@@ -130,3 +130,56 @@ def test_resumed_fibre_archive_uses_indexed_tile_lookup(tmp_path):
         plan=db.execute('EXPLAIN QUERY PLAN SELECT points FROM curves WHERE tile=?',('0_0_0',)).fetchall()
         assert all('SCAN curves' not in row[-1] for row in plan),plan
         assert db.execute('SELECT count(*) FROM curves WHERE tile=?',('0_0_0',)).fetchone()[0]>0
+
+
+@pytest.mark.parametrize('pitch',[8.65,17.,130.,300.])
+def test_exact_field_pitch_retains_fine_prior_and_strict_extent(tmp_path,pitch):
+    from winding_field.config import field_geometry
+    meta=dict(shape_zyx=[83,92,101],spacing_xyz=[8.64,9.,10.],origin_xyz=[13.,27.,45.],frame='test')
+    geometry=field_geometry(meta,pitch)
+    np.testing.assert_array_equal(geometry['spacing_xyz'],[pitch]*3)
+    np.testing.assert_array_equal(geometry['origin_xyz'],meta['origin_xyz'])
+    extent=(np.array(meta['shape_zyx'])[::-1]-1)*meta['spacing_xyz']
+    np.testing.assert_array_equal(geometry['shape_zyx'],(np.floor(extent/pitch).astype(int)+1)[::-1])
+    assert np.all((np.array(geometry['shape_zyx'])[::-1]-1)*pitch<=extent)
+    assert meta['spacing_xyz']==[8.64,9.,10.]
+
+
+def test_coarse_field_uses_physical_constraints_and_mesh_geometry(tmp_path):
+    from winding_field.field import solve,open_field
+    from winding_field.meshes import mesh
+    run=prepared_run(tmp_path/'run',shape=(12,12,32),chunk=4)
+    config=dict(sweeps=1,field_chunk=32,field_spacing_um=7.,seed_stride=4)
+    receipt=solve(run,config)
+    assert receipt['geometry']['spacing_xyz']==[7.]*3
+    assert receipt['geometry']['shape_zyx']==[7,5,9]
+    assert receipt['fibre_constraint_rows']>0
+    with open_field(run) as src:
+        field,valid=src.read([0]*3,list(src.shape))
+        np.testing.assert_allclose(field,np.broadcast_to(np.arange(9)*7/16,field.shape),atol=2e-4)
+        assert valid.all()
+    result=mesh(run,dict(config,mesh_tile=4))
+    assert result['status']=='MESH_READY'
+    with pytest.raises(ValueError,match='identity|differ'):
+        solve(run,dict(config,field_spacing_um=8.))
+
+
+def test_physical_sampling_orients_directors_and_preserves_support_holes(tmp_path):
+    from winding_field.artifacts import Tiles
+    from winding_field.field import sample_prior
+    maps=Tiles(tmp_path/'maps',shape=(4,4,12),chunk=4,identity={})
+    for key in maps.keys():
+        lo,hi=maps.box(key); shape=tuple(hi-lo)
+        normals=np.zeros(shape+(3,),np.float32); normals[...,0]=(-1)**key[2]
+        support=np.ones(shape,bool)
+        if key[2]==1: support[:,:,1]=False
+        maps.write(key,dict(normals=normals,density=np.full(shape,1/16,np.float32),support=support))
+    meta=dict(shape_zyx=[4,4,12],origin_xyz=[10.,20.,30.],spacing_xyz=[2.,3.,4.])
+    geometry=dict(origin_xyz=meta['origin_xyz'],spacing_xyz=[3.]*3,shape_zyx=[4,4,8])
+    cal=dict(mode='planar',axis_xyz=[1.,0.,0.])
+    target,weights,valid=sample_prior(maps,meta,geometry,cal,[0,0,0],[4,4,8])
+    assert not valid[:,:,3].any()  # x=4.5 interpolates an unsupported fine node.
+    assert valid[:,:,:3].all() and valid[:,:,4:].all()
+    np.testing.assert_allclose(target[valid][:,0],1/16)
+    assert not target[~valid].any()
+    maps.close()

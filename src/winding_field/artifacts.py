@@ -64,22 +64,66 @@ class Tiles:
         row=self.db.execute('SELECT info FROM tiles WHERE key=?',(self.path(key).stem,)).fetchone()
         return json.loads(row[0]) if row else None
 
-    def load(self,key):
+    def load(self,key,names=None):
         if not self.has(key):
             raise FileNotFoundError('uncomputed tile: '+str(key))
         with np.load(self.path(key),allow_pickle=False) as data:
-            return {name:data[name] for name in data.files}
+            return {name:data[name] for name in (data.files if names is None else names)}
 
     def read(self,name,lo,hi):
+        return self.read_many((name,),lo,hi)[name]
+
+    def read_many(self,names,lo,hi):
         lo,hi=bounds(lo,hi,self.shape)
-        result=None
+        result={}
         for key in itertools.product(*(range(a//self.chunk,(b-1)//self.chunk+1) for a,b in zip(lo,hi))):
-            tile=self.load(key)[name]
-            if result is None:
-                result=np.empty((*tuple(hi-lo),*tile.shape[3:]),dtype=tile.dtype)
             start,end=self.box(key); a,b=np.maximum(start,lo),np.minimum(end,hi)
-            result[tuple(slice(int(x),int(y)) for x,y in zip(a-lo,b-lo))]=tile[
-                tuple(slice(int(x),int(y)) for x,y in zip(a-start,b-start))]
+            for name,tile in self.load(key,names).items():
+                if name not in result:
+                    result[name]=np.empty((*tuple(hi-lo),*tile.shape[3:]),dtype=tile.dtype)
+                result[name][tuple(slice(int(x),int(y)) for x,y in zip(a-lo,b-lo))]=tile[
+                    tuple(slice(int(x),int(y)) for x,y in zip(a-start,b-start))]
+        return result
+
+    def sample(self,names,indices_zyx,transform=None):
+        """Trilinear Cartesian sampling; booleans require all contributing corners.
+
+        Only touched tiles are loaded, once each, even for very sparse coarse grids.
+        An optional tile transform can orient directors before interpolation.
+        """
+        axes=[np.asarray(a,dtype=float) for a in indices_zyx]
+        if len(axes)!=3 or any(a.ndim!=1 or not len(a) or not np.isfinite(a).all()
+                or np.any(a<0) or np.any(a>n-1) for a,n in zip(axes,self.shape)):
+            raise ValueError('sample coordinates must be finite nonempty ZYX axes inside maps')
+        lower=[np.floor(a).astype(np.int64) for a in axes]
+        upper=[np.minimum(a+1,n-1) for a,n in zip(lower,self.shape)]
+        fraction=[a-b for a,b in zip(axes,lower)]
+        nodes=[lower,upper]; weights=[[1-f for f in fraction],fraction]
+        keys=[np.unique(np.concatenate([a//self.chunk,b[f>0]//self.chunk]))
+              for a,b,f in zip(lower,upper,fraction)]
+        shape=tuple(len(a) for a in axes); result={}
+        for key in itertools.product(*keys):
+            data=self.load(key,names)
+            if transform is not None:
+                data=transform(data,self.box(key)[0])
+            for name,tile in data.items():
+                if name not in result:
+                    result[name]=(np.ones if tile.dtype==np.bool_ else np.zeros)(
+                        (*shape,*tile.shape[3:]),dtype=bool if tile.dtype==np.bool_ else np.result_type(tile.dtype,np.float32))
+            for corner in itertools.product((0,1),repeat=3):
+                positions=[np.flatnonzero((nodes[c][i]//self.chunk==key[i]) & (weights[c][i]>0))
+                           for i,c in enumerate(corner)]
+                if any(not len(p) for p in positions):
+                    continue
+                dst=np.ix_(*positions)
+                src=np.ix_(*(nodes[c][i][p]%self.chunk for i,(c,p) in enumerate(zip(corner,positions))))
+                w=[weights[c][i][p] for i,(c,p) in enumerate(zip(corner,positions))]
+                weight=w[0][:,None,None]*w[1][None,:,None]*w[2][None,None,:]
+                for name,tile in data.items():
+                    if tile.dtype==np.bool_:
+                        result[name][dst] &= tile[src]
+                    else:
+                        result[name][dst] += tile[src]*weight[(...,)+(None,)*(tile.ndim-3)]
         return result
 
     def identity(self):
