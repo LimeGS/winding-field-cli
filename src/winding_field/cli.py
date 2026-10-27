@@ -67,14 +67,9 @@ def main(argv=None):
             result=dict(path=str(checkpoint(args.path)),sha256=MODEL_SHA)
         elif args.command in ('run','plan'):
             from .workflow import run,plan
+            from .config import validate_config
             config=vars(args).copy(); command=config.pop('command'); until=config.pop('until')
-            selected=resolve_source(config.pop('scroll'),config.get('source'),config.pop('scan'))
-            config['source']=selected['source']
-            if config.get('voxel_um') is None:
-                config['voxel_um']=selected.get('voxel_um')
             config['output']=str(Path(config['output']).expanduser().resolve())
-            if not config['source'].startswith(('http://','https://','s3://')):
-                config['source']=str(Path(config['source']).expanduser().resolve())
             for key in ('local','cache','model_path'):
                 if config.get(key):
                     config[key]=str(Path(config[key]).expanduser().resolve())
@@ -86,6 +81,14 @@ def main(argv=None):
             roi=config.pop('roi')
             if roi:
                 config.update(roi_lo=roi[::2],roi_hi=roi[1::2])
+            validate_config(config)
+            selected=resolve_source(config.pop('scroll'),config.get('source'),config.pop('scan'),
+                                    cache=config.get('cache'),offline=config['offline'])
+            config['source']=selected['source']
+            if config.get('voxel_um') is None:
+                config['voxel_um']=selected.get('voxel_um')
+            if not config['source'].startswith(('http://','https://','s3://')):
+                config['source']=str(Path(config['source']).expanduser().resolve())
             result=plan(config) if command=='plan' else run(config,until=until)
         elif args.command=='demo':
             from .demo import synthetic
