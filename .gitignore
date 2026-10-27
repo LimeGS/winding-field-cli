@@ -1,0 +1,12 @@
+.venv/
+.runtime/
+.superpowers/
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+build/
+dist/
+runs/
+.cache/
+.coverage
