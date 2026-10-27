@@ -117,7 +117,13 @@ performance were not exercised in this migration.
 
 The synchronized READMEs document public source installation, the current command
 ownership and existing examples. The CLI now pins original revision
-`416db6c4da83c80214adf9aa136d2537be4dd5f1`, which adds only README corrections to
-the verified original revision above. No runtime source or numerical result
-changed. The artifact hashes in the receipt identify the earlier verification
-builds; publication does not relabel them as new artifacts.
+`397ad750e1ee7f7aa5cb84ca575e750db3e3c232`. In addition to README corrections,
+publication CI found a NumPy typing incompatibility: NPZ and OBJ index variables
+shared a name despite holding different types. Renaming the NPZ local variable
+fixed mypy with recent NumPy; format/lint and 32 surface workflow regressions
+passed. Undoing that local rename gives an identical syntax tree, so numerical
+operations are unchanged.
+
+This source edit changes implementation hashes. The CT acceptance and artifact
+hashes above still identify their original verified revisions; publication does
+not rewrite those receipts or make older runs resumable with newer code.
