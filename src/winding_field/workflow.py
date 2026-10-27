@@ -15,6 +15,7 @@ import time
 import numpy as np
 
 from . import __version__
+from .config import validate_config
 from .io import Volume,bounds,resolve_source
 from .util import atomic_json,digest,file_sha
 
@@ -49,16 +50,20 @@ def open_volume(config):
             if path.is_dir():
                 local=str(path); break
     return Volume(config['source'],local=local,cache=config.get('cache'),cache_bytes=config.get('cache_bytes',2<<30),
-                  offline=config.get('offline',False),voxel_um=config.get('voxel_um'),level=config.get('level',0))
+                  offline=config.get('offline',False),voxel_um=config.get('voxel_um'),level=config.get('level',0),
+                  reserve_bytes=config.get('reserve_bytes',1<<30))
 
 
 def plan(config,volume=None,stages=()):
+    validate_config(config)
     own=volume is None
     volume=open_volume(config) if own else volume
     try:
         lo,hi=bounds(config.get('roi_lo',[0,0,0]),config.get('roi_hi',list(volume.shape)),volume.shape)
         stride=config.get('stride',1)
         shape=(hi-lo-1)//stride+1
+        if min(shape)<2:
+            raise ValueError('ROI needs at least two observation samples per axis')
         halo=40*stride
         input_lo=np.maximum(0,lo-halo); input_hi=np.minimum(volume.shape,hi+halo)
         chunk_count=np.prod((input_hi-1)//volume.chunks-input_lo//volume.chunks+1,dtype=np.int64)
@@ -71,7 +76,10 @@ def plan(config,volume=None,stages=()):
         while not parent.exists():
             parent=parent.parent
         free=shutil.disk_usage(parent).free; reserve=config.get('reserve_bytes',1<<30)
-        fits=ct_bytes<=volume.limit and ct_bytes+remaining+reserve<free
+        cache_free=shutil.disk_usage(volume.cache).free
+        shared=os.stat(parent).st_dev==os.stat(volume.cache).st_dev
+        fits=(ct_bytes<=volume.limit and ct_bytes+reserve<cache_free
+              and remaining+reserve+(ct_bytes if shared else 0)<free)
         mode=config.get('ct_mode','auto')
         if mode=='auto':
             mode='download' if volume.remote and fits else 'stream' if volume.remote else 'local'
@@ -81,7 +89,8 @@ def plan(config,volume=None,stages=()):
                     input_lo_zyx=input_lo.tolist(),input_hi_zyx=input_hi.tolist(),ct_policy=mode,
                     estimated_ct_bytes=ct_bytes,estimated_products_bytes=output_bytes,
                     existing_products_bytes=written,estimated_remaining_bytes=remaining,free_bytes=free,
-                    reserve_bytes=reserve,physical_accuracy='UNVALIDATED')
+                     reserve_bytes=reserve,cache_free_bytes=cache_free,shared_filesystem=shared,
+                     physical_accuracy='UNVALIDATED')
     finally:
         if own:
             volume.close()
@@ -127,6 +136,7 @@ def _validate_products(root,state):
 
 
 def run(config,resume=False,until='flatten'):
+    validate_config(config)
     import torch
     from .predict import prepare
     from .fibres import trace
