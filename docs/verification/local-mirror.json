@@ -1,0 +1,13 @@
+{
+  "chunk": "0/11/31/47",
+  "io": {
+    "backend": "portable-zarr-v2",
+    "cache_bytes": 10485760,
+    "cache_hits": 0,
+    "downloaded_bytes": 0,
+    "downloads": 0,
+    "local_hits": 1
+  },
+  "result": "online S3 mirror verified without a payload download",
+  "source": "s3://vesuvius-challenge-open-data/PHerc0175A/volumes/20250521115057-8.640um-1.2m-116keV-masked.zarr"
+}

@@ -1,0 +1,19 @@
+{
+  "python": "3.11.13 (main, Aug  3 2025, 10:47:32) [Clang 17.0.0 (clang-1700.0.13.5)]",
+  "platform": "macOS-27.0.1-arm64-arm-64bit",
+  "package_implementation_sha256": "7f0d319ccc407c2498c1bf7921d367b73c4dfe9d729ae8b7e3e11c42278ad5c8",
+  "installed_in_isolated_venv": true,
+  "outside_checkout_tests": "39 passed in 56.71s",
+  "dependency_check": "24 packages compatible",
+  "dependencies": {
+    "numpy": "2.4.6",
+    "scipy": "1.17.1",
+    "torch": "2.14.1",
+    "numcodecs": "0.16.6",
+    "scikit-image": "0.26.0",
+    "Pillow": "13.0.0"
+  },
+  "browser": "Brave Chromium via Playwright; final galleries rendered without JavaScript errors",
+  "independent_review": "8 important findings reproduced and fixed, no deferred minors",
+  "physical_acceptance": false
+}

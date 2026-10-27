@@ -1,0 +1,15 @@
+{
+  "afv_sha256": "8c0b787fb86903412385ad1881c4136ade3e5d68e4e22bfe5ed64f5c2f0a479d",
+  "boundary_policy": "fragments stop at tile bounds or unsupported gaps",
+  "coordinates": "XYZ micrometres",
+  "count": 95,
+  "identity": {
+    "maps": "873017f68ac99ca346bdd13a6edb1e36032d0abb0a82a5c5fe3109889f14ea69",
+    "method": "bounded-streamlines-v1",
+    "seed_stride": 4,
+    "threshold": 0.5
+  },
+  "physical_accuracy": "UNVALIDATED",
+  "sha256": "497d673ad1433b2e639d39e37f7b6f146ddd671985b20b211ebcb88497ad9d53",
+  "status": "FIBRES_READY"
+}
