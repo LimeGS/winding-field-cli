@@ -126,9 +126,12 @@ def solve(run,config,stop=None):
             solve_blocks(root,shape,chunk,identity,load,stop=lambda:True,**options)
         saved=json.loads(checkpoint.read_bytes())
         if not saved['progress'].get('initialization_done') and not saved['progress'].get('solver'):
-            with BlockStore(root,shape,chunk,saved['identity'],resume=True,cache_bytes=64<<20) as store:
+            with BlockStore(root,shape,chunk,saved['identity'],resume=True,cache_bytes=64<<20,
+                            reserve_bytes=options['reserve_bytes']) as store:
                 progress=store.manifest['progress']
                 for key in options['order']:
+                    if stop and stop():
+                        return dict(status='PAUSED')
                     if '-'.join(map(str,key)) in store.manifest['chunks']:
                         continue
                     lo=np.array(key)*chunk; hi=np.minimum(lo+chunk,shape)

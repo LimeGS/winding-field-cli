@@ -76,3 +76,57 @@ def test_failed_local_convergence_does_not_publish_field(tmp_path):
     with pytest.raises(RuntimeError,match='converge'):
         solve(run,{'sweeps':1,'field_chunk':32,'maxiter':0})
     assert not (run/'FIELD.json').exists()
+
+
+@pytest.mark.parametrize('limit',[0,1])
+def test_field_initialization_stops_at_block_boundary_and_resumes(tmp_path,limit):
+    from winding_field.field import solve
+    run=prepared_run(tmp_path/'run'); checkpoint=run/'field/CHECKPOINT.json'
+    def stop():
+        return checkpoint.exists() and len(json.loads(checkpoint.read_bytes())['chunks'])>=limit
+    config={'sweeps':1,'field_chunk':8}
+    assert solve(run,config,stop=stop)['status']=='PAUSED'
+    saved=json.loads(checkpoint.read_bytes())
+    assert len(saved['chunks'])==limit
+    assert not saved['progress'].get('initialization_done')
+    assert not (run/'FIELD.json').exists()
+    assert solve(run,config)['status']=='FIELD_READY'
+
+
+def test_field_initialization_preserves_disk_reserve(tmp_path,monkeypatch):
+    from types import SimpleNamespace
+    import winding_field.field as field
+    from winding_field.field import solve
+    from winding_field._core.field_store import StorageBudgetError
+    run=prepared_run(tmp_path/'run'); checkpoint=run/'field/CHECKPOINT.json'
+    reserve=16<<20
+    initializing=False; Store=field.BlockStore
+    def initialization_store(*args,**kwargs):
+        nonlocal initializing
+        store=Store(*args,**kwargs)
+        initializing=True
+        return store
+    monkeypatch.setattr(field,'BlockStore',initialization_store)
+    monkeypatch.setattr('winding_field._core.field_store.shutil.disk_usage',
+        lambda path:SimpleNamespace(free=reserve if initializing else reserve*10))
+    try:
+        solve(run,{'sweeps':1,'field_chunk':8,'reserve_bytes':reserve})
+    except StorageBudgetError:
+        pass
+    assert json.loads(checkpoint.read_bytes())['chunks']=={}
+    assert not (run/'FIELD.json').exists()
+
+
+def test_resumed_fibre_archive_uses_indexed_tile_lookup(tmp_path):
+    import sqlite3
+    from winding_field.fibres import trace
+    run=prepared_run(tmp_path/'run')
+    count=json.loads((run/'FIBRES.json').read_bytes())['count']
+    with sqlite3.connect(run/'fibres/fibres.sqlite') as db:
+        db.execute('DROP INDEX IF EXISTS curves_tile')
+    (run/'FIBRES.json').unlink()
+    assert trace(run,{'seed_stride':4})['count']==count
+    with sqlite3.connect(run/'fibres/fibres.sqlite') as db:
+        plan=db.execute('EXPLAIN QUERY PLAN SELECT points FROM curves WHERE tile=?',('0_0_0',)).fetchall()
+        assert all('SCAN curves' not in row[-1] for row in plan),plan
+        assert db.execute('SELECT count(*) FROM curves WHERE tile=?',('0_0_0',)).fetchone()[0]>0

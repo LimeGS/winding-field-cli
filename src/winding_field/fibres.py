@@ -62,7 +62,8 @@ def trace(run,config,stop=None):
     atomic_json(path,identity)
     db=sqlite3.connect(root/'fibres.sqlite')
     db.executescript('CREATE TABLE IF NOT EXISTS done (tile TEXT PRIMARY KEY);'
-                     'CREATE TABLE IF NOT EXISTS curves (id INTEGER PRIMARY KEY, tile TEXT, points BLOB);')
+                     'CREATE TABLE IF NOT EXISTS curves (id INTEGER PRIMARY KEY, tile TEXT, points BLOB);'
+                     'CREATE INDEX IF NOT EXISTS curves_tile ON curves(tile);')
     seed_stride=identity['seed_stride']
     if type(seed_stride) is not int or seed_stride<1:
         raise ValueError('seed stride must be positive integer')

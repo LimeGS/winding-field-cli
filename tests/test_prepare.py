@@ -95,3 +95,44 @@ def test_prepare_resume_pins_ct_and_roi_geometry(tmp_path):
     (source/'0/0.0.0').write_bytes(bytes([0])*32**3)
     with pytest.raises(ValueError,match='changed'):
         prepare(volume,tmp_path/'run',config)
+
+
+def test_strided_preparation_reads_native_chunks_not_dense_envelope(tmp_path,monkeypatch):
+    from ct_fixture import write_ct
+    from winding_field.io import Volume
+    from winding_field.predict import prepare
+    from winding_field.artifacts import Tiles
+    data=np.broadcast_to(np.arange(80,dtype=np.uint8),(16,16,80)).copy()
+    source=write_ct(tmp_path/'ct.zarr',data)
+    volume=Volume(source,cache=tmp_path/'cache')
+    read=volume.read
+    def bounded(lo,hi):
+        assert np.all(np.asarray(hi)-lo<=volume.chunks),'dense native-resolution envelope'
+        return read(lo,hi)
+    monkeypatch.setattr(volume,'read',bounded)
+    meta=prepare(volume,tmp_path/'run',dict(roi_lo=[0,0,1],roi_hi=[16,16,74],stride=8,chunk=64))
+    assert meta['origin_xyz']==[1.,0.,0.]
+    maps=Tiles(tmp_path/'run/maps')
+    np.testing.assert_array_equal(maps.read('ct',[0,0,0],[2,2,10]),data[::8,::8,1:74:8])
+    maps.close();volume.close()
+
+
+def test_classical_threshold_is_shared_across_tiles_and_persisted(tmp_path):
+    from ct_fixture import write_ct
+    from winding_field.io import Volume
+    from winding_field.predict import prepare
+    from winding_field.artifacts import Tiles
+    data=np.broadcast_to(np.where(np.arange(192)%8<4,20,80),(8,8,192)).astype(np.uint8).copy()
+    data[:,:,144:]=220  # Only the right tile's distant halo sees this material.
+    volume=Volume(write_ct(tmp_path/'ct.zarr',data),cache=tmp_path/'cache')
+    config=dict(roi_hi=[8,8,128],prediction='classical')
+    first=prepare(volume,tmp_path/'small',dict(config,chunk=64))
+    second=prepare(volume,tmp_path/'large',dict(config,chunk=128))
+    a=Tiles(tmp_path/'small/maps'); b=Tiles(tmp_path/'large/maps')
+    np.testing.assert_allclose(a.read('density',[2,2,40],[6,6,88]),
+                               b.read('density',[2,2,40],[6,6,88]),atol=1e-6)
+    assert a.read('support',[2,2,40],[6,6,88]).mean()>.9
+    assert first['identity']['threshold']==second['identity']['threshold']==20
+    assert (tmp_path/'small/THRESHOLD.json').exists()
+    assert prepare(volume,tmp_path/'small',dict(config,chunk=64))['tiles_sha256']==first['tiles_sha256']
+    a.close();b.close();volume.close()

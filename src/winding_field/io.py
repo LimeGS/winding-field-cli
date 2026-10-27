@@ -115,6 +115,7 @@ class Volume:
         self.limit, self.offline = cache_bytes, offline
         self._stats = dict(local_hits=0, cache_hits=0, downloads=0, downloaded_bytes=0)
         self._validated = set()
+        self._verified_local = {}
         self._ledger = None
         self.db = sqlite3.connect(self.cache/'index.sqlite', timeout=120)
         self.db.execute('CREATE TABLE IF NOT EXISTS cache (key TEXT PRIMARY KEY, size INTEGER, at REAL, etag TEXT, sha TEXT)')
@@ -243,8 +244,23 @@ class Volume:
     def _chunk_bytes(self, key):
         local = (self.local/key) if self.local else (Path(self.source)/key if not self.remote else None)
         if local and local.is_file():
+            raw = local.read_bytes()
+            sha = hashlib.sha256(raw).hexdigest()
+            if self.remote and not self.offline and self._verified_local.get(key) != sha:
+                # S3 single-part ETags are MD5s; a 304 verifies the mirror without a payload download.
+                s3 = (urlparse(self.source).hostname or '').endswith('.s3.amazonaws.com')
+                headers = {'If-None-Match':'"'+hashlib.md5(raw,usedforsecurity=False).hexdigest()+'"'} if s3 else {}
+                data, _ = fetch(self.source+'/'+key,headers=headers)
+                if data is not None:
+                    self._stats['downloads'] += 1
+                    self._stats['downloaded_bytes'] += len(data)
+                    if data != raw:
+                        raise ValueError('local CT chunk differs from original source: '+key)
+                elif not headers:
+                    raise ValueError('unexpected remote 304 without a validator')
+                self._verified_local[key] = sha
             self._stats['local_hits'] += 1
-            return self._record(key, local.read_bytes())
+            return self._record(key, raw)
         if not self.remote:
             raise FileNotFoundError(f'missing local CT chunk (not known air): {key}')
         token = digest([self._namespace,key])
@@ -273,14 +289,14 @@ class Volume:
             else:
                 self._stats['downloads'] += 1
                 self._stats['downloaded_bytes'] += len(data)
+                self.db.execute('DELETE FROM cache WHERE key=?', (token,))
+                path.unlink(missing_ok=True)
                 if len(data) <= self.limit:
-                    self.db.execute('DELETE FROM cache WHERE key=?', (token,))
-                    path.unlink(missing_ok=True)
                     self._evict(len(data))
                     atomic_bytes(path,data)
                     self.db.execute('INSERT INTO cache VALUES (?,?,?,?,?)',
                                     (token,len(data),time.time(),etag,hashlib.sha256(data).hexdigest()))
-                    self.db.commit()
+                self.db.commit()
             self._validated.add(token)
             return self._record(key,None if etag==MISSING_ETAG else data)
 
@@ -311,6 +327,25 @@ class Volume:
             a,b = np.maximum(start,lo),np.minimum(start+chunks,hi)
             result[tuple(slice(int(x),int(y)) for x,y in zip(a-lo,b-lo))] = array[
                 tuple(slice(int(x),int(y)) for x,y in zip(a-start,b-start))]
+        return result
+
+    def sample(self, indices_zyx):
+        """Sample a Cartesian grid without materializing its dense native envelope."""
+        indices = [np.asarray(axis) for axis in indices_zyx]
+        if len(indices) != 3 or any(a.ndim != 1 or not len(a) or a.dtype.kind not in 'iu'
+                or np.any(a < 0) or np.any(a >= n) for a,n in zip(indices,self.shape)):
+            raise ValueError('sample indices must be nonempty integer ZYX axes inside source')
+        shape = tuple(len(a) for a in indices)
+        if math.prod(shape)*self.dtype.itemsize > 512 << 20:
+            raise ValueError('sample exceeds 512 MiB; use tiled sampling')
+        groups = [[np.flatnonzero(a//c == k) for k in np.unique(a//c)]
+                  for a,c in zip(indices,self.chunks)]
+        result = np.empty(shape,dtype=self.dtype)
+        for positions in itertools.product(*groups):
+            values = [a[p] for a,p in zip(indices,positions)]
+            lo = np.array([v.min() for v in values]); hi = np.array([v.max()+1 for v in values])
+            tile = self.read(lo,hi)
+            result[np.ix_(*positions)] = tile[np.ix_(*(v-a for v,a in zip(values,lo)))]
         return result
 
     def stats(self):

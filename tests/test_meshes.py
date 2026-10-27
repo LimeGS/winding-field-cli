@@ -56,3 +56,26 @@ def test_tiled_mesh_and_flatten_preserve_all_faces_and_roi(tmp_path):
             assert np.isfinite(chart['uv']).all()
     assert len(ids)==len(set(ids))==flat['covered_faces']
     assert flatten(run,{'chart_faces':128})['covered_faces']==flat['covered_faces']
+
+
+def test_partial_atlas_resume_restores_missing_and_corrupt_companions(tmp_path):
+    from test_field import prepared_run
+    from ct_fixture import write_ct
+    from winding_field.io import Volume
+    from winding_field.field import solve
+    from winding_field.meshes import mesh
+    from winding_field.flatten import flatten
+    run=prepared_run(tmp_path/'run')
+    solve(run,{'sweeps':1,'field_chunk':8})
+    mesh(run,{'levels':[.5,1.5,2.5],'mesh_tile':4})
+    source=write_ct(tmp_path/'ct.zarr',np.full((6,6,24),128,np.uint8),spacing=(2.,3.,4.),origin=(10.,20.,30.))
+    volume=Volume(source,cache=tmp_path/'cache')
+    config={'chart_faces':128}
+    assert flatten(run,config,volume,stop=lambda:True)['status']=='PAUSED'
+    obj=next((run/'flat').glob('*-flat.obj')); png=next((run/'flat').glob('*.png'))
+    expected_obj=obj.read_bytes();expected_png=png.read_bytes()
+    obj.unlink();png.write_bytes(b'corrupted image')
+    assert flatten(run,config,volume)['status']=='FLAT_READY'
+    assert obj.read_bytes()==expected_obj
+    assert png.read_bytes()==expected_png
+    volume.close()

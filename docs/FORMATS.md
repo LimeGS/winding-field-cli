@@ -34,6 +34,13 @@ checkpoints. Retain the original package and data for reproducibility.
 Maps contain CT-derived sheet density (inverse micrometres), unsigned surface
 normals (XYZ), separate fibre tangents (XYZ), presence and support.
 
+For the classical route, `THRESHOLD.json` persists a single Otsu threshold sampled
+from at most 27 fixed 16³-output-grid patches within the ROI. Tile size cannot
+change that threshold. Rare intensity populations may be absent from this bounded
+sample; `--threshold` allows an acquisition-calibrated value. SD2 supplies its own
+presence predictions. Strided preparation assembles sampled grids from bounded
+native-chunk reads rather than allocating their dense native envelope.
+
 `lasagna/` exports six uint8 OME-Zarr v2 arrays and two Lasagna v2 manifests:
 `fibres.lasagna.json` and `surfaces.lasagna.json`. Direction XY is encoded around
 128 with scale 127 after folding the sign into the positive-Z hemisphere. The
@@ -76,3 +83,6 @@ degenerate triangles fail explicitly. Shared original vertex IDs connect chart
 cuts. `FLAT.json` records coverage of mesh faces, chart count and atlas identity.
 Each chart's quality is also in the atlas database. UV coverage and triangle
 integrity do not establish physical sheet correctness or 3D nonintersection.
+Committed atlas rows also retain the expected OBJ/PNG hashes. Partial-stage
+recovery restores missing/corrupt companions from the verified chart payload and
+original CT before it can publish completion.
