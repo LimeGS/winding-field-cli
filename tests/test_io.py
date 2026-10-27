@@ -93,3 +93,35 @@ def test_roi_outside_and_negative_cache_rejected(served):
         v.read([-1,0,0], [2,2,2])
     with pytest.raises(ValueError):
         v.read([0,0,0], [4,4,7])
+
+
+def test_remote_mutation_does_not_reuse_cached_bytes(served):
+    from winding_field.io import Volume
+    root, url, _ = served
+    first = Volume(url, cache=root/'cache')
+    first.read([0,0,0], [2,2,3])
+    (root/'ct.zarr/0/0.0.0').write_bytes(bytes([255])*12)
+    second = Volume(url, cache=root/'cache')
+    assert (second.read([0,0,0], [2,2,3]) == 255).all()
+
+
+def test_local_missing_chunk_is_not_air(served):
+    from winding_field.io import Volume
+    root, _, _ = served
+    (root/'ct.zarr/0/0.0.0').unlink()
+    v = Volume(root/'ct.zarr', cache=root/'cache')
+    with pytest.raises(FileNotFoundError):
+        v.read([0,0,0], [2,2,3])
+
+
+def test_metadata_change_changes_identity(served):
+    from winding_field.io import Volume
+    root, url, _ = served
+    first = Volume(url, cache=root/'cache')
+    p = root/'ct.zarr/.zattrs'
+    attrs = json.loads(p.read_text())
+    attrs['multiscales'][0]['datasets'][0]['coordinateTransformations'][0]['scale'][0] = 5
+    p.write_text(json.dumps(attrs))
+    second = Volume(url, cache=root/'cache')
+    assert first.identity != second.identity
+    assert second.spacing_xyz == [2.,3.,5.]

@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "winding-field-cli"
+version = "0.1.0"
+description = "Resumable original-CT to winding-field, meshes and linked flat charts"
+requires-python = ">=3.11"
+license = "MIT"
+dependencies = ["numpy>=1.26,<3", "scipy>=1.11", "torch>=2.2", "scikit-image>=0.22", "numcodecs>=0.12", "Pillow>=10"]
+
+[project.optional-dependencies]
+test = ["pytest>=8", "build>=1"]
+
+[project.scripts]
+winding-field = "winding_field.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
