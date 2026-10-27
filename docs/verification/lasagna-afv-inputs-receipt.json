@@ -1,0 +1,228 @@
+{
+  "cli_dependencies": {
+    "avf-spline-generator": "0.1.0",
+    "numcodecs": "0.16.6",
+    "numpy": "2.4.6",
+    "scikit-image": "0.26.0",
+    "scipy": "1.17.1",
+    "torch": "2.14.1",
+    "winding-field-cli": "0.1.0",
+    "winding-field-experiments": "1.3.0.dev0"
+  },
+  "cli_python": "3.11.13",
+  "code_revision": "07f5add642d9f44191dcb1a054110039856f9c9d",
+  "core_revision": "397ad750e1ee7f7aa5cb84ca575e750db3e3c232",
+  "date": "2026-10-27",
+  "implementation_sha256": "4a417bb3725ebc55c8a8c028fe353619c3bbcc58e9e4cb1ce84cbca64147021a",
+  "lasagna": {
+    "dependencies": {
+      "numpy": "2.5.4",
+      "scipy": "1.18.1",
+      "torch": "2.14.1",
+      "vesuvius-lasagna": "0.0.1",
+      "zarr": "3.4.2"
+    },
+    "pins": {
+      "adapter": "Official predict3d, strict checkpoint loading, 64-cubed tiles, overlap 32, border 16, full input-lattice outputs. CPU runs FP32; CUDA retains upstream BF16 autocast. Runtime sources and dependency versions are fingerprinted at preflight.",
+      "install_url": "https://github.com/ScrollPrize/villa/archive/b29f310957c7b29e7d332f9876e0e487819cfaa3.tar.gz#subdirectory=lasagna",
+      "model": "scrollprize/lasagna/model_current.pt",
+      "model_bytes": 558287587,
+      "model_revision": "de45f01147adea9f4ad0f621b1ccd885a1f03760",
+      "model_sha256": "4cc0c40a846b296769b9f7982470559078662a1a0b0e1f74ff41ed9341c0d600",
+      "python": "3.14",
+      "revision": "b29f310957c7b29e7d332f9876e0e487819cfaa3",
+      "runtime": "vesuvius-lasagna",
+      "source_url": "https://github.com/ScrollPrize/villa"
+    },
+    "precision": "float32-cpu/bfloat16-cuda",
+    "python": "3.14.10",
+    "runtime_dependencies_sha256": "d5c5bf25fc91076338a4a44837dc3eec26a6553047edac150c56e40c80b38c7c",
+    "runtime_source_files": 899,
+    "runtime_sources_sha256": "053703c3a3d8114dadfa5ae784ca9f1822a4ca0009a7d3737549407d6b2eea3f",
+    "staged_shape_zyx": [
+      80,
+      80,
+      80
+    ],
+    "worker_sha256": "425d64937f94790b556fcd3df3bbb377153f536649d78fc1fd98ca8342ce42e3"
+  },
+  "observations": {
+    "origin_xyz": [
+      52254.72,
+      34836.48,
+      12856.320000000002
+    ],
+    "shape_zyx": [
+      48,
+      48,
+      48
+    ],
+    "spacing_xyz": [
+      8.64,
+      8.64,
+      8.64
+    ]
+  },
+  "physical_acceptance": false,
+  "platform": "macOS-27.0.1-arm64-arm-64bit",
+  "qual_pins": {
+    "adaptations": "None to bundled upstream files; the application supplies its own pinned download and tiled inference adapter.",
+    "checkpoint": "checkpoint_final.pth",
+    "checkpoint_sha256": "b8519a4ce4044c93ed98af0c278628fdcdfdd8808275b3c8becd7211f38b7967",
+    "files": {
+      "src/winding_field/_vendor/qual_model.py": "26b9781e6eb6f20b65f272a491f1856e300b9066ef673f2cecdbb247ce6b3323",
+      "src/winding_field/_vendor/qual_plans.json": "a81fd986d0812688de753a72360706897b0bd29e55fd1d6d0cb29f7e31063f65"
+    },
+    "license": "Apache-2.0",
+    "model_repository": "https://huggingface.co/Qualzz20/afv_fiber_9um_v2",
+    "model_revision": "2a8a26a70754a5d90aeca91f9ef8e7130e6e4f81",
+    "spline_repository": "https://github.com/Qualzz/AVF_SPLINE_GENERATOR",
+    "spline_revision": "3c8b73628ca56cb28042b9b2e79439b2e1c693d2"
+  },
+  "records": {
+    "external": {
+      "bytes": 8234856,
+      "charts": 13,
+      "constraint_rows": 143,
+      "coverage_fraction": 1.0,
+      "downloaded_ct_bytes": 0,
+      "fibre_count": 7,
+      "field_geometry": {
+        "frame": "22760e377700e45bac854cb97c37a09dd9919fffb56972fc7be257c485d064f7",
+        "origin_xyz": [
+          52254.72,
+          34836.48,
+          12856.320000000002
+        ],
+        "shape_zyx": [
+          24,
+          24,
+          24
+        ],
+        "sheet_step": 1.0,
+        "spacing_xyz": [
+          17.0,
+          17.0,
+          17.0
+        ],
+        "voxel_um": 1.0
+      },
+      "mesh_components": 7,
+      "mesh_faces": 2283,
+      "products_sha256": {
+        "FIBRES.json": "98ea5f56cd61c098e1bfa40d9495fa61c297b769d3d819acee57709c9335bf0c",
+        "FIELD.json": "449b6d6f47fbd83f85edd75abbb6d75f14d5daae162e6bf33b9dfe17c9fcd49e",
+        "FLAT.json": "9fdf10f574f4d9062e36a4570cebecabee103615eb120799369c003a19ec021a",
+        "LASAGNA.json": "347591a775608ae5bcb4af629b2c46fa82504beda9f0c30e2f5d3cfd75bd89fd",
+        "MESHES.json": "e507f41075ec06c965a9af2bcafbc4b8db34b473fedc8c3412084c182640fc0b",
+        "PREPARED.json": "f7b121f77ceeb89ce93b80d27933a82254568b0c285cc5144fb91ef3070f2df7",
+        "fibres/fibres.afv": "e4f0897da0972b3ba1e18a2fa4c8d2719991d5156e89d9efe09c4c51fcafa180",
+        "fibres/fibres.sqlite": "c237aa7916cc9ca7d99ecce0dc7b66b61afe8a634724b19ef9d61ff035bb97bf",
+        "field/CHECKPOINT.json": "8db3e803016d0e1bf3be519cd0a10c89413bfb652a457d2dc26f0d758b0eb612"
+      },
+      "seconds": 43.30826508300015
+    },
+    "qual": {
+      "bytes": 11915224,
+      "charts": 13,
+      "constraint_rows": 143,
+      "coverage_fraction": 1.0,
+      "downloaded_ct_bytes": 0,
+      "fibre_count": 7,
+      "field_geometry": {
+        "frame": "22760e377700e45bac854cb97c37a09dd9919fffb56972fc7be257c485d064f7",
+        "origin_xyz": [
+          52254.72,
+          34836.48,
+          12856.320000000002
+        ],
+        "shape_zyx": [
+          24,
+          24,
+          24
+        ],
+        "sheet_step": 1.0,
+        "spacing_xyz": [
+          17.0,
+          17.0,
+          17.0
+        ],
+        "voxel_um": 1.0
+      },
+      "mesh_components": 7,
+      "mesh_faces": 2283,
+      "products_sha256": {
+        "FIBRES.json": "030649adbb845ddbaef7ecdd9e9eb8ffd579d50c14142ac046e647d0732bfe74",
+        "FIELD.json": "8fb10d666c605a375c701bbcecdf1fee034626ff12f9b9c1e5e52370456a65c5",
+        "FLAT.json": "c2cc442e4259b03195f376e0e5e8aed0a6c5fa4a8472510201b78640d5b6b9ed",
+        "LASAGNA.json": "b947e4ef56a82054b1d3f86ea07e52646f178165069e65018848efdc54ec434e",
+        "MESHES.json": "569fa7e439b176c0732c0259527478d9630d8dd7f50274cf01874473e0648722",
+        "PREPARED.json": "e028159673dc98a57a4ff14853d2b7927eb8ccaa520614b29ac624e35861267e",
+        "fibres/fibres.afv": "115ba71bae5bff78afaf35537843e65d2082ceaa734f6a68df8601077a45a36f",
+        "fibres/fibres.sqlite": "5af8ea18a0d2669b55f9f4896f3650c572f4bd1ef0e16ba3baa71ad9d59ce105",
+        "field/CHECKPOINT.json": "0e35994e470aed98283de4a9cbc5d4985cdb2044e1a57822f57e477defadad07"
+      },
+      "seconds": 65.18659883299915
+    }
+  },
+  "roi_hi_zyx": [
+    1536,
+    4080,
+    6096
+  ],
+  "roi_lo_zyx": [
+    1488,
+    4032,
+    6048
+  ],
+  "settings": {
+    "chunk": 16,
+    "ct_mode": "stream",
+    "field_chunk": 16,
+    "invalid_value": null,
+    "maxiter": 2000,
+    "previews": true,
+    "rtol": 1e-06,
+    "stride": 1,
+    "sweeps": 1,
+    "threads": 4
+  },
+  "source": {
+    "level": 0,
+    "metadata_sha256": "94065d12a2d185057f6f7cf3f1d55218b84eb261909571813b1ef218c6fe223d",
+    "origin_xyz": [
+      0.0,
+      0.0,
+      0.0
+    ],
+    "shape": [
+      12748,
+      9363,
+      9363
+    ],
+    "source": "https://vesuvius-challenge-open-data.s3.amazonaws.com/PHerc0175A/volumes/20250521115057-8.640um-1.2m-116keV-masked.zarr",
+    "spacing_xyz": [
+      8.64,
+      8.64,
+      8.64
+    ]
+  },
+  "verification": {
+    "external_mutation_rejected": true,
+    "identical_surface_maps": true,
+    "installed_provenance_files": 4,
+    "installed_source_files": 39,
+    "installed_tests": "323 passed in 137.72s",
+    "preserved_family_counts": {
+      "H": 3,
+      "V": 4,
+      "unknown": 0
+    },
+    "source_tests": "323 passed in 102.00s",
+    "source_tree_sha256": "9ef1c6737b4a5f18fd98c1dc4b7c4bd58fa1972a6ac1f42f242eb778c049d973",
+    "source_vertex_max_error_um": 7.275957614183426e-12,
+    "stable_completed_resume": true,
+    "stop_resume": true,
+    "strict_roi": true
+  }
+}
