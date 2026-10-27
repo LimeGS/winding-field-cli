@@ -1,13 +1,15 @@
 [build-system]
-requires = ["setuptools>=68", "wheel"]
+requires = ["setuptools>=77", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "winding-field-cli"
 version = "0.1.0"
 description = "Resumable original-CT to winding-field, meshes and linked flat charts"
+readme = "README.md"
 requires-python = ">=3.11"
 license = "MIT"
+license-files = ["LICENSE", "licenses/*.txt"]
 dependencies = ["numpy>=1.26,<3", "scipy>=1.11", "torch>=2.2", "scikit-image>=0.22", "numcodecs>=0.12", "Pillow>=10"]
 
 [project.optional-dependencies]
@@ -16,8 +18,16 @@ test = ["pytest>=8", "build>=1"]
 [project.scripts]
 winding-field = "winding_field.cli:main"
 
+[project.urls]
+Repository = "https://github.com/LimeGS/winding-field-cli"
+Documentation = "https://github.com/LimeGS/winding-field-cli/blob/main/README.md"
+
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.data-files]
+"share/winding-field-cli/provenance" = ["provenance/core.json", "provenance/villa.json"]
+"share/winding-field-cli" = ["THIRD_PARTY.md"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
