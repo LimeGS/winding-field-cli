@@ -2,6 +2,21 @@
 
 import math
 
+import numpy as np
+
+
+def field_geometry(meta,spacing_um=None):
+    geometry={k:meta[k] for k in ('shape_zyx','origin_xyz','spacing_xyz','frame')}
+    if spacing_um is not None:
+        if not math.isfinite(spacing_um) or spacing_um<=0:
+            raise ValueError('field spacing must be positive finite micrometres')
+        extent=(np.asarray(meta['shape_zyx'])[::-1]-1)*meta['spacing_xyz']
+        geometry.update(spacing_xyz=[float(spacing_um)]*3,
+                        shape_zyx=(np.floor(extent/spacing_um).astype(np.int64)+1)[::-1].tolist())
+    if min(geometry['shape_zyx'])<2:
+        raise ValueError('field grid needs at least two nodes per axis; enlarge ROI or reduce --field-spacing-um')
+    return geometry
+
 
 def validate_config(config):
     integers={'stride':(1,8),'chunk':(4,128),'field_chunk':(4,256),'level':(0,None),

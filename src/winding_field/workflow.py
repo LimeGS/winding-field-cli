@@ -15,7 +15,7 @@ import time
 import numpy as np
 
 from . import __version__
-from .config import validate_config
+from .config import validate_config,field_geometry
 from .io import Volume,bounds,resolve_source
 from .util import atomic_json,digest,file_sha
 
@@ -73,7 +73,11 @@ def plan(config,volume=None,stages=()):
             input_hi=np.minimum(volume.shape,lo%stride+(end+40-1)*stride+1)
         chunk_count=np.prod((input_hi-1)//volume.chunks-input_lo//volume.chunks+1,dtype=np.int64)
         ct_bytes=int(chunk_count)*math.prod(volume.chunks)*volume.dtype.itemsize
-        output_bytes=math.prod(shape.tolist())*100
+        observations=dict(shape_zyx=shape.tolist(),spacing_xyz=(np.asarray(volume.spacing_xyz)*stride).tolist(),
+                          origin_xyz=(np.asarray(volume.origin_xyz)+lo[::-1]*volume.spacing_xyz).tolist(),
+                          frame=digest(volume.identity))
+        field=field_geometry(observations,config.get('field_spacing_um'))
+        output_bytes=math.prod(shape.tolist())*60+math.prod(field['shape_zyx'])*40
         output=Path(config['output']); parent=output if output.exists() else output.parent
         written=sum(p.stat().st_size for name in ('maps','lasagna','fibres','field','meshes','flat')
                     for p in (output/name).rglob('*') if p.is_file())
@@ -91,6 +95,7 @@ def plan(config,volume=None,stages=()):
         if mode=='download' and not fits and volume.remote and not stages:
             raise ValueError('requested CT download exceeds cache or available-space budget; increase budget or use stream')
         return dict(source=volume.identity,roi_lo_zyx=lo.tolist(),roi_hi_zyx=hi.tolist(),shape_zyx=shape.tolist(),
+                     observations=observations,field=field,
                     input_lo_zyx=input_lo.tolist(),input_hi_zyx=input_hi.tolist(),ct_policy=mode,
                     estimated_ct_bytes=ct_bytes,estimated_products_bytes=output_bytes,
                     existing_products_bytes=written,estimated_remaining_bytes=remaining,free_bytes=free,
