@@ -7,7 +7,7 @@ from pathlib import Path
 
 import numpy as np
 
-from ._core.surface_mesh import extract_mesh
+from surface_mesh import extract_mesh
 from .artifacts import Tiles
 from .field import open_field,map_axes
 from .util import atomic_json

@@ -10,9 +10,14 @@ from .io import Volume,resolve_source
 
 
 def main(argv=None):
+    argv=list(sys.argv[1:] if argv is None else argv)
+    if argv and argv[0]=='prepared':
+        from .field_workflow import main as prepared_main
+        return prepared_main(argv[1:])
     parser = argparse.ArgumentParser(prog='winding-field')
     parser.add_argument('--version', action='version', version=__version__)
     sub = parser.add_subparsers(dest='command', required=True)
+    sub.add_parser('prepared',help='build/resume prepared fields, mesh and render (prepared --help)')
     info = sub.add_parser('inspect', help='inspect exact original CT geometry')
     info.add_argument('source')
     info.add_argument('--voxel-um',type=float)

@@ -6,14 +6,27 @@ observation and fibre preparation.
 
 ## Quick start
 
-Python 3.11+, Linux or macOS. Install from the repository root:
+Python 3.11 or 3.12, Linux or macOS. Clone this branch and install the original
+library at its recorded revision (`winding-field-experiments==1.3.0.dev0`).
+Use `python3.12` instead of `python3.11` if preferred:
 
 ```bash
-python3 -m venv .venv
+git clone --branch feat/core-cli-separation https://github.com/LimeGS/winding-field-cli.git
+cd winding-field-cli
+python3.11 -m venv .venv
 source .venv/bin/activate
-python -m pip install .
+CORE_REV=$(python -c "import json; print(json.load(open('provenance/core.json'))['revision'])")
+python -m pip install \
+  "winding-field-experiments @ https://github.com/LimeGS/winding-field/archive/$CORE_REV.tar.gz" .
 winding-field doctor
 ```
+
+The [original numerical library](https://github.com/LimeGS/winding-field/tree/feat/core-cli-separation)
+is a real dependency: this package contains no solver copy. Only the CLI installs
+the `winding-field` executable. The revision in
+[provenance/core.json](provenance/core.json) is also used by CI. A separate local
+library checkout is not required. To reproduce a fixed source snapshot, check
+out the CLI commit from the verification receipt or PR before installing.
 
 Run the complete pipeline on synthetic CT, offline:
 
@@ -124,6 +137,22 @@ Use a new output directory to change settings, input data or package implementat
 | `--invalid-value 0` | Declare acquisition fill explicitly; otherwise zero is valid CT |
 | `--chart-faces 1024 --no-previews` | Chart size; optionally skip CT preview images |
 
+## Prepared inputs and geometry rendering
+
+Already have a field recipe or a mesh? The workflows moved here from the
+original library:
+
+```bash
+winding-field prepared build --config field-run.json --output runs/prepared
+winding-field prepared resume --config field-run.json --output runs/prepared --prefetch
+winding-field prepared surfaces --config surfaces.json --output runs/surfaces
+winding-field prepared render --mesh runs/surfaces --output runs/views
+```
+
+See [prepared workflows](docs/PREPARED.md) for recipes, supervised workers,
+Python imports and runnable examples. Implementation-bound runs made before
+the split require the original packages or a new output directory.
+
 ## Outputs
 
 Paths are relative to the run directory. Field/mesh coordinates are XYZ µm;
@@ -150,10 +179,14 @@ RAM proportional to seed count (~64 bytes/seed); saved curves need extra disk.
 
 Research output: physical sheet correctness and global convergence remain
 unvalidated. Whole-scroll native-resolution throughput has not been benchmarked.
-See [formats and geometry](docs/FORMATS.md), [verification](docs/verification/qual-v2-splines.md)
-and [attribution](THIRD_PARTY.md) for details.
+See [formats and geometry](docs/FORMATS.md),
+[core/CLI verification](docs/verification/core-cli-separation.md),
+[Qual verification](docs/verification/qual-v2-splines.md) and
+[attribution](THIRD_PARTY.md) for details.
 
 ## Development
+
+With the quick-start environment active:
 
 ```bash
 python -m pip install -e '.[test]'
