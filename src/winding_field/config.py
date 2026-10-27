@@ -5,6 +5,17 @@ import math
 import numpy as np
 
 
+def validate_observations(config,volume,shape):
+    if config.get('prediction')=='qual-v2':
+        spacing=np.asarray(volume.spacing_xyz)*config.get('stride',1)
+        if (volume.dtype!=np.uint8 or not np.allclose(spacing,spacing[0],rtol=1e-6,atol=0)
+                or spacing.min()<8.64-1e-6 or spacing.max()>9.6+1e-6):
+            raise ValueError('Qual V2 requires uint8 CT and isotropic 8.64–9.6 µm observations; '
+                             'select --level/--stride to match, independently of --field-spacing-um')
+        if min(shape)<8:
+            raise ValueError('Qual V2 splines need at least 8 observation samples per axis')
+
+
 def field_geometry(meta,spacing_um=None):
     geometry={k:meta[k] for k in ('shape_zyx','origin_xyz','spacing_xyz','frame')}
     if spacing_um is not None:
@@ -48,6 +59,6 @@ def validate_config(config):
             raise ValueError('levels must be nonempty finite numbers')
         if len(set(config['levels']))!=len(config['levels']):
             raise ValueError('duplicate levels')
-    for name,choices in [('prediction',('classical','sd2')),('ct_mode',('auto','download','stream'))]:
+    for name,choices in [('prediction',('classical','sd2','qual-v2')),('ct_mode',('auto','download','stream'))]:
         if name in config and config[name] not in choices:
             raise ValueError('invalid '+name)

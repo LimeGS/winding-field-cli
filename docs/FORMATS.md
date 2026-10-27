@@ -16,7 +16,7 @@
 - OME-NGFF scale/translation and axis units are interpreted. Unitless metadata
   requires explicit `--voxel-um` or catalog spacing. No silent resolution change.
 - Preparation has a 40-observation-grid-voxel input halo, clipped to the source volume.
-  SD2 rounds the input core coverage out to source-anchored 32³ tiles first;
+  Qual V2 rounds input core coverage out to source-anchored 48³ tiles (SD2: 32³);
   `RUN.json.plan.input_lo_zyx/input_hi_zyx` records this extra input-only context.
   Persistent maps and extracted meshes remain within the output grid/ROI.
 
@@ -37,6 +37,8 @@ Statuses are `STARTING`, `RUNNING`, `PAUSED`, `FAILED` and `COMPLETE`.
 Source metadata, consumed content, package implementation and completed products
 must agree on resume. The CT cache is disposable, not the source of truth for
 checkpoints. Retain the original package and data for reproducibility.
+The implementation identity also includes bundled model JSON, installed numerical
+dependency versions, and the source hashes of the Qual tracer and network architecture.
 
 ## Observations and fibres
 
@@ -51,6 +53,18 @@ is clamped, and normalization is the pinned model's window z-score. Storage
 `--chunk` and ROI edges do not change the canonical window for overlapping samples
 on the same sampling lattice. Up to eight cropped canonical tiles are cached in RAM.
 This defines a repeatable tiled estimator, not equality with whole-volume inference.
+
+The default `qual-v2` predictor requires isotropic uint8 observations at 8.64–9.6 µm.
+It uses fixed 128³ windows (48³ owned core plus 40-voxel halos), with the same
+source anchoring and bounded cache as SD2. Normalization is upstream's sample
+z-score with standard-deviation floor 10. Segmentation softmax is ordered
+background/V/H/intersection; presence is `1 - P(background)`. `probabilities`
+stores raw float32 V/H channels as `(Z,Y,X,2)`; intersection is not assigned to
+either family. The direction head supplies normalized XYZ fibre axes.
+On CPU backends without oneDNN, convolutions are evaluated in depth slabs with
+exact padding/halos to limit im2col scratch to 256 MiB (or one output plane).
+Instance normalization still sees each complete feature window; weights and
+the network topology are unchanged. This is not smaller-window inference.
 
 `--invalid-value` is an explicit acquisition-fill policy. By default every finite
 CT measurement, including zero, is valid. Declared fill zeros predicted presence;
@@ -70,11 +84,42 @@ native-chunk reads rather than allocating their dense native envelope.
 manifests address an **ROI-local output grid** and include world origin, spacing
 and original-source metadata; align this frame before combining with other data.
 
-`fibres/fibres.sqlite` stores bounded traced fragments in physical XYZ units.
+`fibres/fibres.sqlite` stores curves in physical XYZ units.
 `FIBRES.json` includes their count and database SHA. `fibres/fibres.afv` is an AFV
 v1 SQLite export with application ID 1447249475. Its `frame` metadata specifies
 selected-source voxel coordinates, source level and physical transform. It is
-not automatically native L0. Fragments stop at unsupported gaps or tile edges.
+not automatically native L0. Blocks contain at most 256 segments (257 XYZ
+binary64 points), sharing one endpoint. H/V labels, voxel lengths and physical
+millimetre lengths are retained for Qual curves. The published V2 model uses the
+same AFV schema v1 container.
+
+Qual tracing consumes `fibres/probabilities.npy`, a disk-backed `(2,Z,Y,X)` float32
+array in V/H order with unsupported observations zeroed. Its tile ledger and
+completion hash prevent changed input on resume. The pinned official generator
+runs as an interruptible CPU subprocess, with work/logs under `fibres/upstream/`.
+Model inference and field solving still use the selected `--device`.
+After the child is reaped, `WORK.json` seals its scratch files and any intermediate
+AFV with SHA-256; the exact inventory and bytes are checked before reuse. STOP,
+Ctrl-C and handled failures retain this seal. A hard kill of the parent before
+sealing leaves unverified work that is rejected; use a new output directory in
+that case. Import rejects curves or spatial bounds outside its committed ledger.
+The final fibre receipt also binds the retained probability input, checked even
+when resuming an already completed workflow.
+
+The generator pools 2×2×2 observations before quantizing, excludes unpaired final
+planes on odd axes, and traces globally across storage tiles. Its intermediate
+AFV already applies `local_observation_XYZ = 2 * tracing_XYZ + 0.5`; the importer
+adds the prepared origin and spacing exactly once. Curves split wherever any
+contributing fine-grid support corner is invalid, testing edges at intervals no
+larger than 0.25 observation voxels. SD2/classical streamlines retain their original
+tile-boundary stopping behavior.
+
+Qual's dense scratch needs approximately 18 bytes per tracing voxel, besides
+the native float32 input (8 bytes per observation voxel). `plan` accounts for
+these arrays. Seed sorting additionally requires RAM proportional to seed count
+(upstream estimate: 64 bytes/seed), and curve batches/exports need additional
+disk. Disk reserve is monitored while the child runs; stopped preparation may
+replay its current upstream phase, and tracing replays only uncommitted batches.
 
 ## Field
 
@@ -90,6 +135,11 @@ physical density-normal target. All contributing interpolation nodes must be
 supported. Tiles are loaded jointly for density/normals/support, once per request;
 coarse sampling reads only touched tiles, never the dense fine-grid envelope.
 Fibre constraints and mesh phase sampling use the respective physical transforms.
+Qual curves have an R-tree of world-coordinate extents. Each solve block selects
+overlapping curves once, irrespective of their original preparation tile. Every
+supported polyline edge is clipped to the block and sampled at intervals no larger
+than its smallest field pitch, retaining constraints inside small blocks even when
+both original endpoints lie outside. Separate support-split curves stay separate.
 
 ## Meshes and linked atlas
 

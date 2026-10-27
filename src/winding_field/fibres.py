@@ -50,6 +50,9 @@ def streamlines(presence,tangents,support,*,seeds,origin_xyz,spacing_xyz,thresho
 def trace(run,config,stop=None):
     run=Path(run)
     prepared=json.loads((run/'PREPARED.json').read_bytes())
+    if prepared['prediction']=='qual-v2':
+        from .splines import trace_qual
+        return trace_qual(run,config,stop)
     maps=Tiles(run/'maps')
     if maps.identity()!=prepared['tiles_sha256']:
         raise ValueError('prepared maps changed')
