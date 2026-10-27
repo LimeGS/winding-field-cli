@@ -31,7 +31,7 @@ def main(argv=None):
         p.add_argument('--stride',type=int,default=1,help='CT observation sampling step; keep 1 for fine inference')
         p.add_argument('--field-spacing-um',type=float,help='exact isotropic field pitch in micrometres; default: observation pitch')
         p.add_argument('--chunk',type=int,default=64)
-        p.add_argument('--prediction',choices=['classical','sd2'],default='sd2')
+        p.add_argument('--prediction',choices=['classical','sd2','qual-v2'],default='qual-v2')
         p.add_argument('--model-path'); p.add_argument('--device',default='cpu')
         p.add_argument('--threshold',type=float)
         p.add_argument('--invalid-value',type=float,help='acquisition fill value to exclude; zero remains valid unless declared')
@@ -50,8 +50,9 @@ def main(argv=None):
     p.add_argument('--prediction',choices=['classical','sd2'],default='classical')
     p.add_argument('--model-path'); p.add_argument('--device',default='cpu')
     sub.add_parser('doctor',help='report installed runtime and CUDA availability')
-    p=sub.add_parser('models',help='download and verify pinned SD2 checkpoint')
+    p=sub.add_parser('models',help='download and verify a pinned fibre checkpoint')
     p.add_argument('--path')
+    p.add_argument('--prediction',choices=['qual-v2','sd2'],default='qual-v2')
     args=parser.parse_args(argv)
     try:
         if args.command=='inspect':
@@ -65,8 +66,9 @@ def main(argv=None):
             result=dict(version=__version__,python=platform.python_version(),platform=platform.platform(),
                         torch=torch.__version__,cuda=torch.cuda.is_available(),reader='portable-zarr-v2')
         elif args.command=='models':
-            from .models import checkpoint,MODEL_SHA
-            result=dict(path=str(checkpoint(args.path)),sha256=MODEL_SHA)
+            from .models import checkpoint,model_sha
+            result=dict(path=str(checkpoint(args.path,prediction=args.prediction)),
+                        prediction=args.prediction,sha256=model_sha(args.prediction))
         elif args.command in ('run','plan'):
             from .workflow import run,plan
             from .config import validate_config

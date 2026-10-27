@@ -10,7 +10,7 @@ readme = "README.md"
 requires-python = ">=3.11"
 license = "MIT"
 license-files = ["LICENSE", "licenses/*.txt"]
-dependencies = ["numpy>=1.26,<3", "scipy>=1.11", "torch>=2.2", "scikit-image>=0.22", "numcodecs>=0.12", "Pillow>=10"]
+dependencies = ["numpy>=1.26,<3", "scipy>=1.11", "torch>=2.6", "scikit-image>=0.22", "numcodecs>=0.12", "Pillow>=10", "dynamic-network-architectures==0.4.4"]
 
 [project.optional-dependencies]
 test = ["pytest>=8", "build>=1"]
@@ -26,8 +26,11 @@ Documentation = "https://github.com/LimeGS/winding-field-cli/blob/main/README.md
 where = ["src"]
 
 [tool.setuptools.data-files]
-"share/winding-field-cli/provenance" = ["provenance/core.json", "provenance/villa.json"]
+"share/winding-field-cli/provenance" = ["provenance/core.json", "provenance/villa.json", "provenance/qual.json"]
 "share/winding-field-cli" = ["THIRD_PARTY.md"]
+
+[tool.setuptools.package-data]
+"winding_field._vendor" = ["qual_plans.json"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
