@@ -15,7 +15,7 @@ from .artifacts import Tiles
 from .config import validate_config,validate_observations
 from .io import bounds
 from .models import SD2,QualV2,model_sha
-from .util import atomic_json, digest
+from .util import atomic_json, digest,file_sha
 
 
 def observations(ct,spacing_xyz,*,threshold=None,presence=None,tangents=None,validity=None,device='cpu'):
@@ -68,7 +68,8 @@ def prepare(volume,run,config,stop=None):
     stride=config.get('stride',1); chunk=config.get('chunk',32)
     if type(stride) is not int or not 1<=stride<=8 or type(chunk) is not int or not 4<=chunk<=128:
         raise ValueError('stride must be 1..8 and chunk 4..128')
-    method=config.get('prediction','classical')
+    method='external-afv' if config.get('fibres') else config.get('prediction','classical')
+    surface=method!='classical'
     halo=40
     core_size=48 if method=='qual-v2' else 32
     shape=tuple(((hi-lo-1)//stride+1).tolist())
@@ -82,6 +83,12 @@ def prepare(volume,run,config,stop=None):
                   frame=digest(volume.identity),roi_lo_zyx=lo.tolist(),roi_hi_zyx=hi.tolist(),
                   stride=stride,input_halo_voxels=halo*stride,
                   validity=dict(invalid_value=invalid,filter_radius=40))
+    if surface:
+        from . import lasagna
+        geometry['validity']['filter_radius']=0
+        geometry['input_halo_voxels']=(lasagna.BORDER if method=='external-afv' else halo)*stride
+        ready=lasagna.prepare(volume,run,config,geometry,stop)
+        if ready['status']=='PAUSED': return ready
     threshold=config.get('threshold')
     if method=='classical' and threshold is None:
         threshold_path=run/'THRESHOLD.json'
@@ -109,16 +116,27 @@ def prepare(volume,run,config,stop=None):
                 raise ValueError('no valid CT samples for threshold calibration')
             threshold=float(threshold_otsu(values))
             atomic_json(threshold_path,dict(identity=binding,threshold=threshold,samples=int(values.size)))
-    identity=dict(source=volume.identity,geometry=geometry,method=method,model_sha256=model_sha(method),
+    identity=dict(source=volume.identity,geometry=geometry,method=method,model_sha256=None if method=='external-afv' else model_sha(method),
                    threshold=threshold,recipe='fractional-crossings-validity-v2',
                     inference=dict(core=core_size,halo=40,anchor='selected-source sampling lattice',
                                    phase_zyx=(lo%stride).tolist(),normalization='tile-sample-zscore-floor10' if method=='qual-v2' else 'tile-zscore',
-                                   padding='edge') if method!='classical' else None)
+                                    padding='edge') if method in ('qual-v2','sd2') else None)
+    if surface:
+        identity.update(surface_method='lasagna',lasagna_sha256=file_sha(run/'LASAGNA.json'),recipe='independent-lasagna-surface-v1')
     maps=Tiles(run/'maps',shape=shape,chunk=chunk,identity=identity)
     model_type={'sd2':SD2,'qual-v2':QualV2}.get(method)
     model=model_type(config.get('model_path'),config.get('device','cpu'),config.get('offline',False)) if model_type else None
     def infer(ct):
         result=model.predict(ct) if model else (None,None)
+        if surface:
+            valid=np.ones(ct.shape,bool) if invalid is None else ct!=invalid
+            tangent=np.asarray(result[1],np.float32)*spacing
+            tangent/=np.maximum(np.linalg.norm(tangent,axis=-1,keepdims=True),1e-12)
+            arrays=dict(presence=np.where(valid,result[0],0).astype(np.float32),
+                        tangents=np.where(valid[...,None],tangent,0).astype(np.float32),
+                        fibre_support=valid & (result[0]>0))
+            if method=='qual-v2': arrays['probabilities']=result[2]
+            return arrays
         arrays=observations(ct,spacing,threshold=threshold,presence=result[0],tangents=result[1],
                              validity=ct!=invalid if invalid is not None else None,device=config.get('device','cpu'))
         if method=='qual-v2':
@@ -145,7 +163,10 @@ def prepare(volume,run,config,stop=None):
             maps.close(); return dict(status='PAUSED',new_tiles=completed)
         start,end=maps.box(key)
         existing=maps.has(key)
-        if model:
+        if method=='external-afv':
+            sha=digest([identity['lasagna_sha256'],key])
+            arrays={}
+        elif model:
             a,b=lo//stride+start,lo//stride+end
             arrays={}; hashes=[]
             for tile in itertools.product(*(range(x//core_size,(y-1)//core_size+1) for x,y in zip(a,b))):
@@ -173,15 +194,18 @@ def prepare(volume,run,config,stop=None):
             if maps.info(key)['ct_sha256']!=sha:
                 raise ValueError('source CT changed since preparation')
             continue
+        if surface:
+            arrays.update(lasagna.read_observations(run,geometry,start,end))
         maps.write(key,arrays,dict(ct_sha256=sha))
         completed+=1
         if stop and stop():
             maps.close(); return dict(status='PAUSED',new_tiles=completed)
     binding=maps.identity()
     meta=dict(geometry,identity=identity,tiles_sha256=binding,prediction=method,
+              surface_method='lasagna' if surface else 'classical',fibre_method=method,
               source=volume.identity,model_sha256=identity['model_sha256'],
               status='PREPARED',physical_accuracy='UNVALIDATED',
-              method_note=f'{method} pretrained fibre prediction' if model else 'classical CT threshold/structure-tensor baseline')
+              method_note=('official Lasagna surfaces with '+method+' fibres') if surface else 'classical CT threshold/structure-tensor baseline')
     atomic_json(run/'PREPARED.json',meta)
     maps.close()
     return meta

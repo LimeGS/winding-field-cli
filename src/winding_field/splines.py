@@ -58,11 +58,12 @@ def materialize_predictions(maps,root,stop=None,reserve_bytes=0):
         for key in maps.keys():
             if stop and stop(): return None
             lo,hi=maps.box(key); region=(slice(None),)+tuple(slice(a,b) for a,b in zip(lo,hi))
-            data=maps.load(key,('probabilities','support'))
+            support_name='fibre_support' if maps.meta['identity'].get('surface_method')=='lasagna' else 'support'
+            data=maps.load(key,('probabilities',support_name))
             values=data['probabilities']
             if values.shape!=(*tuple(hi-lo),2) or not np.isfinite(values).all() or np.any((values<0)|(values>1)):
                 raise ValueError('spline input must contain finite V/H probabilities in [0,1]')
-            values=np.where(data['support'][...,None],values,0).transpose(3,0,1,2).astype('<f4')
+            values=np.where(data[support_name][...,None],values,0).transpose(3,0,1,2).astype('<f4')
             sha=hashlib.sha256(values.tobytes()).hexdigest(); tag='_'.join(map(str,key))
             old=db.execute('SELECT sha FROM tiles WHERE key=?',(tag,)).fetchone()
             if old:

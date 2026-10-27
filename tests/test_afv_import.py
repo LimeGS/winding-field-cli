@@ -169,3 +169,16 @@ def test_paused_import_rejects_unaccounted_curve(tmp_path):
     with sqlite3.connect(tmp_path/'fibres/fibres.sqlite') as db: db.execute('DELETE FROM done')
     with pytest.raises(ValueError,match='inventory'):
         afv.import_fibres(tmp_path,config)
+
+
+def test_explicit_descriptor_accepts_world_coordinate_afv(tmp_path):
+    afv=adapter(); meta,config=fixture(tmp_path)
+    with sqlite3.connect(config['fibres']) as db:
+        root=json.loads(db.execute("SELECT value FROM metadata WHERE key='root'").fetchone()[0])
+        root['coordinate_units']='micrometer'
+        db.execute("UPDATE metadata SET value=? WHERE key='root'",(json.dumps(root),))
+        db.execute('UPDATE blocks SET points=?',(np.array([[109.,218.,327.],[145.,218.,327.]],dtype='<f8').tobytes(),))
+    (tmp_path/'geometry.json').write_text(json.dumps(dict(source=meta['source']['source'],
+        origin_xyz_um=[0.,0.,0.],spacing_xyz_um=[1.,1.,1.])))
+    assert afv.import_fibres(tmp_path,config)['status']=='FIBRES_READY'
+    np.testing.assert_allclose(curves(tmp_path)[0][2][0],[109.,218.,327.])
