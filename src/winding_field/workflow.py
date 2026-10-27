@@ -208,11 +208,16 @@ def run(config,resume=False,until='flatten'):
                     if stage=='prepare':
                         result=prepare(volume,root,config,stop)
                         if result['status']=='PREPARED':
-                            export_lasagna(root)
+                            if export_lasagna(root,stop) is None:
+                                result=dict(status='PAUSED')
                     elif stage=='fibres':
                         result=trace(root,config,stop)
                         if result['status']=='FIBRES_READY':
-                            result['afv_sha256']=export_afv(root); atomic_json(root/receipt,result)
+                            sha=export_afv(root,stop)
+                            if sha is None:
+                                result=dict(status='PAUSED')
+                            else:
+                                result['afv_sha256']=sha; atomic_json(root/receipt,result)
                     elif stage=='field':
                         result=solve(root,config,stop)
                     elif stage=='mesh':
