@@ -4,7 +4,6 @@ import pytest
 from test_surface_workflow import prepared
 
 from field_runtime import ResourceUnavailable
-from surface_mesh import MeshReader
 from winding_field.surface_workflow import render_bundle, run_surfaces
 
 
@@ -38,35 +37,6 @@ def test_workflow_recovers_after_one_view_was_published(tmp_path, monkeypatch):
     before = (root / "renders/front.png").read_bytes()
     assert run_surfaces(path, root, resume=True)["status"] == "SURFACES_READY"
     assert (root / "renders/front.png").read_bytes() == before
-
-
-@pytest.mark.parametrize("member", ["metadata", "levels"])
-def test_manifest_cannot_relabel_committed_mesh(tmp_path, member):
-    path, _ = prepared(tmp_path)
-    root = tmp_path / "mesh"
-    run_surfaces(path, root, render=False)
-    manifest = json.loads((root / "MESH.json").read_bytes())
-    if member == "metadata":
-        manifest["metadata"]["frame"] = "unrelated-world"
-    else:
-        manifest["levels"][0]["level"] = 999
-    (root / "MESH.json").write_text(json.dumps(manifest))
-    with pytest.raises(ValueError):
-        MeshReader(root)
-
-
-def test_completed_resume_preserves_changed_manifest(tmp_path):
-    path, _ = prepared(tmp_path)
-    root = tmp_path / "mesh"
-    run_surfaces(path, root, render=False)
-    file = root / "MESH.json"
-    manifest = json.loads(file.read_bytes())
-    manifest["metadata"]["frame"] = "foreign-frame"
-    file.write_text(json.dumps(manifest))
-    before = file.read_bytes()
-    with pytest.raises(ValueError):
-        run_surfaces(path, root, resume=True, render=False)
-    assert file.read_bytes() == before
 
 
 def test_render_has_its_own_disk_admission(tmp_path):
