@@ -144,6 +144,7 @@ Numerical geometry APIs remain `surface_sources.FieldSource`,
 After installing both packages, run these from the CLI checkout with new paths:
 
 ```bash
+mkdir -p runs
 python -I examples/block_field.py --output runs/blocks --stop-after-blocks 1
 python -I examples/block_field.py --output runs/blocks --resume --prefetch
 python -I examples/block_field.py --output runs/supervised --supervised --prefetch
