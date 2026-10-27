@@ -34,7 +34,7 @@ def main():
     parser.add_argument('--core',type=Path,required=True)
     args=parser.parse_args()
     source=args.core/'src'
-    pending=['field_observations']
+    pending=['field_observations','block_solver','surface_mesh','surface_sources']
     files={}
     while pending:
         name=pending.pop()

@@ -2,6 +2,16 @@
   "origin": "winding-field-gh working tree",
   "changes": "namespace imports only",
   "source_sha256": {
+    "surface_sources.py": "cab95d509bc4cc93faff07e414998f25ff5761feff99c4a2b6e5f8b571c9e213",
+    "field_store.py": "cb606b2a3322298c25b57c055bb6e76f4a70031569d998ff03839af5e7e47aa2",
+    "surface_mesh.py": "7527ba49c9866388dccf9fe35891116752726d981d2fd506d3ac9131e07632e3",
+    "field_runtime.py": "c46acd41337f580ba73b68ce12c35f6997e4221f4f132b13bda62f7d286ad029",
+    "block_solver.py": "6870b5bdeef22990569167bd0413f2739f667e0818f430c32ac00fe79cabe3ac",
+    "field_solver.py": "a0aa824200a2a000c7194d54b7740e8331b955aa8829244f23e811562c2ed9a0",
+    "field_prefetch.py": "3ac983503f5a41661302b0cdd2a0b8526e5a96e86c201e10a18081bd00cb84f8",
+    "field_constraints.py": "d872fa0889a3649349ec50dcd5dcc3869b194ea4f89e2e390b9b052f566af17f",
+    "physical_grid.py": "98595a0568cb425b3f2c631d420741ff9b1a437933d8e20f84ffba94c6e2018e",
+    "constraint_templates.py": "def889cc9fb3554b755cc26b4e31fd25ff7c56da039a51774aa9b05d15d2f666",
     "field_observations.py": "be10f03b4bcf07f5b5b43bfcdd382701b843a3ee6516a7beefa0c724f66a249e"
   }
 }
