@@ -51,12 +51,12 @@ tests: `test_io.py`, `test_cli.py`, new `test_audit_io.py`.
 Interfaces: `validate_config(config)`; `resolve_source(..., cache=None, offline=False)`;
 `Volume(..., reserve_bytes=0)`; plan adds observation/field geometry and cache free bytes.
 
-- [ ] Add regressions: bounded gzip decoding, offline mirror and catalog, early invalid
+- [x] Add regressions: bounded gzip decoding, offline mirror and catalog, early invalid
   options, distinct cache-disk admission and write rejection, two simultaneous downloads.
-- [ ] Run regressions and observe their specific failures.
-- [ ] Implement shared validation, bounded decoding, cached catalog, local metadata
+- [x] Run regressions and observe their specific failures.
+- [x] Implement shared validation, bounded decoding, cached catalog, local metadata
   fallback with conflict checking, per-filesystem admission, unique checkpoint temporaries.
-- [ ] Run targeted tests; commit the verified batch.
+- [x] Run targeted tests; commit the verified batch.
 
 ## Task 2: Stable observations and validity (findings 3, 7)
 
@@ -65,10 +65,10 @@ Files: `predict.py`, `config.py`, `cli.py`; tests: `test_prepare.py`.
 Interfaces: `observations(..., validity=None)`; preparation records canonical tile,
 normalization, padding, validity and halo policies in its identity.
 
-- [ ] Add tests comparing nonlinear window-dependent predictions across chunk sizes
+- [x] Add tests comparing nonlinear window-dependent predictions across chunk sizes
   and overlapping ROIs, plus fill-mask footprint and valid-zero controls.
-- [ ] Observe failures, implement fixed source-anchored tiles and explicit validity.
-- [ ] Run preparation tests and actual pinned-SD2 chunk comparison; commit.
+- [x] Observe failures, implement fixed source-anchored tiles and explicit validity.
+- [x] Run preparation tests and actual pinned-SD2 chunk comparison; commit.
 
 ## Task 3: Independent solve grid and joint map reads (findings 2, 10)
 
@@ -78,11 +78,11 @@ tests: `test_field.py`, `test_prepare.py`, `test_cli.py`.
 Interfaces: `field_geometry(meta, spacing_um)`; `Tiles.read_many(names,lo,hi)`;
 bounded trilinear sampling of oriented prior/mesh presence in physical coordinates.
 
-- [ ] Add tests for exact 8.65/17/130/300 pitches, analytical physical ramps,
+- [x] Add tests for exact 8.65/17/130/300 pitches, analytical physical ramps,
   support gaps, distant fine-tile constraints, resume identity and one NPZ traversal.
-- [ ] Observe failures; implement geometry and sampling adapter, adapt constraints,
+- [x] Observe failures; implement geometry and sampling adapter, adapt constraints,
   initialization, extraction phase and plan estimates to the field grid.
-- [ ] Run targeted tests and coarse-grid end-to-end extraction; commit.
+- [x] Run targeted tests and coarse-grid end-to-end extraction; commit.
 
 ## Task 4: Interruptible exports (finding 6)
 
@@ -92,18 +92,22 @@ Interfaces: `export_lasagna(run, stop=None)` returns completion boolean or None;
 `export_afv(run, stop=None)` returns final SHA or None. Lasagna chunk hashes live
 in `exports.sqlite`; AFV partial SQLite commits each bounded fibre record.
 
-- [ ] Add stop/resume equivalence, retained-file timestamp, corrupted export and
+- [x] Add stop/resume equivalence, retained-file timestamp, corrupted export and
   changed-source identity tests; verify failures.
-- [ ] Implement hash-bound chunk resume and transactional record resume, then wire
+- [x] Implement hash-bound chunk resume and transactional record resume, then wire
   stop callbacks into stage completion.
-- [ ] Run exporter and workflow tests; commit.
+- [x] Run exporter and workflow tests; commit.
 
 ## Task 5: Documentation, installed verification and whole-change review
 
 Files: `README.md`, `docs/FORMATS.md`, `docs/verification/audit-fixes.md`.
 
-- [ ] Document independent pitches, input masks, canonical inference and resume rules.
-- [ ] Run full suite, build and install wheel, run suite outside checkout.
-- [ ] Exercise live gzip catalog; fresh synthetic and original-CT demos; repeat resume.
-- [ ] Obtain fresh-context review; fix important findings with regressions.
-- [ ] Record exact evidence and limitations; commit delivery without moving v0.1.0.
+- [x] Document independent pitches, input masks, canonical inference and resume rules.
+- [x] Run full suite, build and install wheel, run suite outside checkout.
+- [x] Exercise live gzip catalog; fresh synthetic and original-CT demos; repeat resume.
+- [x] Obtain fresh-context review; fix important findings with regressions.
+- [x] Record exact evidence and limitations; commit delivery without moving v0.1.0.
+
+Acceptance: 80 source tests / 80 isolated installed-wheel tests. All ten findings,
+three review findings and the actual low-space checkpoint retry regression resolved.
+See `docs/verification/audit-fixes.md` and its machine-readable receipt.

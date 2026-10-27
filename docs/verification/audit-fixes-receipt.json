@@ -1,0 +1,67 @@
+{
+  "implementation_sha256": "8b954e10433271b12778d40e7101bc833b9ad2ecc4ce0a85c3fb979b179b7409",
+  "source_tests": 80,
+  "installed_tests": 80,
+  "artifacts": {
+    "winding_field_cli-0.1.0-py3-none-any.whl": "7ab7de38a7cf9c36982d7cad79997c9a568b4d8c42d8764757613b7f41bde450",
+    "winding_field_cli-0.1.0.tar.gz": "29113444ad3abf4e16baca94c75dc9d7ca7b423949cd1f236b400f63f277899a"
+  },
+  "demos": [
+    {
+      "run": "acceptance-synthetic",
+      "observation_spacing_um": [
+        4.0,
+        4.0,
+        4.0
+      ],
+      "field_spacing_um": [
+        4.0,
+        4.0,
+        4.0
+      ],
+      "field_shape_zyx": [
+        24,
+        32,
+        56
+      ],
+      "fibres": 95,
+      "faces": 9286,
+      "charts": 17,
+      "face_coverage": 1.0,
+      "resume_preserved_sha256": [
+        "f1640df3c00becfcd1b9975e5904ae2de3f4599cb1005c5de99fb3d02e46de23",
+        "a0bb65749e38ad9149dcb9b081fca9f09df5abfc8c1568953ff85ed2e8121764",
+        "17f9b7c00a99d8c02c9f8a571ed9a960cef0e3dcc0a77099d86baa87fb914234"
+      ]
+    },
+    {
+      "run": "acceptance-real-17um",
+      "observation_spacing_um": [
+        8.64,
+        8.64,
+        8.64
+      ],
+      "field_spacing_um": [
+        17.0,
+        17.0,
+        17.0
+      ],
+      "field_shape_zyx": [
+        16,
+        16,
+        16
+      ],
+      "fibres": 25,
+      "faces": 206,
+      "charts": 13,
+      "face_coverage": 1.0,
+      "resume_preserved_sha256": [
+        "c71266eb064085af02896a273d698f5dd97337043878bc5d75d1f10fcd908235",
+        "1d3d6c048df601ab06714caba4bc0f42418921a021748b9b7cbdf5ae401682dc",
+        "9cad2fe4196af97eaf11c5237a9c04c09eaa29f4fe3ecd81f2a6758f261bc739"
+      ]
+    }
+  ],
+  "physical_acceptance": false,
+  "global_converged": false
+}
