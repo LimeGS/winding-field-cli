@@ -27,6 +27,9 @@ From the published repository:
 python -m pip install 'git+https://github.com/LimeGS/winding-field-cli.git@v0.1.0'
 ```
 
+The independent-spacing and audit fixes below require the current checkout
+(`pip install .`); the preserved `v0.1.0` release predates those changes.
+
 The numerical solver and extractor are reused from `winding-field-gh`; their
 mathematics are unchanged. Source hashes and namespace-only changes are recorded
 in `provenance/`. Five pinned Villa modules implement the pretrained SD2 network.
@@ -58,8 +61,9 @@ winding-field run \
 ```
 
 `--roi` is **Z0 Z1 Y0 Y1 X0 X1**, half-open, in voxels of the explicitly selected
-source level. Output samples stay inside it. Preparation reads a recorded 40-grid-
-voxel halo around it; source chunks may contain additional compressed data.
+source level. Output samples stay inside it. SD2 reads source-aligned 32³ inference
+cores covering the ROI, each with a 40-observation-voxel halo. `plan` records the
+full input bounds; source chunks may contain additional compressed data.
 Arrays are ZYX; all field/mesh coordinates are XYZ **micrometres**, with voxel-centre
 origins. Unitless CT metadata requires `--voxel-um` or catalog spacing.
 
@@ -76,6 +80,38 @@ selects a different scan or pyramid level to make a job fit. Whole-scroll execut
 is supported by tiled processing, but has **not** been validated end-to-end at
 native resolution. A large full-volume job is not a next-morning laptop demo.
 
+### Choose the field resolution
+
+Use **`--field-spacing-um`**, keeping `--level 0 --stride 1` for fine CT observations:
+
+| Requested field pitch | Flags |
+| --- | --- |
+| 8.65 µm | `--field-spacing-um 8.65` |
+| 17 µm | `--field-spacing-um 17` |
+| 130 µm | `--field-spacing-um 130` |
+| 300 µm | `--field-spacing-um 300` |
+
+The user can choose **any positive numeric pitch** that fits the ROI; these four
+are examples, not a preset list. These are exact isotropic pitches. For the historical
+175A pitches use `8.64`, `17.28`, `138.24` or `276.48` instead. Omitting the flag
+uses the observation spacing, including anisotropy.
+
+```bash
+winding-field plan --scroll PHerc0175A --level 0 --stride 1 \
+  --field-spacing-um 300 --output runs/175a-300um
+winding-field run --scroll PHerc0175A --level 0 --stride 1 \
+  --field-spacing-um 300 --output runs/175a-300um --device cuda:0
+```
+
+`plan` reports separate `observations` and `field` geometries. Coarse fields sample
+the oriented, smoothed fine prior; they do not downsample CT before prediction.
+Fine preparation still costs the same. Field nodes begin at the first ROI centre
+and stop before its last observed centre; the far edge may be less than one field
+pitch short. The ROI must hold at least two field nodes along every axis.
+
+`--voxel-um` declares input units, **not** a requested field pitch.
+`--field-chunk` controls solve block size, **not** physical spacing.
+
 ### Important controls
 
 - `--prediction sd2` (default): pinned pretrained fibre presence/directions.
@@ -83,18 +119,27 @@ native resolution. A large full-volume job is not a next-morning laptop demo.
 - `--prediction classical`: explicitly labelled Otsu/structure-tensor baseline.
   One threshold is estimated from bounded ROI samples and persisted for all tiles;
   `--threshold VALUE` supplies an explicit calibrated threshold instead.
+- `--invalid-value 0`: use only when this acquisition defines zero as masked fill.
+  Invalid samples and the surrounding 40-observation-voxel filter footprint have
+  no supported observations. Without this flag, zero remains a valid CT value.
+- `--chunk`: storage tile size. SD2 always uses fixed source-aligned 32³ cores,
+  40-voxel context and pinned tile z-score normalization, independent of this flag.
 - `--local /matching/original.zarr`: use existing matching CT chunks first; absent
   local chunks are fetched from the original remote source. A local-only missing
   chunk raises instead of silently becoming air. Online mirrors are content-verified;
   S3 single-part ETags can verify local bytes without downloading the payload again.
+- `--offline`: uses cached catalog resolution and metadata, or metadata from the
+  supplied local mirror. An uncached `--scroll` fails with a local explanation;
+  use `--source` directly when the catalog has never been cached.
 - `WINDING_CT_ROOTS=/data:/workspace/ct`: search matching source basenames locally.
 - `--ct-mode auto|download|stream`: auto prefetches the required input domain if it
-  fits both the cache cap and available space after estimated products/reserve.
+  fits the cache cap and both filesystems' available space after products/reserve.
 - `--cache-gib 2`, `--cache /disk/cache`, `--reserve-gib 1`: disposable CT cache,
-  shared compressed-payload cap and output free-space reserve. Metadata/index and
+  shared compressed-payload cap and free-space reserve on output and cache disks. Metadata/index and
   transient decode RAM are separate from the payload cap.
-- `--level 0`: explicit source pyramid level. `--stride 1`: explicit output-grid
-  sampling; larger values reduce computation but can lose sheet/fibre detail.
+- `--level 0`: explicit source pyramid level. `--stride 1`: CT observation
+  sampling; larger values (up to 8) can lose sheet/fibre detail. Prefer independent
+  field spacing to make the solve coarser while retaining fine predictions.
 - `--until prepare|fibres|field|mesh|flatten`: stop after an intermediate stage.
 - `--sweeps 4`, `--maxiter 2000`: numerical budgets. Exhausting sweeps is not proof
   of global convergence. Settings are pinned on resume.
@@ -110,10 +155,13 @@ winding-field resume runs/175a-roi
 winding-field mesh runs/175a-roi       # continue through a named stage
 ```
 
-Ctrl-C or `touch RUN_DIRECTORY/STOP` requests a durable stop at stage/block
+Ctrl-C or `touch RUN_DIRECTORY/STOP` requests a durable stop at inference/block,
+export-chunk or fibre-record
 boundaries. Resume checks source metadata, consumed chunk hashes and completed
 products; changed numerical inputs require a new run. The first interrupt waits
 for the current bounded operation to finish.
+Lasagna exports retain checksummed chunks; AFV exports retain committed records
+in a partial database until atomic final publication. Resume continues that work.
 
 | Path | Contents |
 | --- | --- |
@@ -126,7 +174,7 @@ for the current bounded operation to finish.
 | `flat/` | Linked atlas, 3D/flat OBJ, UV/source-ID NPZ and original-CT previews |
 | `index.html` | Self-contained local gallery (bounded visual preview) |
 
-Lasagna manifests use an **ROI-local output grid**, with explicit world transform
+Lasagna manifests use the **ROI-local observation grid**, with explicit world transform
 extras and NGFF physical metadata. AFV coordinates are in the selected original
 source grid; inspect its `frame` metadata before combining it with an L0-only tool.
 Fibres terminate at tile boundaries and unsupported gaps; these are fragments,
@@ -144,7 +192,8 @@ not globally joined anatomical fibres.
 - Fibre tracing and flattening use bounded fragments/charts. One continuous,
   physically verified full-scroll unroll is not demonstrated.
 - Stage outputs and solver state persist; budgets do not guarantee a hard process
-  RSS ceiling. Choose smaller chunks for RAM/VRAM limits.
+  RSS ceiling. Smaller field/storage chunks reduce their working sets; SD2's
+  canonical inference window remains fixed for reproducibility.
 
 ## Development
 
