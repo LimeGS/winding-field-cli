@@ -204,3 +204,48 @@ def test_physical_sampling_orients_directors_and_preserves_support_holes(tmp_pat
     np.testing.assert_allclose(target[valid][:,0],1/16)
     assert not target[~valid].any()
     maps.close()
+
+
+@pytest.mark.parametrize('pitch',[17.,130.])
+@pytest.mark.parametrize('point_count',[2,80])
+def test_long_qual_spline_constrains_blocks_away_from_its_origin(tmp_path,monkeypatch,pitch,point_count):
+    import io
+    import sqlite3
+    import winding_field.field as field
+    from winding_field.artifacts import Tiles
+    from winding_field.util import atomic_json,file_sha
+    run=tmp_path/'run'; shape=(80,24,24)
+    maps=Tiles(run/'maps',shape=shape,chunk=8,identity={})
+    for key in maps.keys():
+        lo,hi=maps.box(key); local=tuple(hi-lo)
+        normals=np.zeros(local+(3,),np.float32); normals[...,0]=1
+        maps.write(key,dict(density=np.full(local,1/100,np.float32),normals=normals,support=np.ones(local,bool)))
+    meta=dict(shape_zyx=list(shape),spacing_xyz=[9.]*3,origin_xyz=[10.,20.,30.],frame='test',
+              prediction='qual-v2',tiles_sha256=maps.identity())
+    maps.close(); atomic_json(run/'PREPARED.json',meta)
+    (run/'fibres').mkdir()
+    points=np.column_stack([np.full(80,41.5),np.full(80,51.5),30+np.arange(80)*9.])
+    if point_count==2:
+        points=points[68:70]
+    blob=io.BytesIO(); np.save(blob,points,allow_pickle=False)
+    with sqlite3.connect(run/'fibres/fibres.sqlite') as db:
+        db.executescript('CREATE TABLE curves(id INTEGER PRIMARY KEY,tile TEXT,points BLOB,family TEXT);'
+                        'CREATE VIRTUAL TABLE curve_bounds USING rtree(id,min_x,max_x,min_y,max_y,min_z,max_z);')
+        db.execute('INSERT INTO curves VALUES (1,?,?,?)',('qual',blob.getvalue(),'V'))
+        db.execute('INSERT INTO curve_bounds VALUES (1,41.5,41.5,51.5,51.5,?,?)',(points[:,2].min(),points[:,2].max()))
+    atomic_json(run/'FIBRES.json',dict(sha256=file_sha(run/'fibres/fibres.sqlite')))
+    calls=[]; pair=field.pair_constraints
+    def constraints(a,b,origin,*args,**kwargs):
+        calls.append((origin.copy(),a.copy(),b.copy()))
+        return pair(a,b,origin,*args,**kwargs)
+    monkeypatch.setattr(field,'pair_constraints',constraints)
+    result=field.solve(run,dict(sweeps=1,field_chunk=4,field_spacing_um=pitch))
+    assert result['fibre_constraint_rows']>0
+    assert any(origin[2]>30 and len(a) for origin,a,b in calls)
+    for origin,a,b in calls:
+        assert len(np.unique(np.c_[a,b],axis=0))==len(a)
+    with field.open_field(run) as source:
+        values,support=source.read([0]*3,list(source.shape))
+        expected=np.broadcast_to(np.arange(source.shape[2])*pitch/100,values.shape)
+        np.testing.assert_allclose(values,expected,atol=2e-4)
+        assert support.all()

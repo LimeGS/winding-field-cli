@@ -121,17 +121,28 @@ def solve(run,config,stop=None):
     def constraints(lo,hi,read_nodes):
         nonlocal row_count
         a=[]; b=[]
-        axes=map_axes(meta,geometry,lo,hi)
-        for key in itertools.product(*(range(int(axis[0])//maps.chunk,int(axis[-1])//maps.chunk+1) for axis in axes)):
-            tag='_'.join(map(str,key))
-            for (raw,) in db.execute('SELECT points FROM curves WHERE tile=?',(tag,)):
-                points=np.load(io.BytesIO(raw),allow_pickle=False)[::3]
-                if len(points)<2:
-                    continue
-                grid=(points-geometry['origin_xyz'])/geometry['spacing_xyz']
-                inside=((grid>=lo[::-1]) & (grid<=(hi-1)[::-1])).all(1)
-                valid=inside[:-1]&inside[1:]
-                a.extend(points[:-1][valid]); b.extend(points[1:][valid])
+        if meta['prediction']=='qual-v2':
+            low=np.asarray(geometry['origin_xyz'])+lo[::-1]*geometry['spacing_xyz']
+            high=np.asarray(geometry['origin_xyz'])+(hi-1)[::-1]*geometry['spacing_xyz']
+            rows=db.execute('SELECT c.points FROM curve_bounds b JOIN curves c ON c.id=b.id '
+                            'WHERE b.max_x>=? AND b.min_x<=? AND b.max_y>=? AND b.min_y<=? '
+                            'AND b.max_z>=? AND b.min_z<=? ORDER BY c.id',tuple(v for pair in zip(low,high) for v in pair))
+        else:
+            axes=map_axes(meta,geometry,lo,hi)
+            keys=itertools.product(*(range(int(axis[0])//maps.chunk,int(axis[-1])//maps.chunk+1) for axis in axes))
+            rows=(row for key in keys for row in db.execute('SELECT points FROM curves WHERE tile=?',('_'.join(map(str,key)),)))
+        for (raw,) in rows:
+            points=np.load(io.BytesIO(raw),allow_pickle=False)
+            if meta['prediction']=='qual-v2':
+                points=points[np.unique(np.r_[np.arange(0,len(points),3),len(points)-1])]
+            else:
+                points=points[::3]
+            if len(points)<2:
+                continue
+            grid=(points-geometry['origin_xyz'])/geometry['spacing_xyz']
+            inside=((grid>=lo[::-1]) & (grid<=(hi-1)[::-1])).all(1)
+            valid=inside[:-1]&inside[1:]
+            a.extend(points[:-1][valid]); b.extend(points[1:][valid])
         if not a:
             return None
         row_count+=len(a)
