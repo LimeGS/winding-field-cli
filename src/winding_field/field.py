@@ -90,6 +90,22 @@ def open_field(run):
                        meta['geometry'],cache_bytes=64<<20)
 
 
+def spline_samples(points,low,high,step):
+    """Clip each supported edge, then sample inside the block, including free nodes."""
+    start=points[:-1]; delta=np.diff(points,axis=0)
+    near=np.divide(low-start,delta,out=np.full_like(start,-np.inf),where=delta!=0)
+    far=np.divide(high-start,delta,out=np.full_like(start,np.inf),where=delta!=0)
+    enter=np.maximum(0,np.minimum(near,far).max(1))
+    leave=np.minimum(1,np.maximum(near,far).min(1))
+    valid=(leave>enter)&np.all((delta!=0)|((start>=low)&(start<=high)),axis=1)
+    for i in np.flatnonzero(valid):
+        a=np.clip(start[i]+enter[i]*delta[i],low,high)
+        b=np.clip(start[i]+leave[i]*delta[i],low,high)
+        length=np.linalg.norm(b-a)
+        if length:
+            yield np.linspace(a,b,max(1,int(np.ceil(length/step)))+1)
+
+
 def solve(run,config,stop=None):
     run=Path(run); meta=json.loads((run/'PREPARED.json').read_bytes())
     fibres=json.loads((run/'FIBRES.json').read_bytes())
@@ -134,9 +150,10 @@ def solve(run,config,stop=None):
         for (raw,) in rows:
             points=np.load(io.BytesIO(raw),allow_pickle=False)
             if meta['prediction']=='qual-v2':
-                points=points[np.unique(np.r_[np.arange(0,len(points),3),len(points)-1])]
-            else:
-                points=points[::3]
+                for sampled in spline_samples(points,low,high,min(geometry['spacing_xyz'])):
+                    a.extend(sampled[:-1]); b.extend(sampled[1:])
+                continue
+            points=points[::3]
             if len(points)<2:
                 continue
             grid=(points-geometry['origin_xyz'])/geometry['spacing_xyz']

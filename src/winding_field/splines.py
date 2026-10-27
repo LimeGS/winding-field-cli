@@ -112,6 +112,12 @@ def run_child(command,log,stop=None,reserve_bytes=0,threads=4):
     return True
 
 
+def upstream_hashes(root):
+    return {str(p.relative_to(root)):file_sha(p)
+            for p in itertools.chain((root/'work').rglob('*'),[root/'curves.afv'])
+            if p.is_file() and p.name!='.lock'}
+
+
 def supported_pieces(points,maps):
     """Split edges at unsupported corners, sampling at most 0.25 observation voxels."""
     @lru_cache(maxsize=8)
@@ -172,6 +178,11 @@ def import_curves(source,root,maps,meta,stop=None):
             'CREATE TABLE IF NOT EXISTS curves (id INTEGER PRIMARY KEY,tile TEXT,points BLOB,family TEXT,source_id INTEGER);'
             'CREATE INDEX IF NOT EXISTS curves_source ON curves(source_id);'
             'CREATE VIRTUAL TABLE IF NOT EXISTS curve_bounds USING rtree(id,min_x,max_x,min_y,max_y,min_z,max_z);')
+        if (db.execute('SELECT 1 FROM curves c LEFT JOIN done d ON d.fid=c.source_id '
+                       'LEFT JOIN curve_bounds b ON b.id=c.id WHERE d.fid IS NULL OR b.id IS NULL LIMIT 1').fetchone()
+                or db.execute('SELECT 1 FROM curve_bounds b LEFT JOIN curves c ON c.id=b.id '
+                              'WHERE c.id IS NULL LIMIT 1').fetchone()):
+            raise ValueError('imported spline inventory changed')
         total=0
         for fid,family,count in src.execute('SELECT id,family,point_count FROM fibers ORDER BY id'):
             if stop and stop(): return False
@@ -221,12 +232,22 @@ def trace_qual(run,config,stop=None):
             saved=json.loads((run/'FIBRES.json').read_bytes())
             if saved['identity']!=identity or file_sha(root/'fibres.sqlite')!=saved['sha256']:
                 raise ValueError('spline receipt or curves changed')
+            if file_sha(root/'probabilities.npy')!=saved['probabilities_sha256']:
+                raise ValueError('spline probabilities changed')
             return saved
         reserve=config.get('reserve_bytes',0)
         path=materialize_predictions(maps,root,stop,reserve)
         if path is None: return dict(status='PAUSED')
         upstream=root/'upstream'; upstream.mkdir(exist_ok=True)
         output=upstream/'curves.afv'; receipt=upstream/'OUTPUT.json'; work=upstream/'work'
+        seal=upstream/'WORK.json'; retained=upstream_hashes(upstream)
+        if seal.exists():
+            if json.loads(seal.read_bytes())!=retained:
+                raise ValueError('upstream work changed or interrupted before sealing; use a new output')
+        elif retained:
+            raise ValueError('unverified upstream work; use a new output')
+        else:
+            atomic_json(seal,retained)
         if receipt.exists():
             if file_sha(output)!=json.loads(receipt.read_bytes())['sha256']:
                 raise ValueError('upstream spline output changed')
@@ -237,13 +258,19 @@ def trace_qual(run,config,stop=None):
                      '--work-dir',str(work.resolve()),'--threads',str(threads),'--device','cpu',
                      '--coordinate-space',meta['frame']]
             if (work/'run.json').exists(): command.append('--resume')
-            if not run_child(command,upstream/'generator.log',stop,reserve,threads):
+            try:
+                complete=run_child(command,upstream/'generator.log',stop,reserve,threads)
+            finally:
+                # shortcut: unsealed work after a hard kill is rejected; add commit-time hashes for crash recovery.
+                atomic_json(seal,upstream_hashes(upstream))
+            if not complete:
                 return dict(status='PAUSED')
         if not import_curves(output,root,maps,meta,stop): return dict(status='PAUSED')
         atomic_json(receipt,dict(sha256=file_sha(output)))
         with sqlite3.connect(root/'fibres.sqlite') as db:
             count=db.execute('SELECT count(*) FROM curves').fetchone()[0]
         result=dict(status='FIBRES_READY',count=count,identity=identity,sha256=file_sha(root/'fibres.sqlite'),
+                    probabilities_sha256=json.loads((root/'PROBABILITIES.json').read_bytes())['sha256'],
                     coordinates='XYZ micrometres',boundary_policy='global splines split at unsupported gaps and ROI boundary',
                     physical_accuracy='UNVALIDATED')
         atomic_json(run/'FIBRES.json',result)

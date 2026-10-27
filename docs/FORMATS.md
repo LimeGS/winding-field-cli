@@ -98,6 +98,13 @@ array in V/H order with unsupported observations zeroed. Its tile ledger and
 completion hash prevent changed input on resume. The pinned official generator
 runs as an interruptible CPU subprocess, with work/logs under `fibres/upstream/`.
 Model inference and field solving still use the selected `--device`.
+After the child is reaped, `WORK.json` seals its scratch files and any intermediate
+AFV with SHA-256; the exact inventory and bytes are checked before reuse. STOP,
+Ctrl-C and handled failures retain this seal. A hard kill of the parent before
+sealing leaves unverified work that is rejected; use a new output directory in
+that case. Import rejects curves or spatial bounds outside its committed ledger.
+The final fibre receipt also binds the retained probability input, checked even
+when resuming an already completed workflow.
 
 The generator pools 2×2×2 observations before quantizing, excludes unpaired final
 planes on odd axes, and traces globally across storage tiles. Its intermediate
@@ -129,8 +136,10 @@ supported. Tiles are loaded jointly for density/normals/support, once per reques
 coarse sampling reads only touched tiles, never the dense fine-grid envelope.
 Fibre constraints and mesh phase sampling use the respective physical transforms.
 Qual curves have an R-tree of world-coordinate extents. Each solve block selects
-overlapping curves once, irrespective of their original preparation tile; short
-two-point pieces and the final endpoint survive constraint downsampling.
+overlapping curves once, irrespective of their original preparation tile. Every
+supported polyline edge is clipped to the block and sampled at intervals no larger
+than its smallest field pitch, retaining constraints inside small blocks even when
+both original endpoints lie outside. Separate support-split curves stay separate.
 
 ## Meshes and linked atlas
 

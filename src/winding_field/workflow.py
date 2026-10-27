@@ -141,9 +141,12 @@ def _validate_products(root,state):
         if expected!=actual:
             raise ValueError('prepared maps changed')
     if 'fibres' in state['stages']:
-        expected=json.loads((root/'FIBRES.json').read_bytes())['sha256']
-        if file_sha(root/'fibres/fibres.sqlite')!=expected:
+        expected=json.loads((root/'FIBRES.json').read_bytes())
+        if file_sha(root/'fibres/fibres.sqlite')!=expected['sha256']:
             raise ValueError('fibres changed')
+        if ('probabilities_sha256' in expected
+                and file_sha(root/'fibres/probabilities.npy')!=expected['probabilities_sha256']):
+            raise ValueError('spline probabilities changed')
     if 'field' in state['stages']:
         from .field import open_field
         with open_field(root) as source:
