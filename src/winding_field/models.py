@@ -1,4 +1,4 @@
-"""Pinned public fibre inference and verified checkpoint acquisition."""
+"""Pinned public inference and verified checkpoint acquisition."""
 
 import json
 import math
@@ -19,11 +19,14 @@ MODEL_URL=f'https://huggingface.co/scrollprize/lasagna-fiber/resolve/{MODEL_REV}
 QUAL_MODEL_SHA='b8519a4ce4044c93ed98af0c278628fdcdfdd8808275b3c8becd7211f38b7967'
 QUAL_MODEL_REV='2a8a26a70754a5d90aeca91f9ef8e7130e6e4f81'
 QUAL_MODEL_URL=f'https://huggingface.co/Qualzz20/afv_fiber_9um_v2/resolve/{QUAL_MODEL_REV}/checkpoint_final.pth'
+LASAGNA_MODEL_SHA='4cc0c40a846b296769b9f7982470559078662a1a0b0e1f74ff41ed9341c0d600'
+LASAGNA_MODEL_REV='de45f01147adea9f4ad0f621b1ccd885a1f03760'
+LASAGNA_MODEL_URL=f'https://huggingface.co/scrollprize/lasagna/resolve/{LASAGNA_MODEL_REV}/model_current.pt'
 CONV_WORKSPACE_BYTES=256<<20
 
 
 def model_sha(prediction):
-    return {'sd2':MODEL_SHA,'qual-v2':QUAL_MODEL_SHA,'classical':None}[prediction]
+    return {'sd2':MODEL_SHA,'qual-v2':QUAL_MODEL_SHA,'lasagna':LASAGNA_MODEL_SHA,'classical':None}[prediction]
 
 
 def verify_checkpoint(path,*,prediction='sd2'):
@@ -32,8 +35,8 @@ def verify_checkpoint(path,*,prediction='sd2'):
 
 
 def checkpoint(path=None,offline=False,*,prediction='sd2'):
-    if prediction not in ('sd2','qual-v2'):
-        raise ValueError('checkpoint requires sd2 or qual-v2')
+    if prediction not in ('sd2','qual-v2','lasagna'):
+        raise ValueError('checkpoint requires sd2, qual-v2 or lasagna')
     path=Path(path or f'~/.cache/winding-field/models/{prediction}.pt').expanduser()
     if not path.exists():
         if offline:
@@ -42,7 +45,7 @@ def checkpoint(path=None,offline=False,*,prediction='sd2'):
         fd,name=tempfile.mkstemp(prefix='.'+path.name+'-',suffix='.download',dir=path.parent)
         temporary=Path(name)
         try:
-            url=QUAL_MODEL_URL if prediction=='qual-v2' else MODEL_URL
+            url={'sd2':MODEL_URL,'qual-v2':QUAL_MODEL_URL,'lasagna':LASAGNA_MODEL_URL}[prediction]
             with os.fdopen(fd,'wb') as out, urlopen(url,timeout=120) as response:
                 total=0
                 while block:=response.read(1<<20):
