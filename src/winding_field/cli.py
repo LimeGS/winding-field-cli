@@ -33,6 +33,7 @@ def main(argv=None):
         p.add_argument('--prediction',choices=['classical','sd2'],default='sd2')
         p.add_argument('--model-path'); p.add_argument('--device',default='cpu')
         p.add_argument('--threshold',type=float)
+        p.add_argument('--invalid-value',type=float,help='acquisition fill value to exclude; zero remains valid unless declared')
         p.add_argument('--field-chunk',type=int,default=64); p.add_argument('--sweeps',type=int,default=4)
         p.add_argument('--maxiter',type=int,default=2000); p.add_argument('--rtol',type=float,default=1e-6)
         p.add_argument('--seed-stride',type=int,default=8); p.add_argument('--fibre-weight',type=float,default=1.)
