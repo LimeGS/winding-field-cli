@@ -170,7 +170,6 @@ def prepare(volume,run,config,geometry,stop=None):
     run=Path(run); root=run/'lasagna-source'; root.mkdir(parents=True,exist_ok=True)
     bind(root/'IDENTITY.json',identity)
     validate_retained(run,config)
-    if (run/'LASAGNA.json').exists(): return json.loads((run/'LASAGNA.json').read_bytes())
     shape=staged['shape_zyx']; array=root/'input.zarr/0'
     bind(array/'.zarray',dict(zarr_format=2,shape=shape,chunks=[CHUNK]*3,dtype=volume.dtype.str,
          compressor=None,fill_value=0,filters=None,order='C',dimension_separator='.'))
@@ -195,6 +194,7 @@ def prepare(volume,run,config,geometry,stop=None):
             atomic_bytes(array/name,data)
             db.execute('INSERT INTO chunks VALUES (?,?)',(name,sha)); db.commit()
     if stop and stop(): return dict(status='PAUSED')
+    if (run/'LASAGNA.json').exists(): return json.loads((run/'LASAGNA.json').read_bytes())
     output=root/'output'; output.mkdir(exist_ok=True)
     command=[runtime['executable'],'-I',str(worker.resolve()),'predict3d',
         '--input',str(array.resolve()),'--output',str((output/'surface.lasagna.json').resolve()),

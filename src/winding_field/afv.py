@@ -43,8 +43,8 @@ def _header(db):
     header={key:json.loads(value) for key,value in db.execute('SELECT key,value FROM metadata')}
     if header.get('complete') is not True: raise ValueError('incomplete AFV')
     root=header.get('root',{})
-    if root.get('coordinate_order')!='XYZ' or root.get('coordinate_units')!='voxel':
-        raise ValueError('AFV requires XYZ voxel coordinates or an explicit voxel-to-world geometry')
+    if root.get('coordinate_order')!='XYZ':
+        raise ValueError('AFV requires XYZ coordinate order')
     counts=db.execute('SELECT count(*),coalesce(sum(point_count),0) FROM fibers').fetchone()
     blocks=db.execute('SELECT count(*) FROM blocks').fetchone()[0]
     if (counts!=(header.get('fiber_count'),header.get('point_count')) or blocks!=header.get('block_count')
@@ -70,6 +70,7 @@ def source_identity(path,geometry_path,source):
         if not isinstance(original,dict): raise ValueError('invalid AFV source frame')
         root=header['root']
         if (frame.get('coordinate_order')!='XYZ' or frame.get('units')!='selected-source voxels'
+                or root.get('coordinate_units')!='voxel'
                 or frame.get('level')!=original.get('level')
                 or frame.get('origin_xyz_um')!=original.get('origin_xyz')
                 or frame.get('spacing_xyz_um')!=original.get('spacing_xyz')

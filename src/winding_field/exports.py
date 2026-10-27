@@ -45,7 +45,9 @@ def export_lasagna(run,stop=None):
     if maps.identity()!=meta['tiles_sha256']:
         maps.close(); raise ValueError('export input maps changed')
     db=export_db(run,'lasagna',meta)
-    names=['presence','nx','ny','surface_presence','surface_nx','surface_ny']
+    external=meta.get('fibre_method')=='external-afv'
+    names=([] if external else ['presence','nx','ny'])+['surface_presence','surface_nx','surface_ny','surface_grad_mag']
+    if meta.get('surface_method')=='lasagna': names.append('surface_cos')
     for name in names:
         folder=root/(name+'.ome.zarr')
         atomic_json(folder/'.zgroup',{'zarr_format':2})
@@ -55,7 +57,7 @@ def export_lasagna(run,stop=None):
                 {'type':'scale','scale':meta['spacing_xyz'][::-1]},
                 {'type':'translation','translation':meta['origin_xyz'][::-1]}]}]}]})
         atomic_json(folder/'0/.zarray',dict(zarr_format=2,shape=list(maps.shape),chunks=[maps.chunk]*3,
-                    dtype='|u1',compressor=codec.get_config(),fill_value=0,filters=None,order='C',dimension_separator='.'))
+                    dtype='<f4' if name=='surface_grad_mag' else '|u1',compressor=codec.get_config(),fill_value=0,filters=None,order='C',dimension_separator='.'))
     try:
         for key in maps.keys():
             if stop and stop():
@@ -65,17 +67,26 @@ def export_lasagna(run,stop=None):
             if all(done):
                 continue
             data=maps.load(key)
-            tangent=data['tangents']; normal=data['normals']
-            tf=np.where(tangent[...,2]<0,-1.,1.); nf=np.where(normal[...,2]<0,-1.,1.)
-            values=[data['presence']*255,tangent[...,0]*tf*127+128,tangent[...,1]*tf*127+128,
-                    data['support']*255,normal[...,0]*nf*127+128,normal[...,1]*nf*127+128]
-            for path,value,ready in zip(paths,values,done):
+            normal=data['normals']*meta['spacing_xyz']
+            magnitude=np.linalg.norm(normal,axis=-1)
+            normal/=np.maximum(magnitude[...,None],1e-12)
+            nf=np.where(normal[...,2]<0,-1.,1.)
+            values=dict(surface_presence=data['support']*255,surface_nx=normal[...,0]*nf*127+128,
+                        surface_ny=normal[...,1]*nf*127+128,surface_grad_mag=data['density']*magnitude*1000)
+            if not external:
+                tangent=data['tangents']/meta['spacing_xyz']
+                tangent/=np.maximum(np.linalg.norm(tangent,axis=-1,keepdims=True),1e-12)
+                tf=np.where(tangent[...,2]<0,-1.,1.)
+                values.update(presence=data['presence']*255,nx=tangent[...,0]*tf*127+128,ny=tangent[...,1]*tf*127+128)
+            if 'surface_phase' in data: values['surface_cos']=data['surface_phase']*255
+            for name,path,ready in zip(names,paths,done):
                 if stop and stop():
                     return None
                 if ready:
                     continue
-                array=np.zeros((maps.chunk,)*3,np.uint8)
-                array[tuple(slice(0,n) for n in value.shape)]=np.rint(np.clip(value,0,255)).astype(np.uint8)
+                value=values[name]; dtype=np.float32 if name=='surface_grad_mag' else np.uint8
+                array=np.zeros((maps.chunk,)*3,dtype)
+                array[tuple(slice(0,n) for n in value.shape)]=value if dtype==np.float32 else np.rint(np.clip(value,0,255)).astype(np.uint8)
                 atomic_bytes(path,codec.encode(array))
                 record_export(db,run,path)
         if stop and stop():
@@ -83,12 +94,18 @@ def export_lasagna(run,stop=None):
     finally:
         maps.close(); db.close()
     for kind,prefix in (('fibres',''),('surfaces','surface_')):
-        groups={name:dict(zarr=prefix+name+'.ome.zarr/0',scaledown=0,channels=[name]) for name in ('presence','nx','ny')}
+        if external and kind=='fibres': continue
+        channels=['presence','nx','ny']
+        if kind=='surfaces':
+            channels.append('grad_mag')
+            if meta.get('surface_method')=='lasagna': channels.append('cos')
+        groups={name:dict(zarr=prefix+name+'.ome.zarr/0',scaledown=0,channels=[name]) for name in channels}
         atomic_json(root/(kind+'.lasagna.json'),dict(version=2,source_to_base=1.,grad_mag_encode_scale=1000.,
                      grad_mag_factor=1.,groups=groups,base_shape_zyx=list(maps.shape),
                      crops=[[0,0,0,*maps.shape[::-1]]],coordinate_frame='ROI-local output grid',
                      world_origin_xyz_um=meta['origin_xyz'],world_spacing_xyz_um=meta['spacing_xyz'],
-                     original_ct=meta['source'],prediction=meta['prediction']))
+                     original_ct=meta['source'],prediction=meta['prediction'],
+                     grad_mag_units='cycles per output-grid voxel times encode_scale; normals in output-index XYZ'))
     return True
 
 
@@ -133,6 +150,7 @@ def export_afv(run,stop=None):
                 or db.execute('PRAGMA foreign_key_check').fetchone()):
             raise ValueError('partial AFV export inventory changed')
         family_column='family' if 'family' in {row[1] for row in src.execute('PRAGMA table_info(curves)')} else "'unknown'"
+        imported=fibres.get('method')=='external-afv'
         for fid,tile,blob,family in src.execute(f'SELECT id,tile,points,{family_column} FROM curves ORDER BY id'):
             if stop and stop():
                 return None
@@ -144,10 +162,14 @@ def export_afv(run,stop=None):
             lo=points.min(0); hi=points.max(0); box=[float(v) for pair in zip(lo,hi) for v in pair]
             length=float(np.linalg.norm(np.diff(points,axis=0),axis=1).sum())
             annotation=dict(type='vc3d_fiber',version=1,sequence=fid,tile=tile,prediction=meta['prediction'],
-                            automatically_traced=True,fragment=True,control_points=[points[0].tolist(),points[-1].tolist()],
+                            automatically_traced=not imported,fragment=True,control_points=[points[0].tolist(),points[-1].tolist()],
                             length_voxels=length,length_mm=float(np.linalg.norm(np.diff(world,axis=0),axis=1).sum()/1000))
             if family in ('V','H'):
-                annotation.update(hv_classification=dict(manual_tag=family),classification_source='model_prediction_family_locked_tracing')
+                annotation.update(hv_classification=dict(manual_tag=family),classification_source='imported' if imported else 'model_prediction_family_locked_tracing')
+            if imported:
+                source_id,source_block,note=src.execute('SELECT source_id,source_block,annotation FROM curves WHERE id=?',(fid,)).fetchone()
+                annotation.update(source_id=source_id,source_block=source_block,source_annotation=json.loads(note),
+                                  source_afv_sha256=fibres['identity']['input']['sha256'])
             record=(fid,f'fiber-{fid}',family,len(points),length,*box,json.dumps(annotation))
             blocks=[(first,points[first:first+257]) for first in range(0,len(points)-1,256)]
             if fid<=last:
