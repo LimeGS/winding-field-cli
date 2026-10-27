@@ -133,7 +133,7 @@ def _pieces(points,maps,stop=None):
             if d[i]<0: values=reversed(values)
             # Bind each axis before the lazy merge advances the generators.
             axes.append(map(lambda v,o=start[i],s=d[i]:(v-o)/s,values))
-        previous=0.
+        previous=0.; continuing=False
         for t in itertools.chain(heapq.merge(*axes),[1.]):
             if stop and stop(): raise InterruptedError('AFV import paused')
             if t<=previous: continue
@@ -141,14 +141,14 @@ def _pieces(points,maps,stop=None):
             if supported((left+right)/2):
                 if piece and not np.allclose(piece[-1],left,rtol=0,atol=1e-9):
                     if len(piece)>1: yield np.asarray(piece)
-                    piece=[]
+                    piece=[]; continuing=False
                 if not piece: piece=[left,right]
+                elif continuing: piece[-1]=right
                 else: piece.append(right)
-                if len(piece)==257:
-                    yield np.asarray(piece); piece=[right]
+                continuing=True
             else:
                 if len(piece)>1: yield np.asarray(piece)
-                piece=[]
+                piece=[]; continuing=False
             previous=t
     if len(piece)>1: yield np.asarray(piece)
 

@@ -182,3 +182,9 @@ def test_explicit_descriptor_accepts_world_coordinate_afv(tmp_path):
         origin_xyz_um=[0.,0.,0.],spacing_xyz_um=[1.,1.,1.])))
     assert afv.import_fibres(tmp_path,config)['status']=='FIBRES_READY'
     np.testing.assert_allclose(curves(tmp_path)[0][2][0],[109.,218.,327.])
+
+
+def test_support_checks_preserve_original_vertices_when_no_clipping_is_needed(tmp_path):
+    afv=adapter(); _,config=fixture(tmp_path,np.array([[1.,2.,3.],[10.,2.,3.],[20.,3.,4.]]))
+    afv.import_fibres(tmp_path,config)
+    np.testing.assert_allclose(curves(tmp_path)[0][2],[[109.,218.,327.],[190.,218.,327.],[280.,227.,336.]])
