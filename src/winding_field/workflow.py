@@ -30,7 +30,11 @@ def implementation_sha():
     files={str(p.relative_to(package)):file_sha(p) for p in sorted(package.rglob('*'))
            if p.suffix in ('.py','.json')}
     dependencies={name:importlib.metadata.version(name) for name in
-                  ('torch','numpy','scipy','numba','dynamic-network-architectures','avf-spline-generator')}
+                  ('torch','numpy','scipy','numba','dynamic-network-architectures','avf-spline-generator',
+                   'winding-field-experiments')}
+    core=importlib.metadata.distribution('winding-field-experiments')
+    files['winding-field-experiments']={name:file_sha(importlib.util.find_spec(name).origin)
+                                      for name in sorted(core.read_text('top_level.txt').splitlines())}
     for name in ('avf_spline_generator','dynamic_network_architectures'):
         root=Path(next(iter(importlib.util.find_spec(name).submodule_search_locations)))
         files[name]={str(p.relative_to(root)):file_sha(p) for p in sorted(root.rglob('*.py'))}
@@ -152,7 +156,7 @@ def _validate_products(root,state):
         with open_field(root) as source:
             source.validate(hashes=True)
     if 'mesh' in state['stages']:
-        from ._core.surface_mesh import MeshReader
+        from surface_mesh import MeshReader
         reader=MeshReader(root/'meshes'); reader.close()
     if 'flatten' in state['stages']:
         # Immutable chart payload hashes are checked by the normal stage resume.

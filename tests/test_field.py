@@ -97,7 +97,7 @@ def test_field_initialization_preserves_disk_reserve(tmp_path,monkeypatch):
     from types import SimpleNamespace
     import winding_field.field as field
     from winding_field.field import solve
-    from winding_field._core.field_store import StorageBudgetError
+    from field_store import StorageBudgetError
     run=prepared_run(tmp_path/'run'); checkpoint=run/'field/CHECKPOINT.json'
     reserve=16<<20
     initializing=False; Store=field.BlockStore
@@ -107,7 +107,7 @@ def test_field_initialization_preserves_disk_reserve(tmp_path,monkeypatch):
         initializing=True
         return store
     monkeypatch.setattr(field,'BlockStore',initialization_store)
-    monkeypatch.setattr('winding_field._core.field_store.shutil.disk_usage',
+    monkeypatch.setattr('field_store.shutil.disk_usage',
         lambda path:SimpleNamespace(free=reserve if initializing else reserve*10))
     try:
         solve(run,{'sweeps':1,'field_chunk':8,'reserve_bytes':reserve})
@@ -120,9 +120,9 @@ def test_field_initialization_preserves_disk_reserve(tmp_path,monkeypatch):
 def test_initial_checkpoint_space_failure_can_resume_when_space_recovers(tmp_path,monkeypatch):
     from types import SimpleNamespace
     from winding_field.field import solve
-    from winding_field._core.field_store import StorageBudgetError
+    from field_store import StorageBudgetError
     run=prepared_run(tmp_path/'run'); free=0
-    monkeypatch.setattr('winding_field._core.field_store.shutil.disk_usage',lambda p:SimpleNamespace(free=free))
+    monkeypatch.setattr('field_store.shutil.disk_usage',lambda p:SimpleNamespace(free=free))
     config=dict(sweeps=1,field_chunk=8,reserve_bytes=16<<20)
     with pytest.raises(StorageBudgetError):
         solve(run,config)

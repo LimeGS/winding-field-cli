@@ -21,6 +21,10 @@ jobs:
       - run: python -m pip install build pytest
       - if: runner.os == 'Linux'
         run: python -m pip install torch --index-url https://download.pytorch.org/whl/cpu
+      - name: Install original numerical library
+        run: |
+          CORE_REV=$(python -c "import json; print(json.load(open('provenance/core.json'))['revision'])")
+          python -m pip install "winding-field-experiments @ https://github.com/LimeGS/winding-field/archive/$CORE_REV.tar.gz"
       - run: python -m build
       - run: python -m pip install dist/*.whl
       - run: python -m pip check
@@ -31,3 +35,13 @@ jobs:
           winding-field doctor
           winding-field demo --output demo
           winding-field resume demo
+      - name: Installed prepared workflows and rendering
+        run: |
+          python -I examples/block_field.py --output "$RUNNER_TEMP/prepared-inputs" --stop-after-blocks 1
+          python -I examples/block_field.py --output "$RUNNER_TEMP/prepared-inputs" --resume --prefetch
+          winding-field prepared build --config "$RUNNER_TEMP/prepared-inputs/field-run.json" --output "$RUNNER_TEMP/prepared-field" --supervised --prefetch
+          winding-field prepared resume --config "$RUNNER_TEMP/prepared-inputs/field-run.json" --output "$RUNNER_TEMP/prepared-field" --supervised --prefetch
+          python -I examples/surface_pipeline.py --output "$RUNNER_TEMP/prepared-surfaces" --stop-after-tiles 3
+          python -I examples/surface_pipeline.py --output "$RUNNER_TEMP/prepared-surfaces" --resume
+          python -I examples/surface_pipeline.py --output "$RUNNER_TEMP/prepared-surfaces" --resume
+          winding-field prepared render --mesh "$RUNNER_TEMP/prepared-surfaces/mesh" --output "$RUNNER_TEMP/prepared-views"

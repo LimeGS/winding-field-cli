@@ -10,7 +10,7 @@ import numpy as np
 from scipy.ndimage import gaussian_filter, minimum_filter
 from skimage.filters import threshold_otsu
 
-from ._core.field_observations import density_normals
+from field_observations import density_normals
 from .artifacts import Tiles
 from .config import validate_config,validate_observations
 from .io import bounds
