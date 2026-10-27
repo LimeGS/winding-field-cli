@@ -6,21 +6,27 @@ observation and fibre preparation.
 
 ## Quick start
 
-Python 3.11 or 3.12, Linux or macOS. Install from the CLI repository root
-alongside the original library checkout on `feat/core-cli-separation`
-(`winding-field-experiments==1.3.0.dev0`):
+Python 3.11 or 3.12, Linux or macOS. Clone this branch and install the original
+library at its recorded revision (`winding-field-experiments==1.3.0.dev0`).
+Use `python3.12` instead of `python3.11` if preferred:
 
 ```bash
-python3 -m venv .venv
+git clone --branch feat/core-cli-separation https://github.com/LimeGS/winding-field-cli.git
+cd winding-field-cli
+python3.11 -m venv .venv
 source .venv/bin/activate
-python -m pip install /path/to/winding-field-core-cli-separation .
+CORE_REV=$(python -c "import json; print(json.load(open('provenance/core.json'))['revision'])")
+python -m pip install \
+  "winding-field-experiments @ https://github.com/LimeGS/winding-field/archive/$CORE_REV.tar.gz" .
 winding-field doctor
 ```
 
-The numerical library is a real dependency: this package contains no solver
-copy. Only the CLI installs the `winding-field` executable. The exact original
-revision is recorded in [provenance/core.json](provenance/core.json). These local
-separation branches must be published before CI can fetch that revision.
+The [original numerical library](https://github.com/LimeGS/winding-field/tree/feat/core-cli-separation)
+is a real dependency: this package contains no solver copy. Only the CLI installs
+the `winding-field` executable. The revision in
+[provenance/core.json](provenance/core.json) is also used by CI. A separate local
+library checkout is not required. To reproduce a fixed source snapshot, check
+out the CLI commit from the verification receipt or PR before installing.
 
 Run the complete pipeline on synthetic CT, offline:
 
@@ -173,13 +179,17 @@ RAM proportional to seed count (~64 bytes/seed); saved curves need extra disk.
 
 Research output: physical sheet correctness and global convergence remain
 unvalidated. Whole-scroll native-resolution throughput has not been benchmarked.
-See [formats and geometry](docs/FORMATS.md), [verification](docs/verification/qual-v2-splines.md)
-and [attribution](THIRD_PARTY.md) for details.
+See [formats and geometry](docs/FORMATS.md),
+[core/CLI verification](docs/verification/core-cli-separation.md),
+[Qual verification](docs/verification/qual-v2-splines.md) and
+[attribution](THIRD_PARTY.md) for details.
 
 ## Development
 
+With the quick-start environment active:
+
 ```bash
-python -m pip install -e /path/to/winding-field-core-cli-separation -e '.[test]'
+python -m pip install -e '.[test]'
 OMP_NUM_THREADS=4 python -m pytest -q
 python -m build
 ```

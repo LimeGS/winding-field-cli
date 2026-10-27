@@ -1,7 +1,8 @@
 # Core / CLI separation verification
 
 Verified locally on October 27, 2026, on macOS / Python 3.11.13.
-Both repositories use local `feat/core-cli-separation` branches.
+Both repositories use `feat/core-cli-separation` branches. The measurements below
+were completed before publication; see the publication follow-up at the end.
 
 ## Ownership and preservation
 
@@ -105,9 +106,18 @@ fresh run are retained under `.runtime/separation/`.
 Prepared commands now require the `prepared` prefix, and workflow imports use
 `winding_field.*`. Prior implementation-bound runs require their original
 packages or a new output directory. The dependency version and original revision
-are pinned; publish the original branch before running remote CLI CI. No merge,
-push, PR or package release was performed for this separation.
+are pinned; the README installs the original directly from its public GitHub
+revision. Package release and merge are separate from publishing the branches.
 
 This is CPU/ROI software equivalence, not new physical validation. Global
 convergence and physical sheet accuracy remain unvalidated. CUDA and whole-scroll
 performance were not exercised in this migration.
+
+## Publication follow-up
+
+The synchronized READMEs document public source installation, the current command
+ownership and existing examples. The CLI now pins original revision
+`416db6c4da83c80214adf9aa136d2537be4dd5f1`, which adds only README corrections to
+the verified original revision above. No runtime source or numerical result
+changed. The artifact hashes in the receipt identify the earlier verification
+builds; publication does not relabel them as new artifacts.
