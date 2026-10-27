@@ -2,7 +2,7 @@
   "origin": "https://github.com/LimeGS/winding-field",
   "distribution": "winding-field-experiments",
   "version": "1.3.0.dev0",
-  "revision": "163ae9e8bd62a89af51d408d7dbb20302afdbc3c",
+  "revision": "416db6c4da83c80214adf9aa136d2537be4dd5f1",
   "changes": "external dependency; no numerical core bundled in the CLI",
   "migrated_workflows": {
     "revision": "769ed1b1587fc2a275a66059e15a36b8fa7acc93",
