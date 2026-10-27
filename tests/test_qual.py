@@ -82,3 +82,18 @@ def test_cli_defaults_to_qual_and_keeps_field_pitch_independent(tmp_path,capsys)
     assert result['prediction']=='qual-v2'
     assert result['observations']['spacing_xyz']==[9.]*3
     assert result['field']['spacing_xyz']==[17.]*3
+
+
+@pytest.mark.parametrize('stride,dilation,padding,groups',[
+    ((1,1,1),(1,1,1),(1,1,1),1),((2,2,1),(2,1,1),(2,1,1),2)])
+def test_bounded_cpu_convolution_matches_full_volume(monkeypatch,stride,dilation,padding,groups):
+    import winding_field.models as models
+    assert hasattr(models,'BoundedConv3d'), 'CPU convolution workspace is unbounded'
+    torch.manual_seed(18)
+    conv=torch.nn.Conv3d(4,8,3,stride=stride,dilation=dilation,padding=padding,groups=groups).eval()
+    values=torch.randn(1,4,13,15,17)
+    monkeypatch.setattr(models,'CONV_WORKSPACE_BYTES',32<<10)
+    with torch.inference_mode():
+        expected=conv(values)
+        actual=models.BoundedConv3d(conv)(values)
+    torch.testing.assert_close(actual,expected,atol=2e-6,rtol=2e-6)

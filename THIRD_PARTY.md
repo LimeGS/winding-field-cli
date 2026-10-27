@@ -41,6 +41,8 @@ Model: <https://huggingface.co/Qualzz20/afv_fiber_9um_v2>, revision
 `plans.json` are bundled unchanged under `winding_field._vendor`; exact hashes
 are in `provenance/qual.json`. The adapter uses the upstream normalization and
 architecture (`dynamic-network-architectures==0.4.4`).
+On CPUs without oneDNN, the application adapter evaluates convolutions in depth
+slabs to bound temporary allocations; upstream source files remain unchanged.
 
 The separately downloaded checkpoint SHA-256 is
 `b8519a4ce4044c93ed98af0c278628fdcdfdd8808275b3c8becd7211f38b7967`.
