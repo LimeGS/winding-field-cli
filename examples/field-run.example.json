@@ -1,0 +1,20 @@
+{
+  "schema": "winding-field-run-v1",
+  "frame": "my-scroll/world",
+  "voxel_um": 8.0,
+  "grid": {
+    "origin_xyz": [10, 20, 30],
+    "spacing_xyz": [2, 2, 2],
+    "shape_zyx": [64, 64, 64]
+  },
+  "sheet_step": 1.0,
+  "calibration": "REPLACE: declare how target gradients and raw field units were calibrated",
+  "observations": {
+    "target": {"path": "../my-data/target.npy", "sha256": "0000000000000000000000000000000000000000000000000000000000000000"},
+    "weights": {"path": "../my-data/weights.npy", "sha256": "0000000000000000000000000000000000000000000000000000000000000000"},
+    "observed": {"path": "../my-data/observed.npy", "sha256": "0000000000000000000000000000000000000000000000000000000000000000"}
+  },
+  "constraints": {"path": "../my-data/constraints.npz", "sha256": "0000000000000000000000000000000000000000000000000000000000000000"},
+  "solver": {"device": "cpu", "dtype": "float64", "rtol": 0.000001, "maxiter": 4000},
+  "execution": {"chunk": 32, "halo": 4, "sweeps": 4, "cache_bytes": 0, "read_workers": 1}
+}

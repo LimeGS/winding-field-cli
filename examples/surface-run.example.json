@@ -1,0 +1,32 @@
+{
+  "schema": "winding-surfaces-v1",
+  "field": {
+    "kind": "npy",
+    "path": "../my-data/phi.npy",
+    "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "mask": {
+      "path": "../my-data/support.npy",
+      "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+    }
+  },
+  "geometry": {
+    "frame": "my-scroll/world",
+    "voxel_um": 8.0,
+    "origin_xyz": [10, 20, 30],
+    "spacing_xyz": [2, 2, 2],
+    "shape_zyx": [64, 64, 64],
+    "sheet_step": 1.0,
+    "calibration": "REPLACE: declare raw field units and nominal sheet calibration"
+  },
+  "levels": [-1.0, 0.0, 1.0],
+  "execution": {"tile": 32, "level_batch": 2, "cache_bytes": 0, "reserve_bytes": 0},
+  "render": {
+    "width": 1024,
+    "height": 1024,
+    "triangle_batch": 8192,
+    "views": [
+      {"name": "front", "azimuth": 0, "elevation": 0},
+      {"name": "oblique", "azimuth": 35, "elevation": 20}
+    ]
+  }
+}

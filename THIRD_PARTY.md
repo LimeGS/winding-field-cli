@@ -2,11 +2,16 @@
 
 ## Winding-field numerical core
 
-Selected files from `vesubius-challenge/release/winding-field-gh/src` are bundled
-under `winding_field._core`. The source checkout included current uncommitted
-block/mesh modules; exact source-file SHA-256 values, rather than a misleading
-clean-commit claim, are recorded in `provenance/core.json`. Only module imports
-were namespaced. The solver's mathematical behavior is retained.
+The original [winding-field](https://github.com/LimeGS/winding-field) library is
+installed as `winding-field-experiments==1.3.0.dev0`. Numerical modules are imported
+directly from that distribution; no numerical core is bundled here. The original
+revision and numerical source hashes are recorded in `provenance/core.json`.
+
+Prepared workflows (`field_workflow.py`, `surface_workflow.py`), CPU geometry
+rendering (`surface_render.py`), their tests and supporting recipes/examples/tools
+were moved from the original repository to this CLI. Their source revision and
+hashes are also recorded there. Adaptations are package imports, prepared command
+routing and module-based supervised launch; solver mathematics are unchanged.
 
 License: MIT, copyright (c) 2026. Full notice: `licenses/winding-field-MIT.txt`.
 

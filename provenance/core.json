@@ -1,6 +1,18 @@
 {
-  "origin": "winding-field-gh working tree",
-  "changes": "namespace imports only",
+  "origin": "https://github.com/LimeGS/winding-field",
+  "distribution": "winding-field-experiments",
+  "version": "1.3.0.dev0",
+  "revision": "ebfa7dd765333146eb8f1d9ba4c8fef63cb220ed",
+  "changes": "external dependency; no numerical core bundled in the CLI",
+  "migrated_workflows": {
+    "revision": "769ed1b1587fc2a275a66059e15a36b8fa7acc93",
+    "changes": "moved to winding_field with tests, examples and wrappers; package imports, prepared command routing and module-based supervised launch",
+    "source_sha256": {
+      "field_workflow.py": "f5a20f03c4cf1673f303c56cda407cd491f6287f4a446dac43e5506a5ce005f7",
+      "surface_workflow.py": "644e07d821a18d571725cc60a96ea038f050b37b2ebcb2d91324ae5989cc81bf",
+      "surface_render.py": "a4a758306a88382ef4b2d48e077eaffda1e677cb0dc3e35dbc22e8e466d44905"
+    }
+  },
   "source_sha256": {
     "surface_sources.py": "cab95d509bc4cc93faff07e414998f25ff5761feff99c4a2b6e5f8b571c9e213",
     "field_store.py": "cb606b2a3322298c25b57c055bb6e76f4a70031569d998ff03839af5e7e47aa2",

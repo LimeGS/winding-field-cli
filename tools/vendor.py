@@ -1,15 +1,13 @@
-"""Reproduce namespaced imports, preserving upstream mathematics and provenance.
+"""Reproduce the pinned Villa model imports and provenance.
 
-Run: python tools/vendor.py --core /path/to/winding-field-gh
+Run: python tools/vendor.py
 Generated source files are checked in; installation never runs this tool.
 """
 
-import argparse
 import ast
 import hashlib
 import json
 from pathlib import Path
-import re
 import urllib.request
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -30,33 +28,6 @@ def write_package(path, data):
 
 
 def main():
-    parser=argparse.ArgumentParser()
-    parser.add_argument('--core',type=Path,required=True)
-    args=parser.parse_args()
-    source=args.core/'src'
-    pending=['field_observations','block_solver','surface_mesh','surface_sources']
-    files={}
-    while pending:
-        name=pending.pop()
-        if name in files:
-            continue
-        raw=(source/(name+'.py')).read_bytes()
-        files[name]=raw
-        for node in ast.walk(ast.parse(raw)):
-            imports=([node.module] if isinstance(node,ast.ImportFrom) else
-                     [a.name for a in node.names] if isinstance(node,ast.Import) else [])
-            pending.extend(n for n in imports if n and (source/(n+'.py')).exists() and n not in files)
-    provenance={}
-    for name,raw in files.items():
-        text=raw.decode()
-        for module in files:
-            text=re.sub(r'(?m)^(\s*)from '+module+r' import ',r'\1from .'+module+' import ',text)
-            text=re.sub(r'(?m)^(\s*)import '+module+r'$',r'\1from . import '+module,text)
-        write_package(ROOT/'src/winding_field/_core'/f'{name}.py',text.encode())
-        provenance[name+'.py']=hashlib.sha256(raw).hexdigest()
-    write_package(ROOT/'licenses/winding-field-MIT.txt',(args.core/'LICENSE').read_bytes())
-    write_package(ROOT/'provenance/core.json',json.dumps({'origin':'winding-field-gh working tree',
-                  'changes':'namespace imports only','source_sha256':provenance},indent=2).encode())
     modules=['neural_tracing/fiber_trace_3d/model.py','neural_tracing/fiber_trace_3d/direction.py',
              'neural_tracing/fiber_trace/model.py','neural_tracing/nets/vesuvius_unet3d.py',
              'models/utilities/utils.py']
