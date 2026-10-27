@@ -1,6 +1,6 @@
 # Lasagna observations and external AFV inputs
 
-Status: proposed design; awaiting user approval after builder review.
+Status: approved by the user after builder review on 2026-10-27.
 
 ## Intent and user decisions
 
@@ -141,8 +141,8 @@ within a resumable run is required; broad cache functionality is not.
 - [x] Confirm requested Lasagna/Qual responsibilities and external AFV goal.
 - [x] Inspect existing integration, original Lasagna consumers and public weights.
 - [x] Obtain fresh builder review and resolve substantive design gaps.
-- [ ] Present design and obtain user approval.
-- [ ] Capture the initiative and write the implementation plan before code.
+- [x] Present design and obtain user approval.
+- [x] Capture the initiative and write the implementation plan before code.
 
 Builder review found no important unanswered questions. Live upstream inference
 and checkpoint/runtime compatibility were not exercised during design review;
