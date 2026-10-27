@@ -56,7 +56,7 @@ def test_offline_catalog_is_cached_and_never_fetches(tmp_path,monkeypatch):
 @pytest.mark.parametrize('option,value',[
     ('stride',0),('stride',-1),('stride',9),('field_chunk',3),('chunk',129),
     ('rtol',float('nan')),('sweeps',0),('seed_stride',0),('fibre_weight',-1),
-    ('chart_faces',8193),('threads',0),('levels',[float('inf')]),('field_spacing_um',0),
+    ('chart_faces',8193),('threads',0),('levels',[float('inf')]),('levels',[1.,1.]),('field_spacing_um',0),
 ])
 def test_plan_and_run_validate_before_source_io(tmp_path,monkeypatch,option,value):
     import winding_field.workflow as workflow

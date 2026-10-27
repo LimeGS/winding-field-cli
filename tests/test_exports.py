@@ -68,6 +68,27 @@ def test_interrupted_afv_rejects_changed_source(tmp_path):
         export_afv(root)
 
 
+@pytest.mark.parametrize('mutation',[
+    'UPDATE blocks SET points=zeroblob(length(points)) WHERE id=1',
+    'DELETE FROM fibers WHERE id=2',
+    'UPDATE fibers SET length=0 WHERE id=1',
+    'UPDATE block_bounds SET min_x=0,max_x=0 WHERE id=1',
+])
+def test_afv_resume_rejects_corrupted_retained_inventory(tmp_path,mutation):
+    from winding_field.exports import export_afv
+    root=export_fixture(tmp_path/'run'); pending=root/'fibres/fibres.partial.afv'
+    def stop():
+        if not pending.exists(): return False
+        with sqlite3.connect(pending) as db:
+            return db.execute('SELECT count(*) FROM fibers').fetchone()[0]>=2
+    assert export_afv(root,stop) is None
+    with sqlite3.connect(pending) as db:
+        db.execute(mutation)
+    with pytest.raises(ValueError,match='corrupt|changed|inventory'):
+        export_afv(root)
+    assert not (root/'fibres/fibres.afv').exists()
+
+
 def test_workflow_export_stop_does_not_complete_prepare_stage(tmp_path,monkeypatch):
     from winding_field.demo import synthetic
     from winding_field.workflow import run
