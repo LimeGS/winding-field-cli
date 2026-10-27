@@ -1,6 +1,7 @@
 """Tiled CT preparation with explicit physical units and model provenance."""
 
 import hashlib
+import itertools
 import json
 from pathlib import Path
 
@@ -68,24 +69,45 @@ def prepare(volume,run,config,stop=None):
     geometry=dict(shape_zyx=list(shape),spacing_xyz=spacing,origin_xyz=origin,units='micrometer',
                   frame=digest(volume.identity),roi_lo_zyx=lo.tolist(),roi_hi_zyx=hi.tolist(),
                   stride=stride,input_halo_voxels=halo*stride)
+    threshold=config.get('threshold')
+    if method=='classical' and threshold is None:
+        threshold_path=run/'THRESHOLD.json'
+        binding=dict(source=volume.identity,geometry=geometry,recipe='otsu-27-patches-16-v1')
+        if threshold_path.exists():
+            saved=json.loads(threshold_path.read_bytes())
+            if saved['identity']!=binding:
+                raise ValueError('threshold calibration identity changed')
+            threshold=saved['threshold']
+        else:
+            # shortcut: fixed ROI patches may miss rare intensities; use a calibrated --threshold when needed.
+            samples=[]
+            starts=[np.unique(np.linspace(0,max(n-16,0),3,dtype=int)) for n in shape]
+            for start in itertools.product(*starts):
+                indices=[lo[i]+np.arange(a,min(a+16,shape[i]))*stride for i,a in enumerate(start)]
+                samples.append(volume.sample(indices).ravel())
+                if stop and stop():
+                    return dict(status='PAUSED')
+            values=np.concatenate(samples)
+            if not np.isfinite(values).all():
+                raise ValueError('finite CT required for threshold calibration')
+            threshold=float(threshold_otsu(values))
+            atomic_json(threshold_path,dict(identity=binding,threshold=threshold,samples=int(values.size)))
     identity=dict(source=volume.identity,geometry=geometry,method=method,model_sha256=MODEL_SHA if method=='sd2' else None,
-                  threshold=config.get('threshold'),recipe='fractional-crossings-v1')
+                  threshold=threshold,recipe='fractional-crossings-v1')
     maps=Tiles(run/'maps',shape=shape,chunk=chunk,identity=identity)
     model=SD2(config.get('model_path'),config.get('device','cpu'),config.get('offline',False)) if method=='sd2' else None
     completed=0
     for key in maps.keys():
         start,end=maps.box(key)
         indices=[np.clip(lo[i]+np.arange(start[i]-halo,end[i]+halo)*stride,0,volume.shape[i]-1) for i in range(3)]
-        a=[int(v[0]) for v in indices]; b=[int(v[-1])+1 for v in indices]
-        raw=volume.read(a,b)
-        ct=raw[np.ix_(*(v-a[i] for i,v in enumerate(indices)))]
+        ct=volume.sample(indices)
         sha=hashlib.sha256(ct.tobytes()).hexdigest()
         if maps.has(key):
             if maps.info(key)['ct_sha256']!=sha:
                 raise ValueError('source CT changed since preparation')
             continue
         presence,tangent=model.predict(ct) if model else (None,None)
-        arrays=observations(ct,spacing,threshold=config.get('threshold'),presence=presence,tangents=tangent,
+        arrays=observations(ct,spacing,threshold=threshold,presence=presence,tangents=tangent,
                             device=config.get('device','cpu'))
         core=tuple(slice(halo,halo+int(n)) for n in end-start)
         arrays={name:value[core].copy() for name,value in arrays.items()}

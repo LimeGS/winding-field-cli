@@ -52,7 +52,7 @@ def open_volume(config):
                   offline=config.get('offline',False),voxel_um=config.get('voxel_um'),level=config.get('level',0))
 
 
-def plan(config,volume=None):
+def plan(config,volume=None,stages=()):
     own=volume is None
     volume=open_volume(config) if own else volume
     try:
@@ -65,18 +65,22 @@ def plan(config,volume=None):
         ct_bytes=int(chunk_count)*math.prod(volume.chunks)*volume.dtype.itemsize
         output_bytes=math.prod(shape.tolist())*100
         output=Path(config['output']); parent=output if output.exists() else output.parent
+        written=sum(p.stat().st_size for name in ('maps','lasagna','fibres','field','meshes','flat')
+                    for p in (output/name).rglob('*') if p.is_file())
+        remaining=0 if 'flatten' in stages else max(0,output_bytes-written)
         while not parent.exists():
             parent=parent.parent
         free=shutil.disk_usage(parent).free; reserve=config.get('reserve_bytes',1<<30)
-        fits=ct_bytes<=volume.limit and ct_bytes+output_bytes+reserve<free
+        fits=ct_bytes<=volume.limit and ct_bytes+remaining+reserve<free
         mode=config.get('ct_mode','auto')
         if mode=='auto':
             mode='download' if volume.remote and fits else 'stream' if volume.remote else 'local'
-        if mode=='download' and not fits and volume.remote:
+        if mode=='download' and not fits and volume.remote and not stages:
             raise ValueError('requested CT download exceeds cache or available-space budget; increase budget or use stream')
         return dict(source=volume.identity,roi_lo_zyx=lo.tolist(),roi_hi_zyx=hi.tolist(),shape_zyx=shape.tolist(),
                     input_lo_zyx=input_lo.tolist(),input_hi_zyx=input_hi.tolist(),ct_policy=mode,
-                    estimated_ct_bytes=ct_bytes,estimated_products_bytes=output_bytes,free_bytes=free,
+                    estimated_ct_bytes=ct_bytes,estimated_products_bytes=output_bytes,
+                    existing_products_bytes=written,estimated_remaining_bytes=remaining,free_bytes=free,
                     reserve_bytes=reserve,physical_accuracy='UNVALIDATED')
     finally:
         if own:
@@ -164,8 +168,8 @@ def run(config,resume=False,until='flatten'):
             volume.bind_ledger(root/'source.sqlite')
             if resume:
                 volume.validate_used(); _validate_products(root,state)
-            estimate=plan(config,volume); state['plan']=estimate
-            if estimate['free_bytes']<estimate['estimated_products_bytes']+estimate['reserve_bytes']:
+            estimate=plan(config,volume,state['stages']); state['plan']=estimate
+            if 'flatten' not in state['stages'] and estimate['free_bytes']<estimate['estimated_remaining_bytes']+estimate['reserve_bytes']:
                 raise OSError('insufficient disk space for products and reserve; choose explicit stride/ROI or another disk')
             stop=lambda:interrupted or (root/'STOP').exists()
             if estimate['ct_policy']=='download' and not state['stages']:

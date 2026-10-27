@@ -53,7 +53,8 @@ winding-field run \
   --source 's3://vesuvius-challenge-open-data/PHerc0175A/volumes/20250521115057-8.640um-1.2m-116keV-masked.zarr' \
   --voxel-um 8.64 \
   --roi 1503 1535 4038 4070 6062 6094 \
-  --output runs/175a-roi --prediction sd2 --device cpu
+  --output runs/175a-roi --prediction sd2 --device cpu \
+  --sweeps 1 --ct-mode stream --cache-gib .25 --reserve-gib .25
 ```
 
 `--roi` is **Z0 Z1 Y0 Y1 X0 X1**, half-open, in voxels of the explicitly selected
@@ -80,9 +81,12 @@ native resolution. A large full-volume job is not a next-morning laptop demo.
 - `--prediction sd2` (default): pinned pretrained fibre presence/directions.
   The model was trained on Paris4 data; transfer to other acquisitions is unvalidated.
 - `--prediction classical`: explicitly labelled Otsu/structure-tensor baseline.
+  One threshold is estimated from bounded ROI samples and persisted for all tiles;
+  `--threshold VALUE` supplies an explicit calibrated threshold instead.
 - `--local /matching/original.zarr`: use existing matching CT chunks first; absent
   local chunks are fetched from the original remote source. A local-only missing
-  chunk raises instead of silently becoming air.
+  chunk raises instead of silently becoming air. Online mirrors are content-verified;
+  S3 single-part ETags can verify local bytes without downloading the payload again.
 - `WINDING_CT_ROOTS=/data:/workspace/ct`: search matching source basenames locally.
 - `--ct-mode auto|download|stream`: auto prefetches the required input domain if it
   fits both the cache cap and available space after estimated products/reserve.

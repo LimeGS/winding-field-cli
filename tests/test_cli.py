@@ -61,3 +61,23 @@ def test_empty_ct_records_failure_not_a_completed_reconstruction(tmp_path):
     assert receipt['status']=='FAILED'
     assert 'supported' in receipt['error']
     assert not (run/'FIELD.json').exists()
+
+
+def test_resume_admits_remaining_products_and_completed_runs(tmp_path,monkeypatch):
+    from types import SimpleNamespace
+    from winding_field.demo import synthetic
+    from winding_field.workflow import run
+    source=synthetic(tmp_path/'ct.zarr'); output=tmp_path/'run'
+    config=dict(source=source,output=str(output),prediction='classical',chunk=64,
+                field_chunk=64,sweeps=1,seed_stride=4,reserve_bytes=4096,cache=str(tmp_path/'cache'))
+    state=run(config,until='prepare')
+    total=24*32*56*100
+    written=sum(p.stat().st_size for name in ('maps','lasagna') for p in (output/name).rglob('*') if p.is_file())
+    free=total-min(written,total//2)+4096
+    assert free<total+4096
+    monkeypatch.setattr('winding_field.workflow.shutil.disk_usage',lambda p:SimpleNamespace(free=free))
+    assert run(state['config'],resume=True,until='fibres')['status']=='PAUSED'
+    free=1<<30  # Mesh extraction separately reserves its transactional working space.
+    assert run(state['config'],resume=True)['status']=='COMPLETE'
+    free=8192
+    assert run(state['config'],resume=True)['status']=='COMPLETE'

@@ -126,24 +126,43 @@ def write_obj(path,vertices,faces,uv,flat=False):
     atomic_bytes(path,('\n'.join(lines)+'\n').encode())
 
 
+def chart_exports(root,name,vertices,faces,uv,volume):
+    names=[name+'.obj',name+'-flat.obj']
+    write_obj(root/names[0],vertices,faces,uv)
+    write_obj(root/names[1],vertices,faces,uv,flat=True)
+    if volume is not None:
+        from .preview import preview
+        names.append(name+'.png')
+        preview(volume,vertices,faces,uv,root/names[-1])
+    return {path:file_sha(root/path) for path in names}
+
+
 def flatten(run,config,volume=None,stop=None):
     run=Path(run); root=run/'flat'; root.mkdir(exist_ok=True)
     limit=config.get('chart_faces',1024)
     if type(limit) is not int or not 1<=limit<=8192:
         raise ValueError('chart_faces must be 1..8192')
-    identity=dict(mesh=file_sha(run/'meshes/MESH.json'),chart_faces=limit,algorithm='lscm-linked-charts-v1',
+    identity=dict(mesh=file_sha(run/'meshes/MESH.json'),chart_faces=limit,algorithm='lscm-linked-charts-v2',
                   ct_previews=volume is not None)
     if (root/'IDENTITY.json').exists() and json.loads((root/'IDENTITY.json').read_bytes())!=identity:
         raise ValueError('flatten identity changed')
     atomic_json(root/'IDENTITY.json',identity)
     reader=MeshReader(run/'meshes')
     db=sqlite3.connect(root/'atlas.sqlite')
-    db.executescript('CREATE TABLE IF NOT EXISTS charts (name TEXT PRIMARY KEY, sha TEXT, faces INTEGER, quality TEXT);'
+    db.executescript('CREATE TABLE IF NOT EXISTS charts (name TEXT PRIMARY KEY, sha TEXT, faces INTEGER, quality TEXT, exports TEXT);'
                     'CREATE TABLE IF NOT EXISTS covered (face INTEGER PRIMARY KEY, chart TEXT, local INTEGER);')
     try:
-        for name,sha in db.execute('SELECT name,sha FROM charts'):
+        for name,sha,exports in db.execute('SELECT name,sha,exports FROM charts'):
             if file_sha(root/(name+'.npz'))!=sha:
                 raise ValueError('flat chart changed')
+            expected=json.loads(exports)
+            if any(not (root/path).is_file() or file_sha(root/path)!=sha for path,sha in expected.items()):
+                with np.load(root/(name+'.npz'),allow_pickle=False) as chart:
+                    actual=chart_exports(root,name,chart['vertices'],chart['faces'],chart['uv'],volume)
+                if actual!=expected:
+                    raise ValueError('regenerated chart exports differ from committed payload')
+            if stop and stop():
+                return dict(status='PAUSED')
         cursor=db.execute('SELECT coalesce(max(face),0) FROM covered').fetchone()[0]
         while True:
             rows=reader.db.execute('SELECT id,a,b,c FROM faces WHERE id>? ORDER BY id LIMIT ?',(cursor,limit)).fetchall()
@@ -157,15 +176,11 @@ def flatten(run,config,volume=None,stop=None):
                 buffer=io.BytesIO(); np.savez_compressed(buffer,vertices=v,faces=f,uv=uv,
                                                        source_face_ids=face_ids,source_vertex_ids=source_ids)
                 atomic_bytes(root/(name+'.npz'),buffer.getvalue())
-                write_obj(root/(name+'.obj'),v,f,uv)
-                write_obj(root/(name+'-flat.obj'),v,f,uv,flat=True)
-                if volume is not None:
-                    from .preview import preview
-                    preview(volume,v,f,uv,root/(name+'.png'))
-                records.append((name,file_sha(root/(name+'.npz')),face_ids,quality))
+                exports=chart_exports(root,name,v,f,uv,volume)
+                records.append((name,file_sha(root/(name+'.npz')),face_ids,quality,exports))
             with db:
-                for name,sha,ids,quality in records:
-                    db.execute('INSERT INTO charts VALUES (?,?,?,?)',(name,sha,len(ids),json.dumps(quality)))
+                for name,sha,ids,quality,exports in records:
+                    db.execute('INSERT INTO charts VALUES (?,?,?,?,?)',(name,sha,len(ids),json.dumps(quality),json.dumps(exports)))
                     db.executemany('INSERT INTO covered VALUES (?,?,?)',[(int(fid),name,i) for i,fid in enumerate(ids)])
             cursor=int(rows[-1,0])
             if stop and stop():

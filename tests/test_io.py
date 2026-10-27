@@ -60,7 +60,7 @@ def test_incomplete_local_mirror_fetches_missing(served):
     v = Volume(url, local=local, cache=root/'cache', cache_bytes=128)
     np.testing.assert_array_equal(v.read([0, 0, 0], [4, 4, 6]), data)
     assert v.stats()['local_hits'] == 1
-    assert v.stats()['downloads'] == 7
+    assert v.stats()['downloads'] == 8  # Generic HTTP also verifies the one mirrored chunk.
 
 
 def test_warm_offline_and_miss(served):
@@ -135,3 +135,70 @@ def test_authoritative_remote_sparse_chunk_uses_fill_and_is_cached_offline(serve
     np.testing.assert_array_equal(online.read([0,0,0],[2,2,3]),np.zeros((2,2,3),np.uint8))
     offline=Volume(url,cache=root/'cache',offline=True)
     np.testing.assert_array_equal(offline.read([0,0,0],[2,2,3]),np.zeros((2,2,3),np.uint8))
+
+
+def test_remote_update_larger_than_cache_cannot_revive_old_payload(served):
+    from numcodecs import Zlib
+    from winding_field.io import Volume
+    root,url,_=served
+    codec=Zlib()
+    metadata=root/'ct.zarr/0/.zarray'
+    value=json.loads(metadata.read_text()); value['compressor']=codec.get_config()
+    metadata.write_text(json.dumps(value))
+    chunk=root/'ct.zarr/0/0.0.0'
+    chunk.write_bytes(codec.encode(bytes(12)))
+    first=Volume(url,cache=root/'cache',cache_bytes=16)
+    assert not first.read([0,0,0],[2,2,3]).any()
+    first.close()
+    expected=np.arange(41,53,dtype=np.uint8).reshape(2,2,3)
+    encoded=codec.encode(expected)
+    assert len(encoded)>16
+    chunk.write_bytes(encoded)
+    current=Volume(url,cache=root/'cache',cache_bytes=16)
+    for _ in range(2):
+        np.testing.assert_array_equal(current.read([0,0,0],[2,2,3]),expected)
+    current.close()
+    offline=Volume(url,cache=root/'cache',cache_bytes=16,offline=True)
+    with pytest.raises(FileNotFoundError,match='cache miss'):
+        offline.read([0,0,0],[2,2,3])
+    offline.close()
+
+
+def test_online_mirror_resume_detects_changed_authoritative_chunk(served):
+    import shutil
+    from winding_field.io import Volume
+    root,url,data=served
+    local=root/'mirror'; shutil.copytree(root/'ct.zarr',local)
+    first=Volume(url,local=local,cache=root/'cache')
+    first.bind_ledger(root/'source.sqlite')
+    np.testing.assert_array_equal(first.read([0,0,0],[2,2,3]),data[:2,:2,:3])
+    first.close()
+    (root/'ct.zarr/0/0.0.0').write_bytes(bytes([255])*12)
+    resumed=Volume(url,local=local,cache=root/'cache')
+    resumed.bind_ledger(root/'source.sqlite')
+    with pytest.raises(ValueError,match='changed|differs'):
+        resumed.validate_used()
+    resumed.close()
+
+
+def test_online_mirror_rejects_wrong_content_with_matching_metadata(served):
+    import shutil
+    from winding_field.io import Volume
+    root,url,_=served
+    local=root/'mirror'; shutil.copytree(root/'ct.zarr',local)
+    (local/'0/0.0.0').write_bytes(bytes([255])*12)
+    volume=Volume(url,local=local,cache=root/'cache')
+    with pytest.raises(ValueError,match='differs'):
+        volume.read([0,0,0],[2,2,3])
+    volume.close()
+
+
+def test_sampled_reads_preserve_duplicates_and_cross_chunk_coordinates(served):
+    from winding_field.io import Volume
+    root,url,data=served
+    volume=Volume(url,cache=root/'cache')
+    indices=[np.array([0,0,3]),np.array([1,3]),np.array([0,2,5,5])]
+    np.testing.assert_array_equal(volume.sample(indices),data[np.ix_(*indices)])
+    with pytest.raises(ValueError):
+        volume.sample([[0],[-1],[0]])
+    volume.close()
