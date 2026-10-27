@@ -6,6 +6,7 @@ import json
 import math
 from pathlib import Path
 import sqlite3
+from tempfile import TemporaryDirectory
 
 import numpy as np
 
@@ -14,6 +15,7 @@ from ._core.field_constraints import pair_constraints
 from ._core.field_store import BlockStore
 from ._core.surface_sources import FieldSource
 from .artifacts import Tiles
+from .config import field_geometry
 from .util import atomic_json, digest, file_sha
 
 
@@ -63,6 +65,24 @@ def initial_field(xyz,meta,cal):
     return (radius-first)*cal['mean_density_per_um']
 
 
+def map_axes(meta,geometry,lo,hi):
+    return [np.clip((geometry['origin_xyz'][2-i]-meta['origin_xyz'][2-i]
+                     +np.arange(a,b)*geometry['spacing_xyz'][2-i])/meta['spacing_xyz'][2-i],
+                    0,meta['shape_zyx'][i]-1) for i,(a,b) in enumerate(zip(lo,hi))]
+
+
+def sample_prior(maps,meta,geometry,cal,lo,hi):
+    names=('normals','density','support')
+    if all(geometry[k]==meta[k] for k in ('origin_xyz','spacing_xyz','shape_zyx')):
+        return oriented(maps.read_many(names,lo,hi),coordinates(lo,hi,meta),cal)
+    def transform(data,start):
+        target,weights,valid=oriented(data,coordinates(start,start+data['support'].shape,meta),cal)
+        return dict(target=target,weights=weights,support=valid)
+    data=maps.sample(names,map_axes(meta,geometry,lo,hi),transform)
+    valid=data['support']; data['target'][~valid]=0; data['weights'][~valid]=1e-3
+    return data['target'],data['weights'],valid
+
+
 def open_field(run):
     run=Path(run); meta=json.loads((run/'FIELD.json').read_bytes())
     return FieldSource(dict(kind='chunks',path=str((run/'field/CHECKPOINT.json').resolve()),
@@ -78,15 +98,15 @@ def solve(run,config,stop=None):
         raise ValueError('prepared maps or fibres changed')
     cal=calibration(maps,meta)
     atomic_json(run/'CALIBRATION.json',cal)
-    geometry={k:meta[k] for k in ('shape_zyx','origin_xyz','spacing_xyz','frame')}
+    geometry=field_geometry(meta,config.get('field_spacing_um'))
     geometry.update(voxel_um=1.,sheet_step=1.)
-    shape=tuple(meta['shape_zyx']); chunk=config.get('field_chunk',64)
+    shape=tuple(geometry['shape_zyx']); chunk=config.get('field_chunk',64)
     if type(chunk) is not int or not 4<=chunk<=256:
         raise ValueError('field chunk must be 4..256')
     identity=dict(maps=meta['tiles_sha256'],fibres=fibres['sha256'],geometry=geometry,calibration=cal,
-                  fibre_weight=config.get('fibre_weight',1.),algorithm='oriented-density-core-v1')
+                   fibre_weight=config.get('fibre_weight',1.),algorithm='physical-trilinear-prior-v2')
     root=run/'field'
-    options=dict(origin_xyz=meta['origin_xyz'],spacing_xyz=meta['spacing_xyz'],
+    options=dict(origin_xyz=geometry['origin_xyz'],spacing_xyz=geometry['spacing_xyz'],
                  order=list(itertools.product(*(range((n-1)//chunk+1) for n in shape))),
                  halo=2,sweeps=config.get('sweeps',4),rtol=config.get('rtol',1e-6),
                  maxiter=config.get('maxiter',2000),dtype='float64',device=config.get('device','cpu'),
@@ -95,20 +115,20 @@ def solve(run,config,stop=None):
     row_count=0
 
     def load(lo,hi):
-        data={name:maps.read(name,lo,hi) for name in ('normals','density','support')}
-        target,weights,valid=oriented(data,coordinates(lo,hi,meta),cal)
+        target,weights,valid=sample_prior(maps,meta,geometry,cal,lo,hi)
         return target,weights,valid,{'maps':meta['tiles_sha256']}
 
     def constraints(lo,hi,read_nodes):
         nonlocal row_count
         a=[]; b=[]
-        for key in itertools.product(*(range(int(x)//maps.chunk,(int(y)-1)//maps.chunk+1) for x,y in zip(lo,hi))):
+        axes=map_axes(meta,geometry,lo,hi)
+        for key in itertools.product(*(range(int(axis[0])//maps.chunk,int(axis[-1])//maps.chunk+1) for axis in axes)):
             tag='_'.join(map(str,key))
             for (raw,) in db.execute('SELECT points FROM curves WHERE tile=?',(tag,)):
                 points=np.load(io.BytesIO(raw),allow_pickle=False)[::3]
                 if len(points)<2:
                     continue
-                grid=(points-meta['origin_xyz'])/meta['spacing_xyz']
+                grid=(points-geometry['origin_xyz'])/geometry['spacing_xyz']
                 inside=((grid>=lo[::-1]) & (grid<=(hi-1)[::-1])).all(1)
                 valid=inside[:-1]&inside[1:]
                 a.extend(points[:-1][valid]); b.extend(points[1:][valid])
@@ -116,14 +136,18 @@ def solve(run,config,stop=None):
             return None
         row_count+=len(a)
         return pair_constraints(np.array(a),np.array(b),
-                np.array(meta['origin_xyz'])+lo[::-1]*meta['spacing_xyz'],meta['spacing_xyz'],tuple(hi-lo),
+                np.array(geometry['origin_xyz'])+lo[::-1]*geometry['spacing_xyz'],geometry['spacing_xyz'],tuple(hi-lo),
                 weight=identity['fibre_weight'])
 
     options['constraints']=constraints
     try:
         checkpoint=root/'CHECKPOINT.json'
         if not checkpoint.exists():
-            solve_blocks(root,shape,chunk,identity,load,stop=lambda:True,**options)
+            # Publish only a complete initial checkpoint; failed admission is retryable.
+            with TemporaryDirectory(prefix='.field-init-',dir=run) as temporary:
+                initial=Path(temporary)/'field'
+                solve_blocks(initial,shape,chunk,identity,load,stop=lambda:True,**options)
+                initial.rename(root)
         saved=json.loads(checkpoint.read_bytes())
         if not saved['progress'].get('initialization_done') and not saved['progress'].get('solver'):
             with BlockStore(root,shape,chunk,saved['identity'],resume=True,cache_bytes=64<<20,
@@ -136,7 +160,7 @@ def solve(run,config,stop=None):
                         continue
                     lo=np.array(key)*chunk; hi=np.minimum(lo+chunk,shape)
                     _,_,valid,_=load(lo,hi)
-                    store.commit(key,initial_field(coordinates(lo,hi,meta),meta,cal),progress,valid)
+                    store.commit(key,initial_field(coordinates(lo,hi,geometry),geometry,cal),progress,valid)
                 progress['initialization_done']=True
                 store.save_progress(progress)
         result=solve_blocks(root,shape,chunk,identity,load,resume=True,stop=stop,**options)

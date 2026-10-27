@@ -1,36 +1,46 @@
 """Tiled CT preparation with explicit physical units and model provenance."""
 
 import hashlib
+from functools import lru_cache
 import itertools
 import json
 from pathlib import Path
 
 import numpy as np
-from scipy.ndimage import gaussian_filter
+from scipy.ndimage import gaussian_filter, minimum_filter
 from skimage.filters import threshold_otsu
 
 from ._core.field_observations import density_normals
 from .artifacts import Tiles
+from .config import validate_config
 from .io import bounds
 from .models import SD2, MODEL_SHA
 from .util import atomic_json, digest
 
 
-def observations(ct,spacing_xyz,*,threshold=None,presence=None,tangents=None,device='cpu'):
+def observations(ct,spacing_xyz,*,threshold=None,presence=None,tangents=None,validity=None,device='cpu'):
     if ct.ndim!=3 or not np.isfinite(ct).all():
         raise ValueError('finite 3D CT required')
     spacing=np.asarray(spacing_xyz,float)
     if spacing.shape!=(3,) or not np.isfinite(spacing).all() or (spacing<=0).any():
         raise ValueError('positive XYZ spacing required')
+    if validity is not None and (validity.shape!=ct.shape or validity.dtype!=np.bool_):
+        raise ValueError('validity must be a boolean CT-shaped mask')
     if presence is None:
         threshold=float(threshold_otsu(ct)) if threshold is None else threshold
         presence=(ct>threshold).astype(np.float32)
+    if validity is not None:
+        presence=np.where(validity,presence,0)
     density,normal,support=density_normals(np.rint(presence*255).astype(np.uint8),halo=0,device=device)
     normal=normal.cpu().numpy()/spacing
     magnitude=np.linalg.norm(normal,axis=-1)
     normal=normal/np.maximum(magnitude[...,None],1e-12)
     density=density.cpu().numpy()*magnitude
     support=support.cpu().numpy() & (magnitude>1e-6) & (density>1e-7)
+    if validity is not None:
+        # The core's derivative/tensor/crossing/density recipe fits inside halo 40.
+        support &= minimum_filter(validity,size=81,mode='nearest')
+    normal[~support]=0; density[~support]=0
     if tangents is None:
         gradients=np.stack([gaussian_filter(ct.astype(np.float32),1,order=tuple(int(j==i) for j in range(3)))
                             /spacing[2-i] for i in range(3)],axis=-1)
@@ -52,6 +62,7 @@ def observations(ct,spacing_xyz,*,threshold=None,presence=None,tangents=None,dev
 
 
 def prepare(volume,run,config,stop=None):
+    validate_config(config)
     run=Path(run); run.mkdir(parents=True,exist_ok=True)
     lo,hi=bounds(config.get('roi_lo',[0,0,0]),config.get('roi_hi',list(volume.shape)),volume.shape)
     stride=config.get('stride',1); chunk=config.get('chunk',32)
@@ -66,9 +77,11 @@ def prepare(volume,run,config,stop=None):
         raise ValueError('ROI needs at least two output samples per axis')
     spacing=(np.array(volume.spacing_xyz)*stride).tolist()
     origin=(np.array(volume.origin_xyz)+lo[::-1]*volume.spacing_xyz).tolist()
+    invalid=config.get('invalid_value')
     geometry=dict(shape_zyx=list(shape),spacing_xyz=spacing,origin_xyz=origin,units='micrometer',
                   frame=digest(volume.identity),roi_lo_zyx=lo.tolist(),roi_hi_zyx=hi.tolist(),
-                  stride=stride,input_halo_voxels=halo*stride)
+                  stride=stride,input_halo_voxels=halo*stride,
+                  validity=dict(invalid_value=invalid,filter_radius=40))
     threshold=config.get('threshold')
     if method=='classical' and threshold is None:
         threshold_path=run/'THRESHOLD.json'
@@ -90,28 +103,71 @@ def prepare(volume,run,config,stop=None):
             values=np.concatenate(samples)
             if not np.isfinite(values).all():
                 raise ValueError('finite CT required for threshold calibration')
+            if invalid is not None:
+                values=values[values!=invalid]
+            if not len(values):
+                raise ValueError('no valid CT samples for threshold calibration')
             threshold=float(threshold_otsu(values))
             atomic_json(threshold_path,dict(identity=binding,threshold=threshold,samples=int(values.size)))
     identity=dict(source=volume.identity,geometry=geometry,method=method,model_sha256=MODEL_SHA if method=='sd2' else None,
-                  threshold=threshold,recipe='fractional-crossings-v1')
+                   threshold=threshold,recipe='fractional-crossings-validity-v2',
+                   inference=dict(core=32,halo=40,anchor='selected-source sampling lattice',
+                                  phase_zyx=(lo%stride).tolist(),normalization='tile-zscore',padding='edge') if method=='sd2' else None)
     maps=Tiles(run/'maps',shape=shape,chunk=chunk,identity=identity)
     model=SD2(config.get('model_path'),config.get('device','cpu'),config.get('offline',False)) if method=='sd2' else None
-    completed=0
-    for key in maps.keys():
-        start,end=maps.box(key)
-        indices=[np.clip(lo[i]+np.arange(start[i]-halo,end[i]+halo)*stride,0,volume.shape[i]-1) for i in range(3)]
+    def infer(ct):
+        presence,tangent=model.predict(ct) if model else (None,None)
+        return observations(ct,spacing,threshold=threshold,presence=presence,tangents=tangent,
+                            validity=ct!=invalid if invalid is not None else None,device=config.get('device','cpu'))
+
+    @lru_cache(maxsize=8)
+    def canonical(key,compute):
+        start=np.asarray(key)*32
+        indices=[np.clip(lo[i]%stride+np.arange(start[i]-halo,start[i]+32+halo)*stride,
+                         0,volume.shape[i]-1) for i in range(3)]
         ct=volume.sample(indices)
         sha=hashlib.sha256(ct.tobytes()).hexdigest()
-        if maps.has(key):
+        arrays={}
+        if compute:
+            core=(slice(halo,halo+32),)*3
+            arrays={name:value[core].copy() for name,value in infer(ct).items()}
+            arrays['ct']=ct[core].copy()
+        return arrays,sha
+
+    completed=0
+    for key in maps.keys():
+        if stop and stop():
+            maps.close(); return dict(status='PAUSED',new_tiles=completed)
+        start,end=maps.box(key)
+        existing=maps.has(key)
+        if model:
+            a,b=lo//stride+start,lo//stride+end
+            arrays={}; hashes=[]
+            for tile in itertools.product(*(range(x//32,(y-1)//32+1) for x,y in zip(a,b))):
+                values,ct_sha=canonical(tile,not existing); hashes.append([tile,ct_sha])
+                if not existing:
+                    low=np.maximum(a,np.array(tile)*32); high=np.minimum(b,np.array(tile)*32+32)
+                    src=tuple(slice(int(x),int(y)) for x,y in zip(low-np.array(tile)*32,high-np.array(tile)*32))
+                    dst=tuple(slice(int(x),int(y)) for x,y in zip(low-a,high-a))
+                    for name,value in values.items():
+                        if name not in arrays:
+                            arrays[name]=np.empty((*tuple(end-start),*value.shape[3:]),value.dtype)
+                        arrays[name][dst]=value[src]
+                if stop and stop():
+                    maps.close(); return dict(status='PAUSED',new_tiles=completed)
+            sha=digest(hashes)
+        else:
+            indices=[np.clip(lo[i]+np.arange(start[i]-halo,end[i]+halo)*stride,0,volume.shape[i]-1) for i in range(3)]
+            ct=volume.sample(indices)
+            sha=hashlib.sha256(ct.tobytes()).hexdigest()
+            if not existing:
+                core=tuple(slice(halo,halo+int(n)) for n in end-start)
+                arrays={name:value[core].copy() for name,value in infer(ct).items()}
+                arrays['ct']=ct[core].copy()
+        if existing:
             if maps.info(key)['ct_sha256']!=sha:
                 raise ValueError('source CT changed since preparation')
             continue
-        presence,tangent=model.predict(ct) if model else (None,None)
-        arrays=observations(ct,spacing,threshold=threshold,presence=presence,tangents=tangent,
-                            device=config.get('device','cpu'))
-        core=tuple(slice(halo,halo+int(n)) for n in end-start)
-        arrays={name:value[core].copy() for name,value in arrays.items()}
-        arrays['ct']=ct[core].copy()
         maps.write(key,arrays,dict(ct_sha256=sha))
         completed+=1
         if stop and stop():

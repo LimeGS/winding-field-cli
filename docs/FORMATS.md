@@ -7,11 +7,17 @@
 - Field grids, fibre constraints and 3D mesh vertices: XYZ micrometres.
 - Origins are voxel-centre coordinates. At source index `i_xyz`,
   `world_xyz = origin_xyz + i_xyz * spacing_xyz`.
-- Output origin is the source origin plus reversed ROI-low times source spacing;
-  output spacing is source spacing times explicit `--stride`.
+- Observation origin is the source origin plus reversed ROI-low times source
+  spacing; observation spacing is source spacing times explicit `--stride`.
+- Field origin is the observation origin. `--field-spacing-um P` sets exact
+  isotropic field spacing. Per-axis node count is
+  `floor((observation_count-1)*observation_spacing/P)+1`. The last field centre
+  never exceeds the last observation centre. Default: the full observation grid.
 - OME-NGFF scale/translation and axis units are interpreted. Unitless metadata
   requires explicit `--voxel-um` or catalog spacing. No silent resolution change.
-- Preparation has a 40-output-grid-voxel input halo, clipped to the source volume.
+- Preparation has a 40-observation-grid-voxel input halo, clipped to the source volume.
+  SD2 rounds the input core coverage out to source-anchored 32³ tiles first;
+  `RUN.json.plan.input_lo_zyx/input_hi_zyx` records this extra input-only context.
   Persistent maps and extracted meshes remain within the output grid/ROI.
 
 ## Run and integrity
@@ -20,6 +26,11 @@
 effective settings, implementation SHA-256, stage receipt hashes, timings and I/O
 counts. `source.sqlite` records consumed source-chunk hashes. `products.sqlite`
 records exported-product hashes. A run is single-writer locked.
+`exports.sqlite` retains input identity and hashes of individually completed
+Lasagna chunks and AFV publication. A partial AFV database commits each fibre
+record and retains its last committed ID. Resume verifies the retained inventory,
+coordinates, metadata and spatial bounds against the pinned source before skipping
+records; only the complete database is renamed.
 
 Statuses are `STARTING`, `RUNNING`, `PAUSED`, `FAILED` and `COMPLETE`.
 `physical_acceptance: false` is independent of successful stage completion.
@@ -33,6 +44,18 @@ checkpoints. Retain the original package and data for reproducibility.
 `PREPARED.json` describes its physical grid, source, ROI, model provenance and halo.
 Maps contain CT-derived sheet density (inverse micrometres), unsigned surface
 normals (XYZ), separate fibre tangents (XYZ), presence and support.
+
+SD2 inference owns fixed 32³ cores on the selected-source sampling lattice. Its
+phase is `roi_low % stride`, context is 40 samples per side, volume-edge padding
+is clamped, and normalization is the pinned model's window z-score. Storage
+`--chunk` and ROI edges do not change the canonical window for overlapping samples
+on the same sampling lattice. Up to eight cropped canonical tiles are cached in RAM.
+This defines a repeatable tiled estimator, not equality with whole-volume inference.
+
+`--invalid-value` is an explicit acquisition-fill policy. By default every finite
+CT measurement, including zero, is valid. Declared fill zeros predicted presence;
+support requires the full 40-voxel observation-filter footprint to be valid.
+Unsupported density, normals and tangents are zero. The policy is identity-bound.
 
 For the classical route, `THRESHOLD.json` persists a single Otsu threshold sampled
 from at most 27 fixed 16³-output-grid patches within the ROI. Tile size cannot
@@ -61,6 +84,12 @@ constraint rows and conditional local-solver convergence. Sweeps are a budget;
 `global_converged: false` means no independent global convergence is established.
 The nominal unit sheet step and automatic planar/radial-Z calibration are
 scientifically unvalidated.
+
+The grid adapter orients fine unsigned normals before trilinearly sampling the
+physical density-normal target. All contributing interpolation nodes must be
+supported. Tiles are loaded jointly for density/normals/support, once per request;
+coarse sampling reads only touched tiles, never the dense fine-grid envelope.
+Fibre constraints and mesh phase sampling use the respective physical transforms.
 
 ## Meshes and linked atlas
 

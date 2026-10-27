@@ -1,6 +1,7 @@
 """All-component extraction from an immutable supported field."""
 
 import itertools
+import json
 import math
 from pathlib import Path
 
@@ -8,7 +9,7 @@ import numpy as np
 
 from ._core.surface_mesh import extract_mesh
 from .artifacts import Tiles
-from .field import open_field
+from .field import open_field,map_axes
 from .util import atomic_json
 
 
@@ -19,12 +20,16 @@ def mesh(run,config,stop=None):
         phase=complex(0); total=0.; low=math.inf; high=-math.inf
         if not levels:
             maps=Tiles(run/'maps')
-            for key in maps.keys():
-                lo,hi=maps.box(key); field,valid=source.read(lo,hi)
+            meta=json.loads((run/'PREPARED.json').read_bytes())
+            geometry=json.loads((run/'FIELD.json').read_bytes())['geometry']
+            tile=config.get('mesh_tile',64)
+            for key in itertools.product(*(range((n-1)//tile+1) for n in source.shape)):
+                lo=np.array(key)*tile; hi=np.minimum(lo+tile,source.shape)
+                field,valid=source.read(lo,hi)
                 if not valid.any():
                     continue
                 low=min(low,float(field[valid].min())); high=max(high,float(field[valid].max()))
-                presence=maps.load(key)['presence']; weight=presence[valid]
+                presence=maps.sample(('presence',),map_axes(meta,geometry,lo,hi))['presence']; weight=presence[valid]
                 phase+=np.sum(weight*np.exp(2j*np.pi*field[valid])); total+=float(weight.sum())
             maps.close()
             if not math.isfinite(low) or high-low<1e-6:

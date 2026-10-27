@@ -28,11 +28,13 @@ def main(argv=None):
         p.add_argument('--offline',action='store_true')
         p.add_argument('--voxel-um',type=float); p.add_argument('--level',type=int,default=0)
         p.add_argument('--roi',nargs=6,type=int,metavar=('Z0','Z1','Y0','Y1','X0','X1'))
-        p.add_argument('--stride',type=int,default=1,help='explicit output sampling step in selected-level voxels')
+        p.add_argument('--stride',type=int,default=1,help='CT observation sampling step; keep 1 for fine inference')
+        p.add_argument('--field-spacing-um',type=float,help='exact isotropic field pitch in micrometres; default: observation pitch')
         p.add_argument('--chunk',type=int,default=64)
         p.add_argument('--prediction',choices=['classical','sd2'],default='sd2')
         p.add_argument('--model-path'); p.add_argument('--device',default='cpu')
         p.add_argument('--threshold',type=float)
+        p.add_argument('--invalid-value',type=float,help='acquisition fill value to exclude; zero remains valid unless declared')
         p.add_argument('--field-chunk',type=int,default=64); p.add_argument('--sweeps',type=int,default=4)
         p.add_argument('--maxiter',type=int,default=2000); p.add_argument('--rtol',type=float,default=1e-6)
         p.add_argument('--seed-stride',type=int,default=8); p.add_argument('--fibre-weight',type=float,default=1.)
@@ -67,14 +69,9 @@ def main(argv=None):
             result=dict(path=str(checkpoint(args.path)),sha256=MODEL_SHA)
         elif args.command in ('run','plan'):
             from .workflow import run,plan
+            from .config import validate_config
             config=vars(args).copy(); command=config.pop('command'); until=config.pop('until')
-            selected=resolve_source(config.pop('scroll'),config.get('source'),config.pop('scan'))
-            config['source']=selected['source']
-            if config.get('voxel_um') is None:
-                config['voxel_um']=selected.get('voxel_um')
             config['output']=str(Path(config['output']).expanduser().resolve())
-            if not config['source'].startswith(('http://','https://','s3://')):
-                config['source']=str(Path(config['source']).expanduser().resolve())
             for key in ('local','cache','model_path'):
                 if config.get(key):
                     config[key]=str(Path(config[key]).expanduser().resolve())
@@ -86,6 +83,14 @@ def main(argv=None):
             roi=config.pop('roi')
             if roi:
                 config.update(roi_lo=roi[::2],roi_hi=roi[1::2])
+            validate_config(config)
+            selected=resolve_source(config.pop('scroll'),config.get('source'),config.pop('scan'),
+                                    cache=config.get('cache'),offline=config['offline'])
+            config['source']=selected['source']
+            if config.get('voxel_um') is None:
+                config['voxel_um']=selected.get('voxel_um')
+            if not config['source'].startswith(('http://','https://','s3://')):
+                config['source']=str(Path(config['source']).expanduser().resolve())
             result=plan(config) if command=='plan' else run(config,until=until)
         elif args.command=='demo':
             from .demo import synthetic

@@ -41,7 +41,7 @@ def test_until_then_resume_and_refuse_changed_input(tmp_path):
     x=np.indices((12,16,32))[2]
     source=write_ct(tmp_path/'ct.zarr',(20+210*(np.cos(2*np.pi*x/8)>.4)).astype(np.uint8))
     run=tmp_path/'run'
-    result=invoke('run','--source',source,'--output',run,'--prediction','classical','--until','prepare',cwd=tmp_path)
+    result=invoke('run','--source',source,'--output',run,'--prediction','classical','--reserve-gib','0','--until','prepare',cwd=tmp_path)
     assert result.returncode==0,result.stdout+result.stderr
     assert json.loads((run/'RUN.json').read_text())['status']=='PAUSED'
     assert not (run/'FIELD.json').exists()
@@ -55,7 +55,7 @@ def test_empty_ct_records_failure_not_a_completed_reconstruction(tmp_path):
     from ct_fixture import write_ct
     source=write_ct(tmp_path/'empty.zarr',np.zeros((8,8,16),np.uint8))
     run=tmp_path/'run'
-    result=invoke('run','--source',source,'--output',run,'--prediction','classical',cwd=tmp_path)
+    result=invoke('run','--source',source,'--output',run,'--prediction','classical','--reserve-gib','0',cwd=tmp_path)
     assert result.returncode!=0
     receipt=json.loads((run/'RUN.json').read_text())
     assert receipt['status']=='FAILED'

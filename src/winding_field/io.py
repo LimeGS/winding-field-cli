@@ -6,12 +6,15 @@ The compressed disk payload budget is shared across sources and processes.
 
 from contextlib import contextmanager
 import fcntl
+import gzip
 import hashlib
+import io
 import itertools
 import json
 import math
 import os
 from pathlib import Path
+import shutil
 import sqlite3
 import time
 from urllib.error import HTTPError, URLError
@@ -44,6 +47,14 @@ def fetch(url, *, headers=None, limit=256 << 20):
                 data = response.read(limit + 1)
                 if len(data) > limit:
                     raise ValueError('remote response exceeds read budget')
+                encoding=response.headers.get('Content-Encoding','identity').lower().strip()
+                if encoding=='gzip':
+                    with gzip.GzipFile(fileobj=io.BytesIO(data)) as decoded:
+                        data=decoded.read(limit+1)
+                    if len(data)>limit:
+                        raise ValueError('decoded remote response exceeds read budget')
+                elif encoding not in ('','identity'):
+                    raise ValueError('unsupported HTTP Content-Encoding: '+encoding)
                 return data, response.headers.get('ETag')
         except HTTPError as exc:
             if exc.code == 304:
@@ -75,12 +86,20 @@ def source_choices(scroll, catalog):
     return choices
 
 
-def resolve_source(scroll=None, source=None, scan=None):
+def resolve_source(scroll=None, source=None, scan=None, *, cache=None, offline=False):
     if source:
         return dict(source=str(source), voxel_um=None)
     if not scroll:
         raise ValueError('provide --source or --scroll')
-    catalog = json.loads(fetch(CATALOG, limit=64 << 20)[0])
+    path=Path(cache or '~/.cache/winding-field/ct').expanduser()/'catalog.json'
+    if offline:
+        if not path.exists():
+            raise FileNotFoundError('offline catalog missing; use --source or resolve --scroll online once with this cache')
+        catalog=json.loads(path.read_bytes())
+    else:
+        raw=fetch(CATALOG,limit=64<<20)[0]
+        catalog=json.loads(raw)
+        atomic_bytes(path,raw)
     choices = source_choices(scroll, catalog)
     if scan:
         choices = [c for c in choices if c['scan'] == scan or scan in c['source']]
@@ -102,9 +121,12 @@ def bounds(lo, hi, shape):
 
 class Volume:
     def __init__(self, source, *, local=None, cache=None, cache_bytes=2 << 30,
-                 offline=False, voxel_um=None, level=0):
+                 offline=False, voxel_um=None, level=0, reserve_bytes=0):
         if type(cache_bytes) is not int or cache_bytes < 0 or type(level) is not int or level < 0:
             raise ValueError('invalid cache budget or pyramid level')
+        if type(reserve_bytes) is not int or reserve_bytes<0:
+            raise ValueError('invalid cache reserve')
+        self.reserve=reserve_bytes
         self.source = http_url(source)
         self.remote = self.source.startswith(('https://', 'http://'))
         if not self.remote:
@@ -172,7 +194,7 @@ class Volume:
             if not self.remote:
                 raw = (Path(self.source)/key).read_bytes()
             elif self.offline:
-                raw = cached.read_bytes()
+                raw = (cached if cached.exists() else self.local/key if self.local else cached).read_bytes()
             else:
                 raw, _ = fetch(self.source+'/'+key, limit=4 << 20)
                 atomic_bytes(cached, raw)
@@ -293,6 +315,9 @@ class Volume:
                 path.unlink(missing_ok=True)
                 if len(data) <= self.limit:
                     self._evict(len(data))
+                    if shutil.disk_usage(self.cache).free<len(data)+self.reserve:
+                        self.db.commit()
+                        raise OSError('insufficient cache filesystem space for payload and reserve')
                     atomic_bytes(path,data)
                     self.db.execute('INSERT INTO cache VALUES (?,?,?,?,?)',
                                     (token,len(data),time.time(),etag,hashlib.sha256(data).hexdigest()))

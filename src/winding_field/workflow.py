@@ -15,6 +15,7 @@ import time
 import numpy as np
 
 from . import __version__
+from .config import validate_config,field_geometry
 from .io import Volume,bounds,resolve_source
 from .util import atomic_json,digest,file_sha
 
@@ -49,21 +50,34 @@ def open_volume(config):
             if path.is_dir():
                 local=str(path); break
     return Volume(config['source'],local=local,cache=config.get('cache'),cache_bytes=config.get('cache_bytes',2<<30),
-                  offline=config.get('offline',False),voxel_um=config.get('voxel_um'),level=config.get('level',0))
+                  offline=config.get('offline',False),voxel_um=config.get('voxel_um'),level=config.get('level',0),
+                  reserve_bytes=config.get('reserve_bytes',1<<30))
 
 
 def plan(config,volume=None,stages=()):
+    validate_config(config)
     own=volume is None
     volume=open_volume(config) if own else volume
     try:
         lo,hi=bounds(config.get('roi_lo',[0,0,0]),config.get('roi_hi',list(volume.shape)),volume.shape)
         stride=config.get('stride',1)
         shape=(hi-lo-1)//stride+1
+        if min(shape)<2:
+            raise ValueError('ROI needs at least two observation samples per axis')
         halo=40*stride
         input_lo=np.maximum(0,lo-halo); input_hi=np.minimum(volume.shape,hi+halo)
+        if config.get('prediction','classical')=='sd2':
+            start=(lo//stride)//32*32
+            end=((lo//stride+shape-1)//32+1)*32
+            input_lo=np.maximum(0,lo%stride+start*stride-halo)
+            input_hi=np.minimum(volume.shape,lo%stride+(end+40-1)*stride+1)
         chunk_count=np.prod((input_hi-1)//volume.chunks-input_lo//volume.chunks+1,dtype=np.int64)
         ct_bytes=int(chunk_count)*math.prod(volume.chunks)*volume.dtype.itemsize
-        output_bytes=math.prod(shape.tolist())*100
+        observations=dict(shape_zyx=shape.tolist(),spacing_xyz=(np.asarray(volume.spacing_xyz)*stride).tolist(),
+                          origin_xyz=(np.asarray(volume.origin_xyz)+lo[::-1]*volume.spacing_xyz).tolist(),
+                          frame=digest(volume.identity))
+        field=field_geometry(observations,config.get('field_spacing_um'))
+        output_bytes=math.prod(shape.tolist())*60+math.prod(field['shape_zyx'])*40
         output=Path(config['output']); parent=output if output.exists() else output.parent
         written=sum(p.stat().st_size for name in ('maps','lasagna','fibres','field','meshes','flat')
                     for p in (output/name).rglob('*') if p.is_file())
@@ -71,17 +85,22 @@ def plan(config,volume=None,stages=()):
         while not parent.exists():
             parent=parent.parent
         free=shutil.disk_usage(parent).free; reserve=config.get('reserve_bytes',1<<30)
-        fits=ct_bytes<=volume.limit and ct_bytes+remaining+reserve<free
+        cache_free=shutil.disk_usage(volume.cache).free
+        shared=os.stat(parent).st_dev==os.stat(volume.cache).st_dev
+        fits=(ct_bytes<=volume.limit and ct_bytes+reserve<cache_free
+              and remaining+reserve+(ct_bytes if shared else 0)<free)
         mode=config.get('ct_mode','auto')
         if mode=='auto':
             mode='download' if volume.remote and fits else 'stream' if volume.remote else 'local'
         if mode=='download' and not fits and volume.remote and not stages:
             raise ValueError('requested CT download exceeds cache or available-space budget; increase budget or use stream')
         return dict(source=volume.identity,roi_lo_zyx=lo.tolist(),roi_hi_zyx=hi.tolist(),shape_zyx=shape.tolist(),
+                     observations=observations,field=field,
                     input_lo_zyx=input_lo.tolist(),input_hi_zyx=input_hi.tolist(),ct_policy=mode,
                     estimated_ct_bytes=ct_bytes,estimated_products_bytes=output_bytes,
                     existing_products_bytes=written,estimated_remaining_bytes=remaining,free_bytes=free,
-                    reserve_bytes=reserve,physical_accuracy='UNVALIDATED')
+                     reserve_bytes=reserve,cache_free_bytes=cache_free,shared_filesystem=shared,
+                     physical_accuracy='UNVALIDATED')
     finally:
         if own:
             volume.close()
@@ -127,6 +146,7 @@ def _validate_products(root,state):
 
 
 def run(config,resume=False,until='flatten'):
+    validate_config(config)
     import torch
     from .predict import prepare
     from .fibres import trace
@@ -188,11 +208,16 @@ def run(config,resume=False,until='flatten'):
                     if stage=='prepare':
                         result=prepare(volume,root,config,stop)
                         if result['status']=='PREPARED':
-                            export_lasagna(root)
+                            if export_lasagna(root,stop) is None:
+                                result=dict(status='PAUSED')
                     elif stage=='fibres':
                         result=trace(root,config,stop)
                         if result['status']=='FIBRES_READY':
-                            result['afv_sha256']=export_afv(root); atomic_json(root/receipt,result)
+                            sha=export_afv(root,stop)
+                            if sha is None:
+                                result=dict(status='PAUSED')
+                            else:
+                                result['afv_sha256']=sha; atomic_json(root/receipt,result)
                     elif stage=='field':
                         result=solve(root,config,stop)
                     elif stage=='mesh':
