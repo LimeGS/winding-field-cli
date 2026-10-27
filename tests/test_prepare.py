@@ -138,7 +138,8 @@ def test_classical_threshold_is_shared_across_tiles_and_persisted(tmp_path):
     a.close();b.close();volume.close()
 
 
-def test_sd2_storage_chunks_and_overlapping_rois_share_canonical_predictions(tmp_path,monkeypatch):
+@pytest.mark.parametrize('method',['sd2','qual-v2'])
+def test_pretrained_storage_chunks_and_overlapping_rois_share_predictions(tmp_path,monkeypatch,method):
     from ct_fixture import write_ct
     from winding_field.io import Volume
     from winding_field.artifacts import Tiles
@@ -150,20 +151,23 @@ def test_sd2_storage_chunks_and_overlapping_rois_share_canonical_predictions(tmp
             calls.append(ct.shape)
             presence=np.clip((ct.astype(float)-ct.mean())/max(ct.std(),1)*.2+.5,0,1).astype(np.float32)
             tangent=np.zeros(ct.shape+(3,),np.float32); tangent[...,1]=1
-            return presence,tangent
-    monkeypatch.setattr(prediction,'SD2',WindowModel)
+            return (presence,tangent,np.stack([presence*.4,presence*.6],axis=-1)) if method=='qual-v2' else (presence,tangent)
+    monkeypatch.setattr(prediction,'QualV2' if method=='qual-v2' else 'SD2',WindowModel,raising=False)
     z,y,x=np.indices((72,)*3)
     ct=(20+150*(x%8<3)+x+y//3+z//4).astype(np.uint8)
-    v=Volume(write_ct(tmp_path/'ct.zarr',ct),cache=tmp_path/'cache')
+    v=Volume(write_ct(tmp_path/'ct.zarr',ct,spacing=(9.,)*3),cache=tmp_path/'cache')
     for name,config in [('a',dict(chunk=16)),('b',dict(chunk=32)),
                         ('c',dict(chunk=16,roi_lo=[4,4,4]))]:
-        prediction.prepare(v,tmp_path/name,dict(prediction='sd2',roi_hi=[32]*3,**config))
+        prediction.prepare(v,tmp_path/name,dict(prediction=method,roi_hi=[32]*3,**config))
     maps=[Tiles(tmp_path/name/'maps') for name in 'abc']
     for channel in ('presence','tangents','density','normals','support','ct'):
         a=maps[0].read(channel,[4]*3,[32]*3)
         np.testing.assert_array_equal(a,maps[1].read(channel,[4]*3,[32]*3))
         np.testing.assert_array_equal(a,maps[2].read(channel,[0]*3,[28]*3))
-    assert set(calls)=={(112,)*3}
+    if method=='qual-v2':
+        np.testing.assert_array_equal(maps[0].read('probabilities',[4]*3,[32]*3),
+                                      maps[2].read('probabilities',[0]*3,[28]*3))
+    assert set(calls)=={(128 if method=='qual-v2' else 112,)*3}
     for m in maps: m.close()
     v.close()
 

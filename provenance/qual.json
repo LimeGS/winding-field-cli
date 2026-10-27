@@ -1,0 +1,14 @@
+{
+  "model_repository": "https://huggingface.co/Qualzz20/afv_fiber_9um_v2",
+  "model_revision": "2a8a26a70754a5d90aeca91f9ef8e7130e6e4f81",
+  "checkpoint": "checkpoint_final.pth",
+  "checkpoint_sha256": "b8519a4ce4044c93ed98af0c278628fdcdfdd8808275b3c8becd7211f38b7967",
+  "files": {
+    "src/winding_field/_vendor/qual_model.py": "26b9781e6eb6f20b65f272a491f1856e300b9066ef673f2cecdbb247ce6b3323",
+    "src/winding_field/_vendor/qual_plans.json": "a81fd986d0812688de753a72360706897b0bd29e55fd1d6d0cb29f7e31063f65"
+  },
+  "adaptations": "None to bundled upstream files; the application supplies its own pinned download and tiled inference adapter.",
+  "spline_repository": "https://github.com/Qualzz/AVF_SPLINE_GENERATOR",
+  "spline_revision": "3c8b73628ca56cb28042b9b2e79439b2e1c693d2",
+  "license": "Apache-2.0"
+}

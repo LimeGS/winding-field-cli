@@ -12,9 +12,9 @@ from skimage.filters import threshold_otsu
 
 from ._core.field_observations import density_normals
 from .artifacts import Tiles
-from .config import validate_config
+from .config import validate_config,validate_observations
 from .io import bounds
-from .models import SD2, MODEL_SHA
+from .models import SD2,QualV2,model_sha
 from .util import atomic_json, digest
 
 
@@ -69,12 +69,12 @@ def prepare(volume,run,config,stop=None):
     if type(stride) is not int or not 1<=stride<=8 or type(chunk) is not int or not 4<=chunk<=128:
         raise ValueError('stride must be 1..8 and chunk 4..128')
     method=config.get('prediction','classical')
-    if method not in ('classical','sd2'):
-        raise ValueError('prediction must be classical or sd2')
     halo=40
+    core_size=48 if method=='qual-v2' else 32
     shape=tuple(((hi-lo-1)//stride+1).tolist())
     if min(shape)<2:
         raise ValueError('ROI needs at least two output samples per axis')
+    validate_observations(config,volume,shape)
     spacing=(np.array(volume.spacing_xyz)*stride).tolist()
     origin=(np.array(volume.origin_xyz)+lo[::-1]*volume.spacing_xyz).tolist()
     invalid=config.get('invalid_value')
@@ -109,27 +109,32 @@ def prepare(volume,run,config,stop=None):
                 raise ValueError('no valid CT samples for threshold calibration')
             threshold=float(threshold_otsu(values))
             atomic_json(threshold_path,dict(identity=binding,threshold=threshold,samples=int(values.size)))
-    identity=dict(source=volume.identity,geometry=geometry,method=method,model_sha256=MODEL_SHA if method=='sd2' else None,
+    identity=dict(source=volume.identity,geometry=geometry,method=method,model_sha256=model_sha(method),
                    threshold=threshold,recipe='fractional-crossings-validity-v2',
-                   inference=dict(core=32,halo=40,anchor='selected-source sampling lattice',
-                                  phase_zyx=(lo%stride).tolist(),normalization='tile-zscore',padding='edge') if method=='sd2' else None)
+                    inference=dict(core=core_size,halo=40,anchor='selected-source sampling lattice',
+                                   phase_zyx=(lo%stride).tolist(),normalization='tile-sample-zscore-floor10' if method=='qual-v2' else 'tile-zscore',
+                                   padding='edge') if method!='classical' else None)
     maps=Tiles(run/'maps',shape=shape,chunk=chunk,identity=identity)
-    model=SD2(config.get('model_path'),config.get('device','cpu'),config.get('offline',False)) if method=='sd2' else None
+    model_type={'sd2':SD2,'qual-v2':QualV2}.get(method)
+    model=model_type(config.get('model_path'),config.get('device','cpu'),config.get('offline',False)) if model_type else None
     def infer(ct):
-        presence,tangent=model.predict(ct) if model else (None,None)
-        return observations(ct,spacing,threshold=threshold,presence=presence,tangents=tangent,
-                            validity=ct!=invalid if invalid is not None else None,device=config.get('device','cpu'))
+        result=model.predict(ct) if model else (None,None)
+        arrays=observations(ct,spacing,threshold=threshold,presence=result[0],tangents=result[1],
+                             validity=ct!=invalid if invalid is not None else None,device=config.get('device','cpu'))
+        if method=='qual-v2':
+            arrays['probabilities']=result[2]
+        return arrays
 
     @lru_cache(maxsize=8)
     def canonical(key,compute):
-        start=np.asarray(key)*32
-        indices=[np.clip(lo[i]%stride+np.arange(start[i]-halo,start[i]+32+halo)*stride,
+        start=np.asarray(key)*core_size
+        indices=[np.clip(lo[i]%stride+np.arange(start[i]-halo,start[i]+core_size+halo)*stride,
                          0,volume.shape[i]-1) for i in range(3)]
         ct=volume.sample(indices)
         sha=hashlib.sha256(ct.tobytes()).hexdigest()
         arrays={}
         if compute:
-            core=(slice(halo,halo+32),)*3
+            core=(slice(halo,halo+core_size),)*3
             arrays={name:value[core].copy() for name,value in infer(ct).items()}
             arrays['ct']=ct[core].copy()
         return arrays,sha
@@ -143,11 +148,11 @@ def prepare(volume,run,config,stop=None):
         if model:
             a,b=lo//stride+start,lo//stride+end
             arrays={}; hashes=[]
-            for tile in itertools.product(*(range(x//32,(y-1)//32+1) for x,y in zip(a,b))):
+            for tile in itertools.product(*(range(x//core_size,(y-1)//core_size+1) for x,y in zip(a,b))):
                 values,ct_sha=canonical(tile,not existing); hashes.append([tile,ct_sha])
                 if not existing:
-                    low=np.maximum(a,np.array(tile)*32); high=np.minimum(b,np.array(tile)*32+32)
-                    src=tuple(slice(int(x),int(y)) for x,y in zip(low-np.array(tile)*32,high-np.array(tile)*32))
+                    low=np.maximum(a,np.array(tile)*core_size); high=np.minimum(b,np.array(tile)*core_size+core_size)
+                    src=tuple(slice(int(x),int(y)) for x,y in zip(low-np.array(tile)*core_size,high-np.array(tile)*core_size))
                     dst=tuple(slice(int(x),int(y)) for x,y in zip(low-a,high-a))
                     for name,value in values.items():
                         if name not in arrays:
@@ -176,7 +181,7 @@ def prepare(volume,run,config,stop=None):
     meta=dict(geometry,identity=identity,tiles_sha256=binding,prediction=method,
               source=volume.identity,model_sha256=identity['model_sha256'],
               status='PREPARED',physical_accuracy='UNVALIDATED',
-              method_note='SD2 pretrained fibre prediction' if model else 'classical CT threshold/structure-tensor baseline')
+              method_note=f'{method} pretrained fibre prediction' if model else 'classical CT threshold/structure-tensor baseline')
     atomic_json(run/'PREPARED.json',meta)
     maps.close()
     return meta

@@ -94,25 +94,26 @@ def test_cache_write_admission_preserves_reserve(tmp_path,monkeypatch):
     v.close()
 
 
-def test_concurrent_checkpoint_downloads_use_unique_verified_temporaries(tmp_path,monkeypatch):
+@pytest.mark.parametrize('prediction',['sd2','qual-v2'])
+def test_concurrent_checkpoint_downloads_use_unique_verified_temporaries(tmp_path,monkeypatch,prediction):
     import winding_field.models as models
     payload=b'pinned model bytes'; barrier=threading.Barrier(2)
-    monkeypatch.setattr(models,'MODEL_SHA',hashlib.sha256(payload).hexdigest())
+    monkeypatch.setattr(models,'MODEL_SHA' if prediction=='sd2' else 'QUAL_MODEL_SHA',hashlib.sha256(payload).hexdigest())
     def fetch(*a,**k):
         barrier.wait(timeout=10)
         return io.BytesIO(payload)
     monkeypatch.setattr(models,'urlopen',fetch)
     verify=models.verify_checkpoint
     verified=[]
-    def check(path):
-        verify(path)
+    def check(path,**kwargs):
+        verify(path,**kwargs)
         if path.name!='sd2.pt':
             verified.append(path)
             barrier.wait(timeout=10)
     monkeypatch.setattr(models,'verify_checkpoint',check)
     path=tmp_path/'sd2.pt'
     with ThreadPoolExecutor(max_workers=2) as pool:
-        results=list(pool.map(lambda _:models.checkpoint(path),range(2)))
+        results=list(pool.map(lambda _:models.checkpoint(path,prediction=prediction),range(2)))
     assert results==[path,path] and path.read_bytes()==payload
     assert len(set(verified))==2
     assert sorted(p.name for p in tmp_path.iterdir())==['sd2.pt']

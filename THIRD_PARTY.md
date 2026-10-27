@@ -33,3 +33,20 @@ SHA-256: `2528a46e38844c06e591084f1dc1af9442ccb45a17aae9b2a68441e6028bbdd6`.
 Weights are not included or relicensed by this repository. Their upstream terms
 and those of each original CT dataset apply independently. The PHerc0175A catalog
 records its CT as CC BY-NC 4.0. This repository's MIT license does not replace that.
+
+## Qual AFV fibre V2
+
+Model: <https://huggingface.co/Qualzz20/afv_fiber_9um_v2>, revision
+`2a8a26a70754a5d90aeca91f9ef8e7130e6e4f81`. The upstream `model.py` and
+`plans.json` are bundled unchanged under `winding_field._vendor`; exact hashes
+are in `provenance/qual.json`. The adapter uses the upstream normalization and
+architecture (`dynamic-network-architectures==0.4.4`).
+
+The separately downloaded checkpoint SHA-256 is
+`b8519a4ce4044c93ed98af0c278628fdcdfdd8808275b3c8becd7211f38b7967`.
+Model code and weights are published under Apache-2.0; see
+`licenses/qual-Apache-2.0.txt`. Weights are not bundled.
+
+Spline generator: <https://github.com/Qualzz/AVF_SPLINE_GENERATOR>, pinned to
+`3c8b73628ca56cb28042b9b2e79439b2e1c693d2`, Apache-2.0. Its V2 model outputs
+use the AFV schema v1 container; V2 does not designate a different SQLite schema.

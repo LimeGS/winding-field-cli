@@ -15,7 +15,7 @@ import time
 import numpy as np
 
 from . import __version__
-from .config import validate_config,field_geometry
+from .config import validate_config,validate_observations,field_geometry
 from .io import Volume,bounds,resolve_source
 from .util import atomic_json,digest,file_sha
 
@@ -64,11 +64,14 @@ def plan(config,volume=None,stages=()):
         shape=(hi-lo-1)//stride+1
         if min(shape)<2:
             raise ValueError('ROI needs at least two observation samples per axis')
+        validate_observations(config,volume,shape)
+        method=config.get('prediction','classical')
         halo=40*stride
         input_lo=np.maximum(0,lo-halo); input_hi=np.minimum(volume.shape,hi+halo)
-        if config.get('prediction','classical')=='sd2':
-            start=(lo//stride)//32*32
-            end=((lo//stride+shape-1)//32+1)*32
+        if method in ('sd2','qual-v2'):
+            core=48 if method=='qual-v2' else 32
+            start=(lo//stride)//core*core
+            end=((lo//stride+shape-1)//core+1)*core
             input_lo=np.maximum(0,lo%stride+start*stride-halo)
             input_hi=np.minimum(volume.shape,lo%stride+(end+40-1)*stride+1)
         chunk_count=np.prod((input_hi-1)//volume.chunks-input_lo//volume.chunks+1,dtype=np.int64)
@@ -94,7 +97,7 @@ def plan(config,volume=None,stages=()):
             mode='download' if volume.remote and fits else 'stream' if volume.remote else 'local'
         if mode=='download' and not fits and volume.remote and not stages:
             raise ValueError('requested CT download exceeds cache or available-space budget; increase budget or use stream')
-        return dict(source=volume.identity,roi_lo_zyx=lo.tolist(),roi_hi_zyx=hi.tolist(),shape_zyx=shape.tolist(),
+        return dict(source=volume.identity,prediction=method,roi_lo_zyx=lo.tolist(),roi_hi_zyx=hi.tolist(),shape_zyx=shape.tolist(),
                      observations=observations,field=field,
                     input_lo_zyx=input_lo.tolist(),input_hi_zyx=input_hi.tolist(),ct_policy=mode,
                     estimated_ct_bytes=ct_bytes,estimated_products_bytes=output_bytes,
