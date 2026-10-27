@@ -56,7 +56,27 @@
 
 ## Task 4: Verify the two distributions together
 
-- [ ] Build/install both wheels in a verification environment; run both suites outside their source checkouts, dependency checks and command ownership checks.
-- [ ] Run prepared build/resume/prefetch/supervision and surface extraction/render examples using installed packages; run the CT pipeline and confirm completed resume.
-- [ ] Run fresh bounded original-CT Qual acceptance at 17 µm; compare numerical products with the prior acceptance and record scientific limits without rewriting it.
-- [ ] Check diffs, imports, source/installed parity and original-checkout hashes. Record results, commit the CLI changes and report branch paths/commits and publication status.
+- [x] Build/install both wheels in a verification environment; run both suites outside their source checkouts, dependency checks and command ownership checks.
+- [x] Run prepared build/resume/prefetch/supervision and surface extraction/render examples using installed packages; run the CT pipeline and confirm completed resume.
+- [x] Run fresh bounded original-CT Qual acceptance at 17 µm; compare numerical products with the prior acceptance and record scientific limits without rewriting it.
+- [x] Check diffs, imports, source/installed parity and original-checkout hashes. Record results, commit the CLI changes and report branch paths/commits and publication status.
+
+## Review resolution
+
+- Independent whole-change review found no critical/runtime issue. Its two
+  findings are addressed: core manifest integrity coverage is restored directly
+  in the library (three cases), and offline commands create their `runs` parent.
+- Core review fix: `163ae9e8bd62a89af51d408d7dbb20302afdbc3c`; CLI review fix and
+  updated dependency pin: `6b8557e36f1a0f794e2a4eb20dd8040a4d05178f`.
+- Final source verification: 1227 core tests with 92.35% coverage, 273 CLI tests;
+  core format/lint/mypy passed. Exact documented examples also pass from a fresh
+  directory against installed runtime-only dependencies.
+- Rebuilt installed wheels pass 1227 core / 273 CLI tests outside the checkouts;
+  their runtime sources, sole executable owner and final provenance match.
+- Review corrections change tests/documentation only. Installed runtime sources
+  retain the accepted CT implementation identity; another CT solve is unnecessary.
+- Legacy algorithms remain unchanged; the independent core suite guards them,
+  but this relocation does not establish new scientific/CUDA/full-scroll results.
+- Branches remain local as requested; remote CLI CI needs publication of the
+  recorded original revision. The final verification documents are checked
+  directly for artifact/product hashes, counts, links and command syntax.
