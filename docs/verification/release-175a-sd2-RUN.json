@@ -1,0 +1,159 @@
+{
+  "active_stage": "flatten",
+  "config": {
+    "cache": "/Users/user/Software.nosync/Factory/winding-field-cli/.cache/real-ct",
+    "cache_bytes": 268435456,
+    "chart_faces": 1024,
+    "chunk": 64,
+    "ct_mode": "stream",
+    "device": "cpu",
+    "fibre_weight": 1.0,
+    "field_chunk": 64,
+    "level": 0,
+    "levels": null,
+    "local": null,
+    "maxiter": 2000,
+    "mesh_tile": 64,
+    "model_path": "/Users/user/Software.nosync/Factory/winding-field-cli/.runtime/sd2.pt",
+    "offline": false,
+    "output": "/Users/user/Software.nosync/Factory/winding-field-cli/runs/final-175a-sd2",
+    "prediction": "sd2",
+    "previews": true,
+    "reserve_bytes": 268435456,
+    "roi_hi": [
+      1535,
+      4070,
+      6094
+    ],
+    "roi_lo": [
+      1503,
+      4038,
+      6062
+    ],
+    "rtol": 1e-06,
+    "seed_stride": 8,
+    "source": "s3://vesuvius-challenge-open-data/PHerc0175A/volumes/20250521115057-8.640um-1.2m-116keV-masked.zarr",
+    "stride": 1,
+    "sweeps": 1,
+    "threads": 4,
+    "threshold": null,
+    "voxel_um": 8.64
+  },
+  "created": 1793077972.224551,
+  "implementation_sha256": "7f0d319ccc407c2498c1bf7921d367b73c4dfe9d729ae8b7e3e11c42278ad5c8",
+  "io": {
+    "backend": "portable-zarr-v2",
+    "cache_bytes": 10485760,
+    "cache_hits": 4,
+    "downloaded_bytes": 0,
+    "downloads": 0,
+    "local_hits": 0
+  },
+  "physical_acceptance": false,
+  "plan": {
+    "ct_policy": "stream",
+    "estimated_ct_bytes": 8388608,
+    "estimated_products_bytes": 3276800,
+    "estimated_remaining_bytes": 0,
+    "existing_products_bytes": 2222889,
+    "free_bytes": 6714548224,
+    "input_hi_zyx": [
+      1575,
+      4110,
+      6134
+    ],
+    "input_lo_zyx": [
+      1463,
+      3998,
+      6022
+    ],
+    "physical_accuracy": "UNVALIDATED",
+    "reserve_bytes": 268435456,
+    "roi_hi_zyx": [
+      1535,
+      4070,
+      6094
+    ],
+    "roi_lo_zyx": [
+      1503,
+      4038,
+      6062
+    ],
+    "shape_zyx": [
+      32,
+      32,
+      32
+    ],
+    "source": {
+      "level": 0,
+      "metadata_sha256": "94065d12a2d185057f6f7cf3f1d55218b84eb261909571813b1ef218c6fe223d",
+      "origin_xyz": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "shape": [
+        12748,
+        9363,
+        9363
+      ],
+      "source": "https://vesuvius-challenge-open-data.s3.amazonaws.com/PHerc0175A/volumes/20250521115057-8.640um-1.2m-116keV-masked.zarr",
+      "spacing_xyz": [
+        8.64,
+        8.64,
+        8.64
+      ]
+    }
+  },
+  "schema": "winding-field-run-v1",
+  "source": {
+    "level": 0,
+    "metadata_sha256": "94065d12a2d185057f6f7cf3f1d55218b84eb261909571813b1ef218c6fe223d",
+    "origin_xyz": [
+      0.0,
+      0.0,
+      0.0
+    ],
+    "shape": [
+      12748,
+      9363,
+      9363
+    ],
+    "source": "https://vesuvius-challenge-open-data.s3.amazonaws.com/PHerc0175A/volumes/20250521115057-8.640um-1.2m-116keV-masked.zarr",
+    "spacing_xyz": [
+      8.64,
+      8.64,
+      8.64
+    ]
+  },
+  "stages": {
+    "fibres": {
+      "receipt": "FIBRES.json",
+      "seconds": 0.04317358299977059,
+      "sha256": "5cb80876f3e7ff9f6f76cb78069a544ddfa209d87e7d956c9bee3b31d8bb2859"
+    },
+    "field": {
+      "receipt": "FIELD.json",
+      "seconds": 0.3587677909999911,
+      "sha256": "8261ca912ef951a42854aee0a74946035eb4b4bbdbc4123837db602b9a55c093"
+    },
+    "flatten": {
+      "receipt": "FLAT.json",
+      "seconds": 1.0725826249999955,
+      "sha256": "dfa01b5086b8854cca86e6b2e69a88dc4c346b5f202a4e81753665b887f0cbe0"
+    },
+    "mesh": {
+      "receipt": "MESHES.json",
+      "seconds": 0.29649166699982743,
+      "sha256": "77b77e16252bd55b5a69e60771ca6954f20ea9b14865dd33ccfea4cfbdb7bb09"
+    },
+    "prepare": {
+      "receipt": "PREPARED.json",
+      "seconds": 19.15975695799989,
+      "sha256": "a263ee2f4f577c05b46f23a690ad4a002178aec39a3ecbdf94193c9437d3499d"
+    }
+  },
+  "status": "COMPLETE",
+  "updated": 1793078009.4099588,
+  "version": "0.1.0"
+}

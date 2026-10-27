@@ -1,0 +1,134 @@
+{
+  "active_stage": "flatten",
+  "config": {
+    "cache": "/Users/user/Software.nosync/Factory/winding-field-cli/runs/final-synthetic-cache",
+    "chart_faces": 1024,
+    "chunk": 64,
+    "device": "cpu",
+    "field_chunk": 64,
+    "model_path": null,
+    "output": "/Users/user/Software.nosync/Factory/winding-field-cli/runs/final-synthetic",
+    "prediction": "classical",
+    "reserve_bytes": 0,
+    "seed_stride": 4,
+    "source": "/Users/user/Software.nosync/Factory/winding-field-cli/runs/final-synthetic-ct.zarr",
+    "sweeps": 1
+  },
+  "created": 1793077962.374899,
+  "implementation_sha256": "7f0d319ccc407c2498c1bf7921d367b73c4dfe9d729ae8b7e3e11c42278ad5c8",
+  "io": {
+    "backend": "portable-zarr-v2",
+    "cache_bytes": 0,
+    "cache_hits": 0,
+    "downloaded_bytes": 0,
+    "downloads": 0,
+    "local_hits": 2
+  },
+  "physical_acceptance": false,
+  "plan": {
+    "ct_policy": "local",
+    "estimated_ct_bytes": 65536,
+    "estimated_products_bytes": 4300800,
+    "estimated_remaining_bytes": 0,
+    "existing_products_bytes": 4765129,
+    "free_bytes": 6709657600,
+    "input_hi_zyx": [
+      24,
+      32,
+      56
+    ],
+    "input_lo_zyx": [
+      0,
+      0,
+      0
+    ],
+    "physical_accuracy": "UNVALIDATED",
+    "reserve_bytes": 0,
+    "roi_hi_zyx": [
+      24,
+      32,
+      56
+    ],
+    "roi_lo_zyx": [
+      0,
+      0,
+      0
+    ],
+    "shape_zyx": [
+      24,
+      32,
+      56
+    ],
+    "source": {
+      "level": 0,
+      "metadata_sha256": "4fac14d3984298f18856fbe8009025873dc14b05593e7af322d7667ee79c4536",
+      "origin_xyz": [
+        20.0,
+        40.0,
+        80.0
+      ],
+      "shape": [
+        24,
+        32,
+        56
+      ],
+      "source": "/Users/user/Software.nosync/Factory/winding-field-cli/runs/final-synthetic-ct.zarr",
+      "spacing_xyz": [
+        4.0,
+        4.0,
+        4.0
+      ]
+    }
+  },
+  "schema": "winding-field-run-v1",
+  "source": {
+    "level": 0,
+    "metadata_sha256": "4fac14d3984298f18856fbe8009025873dc14b05593e7af322d7667ee79c4536",
+    "origin_xyz": [
+      20.0,
+      40.0,
+      80.0
+    ],
+    "shape": [
+      24,
+      32,
+      56
+    ],
+    "source": "/Users/user/Software.nosync/Factory/winding-field-cli/runs/final-synthetic-ct.zarr",
+    "spacing_xyz": [
+      4.0,
+      4.0,
+      4.0
+    ]
+  },
+  "stages": {
+    "fibres": {
+      "receipt": "FIBRES.json",
+      "seconds": 0.07060108299992862,
+      "sha256": "63c927c156b4f724304b1053750197a6e8763e6e642058fdbbf3d897f21ced8e"
+    },
+    "field": {
+      "receipt": "FIELD.json",
+      "seconds": 0.40538458399987576,
+      "sha256": "5dc6a642aa2829bf1b1844729b7bffc2142aa03565431a0d3a80b1d718bde2ef"
+    },
+    "flatten": {
+      "receipt": "FLAT.json",
+      "seconds": 3.6576471250000395,
+      "sha256": "21070513662b4b8cae79fd64b5cbcd43a78c8c5cea0d0ff3d254dd0fe7ca10c7"
+    },
+    "mesh": {
+      "receipt": "MESHES.json",
+      "seconds": 0.7469795830002113,
+      "sha256": "49a66f2bda263d2c2c42aaca594e6da06f8cbe45864fece296b4b23f0e308d33"
+    },
+    "prepare": {
+      "receipt": "PREPARED.json",
+      "seconds": 3.6433838329994614,
+      "sha256": "53e4d2f9f4889cbbe47126f63ebffb633d39a8ddca84c9a4c34c7584daac4388"
+    }
+  },
+  "status": "COMPLETE",
+  "updated": 1793078001.168409,
+  "version": "0.1.0"
+}

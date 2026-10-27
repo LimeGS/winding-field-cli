@@ -1,0 +1,114 @@
+{
+  "frame": "83533331c3de13057e1e8f3d81cc5d731ae96084a0571fd586a2551a6aeddb64",
+  "identity": {
+    "geometry": {
+      "frame": "83533331c3de13057e1e8f3d81cc5d731ae96084a0571fd586a2551a6aeddb64",
+      "input_halo_voxels": 40,
+      "origin_xyz": [
+        20.0,
+        40.0,
+        80.0
+      ],
+      "roi_hi_zyx": [
+        24,
+        32,
+        56
+      ],
+      "roi_lo_zyx": [
+        0,
+        0,
+        0
+      ],
+      "shape_zyx": [
+        24,
+        32,
+        56
+      ],
+      "spacing_xyz": [
+        4.0,
+        4.0,
+        4.0
+      ],
+      "stride": 1,
+      "units": "micrometer"
+    },
+    "method": "classical",
+    "model_sha256": null,
+    "recipe": "fractional-crossings-v1",
+    "source": {
+      "level": 0,
+      "metadata_sha256": "4fac14d3984298f18856fbe8009025873dc14b05593e7af322d7667ee79c4536",
+      "origin_xyz": [
+        20.0,
+        40.0,
+        80.0
+      ],
+      "shape": [
+        24,
+        32,
+        56
+      ],
+      "source": "/Users/user/Software.nosync/Factory/winding-field-cli/runs/final-synthetic-ct.zarr",
+      "spacing_xyz": [
+        4.0,
+        4.0,
+        4.0
+      ]
+    },
+    "threshold": 104.0
+  },
+  "input_halo_voxels": 40,
+  "method_note": "classical CT threshold/structure-tensor baseline",
+  "model_sha256": null,
+  "origin_xyz": [
+    20.0,
+    40.0,
+    80.0
+  ],
+  "physical_accuracy": "UNVALIDATED",
+  "prediction": "classical",
+  "roi_hi_zyx": [
+    24,
+    32,
+    56
+  ],
+  "roi_lo_zyx": [
+    0,
+    0,
+    0
+  ],
+  "shape_zyx": [
+    24,
+    32,
+    56
+  ],
+  "source": {
+    "level": 0,
+    "metadata_sha256": "4fac14d3984298f18856fbe8009025873dc14b05593e7af322d7667ee79c4536",
+    "origin_xyz": [
+      20.0,
+      40.0,
+      80.0
+    ],
+    "shape": [
+      24,
+      32,
+      56
+    ],
+    "source": "/Users/user/Software.nosync/Factory/winding-field-cli/runs/final-synthetic-ct.zarr",
+    "spacing_xyz": [
+      4.0,
+      4.0,
+      4.0
+    ]
+  },
+  "spacing_xyz": [
+    4.0,
+    4.0,
+    4.0
+  ],
+  "status": "PREPARED",
+  "stride": 1,
+  "tiles_sha256": "873017f68ac99ca346bdd13a6edb1e36032d0abb0a82a5c5fe3109889f14ea69",
+  "units": "micrometer"
+}

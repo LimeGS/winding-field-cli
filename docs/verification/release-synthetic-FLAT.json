@@ -1,0 +1,16 @@
+{
+  "atlas_sha256": "e53db0cfd402477dfad5e52d6e2b9b09ec077c97c86357b9ea9e68f886988f8c",
+  "charts": 17,
+  "continuity": "linked atlas; cuts retain common source vertex IDs",
+  "coverage_fraction": 1.0,
+  "covered_faces": 9286,
+  "identity": {
+    "algorithm": "lscm-linked-charts-v2",
+    "chart_faces": 1024,
+    "ct_previews": true,
+    "mesh": "7fd8642cfb1a16e59a96e55305dba3449f3cd2a267a10a8a2b5cf85c25bb75eb"
+  },
+  "physical_acceptance": false,
+  "status": "FLAT_READY",
+  "total_faces": 9286
+}

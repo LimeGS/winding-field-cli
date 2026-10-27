@@ -1,0 +1,239 @@
+{
+  "database_sha256": "0b7f2c87d2e499ae407f33b2d9fab996a2bac2133718537ad1f41ed1951ed2a2",
+  "identity": {
+    "algorithm": "lewiner-shifted-f32-adaptive-global-edges-v2",
+    "code": {
+      "field_store.py": "cb606b2a3322298c25b57c055bb6e76f4a70031569d998ff03839af5e7e47aa2",
+      "surface_mesh.py": "8c99d75da46b42849fb7098346b9c085f886e00214776f22d88610b87d3b5650",
+      "surface_sources.py": "be218a3e9187cbf8e37748c4f8076e9505a0f8408336d5d2a5bd9cfbaa68844a"
+    },
+    "decoder_runtime": "df7ddf4c9956fc428fef4712875859a3d93603827aa29cc916820f6fc452de29",
+    "levels": [
+      -0.20771529342524042,
+      0.7922847065747596,
+      1.7922847065747596,
+      2.7922847065747596,
+      3.7922847065747596,
+      4.79228470657476,
+      5.79228470657476
+    ],
+    "numpy": "2.4.6",
+    "skimage": "0.26.0",
+    "source": {
+      "field": {
+        "kind": "chunks",
+        "path": "/Users/user/Software.nosync/Factory/winding-field-cli/runs/final-synthetic/field/CHECKPOINT.json",
+        "sha256": "83b7d0eb95fc0bf8b14fa027e552cd79bea0416e35c428519719dcd8a91588f8",
+        "support_policy": "observed"
+      },
+      "geometry": {
+        "frame": "83533331c3de13057e1e8f3d81cc5d731ae96084a0571fd586a2551a6aeddb64",
+        "origin_xyz": [
+          20.0,
+          40.0,
+          80.0
+        ],
+        "shape_zyx": [
+          24,
+          32,
+          56
+        ],
+        "sheet_step": 1.0,
+        "spacing_xyz": [
+          4.0,
+          4.0,
+          4.0
+        ],
+        "voxel_um": 1.0
+      },
+      "source_identity": {
+        "boundary": "natural-zero-gauge",
+        "chunk": 64,
+        "constraints": "caller-bound-provider",
+        "device": "cpu",
+        "dtype": "float64",
+        "halo": 2,
+        "maxiter": 2000,
+        "order_sha256": "9d908ecfb6b256def8b49a7c504e6c889c4b0e41fe6ce3e01863dd7b61a20aa0",
+        "origin_xyz": [
+          20.0,
+          40.0,
+          80.0
+        ],
+        "rtol": 1e-06,
+        "schema": "winding-block-solve-v1",
+        "shape": [
+          24,
+          32,
+          56
+        ],
+        "source_identity": {
+          "algorithm": "oriented-density-core-v1",
+          "calibration": {
+            "axis_xyz": [
+              0.999247361675261,
+              0.0025816897049964305,
+              -0.03870458710924841
+            ],
+            "centre_xyz": [
+              127.37043652211189,
+              101.99128384653855,
+              125.94127312995641
+            ],
+            "mean_density_per_um": 0.028483349803652133,
+            "mode": "planar",
+            "orientation_concentration": 0.9927772496584292,
+            "physical_accuracy": "UNVALIDATED",
+            "supported_voxels": 41991,
+            "topology": "local chart; global sheet continuity unverified"
+          },
+          "fibre_weight": 1.0,
+          "fibres": "497d673ad1433b2e639d39e37f7b6f146ddd671985b20b211ebcb88497ad9d53",
+          "geometry": {
+            "frame": "83533331c3de13057e1e8f3d81cc5d731ae96084a0571fd586a2551a6aeddb64",
+            "origin_xyz": [
+              20.0,
+              40.0,
+              80.0
+            ],
+            "shape_zyx": [
+              24,
+              32,
+              56
+            ],
+            "sheet_step": 1.0,
+            "spacing_xyz": [
+              4.0,
+              4.0,
+              4.0
+            ],
+            "voxel_um": 1.0
+          },
+          "maps": "873017f68ac99ca346bdd13a6edb1e36032d0abb0a82a5c5fe3109889f14ea69"
+        },
+        "spacing_xyz": [
+          4.0,
+          4.0,
+          4.0
+        ],
+        "sweeps": 1
+      }
+    },
+    "tile": 64,
+    "total_tiles": 1
+  },
+  "level_selection": "CT-presence circular phase",
+  "levels": [
+    {
+      "area_world2": 405.44840330508123,
+      "boundary_edges": 42,
+      "components": 2,
+      "duplicate_faces": 0,
+      "faces": 70,
+      "id": 0,
+      "inconsistent_edges": 0,
+      "level": -0.20771529342524042,
+      "nonmanifold_edges": 0,
+      "vertices": 58
+    },
+    {
+      "area_world2": 11434.465889491208,
+      "boundary_edges": 112,
+      "components": 1,
+      "duplicate_faces": 0,
+      "faces": 1518,
+      "id": 1,
+      "inconsistent_edges": 0,
+      "level": 0.7922847065747596,
+      "nonmanifold_edges": 0,
+      "vertices": 816
+    },
+    {
+      "area_world2": 11435.384139075983,
+      "boundary_edges": 112,
+      "components": 1,
+      "duplicate_faces": 0,
+      "faces": 1540,
+      "id": 2,
+      "inconsistent_edges": 0,
+      "level": 1.7922847065747596,
+      "nonmanifold_edges": 0,
+      "vertices": 827
+    },
+    {
+      "area_world2": 11437.26553686578,
+      "boundary_edges": 112,
+      "components": 1,
+      "duplicate_faces": 0,
+      "faces": 1540,
+      "id": 3,
+      "inconsistent_edges": 0,
+      "level": 2.7922847065747596,
+      "nonmanifold_edges": 0,
+      "vertices": 827
+    },
+    {
+      "area_world2": 11437.37614016034,
+      "boundary_edges": 112,
+      "components": 1,
+      "duplicate_faces": 0,
+      "faces": 1538,
+      "id": 4,
+      "inconsistent_edges": 0,
+      "level": 3.7922847065747596,
+      "nonmanifold_edges": 0,
+      "vertices": 826
+    },
+    {
+      "area_world2": 11436.279194027586,
+      "boundary_edges": 112,
+      "components": 1,
+      "duplicate_faces": 0,
+      "faces": 1538,
+      "id": 5,
+      "inconsistent_edges": 0,
+      "level": 4.79228470657476,
+      "nonmanifold_edges": 0,
+      "vertices": 826
+    },
+    {
+      "area_world2": 11446.316643705588,
+      "boundary_edges": 112,
+      "components": 1,
+      "duplicate_faces": 0,
+      "faces": 1542,
+      "id": 6,
+      "inconsistent_edges": 0,
+      "level": 5.79228470657476,
+      "nonmanifold_edges": 0,
+      "vertices": 828
+    }
+  ],
+  "metadata": {
+    "frame": "83533331c3de13057e1e8f3d81cc5d731ae96084a0571fd586a2551a6aeddb64",
+    "origin_xyz": [
+      20.0,
+      40.0,
+      80.0
+    ],
+    "shape_zyx": [
+      24,
+      32,
+      56
+    ],
+    "sheet_step": 1.0,
+    "spacing_xyz": [
+      4.0,
+      4.0,
+      4.0
+    ],
+    "voxel_um": 1.0
+  },
+  "next_tile": 1,
+  "phase_concentration": 0.7644702199701543,
+  "physical_acceptance": false,
+  "schema": "winding-mesh-v1",
+  "self_intersection": "UNMEASURED",
+  "status": "MESH_READY",
+  "total_tiles": 1
+}
