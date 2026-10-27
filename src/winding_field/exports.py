@@ -124,8 +124,14 @@ def export_afv(run,stop=None):
         if row and row!=(json.dumps(identity),):
             raise ValueError('partial AFV export identity changed')
         db.execute('INSERT OR IGNORE INTO metadata VALUES (?,?)',('export_identity',json.dumps(identity))); db.commit()
-        last=db.execute('SELECT coalesce(max(id),0) FROM fibers').fetchone()[0]
-        for fid,tile,blob in src.execute('SELECT id,tile,points FROM curves WHERE id>? ORDER BY id',(last,)):
+        cursor=db.execute("SELECT value FROM metadata WHERE key='export_last_id'").fetchone()
+        last=int(json.loads(cursor[0])) if cursor else 0
+        retained=src.execute('SELECT count(*) FROM curves WHERE id<=?',(last,)).fetchone()[0]
+        if (db.execute('SELECT coalesce(max(id),0) FROM fibers').fetchone()[0]!=last
+                or any(db.execute('SELECT count(*) FROM '+table).fetchone()[0]!=retained
+                       for table in ('fibers','blocks','block_bounds'))):
+            raise ValueError('partial AFV export inventory changed')
+        for fid,tile,blob in src.execute('SELECT id,tile,points FROM curves ORDER BY id'):
             if stop and stop():
                 return None
             world=np.load(io.BytesIO(blob),allow_pickle=False)
@@ -133,10 +139,18 @@ def export_afv(run,stop=None):
             lo=points.min(0); hi=points.max(0); box=[float(v) for pair in zip(lo,hi) for v in pair]
             length=float(np.linalg.norm(np.diff(points,axis=0),axis=1).sum())
             annotation=json.dumps(dict(tile=tile,prediction=meta['prediction'],automatically_traced=True,fragment=True))
-            db.execute('INSERT INTO fibers VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',
-                       (fid,f'fiber-{fid}','unknown',len(points),length,*box,annotation))
+            record=(fid,f'fiber-{fid}','unknown',len(points),length,*box,annotation)
+            if fid<=last:
+                bounds=db.execute('SELECT min_x,max_x,min_y,max_y,min_z,max_z FROM block_bounds WHERE id=?',(fid,)).fetchone()
+                if (db.execute('SELECT * FROM fibers WHERE id=?',(fid,)).fetchone()!=record
+                        or db.execute('SELECT fiber_id,first_segment,points FROM blocks WHERE id=?',(fid,)).fetchone()!=(fid,0,points.tobytes())
+                        or bounds is None or not np.allclose(bounds,box,rtol=2e-7,atol=1e-6)):
+                    raise ValueError('partial AFV export record changed: '+str(fid))
+                continue
+            db.execute('INSERT INTO fibers VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',record)
             db.execute('INSERT INTO blocks VALUES (?,?,0,?)',(fid,fid,points.tobytes()))
             db.execute('INSERT INTO block_bounds VALUES (?,?,?,?,?,?,?)',(fid,*box))
+            db.execute('INSERT OR REPLACE INTO metadata VALUES (?,?)',('export_last_id',json.dumps(fid)))
             db.commit()
         if stop and stop():
             return None

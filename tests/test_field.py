@@ -145,6 +145,13 @@ def test_exact_field_pitch_retains_fine_prior_and_strict_extent(tmp_path,pitch):
     assert meta['spacing_xyz']==[8.64,9.,10.]
 
 
+@pytest.mark.parametrize('spacing',[8.64,8.65])
+def test_explicit_native_pitch_retains_roundoff_boundary_plane(spacing):
+    from winding_field.config import field_geometry
+    meta=dict(shape_zyx=[128]*3,spacing_xyz=[spacing]*3,origin_xyz=[0.]*3,frame='test')
+    assert field_geometry(meta,spacing)['shape_zyx']==[128]*3
+
+
 def test_coarse_field_uses_physical_constraints_and_mesh_geometry(tmp_path):
     from winding_field.field import solve,open_field
     from winding_field.meshes import mesh

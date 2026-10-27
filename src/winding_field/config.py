@@ -11,8 +11,17 @@ def field_geometry(meta,spacing_um=None):
         if not math.isfinite(spacing_um) or spacing_um<=0:
             raise ValueError('field spacing must be positive finite micrometres')
         extent=(np.asarray(meta['shape_zyx'])[::-1]-1)*meta['spacing_xyz']
-        geometry.update(spacing_xyz=[float(spacing_um)]*3,
-                        shape_zyx=(np.floor(extent/spacing_um).astype(np.int64)+1)[::-1].tolist())
+        shape=[]
+        for length in extent:
+            ratio=float(length)/spacing_um
+            if not math.isfinite(ratio) or ratio>=np.iinfo(np.int64).max-2:
+                raise ValueError('field grid is too large; increase --field-spacing-um')
+            last=math.floor(ratio)
+            # Division can round below an integer; coordinates decide ownership.
+            last+=int((last+1)*spacing_um<=length)
+            last-=int(last*spacing_um>length)
+            shape.append(last+1)
+        geometry.update(spacing_xyz=[float(spacing_um)]*3,shape_zyx=shape[::-1])
     if min(geometry['shape_zyx'])<2:
         raise ValueError('field grid needs at least two nodes per axis; enlarge ROI or reduce --field-spacing-um')
     return geometry
@@ -37,6 +46,8 @@ def validate_config(config):
     if config.get('levels') is not None:
         if not config['levels'] or not all(math.isfinite(v) for v in config['levels']):
             raise ValueError('levels must be nonempty finite numbers')
+        if len(set(config['levels']))!=len(config['levels']):
+            raise ValueError('duplicate levels')
     for name,choices in [('prediction',('classical','sd2')),('ct_mode',('auto','download','stream'))]:
         if name in config and config[name] not in choices:
             raise ValueError('invalid '+name)
