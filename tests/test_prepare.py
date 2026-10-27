@@ -136,3 +136,64 @@ def test_classical_threshold_is_shared_across_tiles_and_persisted(tmp_path):
     assert (tmp_path/'small/THRESHOLD.json').exists()
     assert prepare(volume,tmp_path/'small',dict(config,chunk=64))['tiles_sha256']==first['tiles_sha256']
     a.close();b.close();volume.close()
+
+
+def test_sd2_storage_chunks_and_overlapping_rois_share_canonical_predictions(tmp_path,monkeypatch):
+    from ct_fixture import write_ct
+    from winding_field.io import Volume
+    from winding_field.artifacts import Tiles
+    import winding_field.predict as prediction
+    calls=[]
+    class WindowModel:
+        def __init__(self,*a,**k): pass
+        def predict(self,ct):
+            calls.append(ct.shape)
+            presence=np.clip((ct.astype(float)-ct.mean())/max(ct.std(),1)*.2+.5,0,1).astype(np.float32)
+            tangent=np.zeros(ct.shape+(3,),np.float32); tangent[...,1]=1
+            return presence,tangent
+    monkeypatch.setattr(prediction,'SD2',WindowModel)
+    z,y,x=np.indices((72,)*3)
+    ct=(20+150*(x%8<3)+x+y//3+z//4).astype(np.uint8)
+    v=Volume(write_ct(tmp_path/'ct.zarr',ct),cache=tmp_path/'cache')
+    for name,config in [('a',dict(chunk=16)),('b',dict(chunk=32)),
+                        ('c',dict(chunk=16,roi_lo=[4,4,4]))]:
+        prediction.prepare(v,tmp_path/name,dict(prediction='sd2',roi_hi=[32]*3,**config))
+    maps=[Tiles(tmp_path/name/'maps') for name in 'abc']
+    for channel in ('presence','tangents','density','normals','support','ct'):
+        a=maps[0].read(channel,[4]*3,[32]*3)
+        np.testing.assert_array_equal(a,maps[1].read(channel,[4]*3,[32]*3))
+        np.testing.assert_array_equal(a,maps[2].read(channel,[0]*3,[28]*3))
+    assert set(calls)=={(112,)*3}
+    for m in maps: m.close()
+    v.close()
+
+
+def test_validity_excludes_full_filter_footprint_without_rejecting_valid_zeros():
+    from winding_field.predict import observations
+    x=np.indices((8,8,128))[2]
+    ct=np.where(x%8<3,200,0).astype(np.uint8)
+    validity=np.ones(ct.shape,bool); validity[:,:,:16]=False
+    masked=observations(ct,[1.]*3,threshold=100,validity=validity)
+    assert not masked['support'][:,:,:56].any()
+    assert not masked['density'][:,:,:56].any()
+    assert not masked['normals'][:,:,:56].any()
+    assert masked['support'][:,:,64:112].all()
+    assert masked['support'][ct==0].any()  # Zero intensity is valid without a fill declaration.
+    assert not masked['presence'][~validity].any()
+
+
+def test_acquisition_fill_policy_is_explicit_and_bound_to_resume(tmp_path):
+    from ct_fixture import write_ct
+    from winding_field.io import Volume
+    from winding_field.predict import prepare
+    from winding_field.artifacts import Tiles
+    ct=np.zeros((8,8,64),np.uint8); ct[:,:,32:]=160
+    v=Volume(write_ct(tmp_path/'ct.zarr',ct),cache=tmp_path/'cache')
+    config=dict(chunk=64,threshold=100,invalid_value=0)
+    prepare(v,tmp_path/'run',config)
+    maps=Tiles(tmp_path/'run/maps')
+    assert not maps.read('support',[0,0,0],[8,8,64]).any()
+    maps.close()
+    with pytest.raises(ValueError,match='identity'):
+        prepare(v,tmp_path/'run',dict(config,invalid_value=None))
+    v.close()

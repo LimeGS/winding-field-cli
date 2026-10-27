@@ -2,6 +2,7 @@
 
 from pathlib import Path
 import os
+import tempfile
 from urllib.request import urlopen
 
 import numpy as np
@@ -26,17 +27,21 @@ def checkpoint(path=None,offline=False):
         if offline:
             raise FileNotFoundError('SD2 model not cached; run winding-field models first')
         path.parent.mkdir(parents=True,exist_ok=True)
-        temporary=path.with_suffix('.download')
-        with urlopen(MODEL_URL,timeout=120) as response,temporary.open('wb') as out:
-            total=0
-            while block:=response.read(1<<20):
-                total+=len(block)
-                if total>1<<30:
-                    raise ValueError('checkpoint exceeds 1 GiB budget')
-                out.write(block)
-            out.flush(); os.fsync(out.fileno())
-        verify_checkpoint(temporary)
-        os.replace(temporary,path)
+        fd,name=tempfile.mkstemp(prefix='.'+path.name+'-',suffix='.download',dir=path.parent)
+        temporary=Path(name)
+        try:
+            with os.fdopen(fd,'wb') as out, urlopen(MODEL_URL,timeout=120) as response:
+                total=0
+                while block:=response.read(1<<20):
+                    total+=len(block)
+                    if total>1<<30:
+                        raise ValueError('checkpoint exceeds 1 GiB budget')
+                    out.write(block)
+                out.flush(); os.fsync(out.fileno())
+            verify_checkpoint(temporary)
+            os.replace(temporary,path)
+        finally:
+            temporary.unlink(missing_ok=True)
     verify_checkpoint(path)
     return path
 
