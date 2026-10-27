@@ -1,6 +1,6 @@
 {
   "date": "2026-10-27",
-  "implementation_sha256": "04fbb70b98f1181ccaffe66883e5ac3ff2a0d8b2ac7b197185172e7960db3f09",
+  "implementation_sha256": "3c74bb0c3b2b3a3a869d24ed3e2c4bd64fe6003c4e9014bb227ddb7784e1f9f3",
   "environment": {
     "platform": "macOS-27.0.1-arm64-arm-64bit",
     "python": "3.11.13",
@@ -16,17 +16,17 @@
     "numba": "0.64.0"
   },
   "tests": {
-    "source": {"passed": 107, "seconds": 66.62},
-    "installed_wheel_outside_checkout": {"passed": 107, "seconds": 66.87}
+    "source": {"passed": 117, "seconds": 79.38},
+    "installed_wheel_outside_checkout": {"passed": 117, "seconds": 80.71}
   },
   "artifacts": {
     "winding_field_cli-0.1.0-py3-none-any.whl": {
-      "bytes": 149416,
-      "sha256": "02d1641f76831f37609f72f9e14185b789e0339d49d6f5c851f3e1d603a19507"
+      "bytes": 150208,
+      "sha256": "6efb6651db8aabe11a01ad34f4a7019dfbb9c4945cd5d23373c20bee7dd45b3a"
     },
     "winding_field_cli-0.1.0.tar.gz": {
-      "bytes": 498363,
-      "sha256": "47f40173198798669a9c8ce83249183127593c4d17c165de0ce6ec111ccf91c0"
+      "bytes": 505388,
+      "sha256": "a9478ae25c47579005291d870e17df69ebec6bf34e875591c9612703915b0dbc"
     }
   },
   "model_revision": "2a8a26a70754a5d90aeca91f9ef8e7130e6e4f81",
@@ -47,12 +47,12 @@
     "field_chunk": 16,
     "cache_bytes": 268435456,
     "reserve_bytes": 268435456,
-    "prepare_seconds": 17.78,
-    "prepare_process_maximum_rss_bytes": 3271458816,
+    "prepare_seconds": 20.88,
+    "prepare_process_maximum_rss_bytes": 3525083136,
     "splines": {"V": 5, "H": 3},
-    "fibre_constraint_rows": 26,
-    "mesh_faces": 222,
-    "flat_charts": 13,
+    "fibre_constraint_rows": 106,
+    "mesh_faces": 227,
+    "flat_charts": 12,
     "extracted_face_coverage_fraction": 1.0,
     "status": "COMPLETE",
     "physical_acceptance": false,
@@ -62,6 +62,7 @@
     "status": "PAUSED",
     "completed_stages": ["prepare"],
     "upstream_afv_published": false,
+    "sealed_work_files": 9,
     "input_hash_and_mtime_unchanged_after_resume": true
   },
   "storage_layout_comparison": {
@@ -71,12 +72,15 @@
     "differing_values": 0
   },
   "unchanged_after_completed_resume": {
-    "field/CHECKPOINT.json": "2101452e044431e93551b8a1ea701613f97b03c19d9db627a2e75bfec8f6c1a8",
-    "meshes/MESH.json": "78438df6f612096cbf6cd0eb8f77887590501520e5e9304d50f13b41b9d0407e",
-    "FLAT.json": "183bf09ae5f7808ab5618c9e49015276d1b4e0960b49704b7f1ea14ff4863eb5",
-    "FIBRES.json": "241e1588e6f7554d602c131851ac0c73fc6569f63de25992b643c762628ee035",
+    "field/CHECKPOINT.json": "9d48b95662d9f6dc113e9962509f14eaa61b093e09b051f18917d4134a986a10",
+    "meshes/MESH.json": "f4f1371bf6552e3a3eee92d715c9c5d79f0f5f570ddc7f4f312084a12b03f7b6",
+    "FLAT.json": "516e3af653b94cb16dff0eae663dc2ffd5afdcf6ecfb281ed19831905d828e89",
+    "FIBRES.json": "86eb351b44ad607aee6a1d8b70e037714ea802fad5c0c516cf68462725df6ca5",
     "fibres/fibres.afv": "dc7a98a8204dceab307292debddbdf8a3e85bfaee88a119ae5e94e08b46089a9",
     "fibres/fibres.sqlite": "0219ca3bc3735fc6fefd49bb674d685321a0acdda214da853e881c4ccf0bee47",
-    "fibres/probabilities.npy": "75e734f82ea0fdfa18dc5356d5d4577101fdd665694fdb322a1a1a8d1f4c75f1"
-  }
+    "fibres/probabilities.npy": "75e734f82ea0fdfa18dc5356d5d4577101fdd665694fdb322a1a1a8d1f4c75f1",
+    "fibres/upstream/WORK.json": "ffc83c82751c865405768839c290c129f0176d7ce501531fe516acb3738173c8"
+  },
+  "independent_review": {"findings_fixed": 4, "deferred": 0},
+  "hard_kill_before_work_seal_requires_new_output": true
 }

@@ -8,9 +8,9 @@ numerical `_core` is unchanged. Pins and bundled upstream hashes are in
 
 ## Regression and installed-package checks
 
-- Source suite: **107 passed in 66.62s**.
+- Final source suite: **117 passed in 79.38s**.
 - Built sdist/wheel; installed wheel tested outside the checkout with `PYTHONPATH`
-  removed and pytest's `pythonpath` empty: **107 passed in 66.87s**.
+  removed and pytest's `pythonpath` empty: **117 passed in 80.71s**.
 - Installed Python/model JSON files match the source tree; upstream model and
   plans match their provenance hashes. The official generator's installed direct
   URL points to the pinned commit archive.
@@ -27,6 +27,27 @@ versions, implementation identity and artifact hashes are in the
 [`receipt`](qual-v2-splines-receipt.json). The artifacts retain development version
 `0.1.0`; this is verification evidence, not a new published release.
 
+## Independent review and fixes
+
+A fresh-context read-only review of the whole change found four issues. Each was
+reproduced as a failing regression and fixed before the final suites and fresh
+original-CT acceptance:
+
+1. Crossing spline edges could disappear in small solve blocks. Clipping each
+   supported edge and sampling at field pitch now supplies free-node constraints
+   in **all 144 intersected blocks** of a 1,296-block, 3 µm-field schedule.
+2. Retained upstream batches and phase arrays lacked content checks. A post-child
+   SHA-256 inventory now rejects changed batches, arrays, progress and missing seals
+   before reuse; tests stop the actual generator after committed batches.
+3. Missing import-ledger rows or extra curves/bounds could survive resume. The
+   importer now rejects all unaccounted inventory before inserting new curves.
+4. Completed workflow resume omitted probability integrity. The final fibre
+   receipt now binds that input and both resume entrypoints check it.
+
+No review findings are deferred. Work seals cover STOP, Ctrl-C and handled
+failures; a hard kill of the parent before sealing requires a new output directory.
+That limitation is explicit rather than silently trusting unverifiable scratch.
+
 ## CPU workspace adjustment
 
 Profiling selected PyTorch's `slow_conv3d` on this machine without oneDNN. A
@@ -37,7 +58,7 @@ Whole-window instance normalization, weights and topology are retained.
 
 Two regression cases compare full versus slabbed convolutions, including stride,
 dilation and groups, at `atol=rtol=2e-6`. Original-CT preparation then completed
-in **17.78s**, with process maximum RSS **3,271,458,816 bytes** (~3.05 GiB).
+in **20.88s**, with process maximum RSS **3,525,083,136 bytes** (~3.28 GiB).
 This measurement is for this small ROI and backend, not a whole-scroll RAM bound.
 
 ## Original-CT acceptance
@@ -52,22 +73,23 @@ winding-field run --source "$CT" --voxel-um 8.64 \
   --field-spacing-um 17 --sweeps 1 --chunk 16 --field-chunk 16 \
   --ct-mode stream --cache /path/to/ct-cache --cache-gib .25 --reserve-gib .25 \
   --threads 4 --model-path .runtime/qual-v2.pt \
-  --until prepare --output .runtime/qual-real-17um
-winding-field fibres .runtime/qual-real-17um
-winding-field resume .runtime/qual-real-17um
+  --until prepare --output .runtime/qual-reviewed-17um
+winding-field fibres .runtime/qual-reviewed-17um
+winding-field resume .runtime/qual-reviewed-17um
 ```
 
 The tracer was deliberately stopped after its work manifest appeared, before
-publishing upstream AFV. The CLI returned `PAUSED` with only preparation committed.
+publishing upstream AFV. The CLI returned `PAUSED` with only preparation committed
+and nine scratch files sealed by their content hashes.
 Resume completed the entire pipeline, with these results:
 
 | Product | Result |
 | --- | --- |
 | Observations | 48³, native 8.64 µm, support fraction 0.222177 |
 | Imported curves | **8 splines: 5 V, 3 H** |
-| Field | **17 µm**, 24³ nodes, **26 fibre-constraint rows** |
-| Mesh | **222 faces** |
-| Flattening | **13 charts**, all 222 extracted faces covered |
+| Field | **17 µm**, 24³ nodes, **106 fibre-constraint rows** |
+| Mesh | **227 faces** |
+| Flattening | **12 charts**, all 227 extracted faces covered |
 
 No acquisition fill sentinel was asserted for this dataset. Explicit fill and
 unsupported-gap behavior are exercised separately by regressions.
@@ -77,7 +99,7 @@ unsupported-gap behavior are exercised separately by regressions.
 The materialized probability input's SHA-256 and modification time were identical
 before stopping and after resuming the actual tracer. A subsequent completed-run
 resume preserved field checkpoint, mesh manifest, flat receipt, fibre receipt,
-curve database, AFV and probability-input hashes.
+curve database, AFV, probability-input and upstream-work-seal hashes.
 
 A second installed Qual preparation used storage chunks 32 instead of 16 and
 requested a 300 µm field. **All seven map channels were bit-identical** over the
@@ -85,8 +107,9 @@ same 48³ ROI: CT, presence, V/H probabilities, density, normals, tangents and
 support. This checks storage-layout and field-pitch independence of the canonical
 tiled estimator; it does not establish whole-volume inference equivalence.
 
-Local outputs are `.runtime/qual-real-17um/`, `.runtime/qual-real-chunk32/` and
-`.runtime/qual-real-checks.json`. The receipt retains their acceptance hashes.
+Local outputs are `.runtime/qual-reviewed-17um/`, `.runtime/qual-reviewed-chunk32/`
+and `.runtime/qual-reviewed-checks.json`; logs are retained in
+`.runtime/qual-evidence/`. The receipt retains the final acceptance hashes.
 
 ## Scientific and scale limits
 

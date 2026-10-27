@@ -206,15 +206,11 @@ def test_physical_sampling_orients_directors_and_preserves_support_holes(tmp_pat
     maps.close()
 
 
-@pytest.mark.parametrize('pitch',[17.,130.])
-@pytest.mark.parametrize('point_count',[2,80])
-def test_long_qual_spline_constrains_blocks_away_from_its_origin(tmp_path,monkeypatch,pitch,point_count):
+def qual_field_fixture(run,shape,points):
     import io
     import sqlite3
-    import winding_field.field as field
     from winding_field.artifacts import Tiles
     from winding_field.util import atomic_json,file_sha
-    run=tmp_path/'run'; shape=(80,24,24)
     maps=Tiles(run/'maps',shape=shape,chunk=8,identity={})
     for key in maps.keys():
         lo,hi=maps.box(key); local=tuple(hi-lo)
@@ -224,16 +220,25 @@ def test_long_qual_spline_constrains_blocks_away_from_its_origin(tmp_path,monkey
               prediction='qual-v2',tiles_sha256=maps.identity())
     maps.close(); atomic_json(run/'PREPARED.json',meta)
     (run/'fibres').mkdir()
-    points=np.column_stack([np.full(80,41.5),np.full(80,51.5),30+np.arange(80)*9.])
-    if point_count==2:
-        points=points[68:70]
     blob=io.BytesIO(); np.save(blob,points,allow_pickle=False)
     with sqlite3.connect(run/'fibres/fibres.sqlite') as db:
         db.executescript('CREATE TABLE curves(id INTEGER PRIMARY KEY,tile TEXT,points BLOB,family TEXT);'
                         'CREATE VIRTUAL TABLE curve_bounds USING rtree(id,min_x,max_x,min_y,max_y,min_z,max_z);')
         db.execute('INSERT INTO curves VALUES (1,?,?,?)',('qual',blob.getvalue(),'V'))
-        db.execute('INSERT INTO curve_bounds VALUES (1,41.5,41.5,51.5,51.5,?,?)',(points[:,2].min(),points[:,2].max()))
+        box=tuple(v for pair in zip(points.min(0),points.max(0)) for v in pair)
+        db.execute('INSERT INTO curve_bounds VALUES (1,?,?,?,?,?,?)',box)
     atomic_json(run/'FIBRES.json',dict(sha256=file_sha(run/'fibres/fibres.sqlite')))
+
+
+@pytest.mark.parametrize('pitch',[17.,130.])
+@pytest.mark.parametrize('point_count',[2,80])
+def test_long_qual_spline_constrains_blocks_away_from_its_origin(tmp_path,monkeypatch,pitch,point_count):
+    import winding_field.field as field
+    run=tmp_path/'run'
+    points=np.column_stack([np.full(80,41.5),np.full(80,51.5),30+np.arange(80)*9.])
+    if point_count==2:
+        points=points[68:70]
+    qual_field_fixture(run,(80,24,24),points)
     calls=[]; pair=field.pair_constraints
     def constraints(a,b,origin,*args,**kwargs):
         calls.append((origin.copy(),a.copy(),b.copy()))
@@ -249,3 +254,35 @@ def test_long_qual_spline_constrains_blocks_away_from_its_origin(tmp_path,monkey
         expected=np.broadcast_to(np.arange(source.shape[2])*pitch/100,values.shape)
         np.testing.assert_allclose(values,expected,atol=2e-4)
         assert support.all()
+
+
+def test_qual_segments_constrain_every_intersected_small_block(tmp_path,monkeypatch):
+    import winding_field.field as field
+    run=tmp_path/'run'
+    x=10+np.arange(.5,47,1.6)*9
+    points=np.column_stack([x,np.full(len(x),51.5),np.full(len(x),61.5)])
+    qual_field_fixture(run,(8,8,48),points)
+    class Checked(Exception): pass
+    # Exercise the real constraint provider over the solver's entire block schedule.
+    def check_blocks(root,shape,chunk,identity,load,**options):
+        checked=0
+        for key in options['order']:
+            lo=np.maximum(np.array(key)*chunk-options['halo'],0)
+            hi=np.minimum(np.array(key)*chunk+chunk+options['halo'],shape)
+            low=np.array([10.,20.,30.])+lo[::-1]*3
+            high=np.array([10.,20.,30.])+(hi-1)[::-1]*3
+            intersects=(low[1]<51.5<high[1] and low[2]<61.5<high[2]
+                        and max(low[0],x[0])<min(high[0],x[-1]))
+            rows=options['constraints'](lo,hi,None)
+            if intersects:
+                assert rows is not None,f'missing spline in block {key}'
+                interior=np.zeros(tuple(hi-lo),bool); interior[1:-1,1:-1,1:-1]=True
+                assert rows.matrix[:,interior.ravel()].nnz>0,f'only fixed boundary nodes in block {key}'
+                checked+=1
+            else:
+                assert rows is None
+        assert checked==144
+        raise Checked
+    monkeypatch.setattr(field,'solve_blocks',check_blocks)
+    with pytest.raises(Checked):
+        field.solve(run,dict(field_spacing_um=3.,field_chunk=4,sweeps=1))
