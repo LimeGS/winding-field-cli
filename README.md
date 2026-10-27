@@ -6,14 +6,21 @@ observation and fibre preparation.
 
 ## Quick start
 
-Python 3.11+, Linux or macOS. Install from the repository root:
+Python 3.11 or 3.12, Linux or macOS. Install from the CLI repository root
+alongside the original library checkout on `feat/core-cli-separation`
+(`winding-field-experiments==1.3.0.dev0`):
 
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
-python -m pip install .
+python -m pip install /path/to/winding-field-core-cli-separation .
 winding-field doctor
 ```
+
+The numerical library is a real dependency: this package contains no solver
+copy. Only the CLI installs the `winding-field` executable. The exact original
+revision is recorded in [provenance/core.json](provenance/core.json). These local
+separation branches must be published before CI can fetch that revision.
 
 Run the complete pipeline on synthetic CT, offline:
 
@@ -124,6 +131,22 @@ Use a new output directory to change settings, input data or package implementat
 | `--invalid-value 0` | Declare acquisition fill explicitly; otherwise zero is valid CT |
 | `--chart-faces 1024 --no-previews` | Chart size; optionally skip CT preview images |
 
+## Prepared inputs and geometry rendering
+
+Already have a field recipe or a mesh? The workflows moved here from the
+original library:
+
+```bash
+winding-field prepared build --config field-run.json --output runs/prepared
+winding-field prepared resume --config field-run.json --output runs/prepared --prefetch
+winding-field prepared surfaces --config surfaces.json --output runs/surfaces
+winding-field prepared render --mesh runs/surfaces --output runs/views
+```
+
+See [prepared workflows](docs/PREPARED.md) for recipes, supervised workers,
+Python imports and runnable examples. Implementation-bound runs made before
+the split require the original packages or a new output directory.
+
 ## Outputs
 
 Paths are relative to the run directory. Field/mesh coordinates are XYZ µm;
@@ -156,7 +179,7 @@ and [attribution](THIRD_PARTY.md) for details.
 ## Development
 
 ```bash
-python -m pip install -e '.[test]'
+python -m pip install -e /path/to/winding-field-core-cli-separation -e '.[test]'
 OMP_NUM_THREADS=4 python -m pytest -q
 python -m build
 ```
