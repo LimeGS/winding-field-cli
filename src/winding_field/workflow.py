@@ -2,6 +2,8 @@
 
 import fcntl
 import itertools
+import importlib.metadata
+import importlib.util
 import json
 import math
 import os
@@ -15,7 +17,7 @@ import time
 import numpy as np
 
 from . import __version__
-from .config import validate_config,field_geometry
+from .config import validate_config,validate_observations,field_geometry
 from .io import Volume,bounds,resolve_source
 from .util import atomic_json,digest,file_sha
 
@@ -25,7 +27,14 @@ RECEIPTS=['PREPARED.json','FIBRES.json','FIELD.json','MESHES.json','FLAT.json']
 
 def implementation_sha():
     package=Path(__file__).parent
-    return digest({str(p.relative_to(package)):file_sha(p) for p in sorted(package.rglob('*.py'))})
+    files={str(p.relative_to(package)):file_sha(p) for p in sorted(package.rglob('*'))
+           if p.suffix in ('.py','.json')}
+    dependencies={name:importlib.metadata.version(name) for name in
+                  ('torch','numpy','scipy','numba','dynamic-network-architectures','avf-spline-generator')}
+    for name in ('avf_spline_generator','dynamic_network_architectures'):
+        root=Path(next(iter(importlib.util.find_spec(name).submodule_search_locations)))
+        files[name]={str(p.relative_to(root)):file_sha(p) for p in sorted(root.rglob('*.py'))}
+    return digest(dict(files=files,dependencies=dependencies))
 
 
 def snapshot_exports(root,stage):
@@ -64,11 +73,14 @@ def plan(config,volume=None,stages=()):
         shape=(hi-lo-1)//stride+1
         if min(shape)<2:
             raise ValueError('ROI needs at least two observation samples per axis')
+        validate_observations(config,volume,shape)
+        method=config.get('prediction','classical')
         halo=40*stride
         input_lo=np.maximum(0,lo-halo); input_hi=np.minimum(volume.shape,hi+halo)
-        if config.get('prediction','classical')=='sd2':
-            start=(lo//stride)//32*32
-            end=((lo//stride+shape-1)//32+1)*32
+        if method in ('sd2','qual-v2'):
+            core=48 if method=='qual-v2' else 32
+            start=(lo//stride)//core*core
+            end=((lo//stride+shape-1)//core+1)*core
             input_lo=np.maximum(0,lo%stride+start*stride-halo)
             input_hi=np.minimum(volume.shape,lo%stride+(end+40-1)*stride+1)
         chunk_count=np.prod((input_hi-1)//volume.chunks-input_lo//volume.chunks+1,dtype=np.int64)
@@ -78,6 +90,10 @@ def plan(config,volume=None,stages=()):
                           frame=digest(volume.identity))
         field=field_geometry(observations,config.get('field_spacing_um'))
         output_bytes=math.prod(shape.tolist())*60+math.prod(field['shape_zyx'])*40
+        spline_bytes=0
+        if method=='qual-v2':
+            spline_bytes=math.prod(shape.tolist())*8+math.prod((shape//2).tolist())*18
+            output_bytes+=math.prod(shape.tolist())*8+spline_bytes
         output=Path(config['output']); parent=output if output.exists() else output.parent
         written=sum(p.stat().st_size for name in ('maps','lasagna','fibres','field','meshes','flat')
                     for p in (output/name).rglob('*') if p.is_file())
@@ -94,10 +110,11 @@ def plan(config,volume=None,stages=()):
             mode='download' if volume.remote and fits else 'stream' if volume.remote else 'local'
         if mode=='download' and not fits and volume.remote and not stages:
             raise ValueError('requested CT download exceeds cache or available-space budget; increase budget or use stream')
-        return dict(source=volume.identity,roi_lo_zyx=lo.tolist(),roi_hi_zyx=hi.tolist(),shape_zyx=shape.tolist(),
+        return dict(source=volume.identity,prediction=method,roi_lo_zyx=lo.tolist(),roi_hi_zyx=hi.tolist(),shape_zyx=shape.tolist(),
                      observations=observations,field=field,
                     input_lo_zyx=input_lo.tolist(),input_hi_zyx=input_hi.tolist(),ct_policy=mode,
-                    estimated_ct_bytes=ct_bytes,estimated_products_bytes=output_bytes,
+                     estimated_ct_bytes=ct_bytes,estimated_products_bytes=output_bytes,
+                     estimated_spline_dense_bytes=spline_bytes,
                     existing_products_bytes=written,estimated_remaining_bytes=remaining,free_bytes=free,
                      reserve_bytes=reserve,cache_free_bytes=cache_free,shared_filesystem=shared,
                      physical_accuracy='UNVALIDATED')
@@ -124,9 +141,12 @@ def _validate_products(root,state):
         if expected!=actual:
             raise ValueError('prepared maps changed')
     if 'fibres' in state['stages']:
-        expected=json.loads((root/'FIBRES.json').read_bytes())['sha256']
-        if file_sha(root/'fibres/fibres.sqlite')!=expected:
+        expected=json.loads((root/'FIBRES.json').read_bytes())
+        if file_sha(root/'fibres/fibres.sqlite')!=expected['sha256']:
             raise ValueError('fibres changed')
+        if ('probabilities_sha256' in expected
+                and file_sha(root/'fibres/probabilities.npy')!=expected['probabilities_sha256']):
+            raise ValueError('spline probabilities changed')
     if 'field' in state['stages']:
         from .field import open_field
         with open_field(root) as source:

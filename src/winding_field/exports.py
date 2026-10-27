@@ -112,7 +112,7 @@ def export_afv(run,stop=None):
         record_export(ledger,run,destination); ledger.close(); return file_sha(destination)
     src=sqlite3.connect((root/'fibres.sqlite').resolve().as_uri()+'?mode=ro',uri=True)
     db=sqlite3.connect(pending)
-    db.executescript('PRAGMA application_id=1447249475; PRAGMA user_version=1;'
+    db.executescript('PRAGMA application_id=1447249475; PRAGMA user_version=1; PRAGMA foreign_keys=ON;'
         'CREATE TABLE IF NOT EXISTS metadata(key TEXT PRIMARY KEY,value TEXT NOT NULL);'
         'CREATE TABLE IF NOT EXISTS fibers(id INTEGER PRIMARY KEY,name TEXT NOT NULL,family TEXT NOT NULL,point_count INTEGER NOT NULL,'
         'length REAL NOT NULL,min_x REAL,max_x REAL,min_y REAL,max_y REAL,min_z REAL,max_z REAL,annotation TEXT NOT NULL);'
@@ -128,39 +128,65 @@ def export_afv(run,stop=None):
         last=int(json.loads(cursor[0])) if cursor else 0
         retained=src.execute('SELECT count(*) FROM curves WHERE id<=?',(last,)).fetchone()[0]
         if (db.execute('SELECT coalesce(max(id),0) FROM fibers').fetchone()[0]!=last
-                or any(db.execute('SELECT count(*) FROM '+table).fetchone()[0]!=retained
-                       for table in ('fibers','blocks','block_bounds'))):
+                or db.execute('SELECT count(*) FROM fibers').fetchone()[0]!=retained
+                or db.execute('SELECT count(*) FROM blocks').fetchone()!=db.execute('SELECT count(*) FROM block_bounds').fetchone()
+                or db.execute('PRAGMA foreign_key_check').fetchone()):
             raise ValueError('partial AFV export inventory changed')
-        for fid,tile,blob in src.execute('SELECT id,tile,points FROM curves ORDER BY id'):
+        family_column='family' if 'family' in {row[1] for row in src.execute('PRAGMA table_info(curves)')} else "'unknown'"
+        for fid,tile,blob,family in src.execute(f'SELECT id,tile,points,{family_column} FROM curves ORDER BY id'):
             if stop and stop():
                 return None
             world=np.load(io.BytesIO(blob),allow_pickle=False)
             points=((world-source['origin_xyz'])/source['spacing_xyz']).astype('<f8')
+            if (points.ndim!=2 or points.shape[1]!=3 or len(points)<2 or not np.isfinite(points).all()
+                    or (points<0).any() or (points>=np.asarray(source['shape'])[::-1]).any()):
+                raise ValueError('invalid AFV source coordinates')
             lo=points.min(0); hi=points.max(0); box=[float(v) for pair in zip(lo,hi) for v in pair]
             length=float(np.linalg.norm(np.diff(points,axis=0),axis=1).sum())
-            annotation=json.dumps(dict(tile=tile,prediction=meta['prediction'],automatically_traced=True,fragment=True))
-            record=(fid,f'fiber-{fid}','unknown',len(points),length,*box,annotation)
+            annotation=dict(type='vc3d_fiber',version=1,sequence=fid,tile=tile,prediction=meta['prediction'],
+                            automatically_traced=True,fragment=True,control_points=[points[0].tolist(),points[-1].tolist()],
+                            length_voxels=length,length_mm=float(np.linalg.norm(np.diff(world,axis=0),axis=1).sum()/1000))
+            if family in ('V','H'):
+                annotation.update(hv_classification=dict(manual_tag=family),classification_source='model_prediction_family_locked_tracing')
+            record=(fid,f'fiber-{fid}',family,len(points),length,*box,json.dumps(annotation))
+            blocks=[(first,points[first:first+257]) for first in range(0,len(points)-1,256)]
             if fid<=last:
-                bounds=db.execute('SELECT min_x,max_x,min_y,max_y,min_z,max_z FROM block_bounds WHERE id=?',(fid,)).fetchone()
-                if (db.execute('SELECT * FROM fibers WHERE id=?',(fid,)).fetchone()!=record
-                        or db.execute('SELECT fiber_id,first_segment,points FROM blocks WHERE id=?',(fid,)).fetchone()!=(fid,0,points.tobytes())
-                        or bounds is None or not np.allclose(bounds,box,rtol=2e-7,atol=1e-6)):
+                saved=db.execute('SELECT id,first_segment,points FROM blocks WHERE fiber_id=? ORDER BY first_segment',(fid,)).fetchall()
+                if db.execute('SELECT * FROM fibers WHERE id=?',(fid,)).fetchone()!=record or len(saved)!=len(blocks):
                     raise ValueError('partial AFV export record changed: '+str(fid))
+                for (bid,start,raw),(first,block) in zip(saved,blocks):
+                    bounds=db.execute('SELECT min_x,max_x,min_y,max_y,min_z,max_z FROM block_bounds WHERE id=?',(bid,)).fetchone()
+                    box=[float(v) for pair in zip(block.min(0),block.max(0)) for v in pair]
+                    if start!=first or raw!=block.tobytes() or bounds is None or not np.allclose(bounds,box,rtol=2e-7,atol=1e-6):
+                        raise ValueError('partial AFV export block changed: '+str(bid))
                 continue
             db.execute('INSERT INTO fibers VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',record)
-            db.execute('INSERT INTO blocks VALUES (?,?,0,?)',(fid,fid,points.tobytes()))
-            db.execute('INSERT INTO block_bounds VALUES (?,?,?,?,?,?,?)',(fid,*box))
+            for first,block in blocks:
+                bid=db.execute('INSERT INTO blocks(fiber_id,first_segment,points) VALUES (?,?,?)',
+                               (fid,first,block.tobytes())).lastrowid
+                box=[float(v) for pair in zip(block.min(0),block.max(0)) for v in pair]
+                db.execute('INSERT INTO block_bounds VALUES (?,?,?,?,?,?,?)',(bid,*box))
             db.execute('INSERT OR REPLACE INTO metadata VALUES (?,?)',('export_last_id',json.dumps(fid)))
             db.commit()
         if stop and stop():
             return None
         count,points_total=db.execute('SELECT count(*),coalesce(sum(point_count),0) FROM fibers').fetchone()
+        root_meta=dict(type='vc3d_fiber_collection',version=1,scale=1,source=source['source'],
+                       coordinate_order='XYZ',coordinate_units='voxel',coordinate_base_shape_zyx=source['shape'],
+                       vc_open_data_source_coordinate_level=source['level'])
+        if np.allclose(source['spacing_xyz'],source['spacing_xyz'][0],rtol=1e-6,atol=0):
+            root_meta['voxel_size_mm']=source['spacing_xyz'][0]/1000
         metadata=dict(uuid=digest([source,meta['tiles_sha256']]),fiber_count=count,point_count=points_total,
+                      block_count=db.execute('SELECT count(*) FROM blocks').fetchone()[0],block_segments=256,
                       frame=dict(source=source,coordinate_order='XYZ',units='selected-source voxels',
                                  level=source['level'],spacing_xyz_um=source['spacing_xyz'],origin_xyz_um=source['origin_xyz']),
-                      root=dict(source=source['source']),complete=True)
+                      root=root_meta,complete=True)
         db.executemany('INSERT OR REPLACE INTO metadata VALUES (?,?)',[(k,json.dumps(v)) for k,v in metadata.items()])
         db.commit()
+        if (db.execute('PRAGMA integrity_check').fetchall()!=[('ok',)]
+                or db.execute('PRAGMA foreign_key_check').fetchone()
+                or db.execute("SELECT rtreecheck('block_bounds')").fetchone()!=('ok',)):
+            raise ValueError('corrupt AFV export')
     finally:
         db.close(); src.close(); ledger.close()
     pending.replace(destination)

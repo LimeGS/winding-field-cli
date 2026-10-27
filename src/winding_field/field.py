@@ -90,6 +90,22 @@ def open_field(run):
                        meta['geometry'],cache_bytes=64<<20)
 
 
+def spline_samples(points,low,high,step):
+    """Clip each supported edge, then sample inside the block, including free nodes."""
+    start=points[:-1]; delta=np.diff(points,axis=0)
+    near=np.divide(low-start,delta,out=np.full_like(start,-np.inf),where=delta!=0)
+    far=np.divide(high-start,delta,out=np.full_like(start,np.inf),where=delta!=0)
+    enter=np.maximum(0,np.minimum(near,far).max(1))
+    leave=np.minimum(1,np.maximum(near,far).min(1))
+    valid=(leave>enter)&np.all((delta!=0)|((start>=low)&(start<=high)),axis=1)
+    for i in np.flatnonzero(valid):
+        a=np.clip(start[i]+enter[i]*delta[i],low,high)
+        b=np.clip(start[i]+leave[i]*delta[i],low,high)
+        length=np.linalg.norm(b-a)
+        if length:
+            yield np.linspace(a,b,max(1,int(np.ceil(length/step)))+1)
+
+
 def solve(run,config,stop=None):
     run=Path(run); meta=json.loads((run/'PREPARED.json').read_bytes())
     fibres=json.loads((run/'FIBRES.json').read_bytes())
@@ -121,17 +137,29 @@ def solve(run,config,stop=None):
     def constraints(lo,hi,read_nodes):
         nonlocal row_count
         a=[]; b=[]
-        axes=map_axes(meta,geometry,lo,hi)
-        for key in itertools.product(*(range(int(axis[0])//maps.chunk,int(axis[-1])//maps.chunk+1) for axis in axes)):
-            tag='_'.join(map(str,key))
-            for (raw,) in db.execute('SELECT points FROM curves WHERE tile=?',(tag,)):
-                points=np.load(io.BytesIO(raw),allow_pickle=False)[::3]
-                if len(points)<2:
-                    continue
-                grid=(points-geometry['origin_xyz'])/geometry['spacing_xyz']
-                inside=((grid>=lo[::-1]) & (grid<=(hi-1)[::-1])).all(1)
-                valid=inside[:-1]&inside[1:]
-                a.extend(points[:-1][valid]); b.extend(points[1:][valid])
+        if meta['prediction']=='qual-v2':
+            low=np.asarray(geometry['origin_xyz'])+lo[::-1]*geometry['spacing_xyz']
+            high=np.asarray(geometry['origin_xyz'])+(hi-1)[::-1]*geometry['spacing_xyz']
+            rows=db.execute('SELECT c.points FROM curve_bounds b JOIN curves c ON c.id=b.id '
+                            'WHERE b.max_x>=? AND b.min_x<=? AND b.max_y>=? AND b.min_y<=? '
+                            'AND b.max_z>=? AND b.min_z<=? ORDER BY c.id',tuple(v for pair in zip(low,high) for v in pair))
+        else:
+            axes=map_axes(meta,geometry,lo,hi)
+            keys=itertools.product(*(range(int(axis[0])//maps.chunk,int(axis[-1])//maps.chunk+1) for axis in axes))
+            rows=(row for key in keys for row in db.execute('SELECT points FROM curves WHERE tile=?',('_'.join(map(str,key)),)))
+        for (raw,) in rows:
+            points=np.load(io.BytesIO(raw),allow_pickle=False)
+            if meta['prediction']=='qual-v2':
+                for sampled in spline_samples(points,low,high,min(geometry['spacing_xyz'])):
+                    a.extend(sampled[:-1]); b.extend(sampled[1:])
+                continue
+            points=points[::3]
+            if len(points)<2:
+                continue
+            grid=(points-geometry['origin_xyz'])/geometry['spacing_xyz']
+            inside=((grid>=lo[::-1]) & (grid<=(hi-1)[::-1])).all(1)
+            valid=inside[:-1]&inside[1:]
+            a.extend(points[:-1][valid]); b.extend(points[1:][valid])
         if not a:
             return None
         row_count+=len(a)

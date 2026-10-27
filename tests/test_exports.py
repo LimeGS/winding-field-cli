@@ -1,6 +1,7 @@
 import json
 import sqlite3
 
+import numpy as np
 import pytest
 
 from test_field import prepared_run
@@ -106,3 +107,64 @@ def test_workflow_export_stop_does_not_complete_prepare_stage(tmp_path,monkeypat
     monkeypatch.setattr(exports,'atomic_bytes',original)
     state=run(state['config'],resume=True,until='prepare')
     assert 'prepare' in state['stages']
+
+
+def qual_export_fixture(root):
+    from test_splines import prepared,upstream_curves
+    from winding_field.splines import import_curves
+    from winding_field.util import atomic_json,file_sha
+    maps,meta=prepared(root,shape=(8,8,600),chunk=32)
+    # Observation pitch 9 µm, selected-source pitch 4.5 µm, with a nonzero ROI.
+    meta['source'].update(spacing_xyz=[4.5]*3,origin_xyz=[10.,20.,30.],shape=[100,100,1400],level=1)
+    meta['origin_xyz']=[100.,200.,300.]
+    atomic_json(root/'PREPARED.json',meta)
+    p=np.column_stack([np.arange(300)*2+.5,np.full(300,3.5),np.full(300,3.5)])
+    upstream_curves(root/'upstream.afv',maps.shape,[(2,p),(1,p[:5]+[0,1,0])])
+    (root/'fibres').mkdir()
+    assert import_curves(root/'upstream.afv',root/'fibres',maps,meta)
+    maps.close()
+    atomic_json(root/'FIBRES.json',dict(sha256=file_sha(root/'fibres/fibres.sqlite')))
+    return root
+
+
+def test_qual_afv_preserves_families_transform_and_bounded_blocks(tmp_path):
+    from winding_field.exports import export_afv
+    from winding_field.splines import afv_points
+    root=qual_export_fixture(tmp_path/'run')
+    pending=root/'fibres/fibres.partial.afv'
+    def stop():
+        if not pending.exists(): return False
+        with sqlite3.connect(pending) as db:
+            return db.execute('SELECT count(*) FROM fibers').fetchone()[0]>=1
+    assert export_afv(root,stop) is None
+    with sqlite3.connect(pending) as db:
+        assert db.execute('SELECT count(*) FROM blocks').fetchone()==(2,)
+    sha=export_afv(root)
+    assert export_afv(root)==sha
+    with sqlite3.connect(root/'fibres/fibres.afv') as db:
+        assert db.execute('PRAGMA user_version').fetchone()==(1,)
+        assert db.execute('SELECT family FROM fibers ORDER BY id').fetchall()==[('H',),('V',)]
+        points=afv_points(db,1,300)
+        np.testing.assert_allclose(points[0],[21.,47.,67.])
+        assert max(row[0] for row in db.execute('SELECT length(points)/24 FROM blocks'))<=257
+        metadata={k:json.loads(v) for k,v in db.execute('SELECT key,value FROM metadata')}
+        assert metadata['frame']['level']==1
+        assert metadata['root']['coordinate_base_shape_zyx']==[100,100,1400]
+        annotation=json.loads(db.execute('SELECT annotation FROM fibers WHERE id=1').fetchone()[0])
+        assert annotation['hv_classification']['manual_tag']=='H'
+        assert annotation['length_mm']==pytest.approx(598*9/1000)
+
+
+def test_qual_afv_resume_checks_later_blocks(tmp_path):
+    from winding_field.exports import export_afv
+    root=qual_export_fixture(tmp_path/'run'); pending=root/'fibres/fibres.partial.afv'
+    def stop():
+        if not pending.exists(): return False
+        with sqlite3.connect(pending) as db:
+            return db.execute('SELECT count(*) FROM fibers').fetchone()[0]>=1
+    assert export_afv(root,stop) is None
+    with sqlite3.connect(pending) as db:
+        assert db.execute('SELECT count(*) FROM blocks').fetchone()==(2,)
+        db.execute('UPDATE blocks SET points=zeroblob(length(points)) WHERE first_segment=256')
+    with pytest.raises(ValueError,match='changed|corrupt'):
+        export_afv(root)
