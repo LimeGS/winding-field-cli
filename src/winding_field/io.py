@@ -24,6 +24,7 @@ from numcodecs import get_codec
 from .util import atomic_bytes, atomic_json, digest, file_sha
 
 CATALOG = 'https://vesuvius-challenge-open-data.s3.amazonaws.com/metadata.json'
+MISSING_ETAG = 'winding-field:authoritative-404'
 
 
 def http_url(source):
@@ -226,7 +227,7 @@ class Volume:
 
     def _record(self, key, data):
         if self._ledger is not None:
-            sha = hashlib.sha256(data).hexdigest()
+            sha = digest('authoritative-zarr-fill') if data is None else hashlib.sha256(data).hexdigest()
             old = self._ledger.execute('SELECT sha FROM chunks WHERE key=?', (key,)).fetchone()
             if old and old[0] != sha:
                 raise ValueError('source chunk changed: '+key)
@@ -257,11 +258,15 @@ class Volume:
                 self._stats['cache_hits'] += 1
                 self.db.execute('UPDATE cache SET at=? WHERE key=?', (time.time(),token))
                 self.db.commit()
-                return self._record(key,raw)
+                return self._record(key,None if record[0]==MISSING_ETAG else raw)
             if self.offline:
                 raise FileNotFoundError(f'offline cache miss: {key}')
-            headers = {'If-None-Match':record[0]} if raw is not None and record[0] and not record[0].startswith('W/') else {}
-            data, etag = fetch(self.source+'/'+key, headers=headers)
+            headers = {'If-None-Match':record[0]} if raw is not None and record[0] and record[0]!=MISSING_ETAG and not record[0].startswith('W/') else {}
+            try:
+                data, etag = fetch(self.source+'/'+key, headers=headers)
+            except FileNotFoundError:
+                # Only the authoritative server's 404 establishes sparse Zarr fill.
+                data,etag=b'',MISSING_ETAG
             if data is None:
                 self._stats['cache_hits'] += 1
                 data = raw
@@ -277,7 +282,7 @@ class Volume:
                                     (token,len(data),time.time(),etag,hashlib.sha256(data).hexdigest()))
                     self.db.commit()
             self._validated.add(token)
-            return self._record(key,data)
+            return self._record(key,None if etag==MISSING_ETAG else data)
 
     def read(self, lo_zyx, hi_zyx):
         lo, hi = bounds(lo_zyx,hi_zyx,self.shape)
@@ -289,9 +294,14 @@ class Volume:
             name = self.metadata.get('dimension_separator','.').join(map(str,index))
             key = self.array_path+'/'+name if self.array_path else name
             raw = self._chunk_bytes(key)
-            if self.metadata.get('compressor'):
+            if raw is None:
+                raw=np.full(self.chunks,self.metadata.get('fill_value',0),dtype=self.dtype).tobytes(order=self.metadata['order'])
+                encoded=False
+            else:
+                encoded=True
+            if encoded and self.metadata.get('compressor'):
                 raw = get_codec(self.metadata['compressor']).decode(raw)
-            for spec in reversed(self.metadata.get('filters') or []):
+            for spec in reversed((self.metadata.get('filters') or []) if encoded else []):
                 raw = get_codec(spec).decode(raw)
             array = np.frombuffer(raw,dtype=self.dtype)
             if array.size != math.prod(self.chunks):
