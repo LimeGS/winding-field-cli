@@ -15,10 +15,12 @@
   never exceeds the last observation centre. Default: the full observation grid.
 - OME-NGFF scale/translation and axis units are interpreted. Unitless metadata
   requires explicit `--voxel-um` or catalog spacing. No silent resolution change.
-- Preparation has a 40-observation-grid-voxel input halo, clipped to the source volume.
+- Fibre inference/classical preparation has a 40-observation-grid-voxel input halo, clipped to the source volume.
   Qual V2 rounds input core coverage out to source-anchored 48³ tiles (SD2: 32³);
   `RUN.json.plan.input_lo_zyx/input_hi_zyx` records this extra input-only context.
   Persistent maps and extracted meshes remain within the output grid/ROI.
+  Lasagna separately stages 16 observations of context per side. External-AFV
+  preparation needs only this surface context; all retained maps remain ROI-local.
 
 ## Run and integrity
 
@@ -44,8 +46,13 @@ dependency versions, and the source hashes of the Qual tracer and network archit
 
 `maps/` is a transactional tile inventory plus checksummed NPZ payloads.
 `PREPARED.json` describes its physical grid, source, ROI, model provenance and halo.
-Maps contain CT-derived sheet density (inverse micrometres), unsigned surface
-normals (XYZ), separate fibre tangents (XYZ), presence and support.
+Maps contain sheet density (cycles per micrometre), unsigned physical surface
+normals (XYZ), CT and surface support. Default/SD2 routes obtain these from official
+Lasagna and additionally retain `surface_phase` (cos / 255). Fibre presence,
+tangents, V/H probabilities and `fibre_support` are separate observations. External
+AFV maps have no fabricated fibre probabilities/tangents/presence.
+`PREPARED.json.surface_method` and `fibre_method` identify these sources.
+See [Lasagna setup and decoding](LASAGNA.md) for pins and raw products.
 
 SD2 inference owns fixed 32³ cores on the selected-source sampling lattice. Its
 phase is `roi_low % stride`, context is 40 samples per side, volume-edge padding
@@ -67,9 +74,10 @@ Instance normalization still sees each complete feature window; weights and
 the network topology are unchanged. This is not smaller-window inference.
 
 `--invalid-value` is an explicit acquisition-fill policy. By default every finite
-CT measurement, including zero, is valid. Declared fill zeros predicted presence;
-support requires the full 40-voxel observation-filter footprint to be valid.
-Unsupported density, normals and tangents are zero. The policy is identity-bound.
+CT measurement, including zero, is valid. Declared fill zeros fibre presence and
+invalidates Lasagna surface samples. The classical estimator requires its full
+40-voxel filter footprint to be valid. Unsupported density and normals are zero.
+Fibre tangents retain their independent acquisition validity. The policy is identity-bound.
 
 For the classical route, `THRESHOLD.json` persists a single Otsu threshold sampled
 from at most 27 fixed 16³-output-grid patches within the ROI. Tile size cannot
@@ -78,8 +86,13 @@ sample; `--threshold` allows an acquisition-calibrated value. SD2 supplies its o
 presence predictions. Strided preparation assembles sampled grids from bounded
 native-chunk reads rather than allocating their dense native envelope.
 
-`lasagna/` exports six uint8 OME-Zarr v2 arrays and two Lasagna v2 manifests:
-`fibres.lasagna.json` and `surfaces.lasagna.json`. Direction XY is encoded around
+`lasagna/` exports surface presence, normals and a real `surface_grad_mag` array;
+Lasagna routes also export cos. The grad_mag array is float32, equal to the
+output-index gradient magnitude times 1000, preserving its range. Other channels
+are uint8. Physical normals are converted as covectors to output-index space
+(multiply components by XYZ pitch); fibre tangents use inverse pitch.
+`surfaces.lasagna.json` records the density encoding. `fibres.lasagna.json` and
+its three channels exist only when fibre inference ran. Direction XY is encoded around
 128 with scale 127 after folding the sign into the positive-Z hemisphere. The
 manifests address an **ROI-local output grid** and include world origin, spacing
 and original-source metadata; align this frame before combining with other data.
@@ -93,8 +106,17 @@ binary64 points), sharing one endpoint. H/V labels, voxel lengths and physical
 millimetre lengths are retained for Qual curves. The published V2 model uses the
 same AFV schema v1 container.
 
+External `--fibres` input uses this same container and an embedded calibrated
+frame or explicit `--fibres-geometry` descriptor. Import checks schema, completion,
+finite points, continuity and input hashes. SQLite journals must be checkpointed.
+`fibres/IMPORT.json` binds the input/descriptor and maps; the normalized database
+commits bounded blocks with source IDs, annotations and an R-tree. Sparse edges
+are clipped and traversed at exact voxel-cell boundaries to retain supported
+portions without bridging gaps. Original vertices survive where no clipping is
+needed. No model tracing is performed; exported lineage records that distinction.
+
 Qual tracing consumes `fibres/probabilities.npy`, a disk-backed `(2,Z,Y,X)` float32
-array in V/H order with unsupported observations zeroed. Its tile ledger and
+array in V/H order with invalid fibre observations zeroed. Its tile ledger and
 completion hash prevent changed input on resume. The pinned official generator
 runs as an interruptible CPU subprocess, with work/logs under `fibres/upstream/`.
 Model inference and field solving still use the selected `--device`.
@@ -135,7 +157,7 @@ physical density-normal target. All contributing interpolation nodes must be
 supported. Tiles are loaded jointly for density/normals/support, once per request;
 coarse sampling reads only touched tiles, never the dense fine-grid envelope.
 Fibre constraints and mesh phase sampling use the respective physical transforms.
-Qual curves have an R-tree of world-coordinate extents. Each solve block selects
+Qual and imported AFV curves have an R-tree of world-coordinate extents. Each solve block selects
 overlapping curves once, irrespective of their original preparation tile. Every
 supported polyline edge is clipped to the block and sampled at intervals no larger
 than its smallest field pitch, retaining constraints inside small blocks even when
