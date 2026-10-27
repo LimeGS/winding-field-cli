@@ -1,0 +1,7 @@
+{
+  "origin": "winding-field-gh working tree",
+  "changes": "namespace imports only",
+  "source_sha256": {
+    "field_observations.py": "be10f03b4bcf07f5b5b43bfcdd382701b843a3ee6516a7beefa0c724f66a249e"
+  }
+}

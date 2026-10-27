@@ -1,0 +1,12 @@
+{
+  "revision": "b29f310957c7b29e7d332f9876e0e487819cfaa3",
+  "url": "https://github.com/ScrollPrize/villa",
+  "changes": "namespace imports only; empty namespace initializers",
+  "source_sha256": {
+    "neural_tracing/fiber_trace_3d/model.py": "7dc4a2a56ce2542484f10bb8c0909a03691077cdbb35a02ea86aeb6fca975be0",
+    "neural_tracing/fiber_trace_3d/direction.py": "36a3ab0f541c9b40f9342cc4b94789ba7aeafc28ab0b5c1820bee35d6d12b518",
+    "neural_tracing/fiber_trace/model.py": "141d88b45a107eae7999abf2f5a43bd5d06b121c31ce051c8977c441ca856f76",
+    "neural_tracing/nets/vesuvius_unet3d.py": "2567587db318e41df4c348db33a03e467bd14d5e4f1a5099efa90fa6b85a0541",
+    "models/utilities/utils.py": "63ba098067e263618b01f21d790f7817a8b7e23863d9ca463cd5a69070838571"
+  }
+}
