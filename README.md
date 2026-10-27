@@ -1,7 +1,8 @@
 # winding-field-cli
 
-Original CT → winding field → 3D meshes → flattened charts. Resumable CLI for
-local or remote 3D Zarr v2 volumes, with automatic observation and fibre preparation.
+Original CT → Qual V2 fibres → splines → winding field → 3D meshes → flattened
+charts. Resumable CLI for local or remote 3D Zarr v2 volumes, with automatic
+observation and fibre preparation.
 
 ## Quick start
 
@@ -24,14 +25,16 @@ open runs/demo/index.html                 # macOS; open in a browser on Linux
 ## Calculate a field
 
 Small real-CT example: native **8.64 µm observations**, **17 µm field**, CPU.
-The default SD2 predictor expects uint8 CT; its weights (~329 MiB) are downloaded
-and verified on first use.
+The default **Qual AFV fibre V2** predictor expects uint8 CT at isotropic
+**8.64–9.6 µm** observation spacing. Its weights (~540 MiB) are downloaded and
+SHA-256 verified on first use. The official Qual spline generator is installed
+automatically with the package; its H/V splines constrain the field.
 
 ```bash
 CT='s3://vesuvius-challenge-open-data/PHerc0175A/volumes/20250521115057-8.640um-1.2m-116keV-masked.zarr'
 
 winding-field run --source "$CT" --voxel-um 8.64 \
-  --roi 1504 1536 4032 4064 6048 6080 \
+  --roi 1488 1536 4032 4080 6048 6096 \
   --field-spacing-um 17 --until field --sweeps 1 \
   --ct-mode stream --cache-gib .25 --reserve-gib .25 \
   --output runs/175a-17um
@@ -47,6 +50,8 @@ ROI: `8.65`, `17`, `130`, `300`, `250.5`, etc. It sets equal spacing in X/Y/Z.
 Omit it to use the observation grid, including its anisotropy.
 
 - Keep `--level 0 --stride 1` for native-resolution CT observations.
+- For finer CT, explicitly select a level/stride in Qual's range (e.g. 4.32 µm
+  CT with `--stride 2` gives 8.64 µm observations).
 - Increasing field spacing reduces the solve grid; fine preparation still costs the same.
 - `--voxel-um` declares input units. `--field-chunk` sets block size in nodes.
 - The ROI must contain at least two field nodes per axis. Nodes stay inside its
@@ -97,6 +102,7 @@ winding-field resume runs/175a-17um        # continue through the complete pipel
 ```
 
 Stopping finishes the current bounded operation and retains committed work.
+Qual's child tracer is stopped and reaped too; resume uses its committed batches.
 Resume checks input/product integrity and clears `STOP`. A deliberate `--until`
 stop reports `PAUSED`; check the corresponding stage receipt for completion.
 Use a new output directory to change settings, input data or package implementation.
@@ -105,11 +111,11 @@ Use a new output directory to change settings, input data or package implementat
 
 | Option | Purpose / default |
 | --- | --- |
-| `--prediction sd2\|classical` | Pretrained SD2 by default; `classical` uses CT threshold/structure tensor |
-| `--model-path /path/sd2.pt` | Use a pinned, hash-verified checkpoint; `winding-field models` prefetches it |
-| `--device cpu\|cuda:0` | Compute device; default `cpu` |
+| `--prediction qual-v2\|sd2\|classical` | Qual V2 + global splines by default; explicit SD2/classical use the legacy local tracer |
+| `--model-path /path/qual-v2.pt` | Use the selected model's pinned checkpoint; `winding-field models` prefetches Qual V2 |
+| `--device cpu\|cuda:0` | Inference/solver device; default `cpu`. Spline tracing uses CPU |
 | `--level 0 --stride 1` | CT observation sampling; stride accepts 1–8 |
-| `--chunk 64 --field-chunk 64` | Storage tile / solve block sizes; SD2 inference windows stay fixed |
+| `--chunk 64 --field-chunk 64` | Storage tile / solve block sizes; inference windows stay fixed |
 | `--sweeps 4 --maxiter 2000 --rtol 1e-6` | Solver sweep budget, per-block iterations and tolerance |
 | `--ct-mode auto\|download\|stream` | Default `auto`: download if cache/storage permits, otherwise stream |
 | `--cache /disk/cache --cache-gib 2` | Shared, bounded CT payload cache |
@@ -130,12 +136,21 @@ arrays and ROI bounds are ZYX.
 | `meshes/level-*.obj` | 3D meshes at each selected isovalue |
 | `flat/chart-*-flat.obj`, `flat/chart-*.png` | Flattened charts and original-CT previews |
 | `flat/chart-*.npz`, `flat/atlas.sqlite` | UV coordinates and correspondence to source mesh faces |
-| `maps/`, `lasagna/`, `fibres/fibres.afv` | Observations, Lasagna maps and traced fibre fragments |
+| `maps/`, `lasagna/`, `fibres/fibres.afv` | Observations, Lasagna maps and family-labelled Qual splines (AFV schema v1) |
+| `fibres/upstream/generator.log` | Official tracer progress; resumable scratch is alongside it |
 | `index.html` | Local interactive gallery after the full pipeline |
+
+For fibres alone, use `--until fibres` on a new run. Qual traces across storage
+tiles and splits curves at unsupported gaps. Its V2 name refers to the model,
+not a new AFV container version.
+
+`plan` includes the dense spline arrays: 8 bytes per observation voxel plus
+approximately 18 bytes per half-resolution tracing voxel. Seed sorting also uses
+RAM proportional to seed count (~64 bytes/seed); saved curves need extra disk.
 
 Research output: physical sheet correctness and global convergence remain
 unvalidated. Whole-scroll native-resolution throughput has not been benchmarked.
-See [formats and geometry](docs/FORMATS.md), [verification](docs/verification/audit-fixes.md)
+See [formats and geometry](docs/FORMATS.md), [verification](docs/verification/qual-v2-splines.md)
 and [attribution](THIRD_PARTY.md) for details.
 
 ## Development

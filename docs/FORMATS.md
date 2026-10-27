@@ -61,6 +61,10 @@ z-score with standard-deviation floor 10. Segmentation softmax is ordered
 background/V/H/intersection; presence is `1 - P(background)`. `probabilities`
 stores raw float32 V/H channels as `(Z,Y,X,2)`; intersection is not assigned to
 either family. The direction head supplies normalized XYZ fibre axes.
+On CPU backends without oneDNN, convolutions are evaluated in depth slabs with
+exact padding/halos to limit im2col scratch to 256 MiB (or one output plane).
+Instance normalization still sees each complete feature window; weights and
+the network topology are unchanged. This is not smaller-window inference.
 
 `--invalid-value` is an explicit acquisition-fill policy. By default every finite
 CT measurement, including zero, is valid. Declared fill zeros predicted presence;

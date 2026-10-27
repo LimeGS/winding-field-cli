@@ -1,6 +1,7 @@
 """Pinned public fibre inference and verified checkpoint acquisition."""
 
 import json
+import math
 from pathlib import Path
 import os
 import tempfile
@@ -18,6 +19,7 @@ MODEL_URL=f'https://huggingface.co/scrollprize/lasagna-fiber/resolve/{MODEL_REV}
 QUAL_MODEL_SHA='b8519a4ce4044c93ed98af0c278628fdcdfdd8808275b3c8becd7211f38b7967'
 QUAL_MODEL_REV='2a8a26a70754a5d90aeca91f9ef8e7130e6e4f81'
 QUAL_MODEL_URL=f'https://huggingface.co/Qualzz20/afv_fiber_9um_v2/resolve/{QUAL_MODEL_REV}/checkpoint_final.pth'
+CONV_WORKSPACE_BYTES=256<<20
 
 
 def model_sha(prediction):
@@ -90,6 +92,31 @@ class SD2:
         return presence[core].copy(),tangent[core].copy()
 
 
+class BoundedConv3d(torch.nn.Module):
+    """Avoid multi-GiB im2col workspaces on CPUs without oneDNN."""
+    def __init__(self,conv):
+        super().__init__(); self.conv=conv
+        if conv.padding_mode!='zeros':
+            raise ValueError('bounded convolution requires zero padding')
+
+    def forward(self,x):
+        c=self.conv
+        shape=[(n+2*p-d*(k-1)-1)//s+1 for n,p,d,k,s in
+               zip(x.shape[2:],c.padding,c.dilation,c.kernel_size,c.stride)]
+        plane=x.shape[0]*(c.in_channels//c.groups)*math.prod(c.kernel_size)*math.prod(shape[1:])*x.element_size()
+        step=max(1,CONV_WORKSPACE_BYTES//plane)
+        if shape[0]<=step:
+            return c(x)
+        padded=torch.nn.functional.pad(x,(0,0,0,0,c.padding[0],c.padding[0]))
+        outputs=[]
+        for first in range(0,shape[0],step):
+            count=min(step,shape[0]-first); start=first*c.stride[0]
+            end=start+(count-1)*c.stride[0]+c.dilation[0]*(c.kernel_size[0]-1)+1
+            outputs.append(torch.nn.functional.conv3d(padded[:,:,start:end],c.weight,c.bias,
+                c.stride,(0,*c.padding[1:]),c.dilation,c.groups))
+        return torch.cat(outputs,dim=2)
+
+
 class QualV2:
     def __init__(self,path=None,device='cpu',offline=False):
         from ._vendor.qual_model import FiberDetector
@@ -100,6 +127,11 @@ class QualV2:
         state={'backbone.'+k:v for k,v in payload['network_weights'].items()}
         state.update(payload['auxiliary_weights'])
         self.model.load_state_dict(state,strict=True)
+        if torch.device(device).type=='cpu' and not (torch.backends.mkldnn.is_available() and torch.backends.mkldnn.enabled):
+            for parent in list(self.model.modules()):
+                for name,child in list(parent.named_children()):
+                    if isinstance(child,torch.nn.Conv3d):
+                        setattr(parent,name,BoundedConv3d(child))
         self.model.to(device).eval(); self.device=device
 
     @torch.inference_mode()
