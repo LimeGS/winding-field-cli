@@ -59,7 +59,7 @@ solver status. `--sweeps 1` is a short example budget; the default is 4.
 ### Choose the resolution
 
 **`--field-spacing-um P` accepts any positive pitch in micrometres** that fits the
-ROI: `8.65`, `17`, `130`, `300`, `250.5`, etc. It sets equal spacing in X/Y/Z.
+ROI: `8.64`, `17.28`, `130`, `309`, `250.5`, etc. It sets equal spacing in X/Y/Z.
 Omit it to use the observation grid, including its anisotropy.
 
 - Keep `--level 0 --stride 1` for native-resolution CT observations.
