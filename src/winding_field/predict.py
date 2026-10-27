@@ -100,9 +100,5 @@ def prepare(volume,run,config,stop=None):
               status='PREPARED',physical_accuracy='UNVALIDATED',
               method_note='SD2 pretrained fibre prediction' if model else 'classical CT threshold/structure-tensor baseline')
     atomic_json(run/'PREPARED.json',meta)
-    # Explicit Lasagna-compatible placement reference; arrays retain float XYZ directors.
-    atomic_json(run/'.lasagna.json',dict(schema='winding-field-lasagna-reference-v1',geometry=geometry,
-                maps='maps/TILES.json',presence='presence',direction='tangents',surface_normal='normals',
-                note='Fibre tangents are distinct from surface normals; this is a reference, not an upstream zarr product.'))
     maps.close()
     return meta

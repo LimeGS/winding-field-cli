@@ -125,3 +125,13 @@ def test_metadata_change_changes_identity(served):
     second = Volume(url, cache=root/'cache')
     assert first.identity != second.identity
     assert second.spacing_xyz == [2.,3.,5.]
+
+
+def test_authoritative_remote_sparse_chunk_uses_fill_and_is_cached_offline(served):
+    from winding_field.io import Volume
+    root,url,_=served
+    (root/'ct.zarr/0/0.0.0').unlink()
+    online=Volume(url,cache=root/'cache')
+    np.testing.assert_array_equal(online.read([0,0,0],[2,2,3]),np.zeros((2,2,3),np.uint8))
+    offline=Volume(url,cache=root/'cache',offline=True)
+    np.testing.assert_array_equal(offline.read([0,0,0],[2,2,3]),np.zeros((2,2,3),np.uint8))
