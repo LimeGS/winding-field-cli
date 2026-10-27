@@ -26,7 +26,7 @@ Documentation = "https://github.com/LimeGS/winding-field-cli/blob/main/README.md
 where = ["src"]
 
 [tool.setuptools.data-files]
-"share/winding-field-cli/provenance" = ["provenance/core.json", "provenance/villa.json", "provenance/qual.json"]
+"share/winding-field-cli/provenance" = ["provenance/core.json", "provenance/villa.json", "provenance/qual.json", "provenance/lasagna.json"]
 "share/winding-field-cli" = ["THIRD_PARTY.md"]
 
 [tool.setuptools.package-data]

@@ -119,4 +119,4 @@
 - [x] Each Review Focus condition has a behavioral test in its owning task.
 - [x] Runtime/checkpoint compatibility is checked before full pipeline integration.
 - [x] Scientific comparison and general cross-run caching are not implementation claims.
-- [ ] User reviewed the plan and selected the execution approach.
+- [x] User reviewed the plan and selected native execution.

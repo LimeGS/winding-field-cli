@@ -28,6 +28,18 @@ License: MIT, copyright (c) 2024 Vesuvius Challenge, `licenses/villa-MIT.txt`.
 Lasagna v2 and AFV v1 interchange schemas follow this same pinned Villa source.
 Our exporter records its ROI/source coordinate frames explicitly.
 
+## Lasagna surface inference
+
+The official `vesuvius-lasagna` distribution is installed separately under Python
+3.14 from the pinned Villa archive above. Its `predict3d` implementation supplies
+surface cos, magnitude and hemisphere-encoded normals. The private CLI worker
+uses FP32 on CPU (BF16 can be emulated there), retaining upstream BF16 on CUDA;
+model architecture, normalization, blending and decoding remain upstream's.
+The model is downloaded separately from `scrollprize/lasagna/model_current.pt`.
+Exact runtime/checkpoint pins and the adapter settings are in
+`provenance/lasagna.json`; weights are not bundled. The upstream model card lists
+MIT, without documenting coverage for every scroll.
+
 ## SD2 weights
 
 Downloaded separately from `scrollprize/lasagna-fiber`, Hugging Face revision

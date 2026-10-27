@@ -1,0 +1,12 @@
+{
+  "runtime": "vesuvius-lasagna",
+  "python": "3.14",
+  "source_url": "https://github.com/ScrollPrize/villa",
+  "revision": "b29f310957c7b29e7d332f9876e0e487819cfaa3",
+  "install_url": "https://github.com/ScrollPrize/villa/archive/b29f310957c7b29e7d332f9876e0e487819cfaa3.tar.gz#subdirectory=lasagna",
+  "model": "scrollprize/lasagna/model_current.pt",
+  "model_revision": "de45f01147adea9f4ad0f621b1ccd885a1f03760",
+  "model_sha256": "4cc0c40a846b296769b9f7982470559078662a1a0b0e1f74ff41ed9341c0d600",
+  "model_bytes": 558287587,
+  "adapter": "Official predict3d, strict checkpoint loading, 64-cubed tiles, overlap 32, border 16, full input-lattice outputs. CPU runs FP32; CUDA retains upstream BF16 autocast. Runtime sources and dependency versions are fingerprinted at preflight."
+}
