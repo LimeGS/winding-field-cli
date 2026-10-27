@@ -66,6 +66,11 @@ def plan(config,volume=None,stages=()):
             raise ValueError('ROI needs at least two observation samples per axis')
         halo=40*stride
         input_lo=np.maximum(0,lo-halo); input_hi=np.minimum(volume.shape,hi+halo)
+        if config.get('prediction','classical')=='sd2':
+            start=(lo//stride)//32*32
+            end=((lo//stride+shape-1)//32+1)*32
+            input_lo=np.maximum(0,lo%stride+start*stride-halo)
+            input_hi=np.minimum(volume.shape,lo%stride+(end+40-1)*stride+1)
         chunk_count=np.prod((input_hi-1)//volume.chunks-input_lo//volume.chunks+1,dtype=np.int64)
         ct_bytes=int(chunk_count)*math.prod(volume.chunks)*volume.dtype.itemsize
         output_bytes=math.prod(shape.tolist())*100
