@@ -6,6 +6,7 @@ import json
 import math
 from pathlib import Path
 import sqlite3
+from tempfile import TemporaryDirectory
 
 import numpy as np
 
@@ -142,7 +143,11 @@ def solve(run,config,stop=None):
     try:
         checkpoint=root/'CHECKPOINT.json'
         if not checkpoint.exists():
-            solve_blocks(root,shape,chunk,identity,load,stop=lambda:True,**options)
+            # Publish only a complete initial checkpoint; failed admission is retryable.
+            with TemporaryDirectory(prefix='.field-init-',dir=run) as temporary:
+                initial=Path(temporary)/'field'
+                solve_blocks(initial,shape,chunk,identity,load,stop=lambda:True,**options)
+                initial.rename(root)
         saved=json.loads(checkpoint.read_bytes())
         if not saved['progress'].get('initialization_done') and not saved['progress'].get('solver'):
             with BlockStore(root,shape,chunk,saved['identity'],resume=True,cache_bytes=64<<20,
