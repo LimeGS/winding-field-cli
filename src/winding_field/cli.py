@@ -1,6 +1,7 @@
 """Installed command entry point."""
 
 import argparse
+import importlib
 import json
 from pathlib import Path
 import sys
@@ -8,16 +9,31 @@ import sys
 from . import __version__
 from .io import Volume,resolve_source
 
+TOOLS = {
+    'surface-export': ('surface_export', 'export a level set, flatten and sample CT'),
+    'surface-atlas': ('surface_atlas', 'build bounded surface charts and previews'),
+    'surface-probe': ('surface_probe', 'freeze a prior seed and inspect its surface'),
+    'surface-geometry-check': ('surface_geometry_check', 'export TIFXYZ and invoke a pinned geometry gate'),
+    'ct-visuals': ('ct_visuals', 'render frozen CT planes and field contours'),
+    'patch-visuals': ('patch_visuals', 'evaluate and plot human-patch residuals'),
+    'run-watch': ('run_watch', 'supervise a job with timeout and storage limits'),
+}
+
 
 def main(argv=None):
     argv=list(sys.argv[1:] if argv is None else argv)
     if argv and argv[0]=='prepared':
         from .field_workflow import main as prepared_main
         return prepared_main(argv[1:])
+    if argv and argv[0] in TOOLS:
+        module = importlib.import_module('.' + TOOLS[argv[0]][0], __package__)
+        return module.main(argv[1:])
     parser = argparse.ArgumentParser(prog='winding-field')
     parser.add_argument('--version', action='version', version=__version__)
     sub = parser.add_subparsers(dest='command', required=True)
     sub.add_parser('prepared',help='build/resume prepared fields, mesh and render (prepared --help)')
+    for command, (_, help_text) in TOOLS.items():
+        sub.add_parser(command, help=help_text)
     info = sub.add_parser('inspect', help='inspect exact original CT geometry')
     info.add_argument('source')
     info.add_argument('--voxel-um',type=float)

@@ -7,7 +7,7 @@ observation and fibre preparation.
 ## Quick start
 
 Python 3.11 or 3.12, Linux or macOS. Clone this branch and install the original
-library at its recorded revision (`winding-field-experiments==1.3.0.dev0`).
+library at its recorded revision (`winding-field-experiments==1.3.0.dev1`).
 Use `python3.12` instead of `python3.11` if preferred:
 
 ```bash
@@ -174,6 +174,12 @@ winding-field prepared render --mesh runs/surfaces --output runs/views
 See [prepared workflows](docs/PREPARED.md) for recipes, supervised workers,
 Python imports and runnable examples. Implementation-bound runs made before
 the split require the original packages or a new output directory.
+
+Surface extraction, Flatboi/PCA export, atlases, geometry checks and CT/patch
+pictures are also owned by this package. See [surface and visualization tools](docs/SURFACE_TOOLS.md)
+for `surface-export`, `surface-probe`, `surface-atlas`, `surface-geometry-check`,
+`ct-visuals`, `patch-visuals` and `run-watch`. Numerical benchmarks stay in the core;
+their optional CT pictures are generated separately with `winding-field ct-visuals`.
 
 ## Outputs
 

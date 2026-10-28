@@ -174,7 +174,7 @@ def _validate_products(root,state):
         with open_field(root) as source:
             source.validate(hashes=True)
     if 'mesh' in state['stages']:
-        from surface_mesh import MeshReader
+        from .surface_mesh import MeshReader
         reader=MeshReader(root/'meshes'); reader.close()
     if 'flatten' in state['stages']:
         # Immutable chart payload hashes are checked by the normal stage resume.
