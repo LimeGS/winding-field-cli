@@ -190,7 +190,10 @@ def import_fibres(run,config,stop=None):
         for fid,family,count,annotation in src.execute(f'SELECT id,{family_column},point_count,annotation FROM fibers ORDER BY id'):
             if type(count) is not int or count<2 or not isinstance(annotation,str) or len(annotation)>1048576:
                 raise ValueError('invalid AFV fibre metadata')
-            json.loads(annotation); family=family or 'unknown'; cursor=0; previous=None
+            note=json.loads(annotation); family=family or 'unknown'; cursor=0; previous=None
+            classification=note.get('hv_classification') if isinstance(note,dict) else None
+            tag=classification.get('manual_tag') if isinstance(classification,dict) else None
+            if family=='unknown' and tag in ('V','H'): family=tag
             for first,raw in src.execute('SELECT first_segment,points FROM blocks WHERE fiber_id=? ORDER BY first_segment',(fid,)):
                 if stop and stop(): return dict(status='PAUSED')
                 if first!=cursor or len(raw)%24 or not 2<=len(raw)//24<=257:

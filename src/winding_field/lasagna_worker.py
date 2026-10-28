@@ -13,7 +13,10 @@ def run_tile_inference(self,model,tile,*,device):
 if __name__=='__main__':
     from contextlib import nullcontext
     import gpu_pause
+    import zarr
     from lasagna.preprocess_cos_omezarr import LasagnaCosPredict3DAdapter,cli_main
+    # Persist zero chunks so absent files still mean incomplete/corrupt output.
+    zarr.config.set({'array.write_empty_chunks': True})
     # The CLI owns its process; upstream's global training-service scheduler does not.
     gpu_pause.gpu_pause_context=nullcontext
     LasagnaCosPredict3DAdapter.run_tile_inference=run_tile_inference
