@@ -1,6 +1,6 @@
 # winding-field-cli
 
-Original CT → Qual V2 fibres → splines → winding field → 3D meshes → flattened
+Original CT → Lasagna surfaces + Qual V2 fibres/splines → winding field → 3D meshes → flattened
 charts. Resumable CLI for local or remote 3D Zarr v2 volumes, with automatic
 observation and fibre preparation.
 
@@ -11,7 +11,7 @@ library at its recorded revision (`winding-field-experiments==1.3.0.dev0`).
 Use `python3.12` instead of `python3.11` if preferred:
 
 ```bash
-git clone --branch feat/core-cli-separation https://github.com/LimeGS/winding-field-cli.git
+git clone https://github.com/LimeGS/winding-field-cli.git
 cd winding-field-cli
 python3.11 -m venv .venv
 source .venv/bin/activate
@@ -21,7 +21,7 @@ python -m pip install \
 winding-field doctor
 ```
 
-The [original numerical library](https://github.com/LimeGS/winding-field/tree/feat/core-cli-separation)
+The [original numerical library](https://github.com/LimeGS/winding-field)
 is a real dependency: this package contains no solver copy. Only the CLI installs
 the `winding-field` executable. The revision in
 [provenance/core.json](provenance/core.json) is also used by CI. A separate local
@@ -38,7 +38,12 @@ open runs/demo/index.html                 # macOS; open in a browser on Linux
 ## Calculate a field
 
 Small real-CT example: native **8.64 µm observations**, **17 µm field**, CPU.
-The default **Qual AFV fibre V2** predictor expects uint8 CT at isotropic
+Install the isolated official Lasagna runtime once using
+[these instructions](docs/LASAGNA.md). Normal CT runs then execute Lasagna
+automatically for surface normals and target density. Its pinned public weights
+(558 MB) are downloaded and verified on first use.
+
+The default **Qual AFV fibre V2** fibre predictor expects uint8 CT at isotropic
 **8.64–9.6 µm** observation spacing. Its weights (~540 MiB) are downloaded and
 SHA-256 verified on first use. The official Qual spline generator is installed
 automatically with the package; its H/V splines constrain the field.
@@ -55,6 +60,19 @@ winding-field run --source "$CT" --voxel-um 8.64 \
 
 The field is in `runs/175a-17um/field/`; `FIELD.json` records its geometry and
 solver status. `--sweeps 1` is a short example budget; the default is 4.
+
+### Import existing fibres
+
+Add `--fibres /path/fibres.afv` to the same command to replace Qual inference and
+tracing. Lasagna still runs. CLI-exported AFVs carry their calibrated frame;
+files with ambiguous geometry need `--fibres-geometry geometry.json`:
+
+```json
+{"source":"/absolute/path/scroll.zarr","origin_xyz_um":[100,200,300],"spacing_xyz_um":[9,9,9]}
+```
+
+This declares `world_XYZ = origin + AFV_XYZ * spacing`. The source must match the
+CT acquisition. See [AFV geometry and examples](docs/LASAGNA.md#external-afv).
 
 ### Choose the resolution
 
@@ -115,7 +133,7 @@ winding-field resume runs/175a-17um        # continue through the complete pipel
 ```
 
 Stopping finishes the current bounded operation and retains committed work.
-Qual's child tracer is stopped and reaped too; resume uses its committed batches.
+Lasagna and Qual children are stopped and reaped too; resume validates retained work.
 Resume checks input/product integrity and clears `STOP`. A deliberate `--until`
 stop reports `PAUSED`; check the corresponding stage receipt for completion.
 Use a new output directory to change settings, input data or package implementation.
@@ -126,6 +144,10 @@ Use a new output directory to change settings, input data or package implementat
 | --- | --- |
 | `--prediction qual-v2\|sd2\|classical` | Qual V2 + global splines by default; explicit SD2/classical use the legacy local tracer |
 | `--model-path /path/qual-v2.pt` | Use the selected model's pinned checkpoint; `winding-field models` prefetches Qual V2 |
+| `--fibres input.afv` | Import external fibres; skip fibre models and tracing |
+| `--fibres-geometry geometry.json` | Explicit transform when the AFV lacks a complete calibrated frame |
+| `--lasagna-python /venv/bin/python` | Override the isolated official runtime |
+| `--lasagna-model-path model.pt` | Local pinned surface weights; `models --prediction lasagna` prefetches them |
 | `--device cpu\|cuda:0` | Inference/solver device; default `cpu`. Spline tracing uses CPU |
 | `--level 0 --stride 1` | CT observation sampling; stride accepts 1–8 |
 | `--chunk 64 --field-chunk 64` | Storage tile / solve block sizes; inference windows stay fixed |
@@ -166,6 +188,7 @@ arrays and ROI bounds are ZYX.
 | `flat/chart-*-flat.obj`, `flat/chart-*.png` | Flattened charts and original-CT previews |
 | `flat/chart-*.npz`, `flat/atlas.sqlite` | UV coordinates and correspondence to source mesh faces |
 | `maps/`, `lasagna/`, `fibres/fibres.afv` | Observations, Lasagna maps and family-labelled Qual splines (AFV schema v1) |
+| `LASAGNA.json`, `lasagna-source/` | Raw official surface products, staged CT, transforms and integrity records |
 | `fibres/upstream/generator.log` | Official tracer progress; resumable scratch is alongside it |
 | `index.html` | Local interactive gallery after the full pipeline |
 
@@ -176,10 +199,15 @@ not a new AFV container version.
 `plan` includes the dense spline arrays: 8 bytes per observation voxel plus
 approximately 18 bytes per half-resolution tracing voxel. Seed sorting also uses
 RAM proportional to seed count (~64 bytes/seed); saved curves need extra disk.
+External AFV runs omit that dense tracing scratch. Planning also includes Lasagna
+staging, raw outputs and conservative upstream workspace estimates. Explicit
+`--prediction sd2` uses Lasagna surfaces with SD2 fibres; `classical` keeps the
+local offline surface/fibre baseline. An external AFV always selects Lasagna.
 
 Research output: physical sheet correctness and global convergence remain
 unvalidated. Whole-scroll native-resolution throughput has not been benchmarked.
 See [formats and geometry](docs/FORMATS.md),
+[Lasagna/AFV verification](docs/verification/lasagna-afv-inputs.md),
 [core/CLI verification](docs/verification/core-cli-separation.md),
 [Qual verification](docs/verification/qual-v2-splines.md) and
 [attribution](THIRD_PARTY.md) for details.

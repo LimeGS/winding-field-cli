@@ -42,7 +42,8 @@ def implementation_sha():
 
 
 def snapshot_exports(root,stage):
-    patterns={'prepare':['lasagna/**/*'],'fibres':['fibres/*.afv'],
+    patterns={'prepare':['lasagna/**/*','LASAGNA.json','lasagna-source/IDENTITY.json','lasagna-source/WORK.json',
+                         'lasagna-source/input.sqlite'],'fibres':['fibres/*.afv'],
               'field':[],'mesh':['meshes/*.obj'],
               'flatten':['flat/*.obj','flat/*.png','flat/atlas.sqlite']}
     with sqlite3.connect(root/'products.sqlite') as db:
@@ -78,7 +79,7 @@ def plan(config,volume=None,stages=()):
         if min(shape)<2:
             raise ValueError('ROI needs at least two observation samples per axis')
         validate_observations(config,volume,shape)
-        method=config.get('prediction','classical')
+        method='external-afv' if config.get('fibres') else config.get('prediction','classical')
         halo=40*stride
         input_lo=np.maximum(0,lo-halo); input_hi=np.minimum(volume.shape,hi+halo)
         if method in ('sd2','qual-v2'):
@@ -92,14 +93,26 @@ def plan(config,volume=None,stages=()):
         observations=dict(shape_zyx=shape.tolist(),spacing_xyz=(np.asarray(volume.spacing_xyz)*stride).tolist(),
                           origin_xyz=(np.asarray(volume.origin_xyz)+lo[::-1]*volume.spacing_xyz).tolist(),
                           frame=digest(volume.identity))
+        lasagna_staging=lasagna_workspace=0
+        if method!='classical':
+            from .lasagna import input_geometry,CHUNK,BORDER
+            staged=input_geometry(volume,dict(observations,stride=stride,roi_lo_zyx=lo.tolist()))
+            stage_shape=np.asarray(staged['shape_zyx'])
+            lasagna_staging=math.prod(((stage_shape+CHUNK-1)//CHUNK*CHUNK).tolist())*volume.dtype.itemsize
+            lasagna_workspace=math.prod((stage_shape+2*BORDER).tolist())*32+lasagna_staging*8
+            stage_lo=np.asarray(staged['source_start_zyx']); stage_hi=stage_lo+(stage_shape-1)*stride+1
+            input_lo=np.minimum(input_lo,stage_lo); input_hi=np.maximum(input_hi,stage_hi)
+            chunk_count=np.prod((input_hi-1)//volume.chunks-input_lo//volume.chunks+1,dtype=np.int64)
+            ct_bytes=int(chunk_count)*math.prod(volume.chunks)*volume.dtype.itemsize
         field=field_geometry(observations,config.get('field_spacing_um'))
-        output_bytes=math.prod(shape.tolist())*60+math.prod(field['shape_zyx'])*40
+        output_bytes=math.prod(shape.tolist())*60+math.prod(field['shape_zyx'])*40+lasagna_staging+lasagna_workspace
+        if config.get('fibres'): output_bytes+=Path(config['fibres']).stat().st_size*4
         spline_bytes=0
         if method=='qual-v2':
             spline_bytes=math.prod(shape.tolist())*8+math.prod((shape//2).tolist())*18
             output_bytes+=math.prod(shape.tolist())*8+spline_bytes
         output=Path(config['output']); parent=output if output.exists() else output.parent
-        written=sum(p.stat().st_size for name in ('maps','lasagna','fibres','field','meshes','flat')
+        written=sum(p.stat().st_size for name in ('maps','lasagna','lasagna-source','fibres','field','meshes','flat')
                     for p in (output/name).rglob('*') if p.is_file())
         remaining=0 if 'flatten' in stages else max(0,output_bytes-written)
         while not parent.exists():
@@ -118,7 +131,8 @@ def plan(config,volume=None,stages=()):
                      observations=observations,field=field,
                     input_lo_zyx=input_lo.tolist(),input_hi_zyx=input_hi.tolist(),ct_policy=mode,
                      estimated_ct_bytes=ct_bytes,estimated_products_bytes=output_bytes,
-                     estimated_spline_dense_bytes=spline_bytes,
+                      estimated_spline_dense_bytes=spline_bytes,
+                      estimated_lasagna_staging_bytes=lasagna_staging,estimated_lasagna_workspace_bytes=lasagna_workspace,
                     existing_products_bytes=written,estimated_remaining_bytes=remaining,free_bytes=free,
                      reserve_bytes=reserve,cache_free_bytes=cache_free,shared_filesystem=shared,
                      physical_accuracy='UNVALIDATED')
@@ -129,6 +143,10 @@ def plan(config,volume=None,stages=()):
 
 def _validate_products(root,state):
     from .artifacts import Tiles
+    from .lasagna import validate_retained as validate_lasagna
+    from .afv import validate_retained as validate_afv
+    validate_lasagna(root,state.get('config',{}))
+    if state.get('config',{}).get('fibres'): validate_afv(root,state['config'])
     if state['stages']:
         with sqlite3.connect((root/'products.sqlite').resolve().as_uri()+'?mode=ro',uri=True) as db:
             for name,sha in db.execute('SELECT path,sha FROM exports'):
@@ -184,6 +202,18 @@ def run(config,resume=False,until='flatten'):
     torch.set_num_threads(config.get('threads',min(4,os.cpu_count() or 1)))
     if root.exists() and not resume:
         raise FileExistsError('output exists; use resume or a new directory')
+    if not resume:
+        probe=open_volume(config)
+        try:
+            plan(config,probe)
+            if config.get('fibres'):
+                from .afv import source_identity
+                source_identity(config['fibres'],config.get('fibres_geometry'),probe.identity)
+        finally: probe.close()
+        if config.get('fibres') or config.get('prediction','classical')!='classical':
+            from . import lasagna
+            lasagna.runtime_identity(config.get('lasagna_python'))
+            lasagna.checkpoint(config.get('lasagna_model_path'),config.get('offline',False),prediction='lasagna')
     root.mkdir(parents=True,exist_ok=resume)
     with (root/'.run.lock').open('a') as lock:
         fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
@@ -209,6 +239,12 @@ def run(config,resume=False,until='flatten'):
             if 'source' in state and state['source']!=volume.identity:
                 raise ValueError('source metadata changed')
             state['source']=volume.identity
+            if config.get('fibres'):
+                from .afv import source_identity
+                fibres_input=source_identity(config['fibres'],config.get('fibres_geometry'),volume.identity)
+                if 'fibres_input' in state and state['fibres_input']!=fibres_input:
+                    raise ValueError('external AFV input identity changed')
+                state['fibres_input']=fibres_input
             volume.bind_ledger(root/'source.sqlite')
             if resume:
                 volume.validate_used(); _validate_products(root,state)
