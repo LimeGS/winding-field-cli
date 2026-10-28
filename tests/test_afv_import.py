@@ -40,7 +40,7 @@ def curves(root):
 def test_import_preserves_physical_frame(tmp_path,embedded):
     afv=adapter(); meta,config=fixture(tmp_path,embedded=embedded)
     with sqlite3.connect(config['fibres']) as db:
-        db.execute("UPDATE fibers SET family='unknown'")
+        db.execute("UPDATE fibers SET family='unknown',annotation='{}'")
     result=afv.import_fibres(tmp_path,config)
     assert result['status']=='FIBRES_READY'
     assert result['method']=='external-afv' and result['input_count']==1
@@ -188,3 +188,22 @@ def test_support_checks_preserve_original_vertices_when_no_clipping_is_needed(tm
     afv=adapter(); _,config=fixture(tmp_path,np.array([[1.,2.,3.],[10.,2.,3.],[20.,3.,4.]]))
     afv.import_fibres(tmp_path,config)
     np.testing.assert_allclose(curves(tmp_path)[0][2],[[109.,218.,327.],[190.,218.,327.],[280.,227.,336.]])
+
+
+@pytest.mark.parametrize('column,tag,expected',[
+    ('missing','V','V'),('unknown','H','H'),('','V','V'),('V','H','V'),('missing','unclassified','unknown'),
+])
+def test_import_and_export_preserve_annotation_only_families(tmp_path,column,tag,expected):
+    from winding_field.exports import export_afv
+    afv=adapter(); _,config=fixture(tmp_path)
+    with sqlite3.connect(config['fibres']) as db:
+        db.execute('UPDATE fibers SET annotation=?',(json.dumps(dict(hv_classification=dict(manual_tag=tag))),))
+        if column=='missing': db.execute('ALTER TABLE fibers DROP COLUMN family')
+        else: db.execute('UPDATE fibers SET family=?',(column,))
+    afv.import_fibres(tmp_path,config)
+    assert curves(tmp_path)[0][1]==expected
+    export_afv(tmp_path)
+    with sqlite3.connect(tmp_path/'fibres/fibres.afv') as db:
+        family,note=db.execute('SELECT family,annotation FROM fibers').fetchone()
+    assert family==expected
+    assert json.loads(note).get('hv_classification',{}).get('manual_tag')==(expected if expected in ('V','H') else None)

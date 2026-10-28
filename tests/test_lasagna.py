@@ -1,5 +1,8 @@
 import importlib.util
 import json
+import os
+from pathlib import Path
+import subprocess
 import sys
 
 import numpy as np
@@ -202,3 +205,42 @@ def test_lasagna_child_error_names_the_failed_stage(tmp_path):
     from winding_field.splines import run_child
     with pytest.raises(RuntimeError,match='Lasagna.*failed'):
         run_child([sys.executable,'-c','raise SystemExit(2)'],tmp_path/'child.log',label='Lasagna')
+
+
+def test_official_worker_persists_zero_chunks_for_strict_reader(tmp_path):
+    from winding_field import lasagna_worker
+    from winding_field.io import Volume
+    python=os.environ.get('WINDING_LASAGNA_PYTHON')
+    if not python: pytest.skip('set WINDING_LASAGNA_PYTHON for the isolated official-runtime check')
+    code='''
+import runpy,sys
+from pathlib import Path
+import numpy as np
+import zarr
+import lasagna.preprocess_cos_omezarr as upstream
+from tiled_predict3d import _atomic_zarr_write
+root=Path(sys.argv[2])
+zarr.config.set({'array.write_empty_chunks': False})
+def write_products():
+    zarr.open_array(str(root/'0'),mode='w',shape=(32,32,64),chunks=(32,32,32),
+                    dtype='u1',zarr_format=2,compressor=None,fill_value=0)
+    values=np.zeros((32,32,64),np.uint8); values[:,:,32:]=100
+    _atomic_zarr_write(str(root),0,0,0,0,32,32,64,values,32)
+    return 0
+upstream.cli_main=write_products
+runpy.run_path(sys.argv[1],run_name='__main__')
+'''
+    subprocess.run([python,'-I','-c',code,str(Path(lasagna_worker.__file__).resolve()),str(tmp_path/'product')],
+                   check=True,capture_output=True,text=True,timeout=90)
+    product=Volume(tmp_path/'product/0',voxel_um=1.,cache=tmp_path/'cache')
+    try:
+        data=product.read([0,0,0],[32,32,64])
+        np.testing.assert_array_equal(data[:,:,:32],0)
+        np.testing.assert_array_equal(data[:,:,32:],100)
+    finally: product.close()
+    (tmp_path/'product/0/0.0.0').unlink()
+    product=Volume(tmp_path/'product/0',voxel_um=1.,cache=tmp_path/'new-cache')
+    try:
+        with pytest.raises(FileNotFoundError,match='missing local CT chunk'):
+            product.read([0,0,0],[32,32,32])
+    finally: product.close()

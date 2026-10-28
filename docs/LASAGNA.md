@@ -92,7 +92,9 @@ Import clips intersecting edges to the observation ROI and traverses voxel cells
 to split at unsupported corners. It preserves original vertices wherever no
 clipping/splitting is needed, without smoothing or retracing. Source IDs, original
 annotations and available family labels survive export; unlabeled fibres remain
-`unknown`. `FIBRES.json` reports source/imported/excluded counts. Exported imported
+`unknown`. An annotation's `hv_classification.manual_tag` supplies V/H when the
+family column is missing, empty or `unknown`; an existing family takes precedence.
+`FIBRES.json` reports source/imported/excluded counts. Exported imported
 curves have `automatically_traced=false` and their source AFV hash.
 
 ## Products, units and recovery
@@ -107,6 +109,8 @@ their own scheduling.
 
 `lasagna-source/output/` retains official cos, grad_mag, nx and ny OME-Zarrs and
 their manifest. `LASAGNA.json` binds runtime, weights, transforms and hashes.
+The private worker persists all-zero chunks too, so an absent file remains an
+incomplete/corrupt product rather than being silently interpreted as zero.
 Density is `grad_mag / 1000` converted from input-index gradient to world units:
 divide normal components by input XYZ pitch, multiply density by that vector's
 length, then normalize the vector. Density is cycles/µm; output grid pitch is not
