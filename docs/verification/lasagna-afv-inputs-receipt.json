@@ -10,10 +10,10 @@
     "winding-field-experiments": "1.3.0.dev0"
   },
   "cli_python": "3.11.13",
-  "code_revision": "07f5add642d9f44191dcb1a054110039856f9c9d",
+  "code_revision": "8d9f67e7f89d18467ed2c7dad165c30a99f70d4c",
   "core_revision": "397ad750e1ee7f7aa5cb84ca575e750db3e3c232",
   "date": "2026-10-27",
-  "implementation_sha256": "4a417bb3725ebc55c8a8c028fe353619c3bbcc58e9e4cb1ce84cbca64147021a",
+  "implementation_sha256": "1473565324d95d18c957b345266a4907e68eae7454bfe33d404abcbb4893256d",
   "lasagna": {
     "dependencies": {
       "numpy": "2.5.4",
@@ -44,7 +44,7 @@
       80,
       80
     ],
-    "worker_sha256": "425d64937f94790b556fcd3df3bbb377153f536649d78fc1fd98ca8342ce42e3"
+    "worker_sha256": "4f3272ba326261aa449bfe6ceb2b2c6d32ae2119bd7a52cc08002f410df9e277"
   },
   "observations": {
     "origin_xyz": [
@@ -81,7 +81,7 @@
   },
   "records": {
     "external": {
-      "bytes": 8234856,
+      "bytes": 8235072,
       "charts": 13,
       "constraint_rows": 143,
       "coverage_fraction": 1.0,
@@ -110,20 +110,20 @@
       "mesh_components": 7,
       "mesh_faces": 2283,
       "products_sha256": {
-        "FIBRES.json": "98ea5f56cd61c098e1bfa40d9495fa61c297b769d3d819acee57709c9335bf0c",
-        "FIELD.json": "449b6d6f47fbd83f85edd75abbb6d75f14d5daae162e6bf33b9dfe17c9fcd49e",
-        "FLAT.json": "9fdf10f574f4d9062e36a4570cebecabee103615eb120799369c003a19ec021a",
-        "LASAGNA.json": "347591a775608ae5bcb4af629b2c46fa82504beda9f0c30e2f5d3cfd75bd89fd",
-        "MESHES.json": "e507f41075ec06c965a9af2bcafbc4b8db34b473fedc8c3412084c182640fc0b",
-        "PREPARED.json": "f7b121f77ceeb89ce93b80d27933a82254568b0c285cc5144fb91ef3070f2df7",
-        "fibres/fibres.afv": "e4f0897da0972b3ba1e18a2fa4c8d2719991d5156e89d9efe09c4c51fcafa180",
+        "FIBRES.json": "11d5968d285b8f252cb6e6687e754adca281fb3c05a386f5772ff2a911935b18",
+        "FIELD.json": "99ecbe965be7add773527bc42f421d18c12278c05a958f4516ce7e5fb0e32d86",
+        "FLAT.json": "36790804678034033d2507a7953ef3d2834176a37ae2d9f9f37ec05d9db0f9f1",
+        "LASAGNA.json": "3a6e44f2c8ff029717ecd7ed195e427130bed04351140b138b164dab54ab949c",
+        "MESHES.json": "a44a86f1760d5a6be2d8a8af5bec36aa5b5d8937c53d57bb607a09d4e256498c",
+        "PREPARED.json": "2b5c92c45056926beaf03166e72d05eb64aa013aa15dbde2380cf404496aac66",
+        "fibres/fibres.afv": "1cd47b3b6a298bf410c151db5c8f58f7f7a897e518e34865027ab12546ae7fa5",
         "fibres/fibres.sqlite": "c237aa7916cc9ca7d99ecce0dc7b66b61afe8a634724b19ef9d61ff035bb97bf",
-        "field/CHECKPOINT.json": "8db3e803016d0e1bf3be519cd0a10c89413bfb652a457d2dc26f0d758b0eb612"
+        "field/CHECKPOINT.json": "50899322b01aabb6c873e904f136878ee358c81df68156d2e47709ba7303d846"
       },
-      "seconds": 43.30826508300015
+      "seconds": 46.37812804100031
     },
     "qual": {
-      "bytes": 11915224,
+      "bytes": 11915188,
       "charts": 13,
       "constraint_rows": 143,
       "coverage_fraction": 1.0,
@@ -152,18 +152,30 @@
       "mesh_components": 7,
       "mesh_faces": 2283,
       "products_sha256": {
-        "FIBRES.json": "030649adbb845ddbaef7ecdd9e9eb8ffd579d50c14142ac046e647d0732bfe74",
-        "FIELD.json": "8fb10d666c605a375c701bbcecdf1fee034626ff12f9b9c1e5e52370456a65c5",
-        "FLAT.json": "c2cc442e4259b03195f376e0e5e8aed0a6c5fa4a8472510201b78640d5b6b9ed",
-        "LASAGNA.json": "b947e4ef56a82054b1d3f86ea07e52646f178165069e65018848efdc54ec434e",
-        "MESHES.json": "569fa7e439b176c0732c0259527478d9630d8dd7f50274cf01874473e0648722",
-        "PREPARED.json": "e028159673dc98a57a4ff14853d2b7927eb8ccaa520614b29ac624e35861267e",
-        "fibres/fibres.afv": "115ba71bae5bff78afaf35537843e65d2082ceaa734f6a68df8601077a45a36f",
+        "FIBRES.json": "80d08342c8ae41329a58678de9648ec908258bef62eee7089cb4380191ab98cf",
+        "FIELD.json": "57f8659199cd4af4c22675a9d4fb5c59c87c231d033b98ef71ce19b921aa9916",
+        "FLAT.json": "cd3f145adcb8d2eeff0e648505e0b00cd5d7d349489aeffe77e226d2000d2e54",
+        "LASAGNA.json": "6977f65a1b376b6bfdaa340c27dd05834a97b016bf197cb5fb9adfd59214b5f6",
+        "MESHES.json": "572164b9e75f338643a1d09a404c503f05eabec4bb40027d028b320617d0bec6",
+        "PREPARED.json": "917aba0aad02b950a8cd72acae142db13104db864530a1bd3fbbd30b2aca5c5a",
+        "fibres/fibres.afv": "fdcbd8f18d54d62509437cf820df1c97e522c7a3e05d79c6814be21d64d2c781",
         "fibres/fibres.sqlite": "5af8ea18a0d2669b55f9f4896f3650c572f4bd1ef0e16ba3baa71ad9d59ce105",
-        "field/CHECKPOINT.json": "0e35994e470aed98283de4a9cbc5d4985cdb2044e1a57822f57e477defadad07"
+        "field/CHECKPOINT.json": "bf38d2f02bf709fc28666c279c6340b48bb0bf0f179b40ac745fade47e6362fa"
       },
-      "seconds": 65.18659883299915
+      "seconds": 69.17761574999895
     }
+  },
+  "review": {
+    "base": "e86f839afbf6eec8fbbe51859e6c09b42b36b6a7",
+    "connected_green": "83 passed in 16.44s",
+    "deferred_code_findings": [],
+    "fix_revision": "8d9f67e",
+    "fixed": [
+      "official all-zero Zarr chunks must be persisted",
+      "annotation-only V/H labels must survive import/export"
+    ],
+    "red": "4 failed, 2 passed",
+    "reviewed_head": "f7bcbcc"
   },
   "roi_hi_zyx": [
     1536,
@@ -212,14 +224,14 @@
     "identical_surface_maps": true,
     "installed_provenance_files": 4,
     "installed_source_files": 39,
-    "installed_tests": "323 passed in 137.72s",
+    "installed_tests": "329 passed in 99.32s (0:01:39)",
     "preserved_family_counts": {
       "H": 3,
       "V": 4,
       "unknown": 0
     },
-    "source_tests": "323 passed in 102.00s",
-    "source_tree_sha256": "9ef1c6737b4a5f18fd98c1dc4b7c4bd58fa1972a6ac1f42f242eb778c049d973",
+    "source_tests": "329 passed in 105.46s (0:01:45)",
+    "source_tree_sha256": "fd34cba96cf1106d7894b038ac1d87d92fc2c32c79ed69ceacaba9b7dd5e26dd",
     "source_vertex_max_error_um": 7.275957614183426e-12,
     "stable_completed_resume": true,
     "stop_resume": true,
