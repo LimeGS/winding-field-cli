@@ -4,13 +4,14 @@ Official Lasagna supplies CT surface normals and density; Qual V2 or imported
 AFV curves supply fibre constraints. The numerical library remains the pinned
 external dependency. Setup and public commands are in [LASAGNA.md](../LASAGNA.md).
 The compact [receipt](lasagna-afv-inputs-receipt.json) records revisions, versions,
-geometry, runtime fingerprints and product hashes for code revision `07f5add`.
+geometry, runtime fingerprints and product hashes for code revision `8d9f67e`.
 
 ## Regression and installation
 
-- Source suite: **323 passed in 102.00 s**.
-- Clean installed wheel, outside the checkout, with `PYTHONPATH` removed and
-  pytest's `pythonpath` empty: **323 passed in 137.72 s**. This includes the
+- Post-review source suite: **329 passed in 105.46 s**.
+- Post-review wheel in the clean installation environment, outside the checkout,
+  with `PYTHONPATH` removed and pytest's `pythonpath` empty:
+  **329 passed in 99.32 s**. This includes the
   installed CLI demo and completed resume from another directory.
 - All **39 Python/JSON package files**, four installed provenance records and
   `THIRD_PARTY.md` match the checkout. Installed `run`/`plan` help exposes all four
@@ -26,15 +27,20 @@ geometry, runtime fingerprints and product hashes for code revision `07f5add`.
 Commands used (paths are local verification environments):
 
 ```bash
-env OMP_NUM_THREADS=4 OPENBLAS_NUM_THREADS=1 \
+env WINDING_LASAGNA_PYTHON="$PWD/.runtime/lasagna-venv/bin/python" \
+  OMP_NUM_THREADS=4 OPENBLAS_NUM_THREADS=1 \
   .runtime/separation-venv/bin/python -m pytest -q
-.runtime/separation-venv/bin/python -m build --outdir .runtime/lasagna-dist
+.runtime/separation-venv/bin/python -m build --outdir .runtime/lasagna-reviewed-dist
 uv venv --python .runtime/separation-venv/bin/python .runtime/lasagna-install-venv
 uv pip install --python .runtime/lasagna-install-venv/bin/python \
   'winding-field-experiments @ https://github.com/LimeGS/winding-field/archive/397ad750e1ee7f7aa5cb84ca575e750db3e3c232.tar.gz' \
-  .runtime/lasagna-dist/winding_field_cli-0.1.0-py3-none-any.whl pytest
+  .runtime/lasagna-reviewed-dist/winding_field_cli-0.1.0-py3-none-any.whl pytest
+# The corrected wheel was reinstalled into that isolated environment:
+uv pip install --python .runtime/lasagna-install-venv/bin/python --reinstall --no-deps \
+  .runtime/lasagna-reviewed-dist/winding_field_cli-0.1.0-py3-none-any.whl
 # From an external temporary directory containing copied tests/examples/tools:
-env -u PYTHONPATH OMP_NUM_THREADS=4 OPENBLAS_NUM_THREADS=1 \
+env -u PYTHONPATH WINDING_LASAGNA_PYTHON=/absolute/path/to/lasagna-venv/bin/python \
+  OMP_NUM_THREADS=4 OPENBLAS_NUM_THREADS=1 \
   /absolute/path/to/lasagna-install-venv/bin/python -m pytest tests -o pythonpath= -q
 ```
 
@@ -53,7 +59,7 @@ The installed official Villa revision is
 The adapter invokes official `predict3d` with 64³ tiles, overlap 32, border 16,
 full-input-lattice output and upstream normalization/blending/decoding.
 
-A direct bridge run completed a 48³ ROI with 80³ staged context in **44.28 s**.
+An initial direct bridge run completed a 48³ ROI with 80³ staged context in **44.28 s**.
 All 110,592 decoded densities matched official `grad_mag / 1000 / 8.64`
 (relative tolerance 2e-7); supported normals were unit length.
 
@@ -82,18 +88,18 @@ winding-field run --source "$CT" --voxel-um 8.64 \
   --ct-mode stream --cache-gib .25 --reserve-gib .25 \
   --lasagna-python .runtime/lasagna-venv/bin/python \
   --lasagna-model-path .runtime/lasagna-model.pt --model-path .runtime/qual-v2.pt \
-  --output .runtime/lasagna-acceptance-final/qual
+  --output .runtime/lasagna-acceptance-reviewed/qual
 ```
 
 It created `STOP` after the actual Lasagna child reported model loading, asserted
 `PAUSED` with a sealed work inventory, then resumed through flattening. A copied
 exported AFV fed the second run using the same settings, replacing `--model-path`
-with `--fibres .runtime/lasagna-acceptance-final/external.afv` and a new output.
+with `--fibres .runtime/lasagna-acceptance-reviewed/external.afv` and a new output.
 
 | Result | Lasagna + Qual | Lasagna + external AFV |
 |---|---:|---:|
-| Wall time, including interruption/resume where exercised | 65.19 s | 43.31 s |
-| Retained run bytes at measurement | 11,915,224 | 8,234,856 |
+| Wall time, including interruption/resume where exercised | 69.18 s | 46.38 s |
+| Retained run bytes at measurement | 11,915,188 | 8,235,072 |
 | Curves | 7 | 7 |
 | Fibre constraint rows | 143 | 143 |
 | Mesh faces / components | 2,283 / 7 | 2,283 / 7 |
@@ -114,11 +120,31 @@ sizes exclude shared cache, models and runtime environments.
 An earlier acceptance exposed artificial collinear vertices during import
 (143 versus 448 constraint rows). A failing regression reproduced it; support
 traversal now retains original vertices unless clipping/splitting is necessary.
-The table and receipt are the corrected rerun, not that earlier experiment.
-Large outputs remain under `.runtime/lasagna-acceptance-final`; local verification
+The table and receipt are the post-review rerun, including the empty-chunk and
+annotation-family fixes below, not that earlier experiment.
+Large outputs remain under `.runtime/lasagna-acceptance-reviewed`; local verification
 drivers/logs are retained under `.runtime/lasagna-evidence`.
 
 ## Recorded implementation decisions and limits
+
+The fresh read-only whole-branch review found no Critical issues and reproduced
+two fixes in `8d9f67e`:
+
+- The official Zarr writer omits all-zero fill chunks by default. The strict
+  reader correctly rejects absent chunks, so the private worker now enables
+  `array.write_empty_chunks` before invoking upstream. The regression runs the
+  actual pinned atomic writer, reads zero/nonzero chunks and still rejects a
+  deleted chunk. It requires `WINDING_LASAGNA_PYTHON` pointing to the isolated
+  runtime; ordinary tests skip this check rather than download that runtime.
+- Annotation-only H/V labels were imported as `unknown`. This was regraded from
+  Minor to Important because preserving available labels is an explicit input
+  contract. Import now uses recognized annotation tags for absent/empty/unknown
+  family columns, preserving an existing family and unknown labels otherwise.
+  Tests cover normalized import and re-export, including conflicting labels.
+
+The regressions produced four failures before correction, then **83 connected
+tests passed**. The review's deferred scientific/platform/whole-scroll questions
+are the limitations below; no code finding was deferred.
 
 - CPU inference uses FP32; CUDA retains upstream BF16. Rounding can differ from
   unmodified CPU upstream, so no byte-equivalence claim is made.
