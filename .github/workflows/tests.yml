@@ -26,7 +26,7 @@ jobs:
           CORE_REV=$(python -c "import json; print(json.load(open('provenance/core.json'))['revision'])")
           python -m pip install "winding-field-experiments @ https://github.com/LimeGS/winding-field/archive/$CORE_REV.tar.gz"
       - run: python -m build
-      - run: python -m pip install dist/*.whl
+      - run: python -m pip install dist/*.whl "matplotlib>=3.8,<4"
       - run: python -m pip check
       - run: python -m pytest -q -o pythonpath=
       - name: Installed CLI outside checkout
@@ -45,3 +45,12 @@ jobs:
           python -I examples/surface_pipeline.py --output "$RUNNER_TEMP/prepared-surfaces" --resume
           python -I examples/surface_pipeline.py --output "$RUNNER_TEMP/prepared-surfaces" --resume
           winding-field prepared render --mesh "$RUNNER_TEMP/prepared-surfaces/mesh" --output "$RUNNER_TEMP/prepared-views"
+      - name: Installed surface and CT tools
+        run: |
+          winding-field surface-export --help
+          winding-field surface-atlas --help
+          winding-field surface-probe --help
+          winding-field surface-geometry-check --help
+          winding-field patch-visuals --help
+          winding-field run-watch --help
+          python -I examples/ct_visuals.py --output "$RUNNER_TEMP/ct-visuals"

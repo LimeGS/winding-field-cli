@@ -10,7 +10,7 @@ from scipy.sparse import coo_matrix
 from scipy.sparse.csgraph import connected_components
 from scipy.sparse.linalg import lsqr
 
-from surface_mesh import MeshReader
+from .surface_mesh import MeshReader
 from .util import atomic_bytes,atomic_json,digest,file_sha
 
 
