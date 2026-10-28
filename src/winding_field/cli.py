@@ -38,6 +38,10 @@ def main(argv=None):
         p.add_argument('--chunk',type=int,default=64)
         p.add_argument('--prediction',choices=['classical','sd2','qual-v2'],default='qual-v2')
         p.add_argument('--model-path'); p.add_argument('--device',default='cpu')
+        p.add_argument('--fibres',help='external AFV; replaces fibre inference/tracing')
+        p.add_argument('--fibres-geometry',help='explicit AFV XYZ-to-world geometry JSON')
+        p.add_argument('--lasagna-python',help='isolated official Python 3.14 runtime')
+        p.add_argument('--lasagna-model-path',help='local pinned Lasagna surface checkpoint')
         p.add_argument('--threshold',type=float)
         p.add_argument('--invalid-value',type=float,help='acquisition fill value to exclude; zero remains valid unless declared')
         p.add_argument('--field-chunk',type=int,default=64); p.add_argument('--sweeps',type=int,default=4)
@@ -55,9 +59,9 @@ def main(argv=None):
     p.add_argument('--prediction',choices=['classical','sd2'],default='classical')
     p.add_argument('--model-path'); p.add_argument('--device',default='cpu')
     sub.add_parser('doctor',help='report installed runtime and CUDA availability')
-    p=sub.add_parser('models',help='download and verify a pinned fibre checkpoint')
+    p=sub.add_parser('models',help='download and verify a pinned checkpoint')
     p.add_argument('--path')
-    p.add_argument('--prediction',choices=['qual-v2','sd2'],default='qual-v2')
+    p.add_argument('--prediction',choices=['qual-v2','sd2','lasagna'],default='qual-v2')
     args=parser.parse_args(argv)
     try:
         if args.command=='inspect':
@@ -79,9 +83,12 @@ def main(argv=None):
             from .config import validate_config
             config=vars(args).copy(); command=config.pop('command'); until=config.pop('until')
             config['output']=str(Path(config['output']).expanduser().resolve())
-            for key in ('local','cache','model_path'):
+            for key in ('local','cache','model_path','fibres','fibres_geometry','lasagna_model_path'):
                 if config.get(key):
                     config[key]=str(Path(config[key]).expanduser().resolve())
+            if config.get('lasagna_python'):
+                # Resolving the venv executable symlink would select the base interpreter.
+                config['lasagna_python']=str(Path(config['lasagna_python']).expanduser().absolute())
             for key in ('cache','reserve'):
                 value=config.pop(key+'_gib')
                 if not 0<=value<=1e6:

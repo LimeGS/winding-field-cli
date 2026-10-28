@@ -28,7 +28,7 @@ def test_lasagna_stops_after_one_chunk_resumes_and_checks_retained_bytes(tmp_pat
     first=writes[0]; before=first.stat().st_mtime_ns
     assert not (root/'lasagna/fibres.lasagna.json').exists()
     assert exports.export_lasagna(root) is True
-    assert len(writes)==18
+    assert len(writes)==21
     assert first.stat().st_mtime_ns==before
     first.write_bytes(b'corrupt')
     with pytest.raises(ValueError,match='export|corrupt'):
@@ -168,3 +168,23 @@ def test_qual_afv_resume_checks_later_blocks(tmp_path):
         db.execute('UPDATE blocks SET points=zeroblob(length(points)) WHERE first_segment=256')
     with pytest.raises(ValueError,match='changed|corrupt'):
         export_afv(root)
+
+
+def test_export_density_converts_world_gradient_to_anisotropic_index_space(tmp_path):
+    from winding_field.artifacts import Tiles
+    from winding_field.exports import export_lasagna
+    from winding_field.io import Volume
+    root=export_fixture(tmp_path/'run'); maps=Tiles(root/'maps')
+    for key in maps.keys():
+        data=maps.load(key); data['density'][:]=.01
+        data['normals'][:]=[2**-.5,2**-.5,0]
+        maps.write(key,data)
+    meta=json.loads((root/'PREPARED.json').read_bytes())
+    meta.update(spacing_xyz=[2.,4.,8.],tiles_sha256=maps.identity()); maps.close()
+    (root/'PREPARED.json').write_text(json.dumps(meta))
+    export_lasagna(root)
+    manifest=json.loads((root/'lasagna/surfaces.lasagna.json').read_bytes())
+    assert 'grad_mag' in manifest['groups']
+    volume=Volume(root/'lasagna/surface_grad_mag.ome.zarr',cache=tmp_path/'cache')
+    try: np.testing.assert_allclose(volume.read([0,0,0],[1,1,1]),np.sqrt(10)*10,rtol=1e-6)
+    finally: volume.close()

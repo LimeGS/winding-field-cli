@@ -137,7 +137,7 @@ def solve(run,config,stop=None):
     def constraints(lo,hi,read_nodes):
         nonlocal row_count
         a=[]; b=[]
-        if meta['prediction']=='qual-v2':
+        if meta['prediction']=='qual-v2' or fibres.get('spatial_index'):
             low=np.asarray(geometry['origin_xyz'])+lo[::-1]*geometry['spacing_xyz']
             high=np.asarray(geometry['origin_xyz'])+(hi-1)[::-1]*geometry['spacing_xyz']
             rows=db.execute('SELECT c.points FROM curve_bounds b JOIN curves c ON c.id=b.id '
@@ -149,7 +149,7 @@ def solve(run,config,stop=None):
             rows=(row for key in keys for row in db.execute('SELECT points FROM curves WHERE tile=?',('_'.join(map(str,key)),)))
         for (raw,) in rows:
             points=np.load(io.BytesIO(raw),allow_pickle=False)
-            if meta['prediction']=='qual-v2':
+            if meta['prediction']=='qual-v2' or fibres.get('spatial_index'):
                 for sampled in spline_samples(points,low,high,min(geometry['spacing_xyz'])):
                     a.extend(sampled[:-1]); b.extend(sampled[1:])
                 continue

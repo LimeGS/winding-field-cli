@@ -1,0 +1,240 @@
+{
+  "cli_dependencies": {
+    "avf-spline-generator": "0.1.0",
+    "numcodecs": "0.16.6",
+    "numpy": "2.4.6",
+    "scikit-image": "0.26.0",
+    "scipy": "1.17.1",
+    "torch": "2.14.1",
+    "winding-field-cli": "0.1.0",
+    "winding-field-experiments": "1.3.0.dev0"
+  },
+  "cli_python": "3.11.13",
+  "code_revision": "8d9f67e7f89d18467ed2c7dad165c30a99f70d4c",
+  "core_revision": "397ad750e1ee7f7aa5cb84ca575e750db3e3c232",
+  "date": "2026-10-27",
+  "implementation_sha256": "1473565324d95d18c957b345266a4907e68eae7454bfe33d404abcbb4893256d",
+  "lasagna": {
+    "dependencies": {
+      "numpy": "2.5.4",
+      "scipy": "1.18.1",
+      "torch": "2.14.1",
+      "vesuvius-lasagna": "0.0.1",
+      "zarr": "3.4.2"
+    },
+    "pins": {
+      "adapter": "Official predict3d, strict checkpoint loading, 64-cubed tiles, overlap 32, border 16, full input-lattice outputs. CPU runs FP32; CUDA retains upstream BF16 autocast. Runtime sources and dependency versions are fingerprinted at preflight.",
+      "install_url": "https://github.com/ScrollPrize/villa/archive/b29f310957c7b29e7d332f9876e0e487819cfaa3.tar.gz#subdirectory=lasagna",
+      "model": "scrollprize/lasagna/model_current.pt",
+      "model_bytes": 558287587,
+      "model_revision": "de45f01147adea9f4ad0f621b1ccd885a1f03760",
+      "model_sha256": "4cc0c40a846b296769b9f7982470559078662a1a0b0e1f74ff41ed9341c0d600",
+      "python": "3.14",
+      "revision": "b29f310957c7b29e7d332f9876e0e487819cfaa3",
+      "runtime": "vesuvius-lasagna",
+      "source_url": "https://github.com/ScrollPrize/villa"
+    },
+    "precision": "float32-cpu/bfloat16-cuda",
+    "python": "3.14.10",
+    "runtime_dependencies_sha256": "d5c5bf25fc91076338a4a44837dc3eec26a6553047edac150c56e40c80b38c7c",
+    "runtime_source_files": 899,
+    "runtime_sources_sha256": "053703c3a3d8114dadfa5ae784ca9f1822a4ca0009a7d3737549407d6b2eea3f",
+    "staged_shape_zyx": [
+      80,
+      80,
+      80
+    ],
+    "worker_sha256": "4f3272ba326261aa449bfe6ceb2b2c6d32ae2119bd7a52cc08002f410df9e277"
+  },
+  "observations": {
+    "origin_xyz": [
+      52254.72,
+      34836.48,
+      12856.320000000002
+    ],
+    "shape_zyx": [
+      48,
+      48,
+      48
+    ],
+    "spacing_xyz": [
+      8.64,
+      8.64,
+      8.64
+    ]
+  },
+  "physical_acceptance": false,
+  "platform": "macOS-27.0.1-arm64-arm-64bit",
+  "qual_pins": {
+    "adaptations": "None to bundled upstream files; the application supplies its own pinned download and tiled inference adapter.",
+    "checkpoint": "checkpoint_final.pth",
+    "checkpoint_sha256": "b8519a4ce4044c93ed98af0c278628fdcdfdd8808275b3c8becd7211f38b7967",
+    "files": {
+      "src/winding_field/_vendor/qual_model.py": "26b9781e6eb6f20b65f272a491f1856e300b9066ef673f2cecdbb247ce6b3323",
+      "src/winding_field/_vendor/qual_plans.json": "a81fd986d0812688de753a72360706897b0bd29e55fd1d6d0cb29f7e31063f65"
+    },
+    "license": "Apache-2.0",
+    "model_repository": "https://huggingface.co/Qualzz20/afv_fiber_9um_v2",
+    "model_revision": "2a8a26a70754a5d90aeca91f9ef8e7130e6e4f81",
+    "spline_repository": "https://github.com/Qualzz/AVF_SPLINE_GENERATOR",
+    "spline_revision": "3c8b73628ca56cb28042b9b2e79439b2e1c693d2"
+  },
+  "records": {
+    "external": {
+      "bytes": 8235072,
+      "charts": 13,
+      "constraint_rows": 143,
+      "coverage_fraction": 1.0,
+      "downloaded_ct_bytes": 0,
+      "fibre_count": 7,
+      "field_geometry": {
+        "frame": "22760e377700e45bac854cb97c37a09dd9919fffb56972fc7be257c485d064f7",
+        "origin_xyz": [
+          52254.72,
+          34836.48,
+          12856.320000000002
+        ],
+        "shape_zyx": [
+          24,
+          24,
+          24
+        ],
+        "sheet_step": 1.0,
+        "spacing_xyz": [
+          17.0,
+          17.0,
+          17.0
+        ],
+        "voxel_um": 1.0
+      },
+      "mesh_components": 7,
+      "mesh_faces": 2283,
+      "products_sha256": {
+        "FIBRES.json": "11d5968d285b8f252cb6e6687e754adca281fb3c05a386f5772ff2a911935b18",
+        "FIELD.json": "99ecbe965be7add773527bc42f421d18c12278c05a958f4516ce7e5fb0e32d86",
+        "FLAT.json": "36790804678034033d2507a7953ef3d2834176a37ae2d9f9f37ec05d9db0f9f1",
+        "LASAGNA.json": "3a6e44f2c8ff029717ecd7ed195e427130bed04351140b138b164dab54ab949c",
+        "MESHES.json": "a44a86f1760d5a6be2d8a8af5bec36aa5b5d8937c53d57bb607a09d4e256498c",
+        "PREPARED.json": "2b5c92c45056926beaf03166e72d05eb64aa013aa15dbde2380cf404496aac66",
+        "fibres/fibres.afv": "1cd47b3b6a298bf410c151db5c8f58f7f7a897e518e34865027ab12546ae7fa5",
+        "fibres/fibres.sqlite": "c237aa7916cc9ca7d99ecce0dc7b66b61afe8a634724b19ef9d61ff035bb97bf",
+        "field/CHECKPOINT.json": "50899322b01aabb6c873e904f136878ee358c81df68156d2e47709ba7303d846"
+      },
+      "seconds": 46.37812804100031
+    },
+    "qual": {
+      "bytes": 11915188,
+      "charts": 13,
+      "constraint_rows": 143,
+      "coverage_fraction": 1.0,
+      "downloaded_ct_bytes": 0,
+      "fibre_count": 7,
+      "field_geometry": {
+        "frame": "22760e377700e45bac854cb97c37a09dd9919fffb56972fc7be257c485d064f7",
+        "origin_xyz": [
+          52254.72,
+          34836.48,
+          12856.320000000002
+        ],
+        "shape_zyx": [
+          24,
+          24,
+          24
+        ],
+        "sheet_step": 1.0,
+        "spacing_xyz": [
+          17.0,
+          17.0,
+          17.0
+        ],
+        "voxel_um": 1.0
+      },
+      "mesh_components": 7,
+      "mesh_faces": 2283,
+      "products_sha256": {
+        "FIBRES.json": "80d08342c8ae41329a58678de9648ec908258bef62eee7089cb4380191ab98cf",
+        "FIELD.json": "57f8659199cd4af4c22675a9d4fb5c59c87c231d033b98ef71ce19b921aa9916",
+        "FLAT.json": "cd3f145adcb8d2eeff0e648505e0b00cd5d7d349489aeffe77e226d2000d2e54",
+        "LASAGNA.json": "6977f65a1b376b6bfdaa340c27dd05834a97b016bf197cb5fb9adfd59214b5f6",
+        "MESHES.json": "572164b9e75f338643a1d09a404c503f05eabec4bb40027d028b320617d0bec6",
+        "PREPARED.json": "917aba0aad02b950a8cd72acae142db13104db864530a1bd3fbbd30b2aca5c5a",
+        "fibres/fibres.afv": "fdcbd8f18d54d62509437cf820df1c97e522c7a3e05d79c6814be21d64d2c781",
+        "fibres/fibres.sqlite": "5af8ea18a0d2669b55f9f4896f3650c572f4bd1ef0e16ba3baa71ad9d59ce105",
+        "field/CHECKPOINT.json": "bf38d2f02bf709fc28666c279c6340b48bb0bf0f179b40ac745fade47e6362fa"
+      },
+      "seconds": 69.17761574999895
+    }
+  },
+  "review": {
+    "base": "e86f839afbf6eec8fbbe51859e6c09b42b36b6a7",
+    "connected_green": "83 passed in 16.44s",
+    "deferred_code_findings": [],
+    "fix_revision": "8d9f67e",
+    "fixed": [
+      "official all-zero Zarr chunks must be persisted",
+      "annotation-only V/H labels must survive import/export"
+    ],
+    "red": "4 failed, 2 passed",
+    "reviewed_head": "f7bcbcc"
+  },
+  "roi_hi_zyx": [
+    1536,
+    4080,
+    6096
+  ],
+  "roi_lo_zyx": [
+    1488,
+    4032,
+    6048
+  ],
+  "settings": {
+    "chunk": 16,
+    "ct_mode": "stream",
+    "field_chunk": 16,
+    "invalid_value": null,
+    "maxiter": 2000,
+    "previews": true,
+    "rtol": 1e-06,
+    "stride": 1,
+    "sweeps": 1,
+    "threads": 4
+  },
+  "source": {
+    "level": 0,
+    "metadata_sha256": "94065d12a2d185057f6f7cf3f1d55218b84eb261909571813b1ef218c6fe223d",
+    "origin_xyz": [
+      0.0,
+      0.0,
+      0.0
+    ],
+    "shape": [
+      12748,
+      9363,
+      9363
+    ],
+    "source": "https://vesuvius-challenge-open-data.s3.amazonaws.com/PHerc0175A/volumes/20250521115057-8.640um-1.2m-116keV-masked.zarr",
+    "spacing_xyz": [
+      8.64,
+      8.64,
+      8.64
+    ]
+  },
+  "verification": {
+    "external_mutation_rejected": true,
+    "identical_surface_maps": true,
+    "installed_provenance_files": 4,
+    "installed_source_files": 39,
+    "installed_tests": "329 passed in 99.32s (0:01:39)",
+    "preserved_family_counts": {
+      "H": 3,
+      "V": 4,
+      "unknown": 0
+    },
+    "source_tests": "329 passed in 105.46s (0:01:45)",
+    "source_tree_sha256": "fd34cba96cf1106d7894b038ac1d87d92fc2c32c79ed69ceacaba9b7dd5e26dd",
+    "source_vertex_max_error_um": 7.275957614183426e-12,
+    "stable_completed_resume": true,
+    "stop_resume": true,
+    "strict_roi": true
+  }
+}

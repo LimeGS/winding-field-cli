@@ -58,11 +58,12 @@ def materialize_predictions(maps,root,stop=None,reserve_bytes=0):
         for key in maps.keys():
             if stop and stop(): return None
             lo,hi=maps.box(key); region=(slice(None),)+tuple(slice(a,b) for a,b in zip(lo,hi))
-            data=maps.load(key,('probabilities','support'))
+            support_name='fibre_support' if maps.meta['identity'].get('surface_method')=='lasagna' else 'support'
+            data=maps.load(key,('probabilities',support_name))
             values=data['probabilities']
             if values.shape!=(*tuple(hi-lo),2) or not np.isfinite(values).all() or np.any((values<0)|(values>1)):
                 raise ValueError('spline input must contain finite V/H probabilities in [0,1]')
-            values=np.where(data['support'][...,None],values,0).transpose(3,0,1,2).astype('<f4')
+            values=np.where(data[support_name][...,None],values,0).transpose(3,0,1,2).astype('<f4')
             sha=hashlib.sha256(values.tobytes()).hexdigest(); tag='_'.join(map(str,key))
             old=db.execute('SELECT sha FROM tiles WHERE key=?',(tag,)).fetchone()
             if old:
@@ -85,7 +86,7 @@ def materialize_predictions(maps,root,stop=None,reserve_bytes=0):
         db.close()
 
 
-def run_child(command,log,stop=None,reserve_bytes=0,threads=4):
+def run_child(command,log,stop=None,reserve_bytes=0,threads=4,*,label='Qual spline generator'):
     if stop and stop(): return False
     log=Path(log); log.parent.mkdir(parents=True,exist_ok=True)
     env=dict(os.environ,NUMBA_NUM_THREADS=str(threads),OMP_NUM_THREADS=str(threads))
@@ -96,7 +97,7 @@ def run_child(command,log,stop=None,reserve_bytes=0,threads=4):
             while child.poll() is None:
                 low_space=shutil.disk_usage(log.parent).free<reserve_bytes
                 if low_space or (stop and stop()):
-                    paused=True; child.send_signal(signal.SIGINT)
+                    paused=True; os.killpg(child.pid,signal.SIGINT)
                     break
                 try: child.wait(timeout=.2)
                 except subprocess.TimeoutExpired: pass
@@ -104,11 +105,13 @@ def run_child(command,log,stop=None,reserve_bytes=0,threads=4):
             if child.poll() is None:
                 try: child.wait(timeout=5)
                 except subprocess.TimeoutExpired:
-                    child.kill(); child.wait()
-        if low_space: raise OSError('spline tracing reached the disk reserve; free space and resume')
+                    os.killpg(child.pid,signal.SIGKILL); child.wait()
+            try: os.killpg(child.pid,signal.SIGKILL)
+            except ProcessLookupError: pass
+        if low_space: raise OSError(label+' reached the disk reserve; free space and resume')
         if paused: return False
         if child.returncode:
-            raise RuntimeError(f'Qual spline generator failed ({child.returncode}); see {log}')
+            raise RuntimeError(f'{label} failed ({child.returncode}); see {log}')
     return True
 
 
