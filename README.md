@@ -3,7 +3,7 @@
 
 Build a winding field from a scroll's CT, then extract 3D meshes and CT-textured
 flat charts. By default, Lasagna supplies surface observations; Qual V2 supplies
-fibres and splines. Runs save each stage so you can stop and continue later.
+fibres and splines. Runs save each stage so you can stop and continue later. Now optimized to run on consumer hardware.
 
 Follow sections **1–2** for a full scroll, or **1 → 3** for a smaller region.
 Section **4** covers stopping and resuming; **5** extracts meshes; **6** covers
