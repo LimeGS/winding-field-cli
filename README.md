@@ -1,10 +1,9 @@
 # winding-field-cli
+![Illustrated workflow: original CT → Lasagna surfaces + Qual V2 fibres/splines → winding field → 3D meshes → flattened charts](docs/assets/workflow-banner.png)
 
 Original CT → Lasagna surfaces + Qual V2 fibres/splines → winding field → 3D meshes → flattened
 charts. Resumable CLI for local or remote 3D Zarr v2 volumes, with automatic
 observation and fibre preparation.
-
-![Illustrated workflow: original CT → Lasagna surfaces + Qual V2 fibres/splines → winding field → 3D meshes → flattened charts](docs/assets/workflow-banner.png)
 
 ## Quick start
 
