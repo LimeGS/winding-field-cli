@@ -5,10 +5,11 @@ Build a winding field from a scroll's CT, then extract 3D meshes and CT-textured
 flat charts. Lasagna supplies surface observations; Qual V2 supplies fibres and
 splines. Runs save each stage so you can stop and continue later.
 
-Follow sections **1–3** for a full scroll, or **1 → 4** for a smaller region.
-Section **5** extracts meshes; section **6** covers inputs you already have.
+Follow sections **1–2** for a full scroll, or **1 → 3** for a smaller region.
+Section **4** covers stopping and resuming; **5** extracts meshes; **6** covers
+inputs you already have.
 
-<details open>
+<details>
 <summary><strong>1. Install</strong></summary>
 
 **CLI and numerical library.** Requires Python **3.11 or 3.12**, Linux/macOS.
@@ -90,7 +91,36 @@ For another acquisition, set `--voxel-um` to its actual spacing and choose
 </details>
 
 <details>
-<summary><strong>3. Stop, inspect and resume a run</strong></summary>
+<summary><strong>3. Run a field for a specific section of a scroll</strong></summary>
+
+Add `--roi Z0 Z1 Y0 Y1 X0 X1` to limit the output to a region. Bounds are in
+**voxels of the selected CT level**, with exclusive upper bounds. This example
+selects a **48 × 48 × 48 voxel** region and solves a **17 µm field** on CPU:
+
+```bash
+CT='s3://vesuvius-challenge-open-data/PHerc0175A/volumes/20250521115057-8.640um-1.2m-116keV-masked.zarr'
+
+winding-field run --source "$CT" --voxel-um 8.64 \
+  --roi 1488 1536 4032 4080 6048 6096 \
+  --field-spacing-um 17 --device cpu --ct-mode stream \
+  --until field --output runs/175a-roi
+```
+
+- Replace the six bounds to select your region; use `plan` instead of `run` to
+  inspect its grids first. Inference reads context around the ROI, but the output
+  stays inside it.
+- Choose `--field-spacing-um` independently of the CT resolution. The ROI must
+  contain at least two field nodes per axis.
+- Results are in `runs/175a-roi/field/`. Use this run path in sections 4 and 5.
+
+To create intermediate inputs from scratch, replace `--until field` with
+`--until prepare` for Lasagna + Qual predictions, or `--until fibres` to also trace
+and export `fibres/fibres.afv`. Continue that same run with `winding-field field RUN`.
+
+</details>
+
+<details>
+<summary><strong>4. Stop, inspect and resume a run</strong></summary>
 
 Point `RUN` at the run directory, not its `field/` subdirectory. While a job is
 running, press **Ctrl-C** or create `STOP` from another terminal. It saves
@@ -120,38 +150,9 @@ Use a new output directory to change them.
 </details>
 
 <details>
-<summary><strong>4. Run a field for a specific section of a scroll</strong></summary>
-
-Add `--roi Z0 Z1 Y0 Y1 X0 X1` to limit the output to a region. Bounds are in
-**voxels of the selected CT level**, with exclusive upper bounds. This example
-selects a **48 × 48 × 48 voxel** region and solves a **17 µm field** on CPU:
-
-```bash
-CT='s3://vesuvius-challenge-open-data/PHerc0175A/volumes/20250521115057-8.640um-1.2m-116keV-masked.zarr'
-
-winding-field run --source "$CT" --voxel-um 8.64 \
-  --roi 1488 1536 4032 4080 6048 6096 \
-  --field-spacing-um 17 --device cpu --ct-mode stream \
-  --until field --output runs/175a-roi
-```
-
-- Replace the six bounds to select your region; use `plan` instead of `run` to
-  inspect its grids first. Inference reads context around the ROI, but the output
-  stays inside it.
-- Choose `--field-spacing-um` independently of the CT resolution. The ROI must
-  contain at least two field nodes per axis.
-- Results are in `runs/175a-roi/field/`. Use this run path in sections 3 and 5.
-
-To create intermediate inputs from scratch, replace `--until field` with
-`--until prepare` for Lasagna + Qual predictions, or `--until fibres` to also trace
-and export `fibres/fibres.afv`. Continue that same run with `winding-field field RUN`.
-
-</details>
-
-<details>
 <summary><strong>5. Extract meshes from an existing field</strong></summary>
 
-For a field produced in section 2 or 4, use its complete run directory. The
+For a field produced in section 2 or 3, use its complete run directory. The
 saved field is reused; completed inference and solving stages are not rerun.
 
 ```bash
@@ -180,7 +181,7 @@ For a standalone field created elsewhere, use the external-field recipe below.
 
 Use an existing AFV with the **same CT acquisition** to skip Qual inference and
 tracing. Lasagna still supplies the surface observations. Set the fibre path and
-ROI to match your data; this example uses the region from section 4:
+ROI to match your data; this example uses the region from section 3:
 
 ```bash
 CT='s3://vesuvius-challenge-open-data/PHerc0175A/volumes/20250521115057-8.640um-1.2m-116keV-masked.zarr'
