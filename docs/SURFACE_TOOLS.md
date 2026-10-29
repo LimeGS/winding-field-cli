@@ -93,9 +93,10 @@ The case declares `frame`, positive `step`, `voxel_um`, and:
 
 Paths resolve relative to the case. The candidate sidecar provides its file hash,
 frame, `origin_xyz`, positive `spacing_xyz`, `shape_zyx` and calibration `step`.
-For masked fields, pass `--support support.npy`; its expected hash must be in
-metadata (`support_sha256` / `support_array_sha256`) or `--support-sha256`.
-All supplied hashes must agree. A declared mask cannot be omitted.
+For masked fields, pass `--support support.npy` and declare at least one expected
+hash. Metadata `support_sha256` and `--support-sha256` hash the complete NPY file;
+metadata `support_array_sha256` hashes `np.ascontiguousarray(support).tobytes()`.
+Each supplied hash must match its respective bytes. A declared mask cannot be omitted.
 
 For historical cases without `voxel_um`, pass `--config dataset.json` with the
 matching explicit frame and units. That configuration is hashed into preflight;

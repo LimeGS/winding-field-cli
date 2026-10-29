@@ -39,6 +39,8 @@ Statuses are `STARTING`, `RUNNING`, `PAUSED`, `FAILED` and `COMPLETE`.
 Source metadata, consumed content, package implementation and completed products
 must agree on resume. The CT cache is disposable, not the source of truth for
 checkpoints. Retain the original package and data for reproducibility.
+Runs bind absolute source/output paths: moving a run directory is not a supported
+resume operation. Exported geometry and the gallery can be copied independently.
 The implementation identity also includes bundled model JSON, installed numerical
 dependency versions, and the source hashes of the Qual tracer and network architecture.
 
@@ -92,7 +94,8 @@ output-index gradient magnitude times 1000, preserving its range. Other channels
 are uint8. Physical normals are converted as covectors to output-index space
 (multiply components by XYZ pitch); fibre tangents use inverse pitch.
 `surfaces.lasagna.json` records the density encoding. `fibres.lasagna.json` and
-its three channels exist only when fibre inference ran. Direction XY is encoded around
+its three channels are exported for Qual, SD2 and classical preparation; external
+AFV runs omit them. Direction XY is encoded around
 128 with scale 127 after folding the sign into the positive-Z hemisphere. The
 manifests address an **ROI-local output grid** and include world origin, spacing
 and original-source metadata; align this frame before combining with other data.
@@ -145,8 +148,9 @@ replay its current upstream phase, and tracing replays only uncommitted batches.
 
 ## Field
 
-`field/CHECKPOINT.json` and block NPYs use the reused numerical core's durable
-block format. `FIELD.json` records physical grid, orientation/calibration,
+`field/CHECKPOINT.json` references checksummed, generation-named block NPZs from
+the numerical core: float32 deltas, a float64 offset and packed observation bits.
+`FIELD.json` records physical grid, orientation/calibration,
 constraint rows and conditional local-solver convergence. Sweeps are a budget;
 `global_converged: false` means no independent global convergence is established.
 The nominal unit sheet step and automatic planar/radial-Z calibration are

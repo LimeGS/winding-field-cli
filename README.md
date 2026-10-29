@@ -2,8 +2,8 @@
 ![Illustrated workflow: original CT → Lasagna surfaces + Qual V2 fibres/splines → winding field → 3D meshes → flattened charts](docs/assets/workflow-banner.png)
 
 Build a winding field from a scroll's CT, then extract 3D meshes and CT-textured
-flat charts. Lasagna supplies surface observations; Qual V2 supplies fibres and
-splines. Runs save each stage so you can stop and continue later.
+flat charts. By default, Lasagna supplies surface observations; Qual V2 supplies
+fibres and splines. Runs save each stage so you can stop and continue later.
 
 Follow sections **1–2** for a full scroll, or **1 → 3** for a smaller region.
 Section **4** covers stopping and resuming; **5** extracts meshes; **6** covers
@@ -27,7 +27,7 @@ python -m pip install \
 winding-field doctor
 ```
 
-**Lasagna runtime.** Real-CT runs also need the official Lasagna package. It uses
+**Lasagna runtime.** Default CT runs also need the official Lasagna package. It uses
 Python 3.14 in a separate environment; install it once without activating it:
 
 ```bash
@@ -242,6 +242,6 @@ All CLI options: `winding-field run --help`.
 
 [Formats](docs/FORMATS.md) · [Lasagna and AFV](docs/LASAGNA.md) · [Streaming](docs/STREAMING.md) ·
 [Prepared workflows](docs/PREPARED.md) · [Surface tools](docs/SURFACE_TOOLS.md) ·
-[Verification](docs/verification/lasagna-afv-inputs.md) · [Attribution](THIRD_PARTY.md)
+[Attribution](THIRD_PARTY.md)
 
 Research output: physical sheet correctness and global convergence remain unvalidated.

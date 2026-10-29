@@ -1,8 +1,9 @@
 # Lasagna surfaces and external AFV fibres
 
-The CT pipeline uses official Lasagna for unsigned surface normals and target
-winding density. Qual V2 supplies fibres/splines unless `--fibres` is supplied.
-Lasagna runs automatically; no precomputed surface predictions are needed.
+The default CT pipeline uses official Lasagna for unsigned surface normals and
+target winding density, with Qual V2 supplying fibres/splines. `--fibres` replaces
+fibre inference/tracing with an external AFV. Explicit `--prediction sd2` also uses
+Lasagna; `--prediction classical` without an AFV uses the offline local baseline.
 
 ## One-time runtime setup
 
@@ -27,7 +28,6 @@ before creating its output directory. `plan` estimates storage without installin
 or running models. Use `--lasagna-python /another/venv/bin/python` to override the
 default interpreter. Keep the venv executable path, including its symlink.
 
-The verified CPU environment used Python 3.14.10 and Torch 2.14.1 on macOS arm64.
 CUDA users must install a driver-compatible PyTorch build in this environment
 and check `torch.cuda.is_available()` there, independently of the CLI environment.
 Runtime sources and installed dependency versions are bound to each run; changing
@@ -37,9 +37,9 @@ The public model is `scrollprize/lasagna/model_current.pt`, revision
 `de45f01147adea9f4ad0f621b1ccd885a1f03760`, SHA-256
 `4cc0c40a846b296769b9f7982470559078662a1a0b0e1f74ff41ed9341c0d600`.
 It is 558,287,587 bytes. `--lasagna-model-path` accepts a local copy of these same
-weights. Prefetch first, then use `--offline` with cached/local CT. The official
-repository lists one public checkpoint; its model card does not document accuracy
-or coverage for every scroll.
+weights. Prefetch first, then use `--offline` with cached/local CT. The CLI accepts
+only this pinned checkpoint; model and runtime identities are recorded in
+[provenance/lasagna.json](../provenance/lasagna.json).
 
 ## Normal CT run
 
@@ -120,8 +120,8 @@ curves have `automatically_traced=false` and their source AFV hash.
 
 `lasagna-source/input.zarr` stages only the sampled ROI plus 16 observations of
 context per side, clipped at source bounds. The official subprocess uses fixed
-64³ tiles, overlap 32, border 16 and full-input-lattice outputs. Strict model
-loading reconstructs architecture from all 306 checkpoint tensors. CPU uses FP32
+64³ tiles, overlap 32, border 16 and full-input-lattice outputs. The official
+runtime loads the pinned checkpoint strictly. CPU uses FP32
 to avoid emulated BF16; CUDA retains upstream BF16. The private worker disables
 upstream's unrelated global training-pause service. Concurrent GPU jobs need
 their own scheduling.
