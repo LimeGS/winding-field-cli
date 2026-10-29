@@ -71,8 +71,8 @@ checkpoint request; remove those markers before `prepared resume --supervised`.
 A long solve is not an immediate cancellation point. The supervisor returns
 0 for budget/STOP, 1 for failure, 130 for interruption.
 
-Python: `winding_field.field_workflow.run_field(config, output, resume=False,
-prefetch=False, stop=None, admit=None)` and `load_run_config(config)`.
+Python: `winding_field.field_workflow.run_field(config_path, output, resume=False,
+prefetch=False, stop=None, admit=None)` and `load_run_config(path)`.
 
 ## Extract or import surfaces, then render
 
@@ -134,7 +134,7 @@ including an independent `reserve_bytes`. Output includes PNGs, per-view JSON,
 `PLAN.json`, `RENDER.json` with mesh/code hashes, metadata and camera statistics.
 The combined workflow propagates `execution.reserve_bytes` to rendering.
 
-Python: `winding_field.surface_workflow.run_surfaces(config, output,
+Python: `winding_field.surface_workflow.run_surfaces(config_path, output,
 resume=False, render=True, stop=None)`, `render_bundle(mesh, output,
 settings=None)`; `winding_field.surface_render.render_view(...)` streams RGBA.
 Geometry APIs are `winding_field.surface_sources.FieldSource` and
@@ -150,7 +150,6 @@ python -I examples/block_field.py --output runs/blocks --stop-after-blocks 1
 python -I examples/block_field.py --output runs/blocks --resume --prefetch
 python -I examples/block_field.py --output runs/supervised --supervised --prefetch
 python -I examples/surface_pipeline.py --output runs/surfaces --stop-after-tiles 3
-python -I examples/surface_pipeline.py --output runs/surfaces --resume
 python -I examples/surface_pipeline.py --output runs/surfaces --resume
 OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 python tools/benchmark_blocks.py \
   --output runs/performance-probe --repetitions 2
