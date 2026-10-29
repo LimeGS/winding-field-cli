@@ -1,13 +1,19 @@
 # winding-field-cli
 ![Illustrated workflow: original CT → Lasagna surfaces + Qual V2 fibres/splines → winding field → 3D meshes → flattened charts](docs/assets/workflow-banner.png)
 
-Turn local or remote 3D Zarr v2 CT into winding fields, 3D meshes and CT-textured
-flat charts. Start from CT or continue from existing results.
+Build a winding field from a scroll's CT, then extract 3D meshes and CT-textured
+flat charts. Lasagna supplies surface observations; Qual V2 supplies fibres and
+splines. Runs save each stage so you can stop and continue later.
 
-<details>
-<summary><strong>Install + offline demo</strong></summary>
+Follow sections **1–3** for a full scroll, or **1 → 4** for a smaller region.
+Section **5** extracts meshes; section **6** covers inputs you already have.
 
-Python **3.11 or 3.12**, Linux/macOS. Install the CLI and its pinned numerical library:
+<details open>
+<summary><strong>1. Install</strong></summary>
+
+**CLI and numerical library.** Requires Python **3.11 or 3.12**, Linux/macOS.
+Run these commands in a terminal; keep the virtual environment active for the
+examples below. Substitute `python3.12` for `python3.11` if needed.
 
 ```bash
 git clone https://github.com/LimeGS/winding-field-cli.git
@@ -20,171 +26,220 @@ python -m pip install \
 winding-field doctor
 ```
 
-For real CT, also install the [isolated Lasagna runtime](docs/LASAGNA.md#one-time-runtime-setup)
-once. Model weights download automatically on first use.
+**Lasagna runtime.** Real-CT runs also need the official Lasagna package. It uses
+Python 3.14 in a separate environment; install it once without activating it:
 
-Try the complete pipeline offline, without model downloads:
+```bash
+python -m pip install uv
+uv python install 3.14
+uv venv --python 3.14 ~/.cache/winding-field/lasagna-venv
+uv pip install --python ~/.cache/winding-field/lasagna-venv/bin/python \
+  'vesuvius-lasagna @ https://github.com/ScrollPrize/villa/archive/b29f310957c7b29e7d332f9876e0e487819cfaa3.tar.gz#subdirectory=lasagna'
+```
+
+The CLI finds this runtime automatically. Lasagna and Qual weights download on
+first use. For CUDA, both environments need a compatible CUDA-enabled PyTorch:
+[runtime setup](docs/LASAGNA.md#one-time-runtime-setup).
+
+**Optional installation check:** run the synthetic pipeline offline, without
+model downloads, then open `runs/demo/index.html` in a browser:
 
 ```bash
 winding-field demo --output runs/demo
 ```
 
-Open `runs/demo/index.html` in a browser.
-
 </details>
 
 <details>
-<summary><strong>Create Lasagna predictions, fibres or a field from CT</strong></summary>
+<summary><strong>2. Run a winding field for a full scroll</strong></summary>
 
-Choose a final `STAGE`; earlier stages run automatically. This example uses a
-small PHerc0175A ROI on CPU, with 8.64 µm observations and a 17 µm field.
+Select the original CT volume. This example uses the public PHerc0175A scan;
+you can replace its URL with a local 3D Zarr v2 path. **No `--roi` means the entire
+selected CT level.**
+
+First inspect geometry and storage estimates with `plan`, then start the run:
 
 ```bash
 CT='s3://vesuvius-challenge-open-data/PHerc0175A/volumes/20250521115057-8.640um-1.2m-116keV-masked.zarr'
-STAGE=field  # prepare | fibres | field | mesh | flatten
+
+winding-field plan --source "$CT" --voxel-um 8.64 \
+  --field-spacing-um 300 --device cuda:0 --ct-mode stream \
+  --until field --output runs/175a-full
+
+winding-field run --source "$CT" --voxel-um 8.64 \
+  --field-spacing-um 300 --device cuda:0 --ct-mode stream \
+  --until field --output runs/175a-full
+```
+
+- `--until field` runs Lasagna → Qual predictions/splines → field, then stops.
+- `--field-spacing-um 300` selects an example **coarse 300 µm solve grid**.
+  Choose your field resolution here; it does not reduce observation preparation.
+- `--ct-mode stream` fetches CT chunks as needed. Prediction products and tracing
+  scratch still need disk/RAM; inspect the estimates before a whole-scroll run.
+- `--device cuda:0` uses the first GPU. Use `--device cpu` in both commands for CPU.
+- `--output` must be a **new directory**. `plan` does not create the run.
+
+**Results:** `runs/175a-full/field/` holds the field and `CHECKPOINT.json`;
+`FIELD.json` records geometry and solver status. `fibres/fibres.afv` retains the
+splines, and `lasagna-source/output/` retains Lasagna predictions.
+
+The default Qual model requires **uint8, isotropic 8.64–9.6 µm observations**.
+For another acquisition, set `--voxel-um` to its actual spacing and choose
+`--level` / `--stride` accordingly. Field spacing is independent of CT spacing.
+
+</details>
+
+<details>
+<summary><strong>3. Stop, inspect and resume a run</strong></summary>
+
+Point `RUN` at the run directory, not its `field/` subdirectory. While a job is
+running, press **Ctrl-C** or create `STOP` from another terminal. It saves
+committed work and stops at a bounded operation; wait for the process to exit.
+
+```bash
+RUN=runs/175a-full
+winding-field status "$RUN"               # stage status, timings and saved settings
+touch "$RUN/STOP"                         # request a checkpointed stop
+```
+
+After it exits, choose how far to continue:
+
+```bash
+# Continue only through field construction:
+winding-field field "$RUN"
+
+# Or continue all the way through meshes and flattened charts:
+winding-field resume "$RUN"
+```
+
+Both commands clear `STOP`, validate saved work and reuse completed stages. A
+run intentionally stopped with `--until field` reports `PAUSED`; check `FIELD.json`
+for its field result. Keep the original inputs, saved settings and runtime.
+Use a new output directory to change them.
+
+</details>
+
+<details>
+<summary><strong>4. Run a field for a specific section of a scroll</strong></summary>
+
+Add `--roi Z0 Z1 Y0 Y1 X0 X1` to limit the output to a region. Bounds are in
+**voxels of the selected CT level**, with exclusive upper bounds. This example
+selects a **48 × 48 × 48 voxel** region and solves a **17 µm field** on CPU:
+
+```bash
+CT='s3://vesuvius-challenge-open-data/PHerc0175A/volumes/20250521115057-8.640um-1.2m-116keV-masked.zarr'
 
 winding-field run --source "$CT" --voxel-um 8.64 \
   --roi 1488 1536 4032 4080 6048 6096 \
-  --field-spacing-um 17 --until "$STAGE" \
-  --ct-mode stream --cache-gib .25 --reserve-gib .25 \
-  --output "runs/175a-$STAGE"
+  --field-spacing-um 17 --device cpu --ct-mode stream \
+  --until field --output runs/175a-roi
 ```
 
-| `STAGE` | New results inside the run |
-| --- | --- |
-| `prepare` | Lasagna surfaces + Qual fibre predictions: `lasagna-source/output/`, `lasagna/`, `maps/` |
-| `fibres` | Traced fibres/splines: `fibres/fibres.afv` |
-| `field` | Winding field: `field/CHECKPOINT.json`, geometry/status in `FIELD.json` |
-| `mesh` | 3D meshes: `meshes/level-*.obj` |
-| `flatten` | UV charts, flat OBJ, CT previews: `flat/`, gallery: `index.html` |
+- Replace the six bounds to select your region; use `plan` instead of `run` to
+  inspect its grids first. Inference reads context around the ROI, but the output
+  stays inside it.
+- Choose `--field-spacing-um` independently of the CT resolution. The ROI must
+  contain at least two field nodes per axis.
+- Results are in `runs/175a-roi/field/`. Use this run path in sections 3 and 5.
 
-Use a **new output directory** for each new run. Omit `--until` for the full pipeline.
-`prepare` runs both models; fibre tracing starts at `fibres`.
-
-Qual V2 requires **uint8, isotropic 8.64–9.6 µm observations**. Select `--level` /
-`--stride` to match your CT; `--field-spacing-um` only changes the solve grid.
+To create intermediate inputs from scratch, replace `--until field` with
+`--until prepare` for Lasagna + Qual predictions, or `--until fibres` to also trace
+and export `fibres/fibres.afv`. Continue that same run with `winding-field field RUN`.
 
 </details>
 
 <details>
-<summary><strong>I already have a field → meshes and charts</strong></summary>
+<summary><strong>5. Extract meshes from an existing field</strong></summary>
 
-**Field inside a CLI run:** keep the complete run directory and continue:
-
-```bash
-winding-field mesh runs/175a-field
-winding-field flatten runs/175a-field
-```
-
-Open `runs/175a-field/index.html`. Isovalues are automatic unless you set
-`--levels 1 2 3` when creating the run.
-
-**Standalone NPY field or frozen block checkpoint:** fill the
-[surface recipe](examples/surface-run.example.json) with its path, SHA-256,
-geometry and levels, then extract meshes + geometry PNGs:
+For a field produced in section 2 or 4, use its complete run directory. The
+saved field is reused; completed inference and solving stages are not rerun.
 
 ```bash
-winding-field prepared surfaces --config surface-run.json --output runs/surfaces
+RUN=runs/175a-roi                         # or runs/175a-full
+winding-field mesh "$RUN"
 ```
 
-[Field formats and recipes](docs/PREPARED.md#extract-or-import-surfaces-then-render)
-· [CT-textured export and visualization](docs/SURFACE_TOOLS.md)
+**Result:** `meshes/level-*.obj`, one 3D mesh per selected isovalue. Isovalues are
+automatic unless you pass `--levels 1 2 3` when creating the run.
+
+To also generate UV charts, flat OBJ files and original-CT previews:
+
+```bash
+winding-field flatten "$RUN"
+```
+
+Results are in `flat/`; open the run's `index.html` to browse them.
+For a standalone field created elsewhere, use the external-field recipe below.
 
 </details>
 
 <details>
-<summary><strong>I already have Lasagna predictions → fibres and field</strong></summary>
+<summary><strong>6. Custom input options</strong></summary>
 
-**From a CLI run:** reuse the complete run with its saved predictions:
+### Fibres / splines (`.afv`)
 
-```bash
-winding-field fibres runs/175a-prepare     # trace fibres from saved predictions
-winding-field field runs/175a-prepare      # solve using retained observations/fibres
-```
-
-**External `.lasagna.json` / OME-Zarr predictions:** direct import is not supported
-yet. If you already converted them into oriented, calibrated `target.npy`,
-`weights.npy` and `observed.npy`, fill the
-[prepared field recipe](examples/field-run.example.json):
+Use an existing AFV with the **same CT acquisition** to skip Qual inference and
+tracing. Lasagna still supplies the surface observations. Set the fibre path and
+ROI to match your data; this example uses the region from section 4:
 
 ```bash
-winding-field prepared build --config field-run.json --output runs/from-predictions
-```
+CT='s3://vesuvius-challenge-open-data/PHerc0175A/volumes/20250521115057-8.640um-1.2m-116keV-masked.zarr'
 
-[Reuse limits and preparation requirements](docs/LASAGNA.md#reuse-existing-predictions)
-
-</details>
-
-<details>
-<summary><strong>I already have fibres → field</strong></summary>
-
-**Inside a CLI run:** continue directly:
-
-```bash
-winding-field field runs/175a-fibres
-```
-
-**Existing AFV → new run:** use the same CT acquisition. With `$CT` from the
-new-run example:
-
-```bash
 winding-field run --source "$CT" --voxel-um 8.64 \
   --roi 1488 1536 4032 4080 6048 6096 --field-spacing-um 17 \
   --fibres /path/fibres.afv --until field --output runs/from-fibres
 ```
 
-This skips Qual inference and tracing; Lasagna still runs. CLI-exported AFVs
-include geometry. Other AFVs may need `--fibres-geometry geometry.json`:
-[coordinate mapping](docs/LASAGNA.md#external-afv).
+CLI-exported AFVs include their calibrated coordinates. If yours lacks that
+metadata, also pass `--fibres-geometry geometry.json` with the CT source, XYZ
+origin and spacing: [geometry descriptor](docs/LASAGNA.md#external-afv).
 
-</details>
+### External field (`.npy` or block checkpoint)
 
-<details>
-<summary><strong>Stop, inspect and resume a run</strong></summary>
+Extract surfaces directly from an existing field using a prepared recipe. This
+route needs the field and its geometry; it does not run CT inference or solve a
+new field.
 
-```bash
-winding-field status runs/175a-field
-touch runs/175a-field/STOP                 # or Ctrl-C
-winding-field field runs/175a-field        # continue only through field
-winding-field resume runs/175a-field       # continue through flattening
-```
-
-Stage commands reuse saved settings and completed work. Resume validates inputs
-and products and clears `STOP`. A deliberate `--until` stop reports `PAUSED`.
-Keep the original inputs and runtime; changed settings/code require a new run.
-
-</details>
-
-<details>
-<summary><strong>Essential options</strong></summary>
-
-| Option | Use |
-| --- | --- |
-| `--source /data/scroll.zarr` | Local CT; also accepts HTTP/S3 URLs |
-| `--roi Z0 Z1 Y0 Y1 X0 X1` | Selected-level voxels, exclusive upper bounds; omit for the whole volume |
-| `--voxel-um 8.64` | Physical voxel size when input metadata has no units |
-| `--field-spacing-um 17` | Positive XYZ field pitch in µm; ROI must fit ≥2 nodes/axis |
-| `--device cuda:0` | GPU inference/solve; default `cpu`, spline tracing stays on CPU |
-| `--levels 1 2 3` | Mesh isovalues, chosen when creating the run |
-| `--invalid-value 0` | Exclude acquisition fill; zero is otherwise valid CT |
-
-Use `winding-field plan` with your `run` arguments to inspect grids/storage first.
-Use `winding-field run --help` for all flags.
-
-</details>
-
-<details>
-<summary><strong>Development</strong></summary>
+Copy the template:
 
 ```bash
-python -m pip install -e '.[test]'
-OMP_NUM_THREADS=4 python -m pytest -q
-python -m build
+cp examples/surface-run.example.json surface-run.json
 ```
+
+Edit `surface-run.json` before running; input paths are relative to this JSON
+unless absolute:
+
+- Set `field.path` and replace its placeholder SHA-256 with the file's hash.
+- Set the `field.mask` path/hash to your support mask, or remove this optional
+  entry if your field has no mask.
+- Set `geometry` to the field's frame, origin, XYZ spacing, ZYX shape and calibration.
+- Set `levels` to the raw field values you want to extract.
+- For a frozen native block field, replace the `field` object with
+  `{"kind":"chunks","path":"/path/field/CHECKPOINT.json","sha256":"…","support_policy":"observed"}`.
+
+Then extract meshes and geometry views:
+
+```bash
+winding-field prepared surfaces --config surface-run.json --output runs/external-surfaces
+```
+
+**Results:** `runs/external-surfaces/level-*.obj` and `renders/*.png`.
+These PNGs show geometry; CT-textured export needs a matching CT source.
+[Field recipe details](docs/PREPARED.md#extract-or-import-surfaces-then-render)
+· [CT-textured export](docs/SURFACE_TOOLS.md#export-and-atlas)
+
+### External Lasagna predictions — Coming soon
+
+Importing precomputed `.lasagna.json` / OME-Zarr predictions into a new run is
+not available yet. Current runs generate Lasagna predictions automatically and
+reuse them when resumed. `--lasagna-model-path` selects model weights, not
+prediction files.
 
 </details>
 
-[Formats](docs/FORMATS.md) · [Streaming](docs/STREAMING.md) ·
+All CLI options: `winding-field run --help`.
+
+[Formats](docs/FORMATS.md) · [Lasagna and AFV](docs/LASAGNA.md) · [Streaming](docs/STREAMING.md) ·
 [Prepared workflows](docs/PREPARED.md) · [Surface tools](docs/SURFACE_TOOLS.md) ·
 [Verification](docs/verification/lasagna-afv-inputs.md) · [Attribution](THIRD_PARTY.md)
 
