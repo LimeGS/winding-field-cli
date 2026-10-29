@@ -13,7 +13,7 @@ import numpy as np
 from block_solver import solve_blocks
 from field_constraints import pair_constraints
 from field_store import BlockStore
-from surface_sources import FieldSource
+from .surface_sources import FieldSource
 from .artifacts import Tiles
 from .config import field_geometry
 from .util import atomic_json, digest, file_sha
