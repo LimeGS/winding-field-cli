@@ -19,8 +19,8 @@ import numpy as np
 from field_runtime import ResourceUnavailable, check_resources
 from field_store import atomic_json
 from .field_workflow import _invalid, _object
-from surface_mesh import MeshReader, _integer, _levels, extract_mesh, import_mesh, sha
-from surface_sources import FieldSource
+from .surface_mesh import MeshReader, _integer, _levels, extract_mesh, import_mesh, sha
+from .surface_sources import FieldSource
 
 
 def _keys(value, allowed):

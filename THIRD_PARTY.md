@@ -3,7 +3,7 @@
 ## Winding-field numerical core
 
 The original [winding-field](https://github.com/LimeGS/winding-field) library is
-installed as `winding-field-experiments==1.3.0.dev0`. Numerical modules are imported
+installed as `winding-field-experiments==1.3.0.dev1`. Numerical modules are imported
 directly from that distribution; no numerical core is bundled here. The original
 revision and numerical source hashes are recorded in `provenance/core.json`.
 
@@ -12,6 +12,12 @@ rendering (`surface_render.py`), their tests and supporting recipes/examples/too
 were moved from the original repository to this CLI. Their source revision and
 hashes are also recorded there. Adaptations are package imports, prepared command
 routing and module-based supervised launch; solver mathematics are unchanged.
+
+Surface extraction/readers (`surface_mesh`, `surface_sources`), Flatboi/PCA export,
+atlas/probe/geometry tools, `run_watch`, CT overlays and patch pictures also moved
+here with their tests. `migrated_postprocessing` records the original files and
+hashes, including the split synthetic CT demo. The core retains the numerical
+benchmark and patch-scoring APIs; visualization commands are CLI-owned.
 
 License: MIT, copyright (c) 2026. Full notice: `licenses/winding-field-MIT.txt`.
 
