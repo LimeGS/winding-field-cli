@@ -137,8 +137,8 @@ The combined workflow propagates `execution.reserve_bytes` to rendering.
 Python: `winding_field.surface_workflow.run_surfaces(config, output,
 resume=False, render=True, stop=None)`, `render_bundle(mesh, output,
 settings=None)`; `winding_field.surface_render.render_view(...)` streams RGBA.
-Numerical geometry APIs remain `surface_sources.FieldSource`,
-`surface_mesh.extract_mesh`, `import_mesh` and `MeshReader` in the library.
+Geometry APIs are `winding_field.surface_sources.FieldSource` and
+`winding_field.surface_mesh.{extract_mesh,import_mesh,MeshReader}` in the CLI.
 
 ## Offline examples
 

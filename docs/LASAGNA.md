@@ -57,6 +57,25 @@ No universal scientific resolution range is asserted for Lasagna. Field pitch is
 independent of observation pitch. Explicit SD2 uses Lasagna surfaces with the
 existing local fibre tracer; explicit classical remains the local offline baseline.
 
+## Reuse existing predictions
+
+Keep the complete CLI run, its CT source and original runtime. Completed
+preparation is reused without rerunning model inference:
+
+```bash
+winding-field fibres /path/to/run   # trace the saved Qual predictions
+winding-field field /path/to/run    # build the field; also finishes fibres if needed
+winding-field resume /path/to/run   # continue through meshes and flattening
+```
+
+Standalone `.lasagna.json` / OME-Zarr predictions cannot currently be imported
+directly into `run`; `--lasagna-model-path` selects weights, not predictions.
+There is no automatic converter to a prepared field recipe. If preparing inputs
+yourself, resolve unsigned normal orientation and physical/sheet calibration,
+then supply hashed NPY `target` (ZYX3 gradients), `weights` and `observed` arrays
+with explicit geometry, plus optional saved constraints. See
+[prepared fields](PREPARED.md#build-and-resume-a-prepared-field).
+
 ## External AFV
 
 ```bash
