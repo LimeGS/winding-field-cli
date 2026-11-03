@@ -1,6 +1,7 @@
 """Installed command entry point."""
 
 import argparse
+import importlib
 import json
 from pathlib import Path
 import signal
@@ -8,6 +9,16 @@ import sys
 
 from . import __version__
 from .io import Volume,resolve_source
+
+TOOLS = {
+    'surface-export': ('surface_export', 'export a level set, flatten and sample CT'),
+    'surface-atlas': ('surface_atlas', 'build bounded surface charts and previews'),
+    'surface-probe': ('surface_probe', 'freeze a prior seed and inspect its surface'),
+    'surface-geometry-check': ('surface_geometry_check', 'export TIFXYZ and invoke a pinned geometry gate'),
+    'ct-visuals': ('ct_visuals', 'render frozen CT planes and field contours'),
+    'patch-visuals': ('patch_visuals', 'evaluate and plot human-patch residuals'),
+    'run-watch': ('run_watch', 'supervise a job with timeout and storage limits'),
+}
 
 
 def tifxyz_exit_code(result):
@@ -28,9 +39,19 @@ def tifxyz_exit_code(result):
 
 
 def main(argv=None):
+    argv=list(sys.argv[1:] if argv is None else argv)
+    if argv and argv[0]=='prepared':
+        from .field_workflow import main as prepared_main
+        return prepared_main(argv[1:])
+    if argv and argv[0] in TOOLS:
+        module = importlib.import_module('.' + TOOLS[argv[0]][0], __package__)
+        return module.main(argv[1:])
     parser = argparse.ArgumentParser(prog='winding-field')
     parser.add_argument('--version', action='version', version=__version__)
     sub = parser.add_subparsers(dest='command', required=True)
+    sub.add_parser('prepared',help='build/resume prepared fields, mesh and render (prepared --help)')
+    for command, (_, help_text) in TOOLS.items():
+        sub.add_parser(command, help=help_text)
     info = sub.add_parser('inspect', help='inspect exact original CT geometry')
     info.add_argument('source',help='CT Zarr path or URL')
     info.add_argument('--voxel-um',type=float,help='micrometre scale for CT geometry lacking units; not field/output spacing')
@@ -49,9 +70,13 @@ def main(argv=None):
         p.add_argument('--stride',type=int,default=1,help='CT observation sampling step; keep 1 for fine inference')
         p.add_argument('--field-spacing-um',type=float,help='exact isotropic field pitch in micrometres; default: observation pitch')
         p.add_argument('--chunk',type=int,default=64,help='observation tile edge in sampled voxels (default: 64)')
-        p.add_argument('--prediction',choices=['classical','sd2'],default='sd2',help='observation predictor (default: sd2; classical uses CT intensity)')
-        p.add_argument('--model-path',help='local SD2 checkpoint path'); p.add_argument('--device',default='cpu',help='PyTorch prediction/field device, e.g. cpu or cuda (default: cpu)')
-        p.add_argument('--threshold',type=float,help='classical predictor CT intensity threshold; default: calibrated Otsu; unused by sd2')
+        p.add_argument('--prediction',choices=['classical','sd2','qual-v2'],default='qual-v2',help='fibre predictor (default: qual-v2); learned predictors use Lasagna surfaces, classical uses CT intensity')
+        p.add_argument('--model-path',help='local checkpoint for the selected fibre predictor'); p.add_argument('--device',default='cpu',help='PyTorch prediction/field device, e.g. cpu or cuda (default: cpu)')
+        p.add_argument('--fibres',help='external AFV; replaces fibre inference/tracing')
+        p.add_argument('--fibres-geometry',help='explicit AFV XYZ-to-world geometry JSON')
+        p.add_argument('--lasagna-python',help='isolated official Python 3.14 runtime')
+        p.add_argument('--lasagna-model-path',help='local pinned Lasagna surface checkpoint')
+        p.add_argument('--threshold',type=float,help='classical predictor CT intensity threshold; default: calibrated Otsu; unused by learned predictors')
         p.add_argument('--invalid-value',type=float,help='acquisition fill value to exclude; zero remains valid unless declared')
         p.add_argument('--field-chunk',type=int,default=64,help='field solver block edge in field-grid samples (default: 64)'); p.add_argument('--sweeps',type=int,default=4,help='field solver block sweeps (default: 4)')
         p.add_argument('--maxiter',type=int,default=2000,help='iteration limit per local field solve (default: 2000)'); p.add_argument('--rtol',type=float,default=1e-6,help='relative tolerance of local field solves (default: 1e-6)')
@@ -93,8 +118,9 @@ def main(argv=None):
     p.add_argument('--prediction',choices=['classical','sd2'],default='classical',help='demo observation predictor (default: classical)')
     p.add_argument('--model-path',help='local SD2 checkpoint path'); p.add_argument('--device',default='cpu',help='PyTorch device (default: cpu)')
     sub.add_parser('doctor',help='report installed runtime and CUDA availability')
-    p=sub.add_parser('models',help='download and verify pinned SD2 checkpoint')
-    p.add_argument('--path',help='SD2 checkpoint destination; default: model cache')
+    p=sub.add_parser('models',help='download and verify a pinned checkpoint')
+    p.add_argument('--path',help='checkpoint destination; default: model cache')
+    p.add_argument('--prediction',choices=['qual-v2','sd2','lasagna'],default='qual-v2',help='checkpoint to download (default: qual-v2)')
     args=parser.parse_args(argv)
     direct=False; native=False
     try:
@@ -109,8 +135,9 @@ def main(argv=None):
             result=dict(version=__version__,python=platform.python_version(),platform=platform.platform(),
                         torch=torch.__version__,cuda=torch.cuda.is_available(),reader='portable-zarr-v2')
         elif args.command=='models':
-            from .models import checkpoint,MODEL_SHA
-            result=dict(path=str(checkpoint(args.path)),sha256=MODEL_SHA)
+            from .models import checkpoint,model_sha
+            result=dict(path=str(checkpoint(args.path,prediction=args.prediction)),
+                        prediction=args.prediction,sha256=model_sha(args.prediction))
         elif args.command in ('run','plan'):
             from .workflow import run,plan,stage_path
             from .config import validate_config,read_tifxyz_request
@@ -136,9 +163,12 @@ def main(argv=None):
             if until not in dict(stages) and not (config['surface_output']=='native' and until in ('mesh','flatten','assemble','render')):
                 raise ValueError('--until '+until+' is incompatible with the selected surface output')
             config['output']=str(Path(config['output']).expanduser().resolve())
-            for key in ('local','cache','model_path'):
+            for key in ('local','cache','model_path','fibres','fibres_geometry','lasagna_model_path'):
                 if config.get(key):
                     config[key]=str(Path(config[key]).expanduser().resolve())
+            if config.get('lasagna_python'):
+                # Resolving the venv executable symlink would select the base interpreter.
+                config['lasagna_python']=str(Path(config['lasagna_python']).expanduser().absolute())
             for key in ('cache','reserve'):
                 value=config.pop(key+'_gib')
                 if not 0<=value<=1e6:

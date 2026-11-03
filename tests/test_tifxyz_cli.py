@@ -182,7 +182,7 @@ def test_plan_estimates_only_branch_products(tmp_path, request_file, capsys):
     from winding_field.demo import synthetic
     source = synthetic(tmp_path/'ct.zarr')
     assert call('plan', '--source', source, '--output', tmp_path/'run', '--surface-output', 'tifxyz',
-                '--tifxyz-config', request_file)==0
+                '--tifxyz-config', request_file, '--prediction', 'classical')==0
     result = json.loads(capsys.readouterr().out)
     assert result['stages']==['prepare', 'fibres', 'field', 'tifxyz']
     assert set(result['estimated_products_by_stage'])==set(result['stages'])

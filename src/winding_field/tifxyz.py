@@ -95,12 +95,15 @@ def _code_identity():
     names = ['tifxyz.py', 'tifxyz_contract.py', 'tifxyz_runtime.py', 'tifxyz_field.py',
               'tifxyz_guide.py', 'tifxyz_project.py', 'tifxyz_store.py', 'tifxyz_audit.py',
               'tifxyz_predicates.py','tifxyz_build.py','native/predicates.h','native/predicates.cpp','native/predicates.cu',
-             'util.py', '_core/surface_sources.py', '_core/field_store.py']
+             'util.py', 'surface_sources.py']
     versions = {}
-    for name in ('numpy', 'scipy', 'scikit-image', 'libigl', 'tifffile'):
+    for name in ('numpy', 'scipy', 'scikit-image', 'libigl', 'tifffile', 'winding-field-experiments'):
         try: versions[name] = importlib.metadata.version(name)
         except importlib.metadata.PackageNotFoundError: versions[name] = 'unavailable'
-    return dict(files={name: file_sha(root/name) for name in names}, numeric=versions,
+    import field_store
+    files={name: file_sha(root/name) for name in names}
+    files['field_store.py']=file_sha(Path(field_store.__file__))
+    return dict(files=files, numeric=versions,
                 python=platform.python_version(), machine=platform.machine(), system=platform.system(),
                 sqlite=sqlite3.sqlite_version, zlib=zlib.ZLIB_RUNTIME_VERSION)
 

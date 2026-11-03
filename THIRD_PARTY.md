@@ -2,11 +2,22 @@
 
 ## Winding-field numerical core
 
-Selected files from `vesubius-challenge/release/winding-field-gh/src` are bundled
-under `winding_field._core`. The source checkout included current uncommitted
-block/mesh modules; exact source-file SHA-256 values, rather than a misleading
-clean-commit claim, are recorded in `provenance/core.json`. Only module imports
-were namespaced. The solver's mathematical behavior is retained.
+The original [winding-field](https://github.com/LimeGS/winding-field) library is
+installed as `winding-field-experiments==1.3.0.dev1`. Numerical modules are imported
+directly from that distribution; no numerical core is bundled here. The original
+revision and numerical source hashes are recorded in `provenance/core.json`.
+
+Prepared workflows (`field_workflow.py`, `surface_workflow.py`), CPU geometry
+rendering (`surface_render.py`), their tests and supporting recipes/examples/tools
+were moved from the original repository to this CLI. Their source revision and
+hashes are also recorded there. Adaptations are package imports, prepared command
+routing and module-based supervised launch; solver mathematics are unchanged.
+
+Surface extraction/readers (`surface_mesh`, `surface_sources`), Flatboi/PCA export,
+atlas/probe/geometry tools, `run_watch`, CT overlays and patch pictures also moved
+here with their tests. `migrated_postprocessing` records the original files and
+hashes, including the split synthetic CT demo. The core retains the numerical
+benchmark and patch-scoring APIs; visualization commands are CLI-owned.
 
 License: MIT, copyright (c) 2026. Full notice: `licenses/winding-field-MIT.txt`.
 
@@ -61,6 +72,18 @@ The project MIT notice is in `licenses/winding-field-MIT.txt`. libigl is install
 separately through the `tifxyz` extra. The port contains no campaign SSH/runtime
 dependencies or scroll-specific geometry constants.
 
+## Lasagna surface inference
+
+The official `vesuvius-lasagna` distribution is installed separately under Python
+3.14 from the pinned Villa archive above. Its `predict3d` implementation supplies
+surface cos, magnitude and hemisphere-encoded normals. The private CLI worker
+uses FP32 on CPU (BF16 can be emulated there), retaining upstream BF16 on CUDA;
+model architecture, normalization, blending and decoding remain upstream's.
+The model is downloaded separately from `scrollprize/lasagna/model_current.pt`.
+Exact runtime/checkpoint pins and the adapter settings are in
+`provenance/lasagna.json`; weights are not bundled. The upstream model card lists
+MIT, without documenting coverage for every scroll.
+
 ## SD2 weights
 
 Downloaded separately from `scrollprize/lasagna-fiber`, Hugging Face revision
@@ -71,3 +94,22 @@ SHA-256: `2528a46e38844c06e591084f1dc1af9442ccb45a17aae9b2a68441e6028bbdd6`.
 Weights are not included or relicensed by this repository. Their upstream terms
 and those of each original CT dataset apply independently. The PHerc0175A catalog
 records its CT as CC BY-NC 4.0. This repository's MIT license does not replace that.
+
+## Qual AFV fibre V2
+
+Model: <https://huggingface.co/Qualzz20/afv_fiber_9um_v2>, revision
+`2a8a26a70754a5d90aeca91f9ef8e7130e6e4f81`. The upstream `model.py` and
+`plans.json` are bundled unchanged under `winding_field._vendor`; exact hashes
+are in `provenance/qual.json`. The adapter uses the upstream normalization and
+architecture (`dynamic-network-architectures==0.4.4`).
+On CPUs without oneDNN, the application adapter evaluates convolutions in depth
+slabs to bound temporary allocations; upstream source files remain unchanged.
+
+The separately downloaded checkpoint SHA-256 is
+`b8519a4ce4044c93ed98af0c278628fdcdfdd8808275b3c8becd7211f38b7967`.
+Model code and weights are published under Apache-2.0; see
+`licenses/qual-Apache-2.0.txt`. Weights are not bundled.
+
+Spline generator: <https://github.com/Qualzz/AVF_SPLINE_GENERATOR>, pinned to
+`3c8b73628ca56cb28042b9b2e79439b2e1c693d2`, Apache-2.0. Its V2 model outputs
+use the AFV schema v1 container; V2 does not designate a different SQLite schema.

@@ -13,7 +13,7 @@ from test_tifxyz_native import artifact
 
 
 def physical_source(root,shape=(3,3,3),origin=(0,0,0),spacing=(1,1,1),chunk=None):
-    from winding_field._core.field_store import BlockStore
+    from field_store import BlockStore
     root.mkdir()
     source = dict(source='synthetic', level=0, shape=[20]*3,
                   origin_xyz=[0]*3, spacing_xyz=[1.]*3, metadata_sha256='a'*64)
@@ -65,12 +65,18 @@ def settings(field, **kwargs):
 
 
 @pytest.mark.parametrize('scratch_gib, fits', [(2., False), (16., True)])
-def test_sqlite_index_can_grow_past_256m_only_with_scratch_allowance(tmp_path, scratch_gib, fits):
+def test_sqlite_index_can_grow_past_256m_only_with_scratch_allowance(tmp_path, monkeypatch, scratch_gib, fits):
     from winding_field.tifxyz import _budget
     from winding_field.tifxyz_store import TileStore
+    from types import SimpleNamespace
+    import os
     source = physical_source(tmp_path/'source')
     with open_physical_field(source) as f:
         budget = _budget(settings(f, scratch_gib=scratch_gib), tmp_path)
+    # Exercise the SQLite quota independently of host free space; disk guards have separate tests.
+    fs=os.statvfs(tmp_path)
+    monkeypatch.setattr('winding_field.tifxyz_store.os.statvfs',lambda path: SimpleNamespace(
+        f_frsize=fs.f_frsize,f_bsize=fs.f_bsize,f_bavail=(64<<30)//fs.f_frsize))
     grid = dict(shape_yx=[1247,1247], tile_pixels=256, pitch_um=8.64,
                 uv_min_um=[0.,0.], level=-4.)
     with TileStore(tmp_path/'store', dict(grid=grid), budget, 'delivered') as store:
@@ -515,7 +521,7 @@ def corrupt_payload(path):
 @pytest.mark.parametrize('resume',[False,True])
 def test_roi_export_resume_and_verify_never_sweep_unrelated_payloads(tmp_path,engine,monkeypatch,resume):
     from winding_field import tifxyz as code
-    from winding_field._core.surface_sources import _File
+    from winding_field.surface_sources import _File
     source,roi,paths=roi_source(tmp_path/'source');out=tmp_path/'out'
     if resume:
         with open_physical_field(source,roi=roi) as field:

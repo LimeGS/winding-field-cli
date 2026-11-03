@@ -1,6 +1,11 @@
 include README.md THIRD_PARTY.md
 recursive-include licenses *.txt
 recursive-include provenance *.json
-recursive-include docs *.md *.json *.png
+recursive-include docs *.md *.png
 recursive-include tests *.py
 include tools/vendor.py
+include examples/*.py
+include examples/*.json
+include tools/run_field.py
+include tools/run_surfaces.py
+include tools/benchmark_blocks.py

@@ -18,7 +18,7 @@ def tools_path(monkeypatch):
 def test_historical_resume_hashes_without_reconstructing(tmp_path,monkeypatch):
     from bench_native_surfaces import Historical
     from winding_field.tifxyz_field import open_physical_field
-    from winding_field._core import field_store
+    import field_store
     root=field_run(tmp_path/'source')
     def no_decode(*args):
         pytest.fail('resume hash validation must not decode/reconstruct field crops')
@@ -84,8 +84,8 @@ def write_json(path,value):
 
 @pytest.fixture
 def historical(tmp_path):
-    from winding_field._core.field_store import BlockStore
-    from winding_field._core.surface_sources import FieldSource
+    from field_store import BlockStore
+    from winding_field.surface_sources import FieldSource
     from winding_field.tifxyz_field import PhysicalField
     shape=(7,8,9); chunk=3; z,y,x=np.indices(shape)
     values=(x+2*y+3*z).astype(float)
@@ -107,7 +107,7 @@ def historical(tmp_path):
         pinned={str(Path(__file__)):dict(bytes=Path(__file__).stat().st_size,sha256=sha(Path(__file__))),
                 str(checkpoint):dict(bytes=checkpoint.stat().st_size,sha256=sha(checkpoint)),
                 str(delta):dict(bytes=delta.stat().st_size,sha256=sha(delta))})
-    import winding_field._core.surface_sources as reader
+    import winding_field.surface_sources as reader
     for path in (Path(reader.__file__),Path(reader.field_store.__file__)):
         cfg['pinned'][str(path)]=dict(bytes=path.stat().st_size,sha256=sha(path))
     write_json(root/'CONFIG.json',cfg)
@@ -160,7 +160,7 @@ def test_missing_optional_proof_falls_back_but_supplied_bad_proof_rejects(histor
 
 def test_bounds_hash_only_relevant_payloads_once_and_recheck_cached_signatures(historical,monkeypatch):
     from native_historical_source import Historical
-    from winding_field._core import field_store
+    import field_store
     root,binding,open_field=historical; p=open_field()
     source=Historical(p,proof_root=root,proof_binding=binding)
     checked=[]
@@ -225,7 +225,7 @@ def test_proof_rejects_invalid_domain_extrema_and_source_binding(historical,chan
 
 def test_bound_equality_keeps_surface_and_matches_unfiltered_geometry(historical):
     from native_historical_source import Historical
-    from winding_field._core.surface_mesh import _tile_mesh
+    from winding_field.surface_mesh import _tile_mesh
     root,binding,open_field=historical
     p=open_field(); source=Historical(p,proof_root=root,proof_binding=binding)
     lo=[0,0,0]; hi=[4,4,4]; bounds=source.tile_bounds(lo,hi)

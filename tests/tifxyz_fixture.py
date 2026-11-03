@@ -4,7 +4,7 @@ import json
 
 import numpy as np
 
-from winding_field._core.field_store import BlockStore
+from field_store import BlockStore
 from winding_field.util import atomic_json,digest,file_sha
 
 

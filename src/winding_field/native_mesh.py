@@ -11,7 +11,7 @@ import numpy as np
 from scipy.sparse import coo_matrix
 from scipy.sparse.csgraph import connected_components
 
-from ._core import surface_mesh as core
+from . import surface_mesh as core
 from .util import atomic_json,file_sha
 
 

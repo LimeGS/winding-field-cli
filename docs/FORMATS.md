@@ -15,10 +15,12 @@
   never exceeds the last observation centre. Default: the full observation grid.
 - OME-NGFF scale/translation and axis units are interpreted. Unitless metadata
   requires explicit `--voxel-um` or catalog spacing. No silent resolution change.
-- Preparation has a 40-observation-grid-voxel input halo, clipped to the source volume.
-  SD2 rounds the input core coverage out to source-anchored 32³ tiles first;
+- Fibre inference/classical preparation has a 40-observation-grid-voxel input halo, clipped to the source volume.
+  Qual V2 rounds input core coverage out to source-anchored 48³ tiles (SD2: 32³);
   `RUN.json.plan.input_lo_zyx/input_hi_zyx` records this extra input-only context.
   Persistent maps and extracted meshes remain within the output grid/ROI.
+  Lasagna separately stages 16 observations of context per side. External-AFV
+  preparation needs only this surface context; all retained maps remain ROI-local.
 
 ## Run and integrity
 
@@ -32,17 +34,27 @@ record and retains its last committed ID. Resume verifies the retained inventory
 coordinates, metadata and spatial bounds against the pinned source before skipping
 records; only the complete database is renamed.
 
-Statuses are `STARTING`, `RUNNING`, `PAUSED`, `FAILED` and `COMPLETE`; the direct
-TIFXYZ branch also records `BLOCKED` with structured reasons and `PARTIAL` for
-published geometry with incomplete source coverage.
+Statuses are `STARTING`, `RUNNING`, `PAUSED`, `FAILED` and `COMPLETE`; native
+surfaces also record `PARTIAL` for published partial geometry. The direct TIFXYZ
+branch records `BLOCKED` with structured reasons and `PARTIAL` for published
+geometry with incomplete source coverage.
 `physical_acceptance: false` is independent of successful stage completion.
 Source metadata, consumed content, package implementation and completed products
 must agree on resume. The CT cache is disposable, not the source of truth for
 checkpoints. Retain the original package and data for reproducibility.
+Runs bind absolute source/output paths: moving a run directory is not a supported
+resume operation. Exported geometry and the gallery can be copied independently.
+The implementation identity also includes bundled model JSON, installed numerical
+dependency versions, and the source hashes of the Qual tracer and network architecture.
 
 ## Original-recipe products
 
-`--flattening-method original` uses `MESHES.json` then
+`--flattening-method original --flattening-config flattening.json` selects
+`prepare/fibres/field/mesh/original`, even with the default native selector.
+`mesh RUN` stops after extraction; `resume RUN` continues through original mapping.
+Add `--export-tifxyz` for mesh-derived TIFFs; `--surface-output tifxyz` selects a
+different direct-field algorithm and cannot be combined with this method.
+Original mapping uses `MESHES.json` then
 `original/ORIGINAL.json` (also published as run-root `ORIGINAL.json`). It is
 independent of field resolution. The source `winding-mesh-v1` bundle is immutable.
 Unlike package-generated micrometre geometry (`voxel_um=1`), external bundles may
@@ -71,8 +83,13 @@ excluded node/cell counts, not physical acceptance or actual VC3D opening.
 
 `maps/` is a transactional tile inventory plus checksummed NPZ payloads.
 `PREPARED.json` describes its physical grid, source, ROI, model provenance and halo.
-Maps contain CT-derived sheet density (inverse micrometres), unsigned surface
-normals (XYZ), separate fibre tangents (XYZ), presence and support.
+Maps contain sheet density (cycles per micrometre), unsigned physical surface
+normals (XYZ), CT and surface support. Default/SD2 routes obtain these from official
+Lasagna and additionally retain `surface_phase` (cos / 255). Fibre presence,
+tangents, V/H probabilities and `fibre_support` are separate observations. External
+AFV maps have no fabricated fibre probabilities/tangents/presence.
+`PREPARED.json.surface_method` and `fibre_method` identify these sources.
+See [Lasagna setup and decoding](LASAGNA.md) for pins and raw products.
 
 SD2 inference owns fixed 32³ cores on the selected-source sampling lattice. Its
 phase is `roi_low % stride`, context is 40 samples per side, volume-edge padding
@@ -81,10 +98,23 @@ is clamped, and normalization is the pinned model's window z-score. Storage
 on the same sampling lattice. Up to eight cropped canonical tiles are cached in RAM.
 This defines a repeatable tiled estimator, not equality with whole-volume inference.
 
+The default `qual-v2` predictor requires isotropic uint8 observations at 8.64–9.6 µm.
+It uses fixed 128³ windows (48³ owned core plus 40-voxel halos), with the same
+source anchoring and bounded cache as SD2. Normalization is upstream's sample
+z-score with standard-deviation floor 10. Segmentation softmax is ordered
+background/V/H/intersection; presence is `1 - P(background)`. `probabilities`
+stores raw float32 V/H channels as `(Z,Y,X,2)`; intersection is not assigned to
+either family. The direction head supplies normalized XYZ fibre axes.
+On CPU backends without oneDNN, convolutions are evaluated in depth slabs with
+exact padding/halos to limit im2col scratch to 256 MiB (or one output plane).
+Instance normalization still sees each complete feature window; weights and
+the network topology are unchanged. This is not smaller-window inference.
+
 `--invalid-value` is an explicit acquisition-fill policy. By default every finite
-CT measurement, including zero, is valid. Declared fill zeros predicted presence;
-support requires the full 40-voxel observation-filter footprint to be valid.
-Unsupported density, normals and tangents are zero. The policy is identity-bound.
+CT measurement, including zero, is valid. Declared fill zeros fibre presence and
+invalidates Lasagna surface samples. The classical estimator requires its full
+40-voxel filter footprint to be valid. Unsupported density and normals are zero.
+Fibre tangents retain their independent acquisition validity. The policy is identity-bound.
 
 For the classical route, `THRESHOLD.json` persists a single Otsu threshold sampled
 from at most 27 fixed 16³-output-grid patches within the ROI. Tile size cannot
@@ -93,22 +123,69 @@ sample; `--threshold` allows an acquisition-calibrated value. SD2 supplies its o
 presence predictions. Strided preparation assembles sampled grids from bounded
 native-chunk reads rather than allocating their dense native envelope.
 
-`lasagna/` exports six uint8 OME-Zarr v2 arrays and two Lasagna v2 manifests:
-`fibres.lasagna.json` and `surfaces.lasagna.json`. Direction XY is encoded around
+`lasagna/` exports surface presence, normals and a real `surface_grad_mag` array;
+Lasagna routes also export cos. The grad_mag array is float32, equal to the
+output-index gradient magnitude times 1000, preserving its range. Other channels
+are uint8. Physical normals are converted as covectors to output-index space
+(multiply components by XYZ pitch); fibre tangents use inverse pitch.
+`surfaces.lasagna.json` records the density encoding. `fibres.lasagna.json` and
+its three channels are exported for Qual, SD2 and classical preparation; external
+AFV runs omit them. Direction XY is encoded around
 128 with scale 127 after folding the sign into the positive-Z hemisphere. The
 manifests address an **ROI-local output grid** and include world origin, spacing
 and original-source metadata; align this frame before combining with other data.
 
-`fibres/fibres.sqlite` stores bounded traced fragments in physical XYZ units.
+`fibres/fibres.sqlite` stores curves in physical XYZ units.
 `FIBRES.json` includes their count and database SHA. `fibres/fibres.afv` is an AFV
 v1 SQLite export with application ID 1447249475. Its `frame` metadata specifies
 selected-source voxel coordinates, source level and physical transform. It is
-not automatically native L0. Fragments stop at unsupported gaps or tile edges.
+not automatically native L0. Blocks contain at most 256 segments (257 XYZ
+binary64 points), sharing one endpoint. H/V labels, voxel lengths and physical
+millimetre lengths are retained for Qual curves. The published V2 model uses the
+same AFV schema v1 container.
+
+External `--fibres` input uses this same container and an embedded calibrated
+frame or explicit `--fibres-geometry` descriptor. Import checks schema, completion,
+finite points, continuity and input hashes. SQLite journals must be checkpointed.
+`fibres/IMPORT.json` binds the input/descriptor and maps; the normalized database
+commits bounded blocks with source IDs, annotations and an R-tree. Sparse edges
+are clipped and traversed at exact voxel-cell boundaries to retain supported
+portions without bridging gaps. Original vertices survive where no clipping is
+needed. No model tracing is performed; exported lineage records that distinction.
+
+Qual tracing consumes `fibres/probabilities.npy`, a disk-backed `(2,Z,Y,X)` float32
+array in V/H order with invalid fibre observations zeroed. Its tile ledger and
+completion hash prevent changed input on resume. The pinned official generator
+runs as an interruptible CPU subprocess, with work/logs under `fibres/upstream/`.
+Model inference and field solving still use the selected `--device`.
+After the child is reaped, `WORK.json` seals its scratch files and any intermediate
+AFV with SHA-256; the exact inventory and bytes are checked before reuse. STOP,
+Ctrl-C and handled failures retain this seal. A hard kill of the parent before
+sealing leaves unverified work that is rejected; use a new output directory in
+that case. Import rejects curves or spatial bounds outside its committed ledger.
+The final fibre receipt also binds the retained probability input, checked even
+when resuming an already completed workflow.
+
+The generator pools 2×2×2 observations before quantizing, excludes unpaired final
+planes on odd axes, and traces globally across storage tiles. Its intermediate
+AFV already applies `local_observation_XYZ = 2 * tracing_XYZ + 0.5`; the importer
+adds the prepared origin and spacing exactly once. Curves split wherever any
+contributing fine-grid support corner is invalid, testing edges at intervals no
+larger than 0.25 observation voxels. SD2/classical streamlines retain their original
+tile-boundary stopping behavior.
+
+Qual's dense scratch needs approximately 18 bytes per tracing voxel, besides
+the native float32 input (8 bytes per observation voxel). `plan` accounts for
+these arrays. Seed sorting additionally requires RAM proportional to seed count
+(upstream estimate: 64 bytes/seed), and curve batches/exports need additional
+disk. Disk reserve is monitored while the child runs; stopped preparation may
+replay its current upstream phase, and tracing replays only uncommitted batches.
 
 ## Field
 
-`field/CHECKPOINT.json` and block NPYs use the reused numerical core's durable
-block format. `FIELD.json` records physical grid, orientation/calibration,
+`field/CHECKPOINT.json` references checksummed, generation-named block NPZs from
+the numerical core: float32 deltas, a float64 offset and packed observation bits.
+`FIELD.json` records physical grid, orientation/calibration,
 constraint rows and conditional local-solver convergence. Sweeps are a budget;
 `global_converged: false` means no independent global convergence is established.
 The nominal unit sheet step and automatic planar/radial-Z calibration are
@@ -119,8 +196,18 @@ physical density-normal target. All contributing interpolation nodes must be
 supported. Tiles are loaded jointly for density/normals/support, once per request;
 coarse sampling reads only touched tiles, never the dense fine-grid envelope.
 Fibre constraints and mesh phase sampling use the respective physical transforms.
+Qual and imported AFV curves have an R-tree of world-coordinate extents. Each solve block selects
+overlapping curves once, irrespective of their original preparation tile. Every
+supported polyline edge is clipped to the block and sampled at intervals no larger
+than its smallest field pitch, retaining constraints inside small blocks even when
+both original endpoints lie outside. Separate support-split curves stay separate.
 
 ## Meshes and linked atlas
+
+The legacy linked atlas requires `--surface-output atlas` on new runs.
+Only this branch publishes `flat/` and the run-root `index.html`; the offline demo
+also uses it. Original mapping shares the indexed mesh bundle described below,
+but publishes `original/` instead of the atlas. Native outputs are described next.
 
 `meshes/mesh.sqlite` is the globally indexed vertex/face store. `meshes/MESH.json`
 and `MESHES.json` identify the frozen field and per-isovalue mesh statistics.
@@ -147,11 +234,14 @@ original CT before it can publish completion.
 
 ## Native global surfaces
 
-New CLI runs select `surface_output=native`. The parent stage path is
+New CLI runs select `surface_output=native` with `flattening_method=default`.
+The parent stage path is
 `prepare/fibres/field/surfaces`; mesh, flatten, assemble and render are independently
 checkpointed per level inside `surfaces/level-NNNN/`. Stage commands/`--until`
 accept those internal stage names. Each completed W is published before work on
-the next one. Existing unselected/atlas configurations retain the old stage path.
+the next one. `mesh RUN` and `flatten RUN` stop at the corresponding native
+checkpoints; `render RUN` or `resume RUN` continues to native publication.
+Existing unselected/atlas configurations retain the old stage path.
 
 `surfaces/NATIVE.json` binds field, CT, effective options, implementation and actual
 level selection; `LEVELS.json` must agree. `IDENTITY.json` binds each level to that

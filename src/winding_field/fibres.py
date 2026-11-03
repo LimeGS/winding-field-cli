@@ -48,8 +48,14 @@ def streamlines(presence,tangents,support,*,seeds,origin_xyz,spacing_xyz,thresho
 
 
 def trace(run,config,stop=None):
+    if config.get('fibres'):
+        from .afv import import_fibres
+        return import_fibres(run,config,stop)
     run=Path(run)
     prepared=json.loads((run/'PREPARED.json').read_bytes())
+    if prepared['prediction']=='qual-v2':
+        from .splines import trace_qual
+        return trace_qual(run,config,stop)
     maps=Tiles(run/'maps')
     if maps.identity()!=prepared['tiles_sha256']:
         raise ValueError('prepared maps changed')

@@ -10,7 +10,7 @@ import shutil
 
 import numpy as np
 
-from ._core.surface_sources import FieldSource
+from .surface_sources import FieldSource
 from .tifxyz_contract import Blocked,Paused,parse_json,triple,validate_frame
 from .tifxyz_runtime import metadata_charge
 from .util import atomic_json,digest,file_sha

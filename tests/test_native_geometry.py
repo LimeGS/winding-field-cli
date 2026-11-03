@@ -4,7 +4,7 @@ import numpy as np
 
 
 def plane_bundle(tmp_path,nx=5,ny=4,copies=1):
-    from winding_field._core.surface_mesh import import_mesh
+    from winding_field.surface_mesh import import_mesh
     from winding_field.util import file_sha
     x,y=np.meshgrid(np.arange(float(nx)),np.arange(float(ny)))
     vertices=np.column_stack([x.ravel()+2,y.ravel()+3,np.full(x.size,4.)])
@@ -25,7 +25,7 @@ def plane_bundle(tmp_path,nx=5,ny=4,copies=1):
 
 
 def test_global_plane_preserves_every_face_and_shared_seams(tmp_path):
-    from winding_field._core.surface_mesh import MeshReader
+    from winding_field.surface_mesh import MeshReader
     from winding_field.native_store import Journal
     from winding_field.native_geometry import flatten_mesh,assemble
     with MeshReader(plane_bundle(tmp_path)) as reader, Journal(tmp_path/'out',{'source':reader.manifest_sha}) as store:
@@ -64,7 +64,7 @@ def test_overlap_predicate_catches_long_slivers_but_not_boundary_contacts():
 
 
 def test_large_seam_graph_does_not_rescan_every_edge_per_chart(tmp_path):
-    from winding_field._core.surface_mesh import MeshReader
+    from winding_field.surface_mesh import MeshReader
     from winding_field.native_store import Journal
     from winding_field.native_geometry import flatten_mesh,assemble
     with MeshReader(plane_bundle(tmp_path,nx=33,ny=33)) as reader, Journal(tmp_path/'out',{'source':reader.manifest_sha}) as store:
@@ -83,7 +83,7 @@ def test_large_seam_graph_does_not_rescan_every_edge_per_chart(tmp_path):
 
 
 def test_disconnected_components_remain_separate(tmp_path):
-    from winding_field._core.surface_mesh import MeshReader
+    from winding_field.surface_mesh import MeshReader
     from winding_field.native_store import Journal
     from winding_field.native_geometry import flatten_mesh,assemble
     with MeshReader(plane_bundle(tmp_path,copies=2)) as reader, Journal(tmp_path/'out',{'source':reader.manifest_sha}) as store:
@@ -95,7 +95,7 @@ def test_disconnected_components_remain_separate(tmp_path):
 
 def test_cancelled_flatten_resumes_without_replacing_committed_charts(tmp_path):
     import pytest
-    from winding_field._core.surface_mesh import MeshReader
+    from winding_field.surface_mesh import MeshReader
     from winding_field.native_store import Journal,Paused
     from winding_field.native_geometry import flatten_mesh,assemble
     source=plane_bundle(tmp_path)
@@ -312,7 +312,7 @@ def test_valid_cotangent_weld_does_not_invoke_slim(monkeypatch):
 
 
 def test_assembly_rejects_contradictory_shared_vertex_targets(tmp_path):
-    from winding_field._core.surface_mesh import MeshReader
+    from winding_field.surface_mesh import MeshReader
     from winding_field.native_store import Journal
     from winding_field.native_geometry import flatten_mesh,assemble
     with MeshReader(plane_bundle(tmp_path)) as reader, Journal(tmp_path/'out',{'source':reader.manifest_sha}) as store:
@@ -335,7 +335,7 @@ def test_assembly_rejects_contradictory_shared_vertex_targets(tmp_path):
 def test_coupled_recovery_is_lazy_and_publishes_only_the_child(tmp_path,monkeypatch):
     import pytest
     import winding_field.native_geometry as geometry
-    from winding_field._core.surface_mesh import MeshReader
+    from winding_field.surface_mesh import MeshReader
     from winding_field.native_store import Journal,Paused
     monkeypatch.setattr(geometry,'_coupled_weld',lambda *args:pytest.fail('coupled recovery on fast path'),raising=False)
     with MeshReader(plane_bundle(tmp_path)) as reader, Journal(tmp_path/'out',{'source':reader.manifest_sha}) as store:
