@@ -113,6 +113,16 @@ def main(argv=None):
     p.add_argument('--output',required=True,help='sheet export directory');p.add_argument('--flattening-config',required=True,help='JSON: output coordinate frame, optional canvas pitch and memory admission estimate')
     p.add_argument('--flattening-method',choices=['original'],required=True,help='global LSCM recipe; resolution comes from input geometry')
     p.add_argument('--export-tifxyz',action='store_true',help='add XYZ TIFFs and validity mask alongside CT renders');p.add_argument('--resume',action='store_true',help='continue the same export; repeat identical inputs and settings')
+    p=sub.add_parser('export-uvw',help='aligned diagnostic W band from one original global UV map')
+    p.add_argument('--field-config',required=True,help='SHA-bound field descriptor JSON')
+    p.add_argument('--reference-sheet',required=True,help='original/level-NNNN with independent publication ledger')
+    p.add_argument('--levels',nargs='+',type=float,required=True,help='finite W targets; band must contain reference W')
+    p.add_argument('--source',required=True,help='same physical CT source as reference')
+    p.add_argument('--voxel-um',type=float,help='CT units when metadata lacks them')
+    p.add_argument('--level',type=int,default=0,help='CT pyramid level, not winding W')
+    p.add_argument('--canvas-samples',type=int,default=512,help='shared square UV grid edge, 2..1024 (default: 512)')
+    p.add_argument('--output',required=True)
+    p.add_argument('--resume',action='store_true',help='resume identical source/settings; remove output/STOP to continue')
     p=sub.add_parser('demo',help='offline synthetic original-CT demonstration')
     p.add_argument('--output',required=True,help='synthetic demo run directory')
     p.add_argument('--prediction',choices=['classical','sd2'],default='classical',help='demo observation predictor (default: classical)')
@@ -186,6 +196,16 @@ def main(argv=None):
             if not config['source'].startswith(('http://','https://','s3://')):
                 config['source']=str(Path(config['source']).expanduser().resolve())
             result=plan(config) if command=='plan' else run(config,until=until)
+        elif args.command=='export-uvw':
+            from .uvw_pipeline import export_existing
+            interrupted=False
+            def handle_uvw(signum,frame):
+                nonlocal interrupted
+                interrupted=True
+            previous={sig:signal.signal(sig,handle_uvw) for sig in (signal.SIGINT,signal.SIGTERM)}
+            try:result=export_existing(args,stop=lambda:interrupted)
+            finally:
+                for sig,handler in previous.items():signal.signal(sig,handler)
         elif args.command=='export-sheets':
             from .original_pipeline import export_existing
             result=export_existing(args)
