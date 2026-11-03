@@ -1,5 +1,23 @@
 # CT input and streaming
 
+## Choose access and inspect usage
+
+```bash
+winding-field plan --source /data/scroll.zarr --voxel-um 8.64 \
+  --ct-mode stream --cache-gib 2 --reserve-gib 1 --until field --output runs/field
+```
+
+Replace the source and scale with your scan, add `--roi` for a bounded region,
+then use `run` with the same arguments. `plan` does not create the output.
+For a remote source, add `--local /data/mirror.zarr` to reuse matching local
+chunks. `--offline` forbids CT network access; model weights and the Lasagna
+runtime must be provisioned separately.
+
+Inspect `winding-field status runs/field` and `RUN.json.io` for actual reads and
+cache use. Resume with `winding-field field runs/field` to stop at the field, or
+`winding-field resume runs/field` to finish the selected pipeline. Preserve the
+original source, configuration and run path.
+
 ## Shipped backend
 
 The installed CLI uses `portable-zarr-v2`: numeric 3D Zarr v2, local files or

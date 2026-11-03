@@ -1,10 +1,17 @@
 # Geometry and persisted products
 
+For runnable commands and recovery start with [README](../README.md),
+[flattening](FLATTENING.md), [prepared inputs](PREPARED.md), or
+[Lasagna/AFV](LASAGNA.md). This page is the technical reference for interpreting
+products and preserving coordinate, mask and resume contracts.
+
 ## Coordinates
 
 - Arrays and ROI arguments: ZYX. `--roi Z0 Z1 Y0 Y1 X0 X1` is half-open in voxels
   of the explicitly selected source level, never implicitly level 0.
-- Field grids, fibre constraints and 3D mesh vertices: XYZ micrometres.
+- CT-pipeline field grids, fibre constraints and 3D mesh vertices: XYZ micrometres.
+  Prepared/external bundles use declared world units; multiply coordinates by
+  `voxel_um` for micrometres. Use `voxel_um=1` when coordinates are already µm.
 - Origins are voxel-centre coordinates. At source index `i_xyz`,
   `world_xyz = origin_xyz + i_xyz * spacing_xyz`.
 - Observation origin is the source origin plus reversed ROI-low times source
@@ -257,14 +264,14 @@ stage. Published partial geometry remains PARTIAL even when a lower requested
 coverage target was met. `physical_acceptance=false` and
 `field_coverage_certified=false` always remain explicit.
 
-`coverage_target` is in `(0,1]`, default1. It measures original mesh area with valid
+`coverage_target` is in `(0,1]`, default 1. It measures original mesh area with valid
 assembled UV, not unique observed CT area or geometric coverage of the implicit
 field. All source components/faces remain in the denominator. Parent-edge welding
 preserves shared coordinates; non-tree cycle edges are explicit cuts. Pixel-level
-XYZ conflicts are masked; there is no global subpixel-overlap or3D-intersection
+XYZ conflicts are masked; there is no global subpixel-overlap or 3D-intersection
 certificate. Chart distortion checks are retained.
 
-`surface_time_limit_s` defaults to1800 active seconds per W, accumulated across
+`surface_time_limit_s` defaults to 1800 active seconds per W, accumulated across
 resumes. `resume --extra-surface-seconds N` appends an allowance record without
 changing the original request. `original_deadline_met` compares against the
 original limit. Interrupted/cold-start validation and worker overhead are reported
@@ -272,9 +279,9 @@ by supervision; wall time paused between invocations is not active compute time.
 
 Each component's `RENDER.json` records pitch, grid origin, shared intensity window,
 source mapping and mask counts. `sheet.png` is grayscale+alpha from original CT;
-`overview.png` samples that same canvas. `mask.png` values are0 background/unmapped,
-1 geometry without supported CT,2 observed CT,3 conflicting XYZ. Geometry-valid
-samples are1/2; a missing CT sample does not by itself remove a TIFXYZ position.
+`overview.png` samples that same canvas. `mask.png` values are 0 background/unmapped,
+1 geometry without supported CT, 2 observed CT, 3 conflicting XYZ. Geometry-valid
+samples are 1/2; a missing CT sample does not by itself remove a TIFXYZ position.
 
 Optional mesh-derived TIFXYZ uses the existing float32 tiled writer and explicit
 output-frame conversion. It requires an isotropic output frame and usable local
@@ -316,9 +323,9 @@ at a shifted origin or after adding new charts. A completed partial publication
 does not silently start a new mapping attempt on resume.
 
 Native compute is supervised in an owned process group: STOP/SIGINT requests a
-bounded stop; the worker may be killed after2seconds if unresponsive. Transactional
+bounded stop; the worker may be killed after 2 seconds if unresponsive. Transactional
 mesh/chart/tile checkpoints survive. RSS sampling covers worker group plus parent;
-the3GiB envelope and16GiB intermediate-work quota do not certify whole-W viability.
+the 3 GiB envelope and 16 GiB intermediate-work quota do not certify whole-W viability.
 Products/cache and the caller's disk reserve are accounted separately.
 
 ### Experimental standalone global mapping
@@ -342,7 +349,9 @@ STOP/deadline admission applies before this verification too.
 Source-triangle coverage, retained-grid connectivity and raster coverage are
 reported separately. The command is experimental and may publish PARTIAL; it does
 not produce direct-field certification or establish physical-sheet correctness.
-See [the command and measured scope](verification/native-global-export.md).
+Inspect its input requirements with `python tools/bench_global_native.py --help`.
+This checkout tool requires an existing mesh and explicit frame; use
+[the operator export flow](FLATTENING.md) for normal CLI runs.
 
 ## Direct TIFXYZ (experimental)
 
@@ -497,20 +506,19 @@ direct estimates contain no native-OBJ allowance. Estimates are not acceptance:
 the worker enforces admission and actual quotas. macOS production runtime is
 unsupported. Optional libigl/tifffile dependencies must already be provisioned.
 
-Hybrid filters process at most65536rows; audit queues are bounded to4096. Uncertain
+Hybrid filters process at most 65536 rows; audit queues are bounded to 4096. Uncertain
 numeric/contact filters retain the exact implementation. CUDA uses FP64 outward
 rounding with FMA/FTZ/fast-math disabled; its host library also supplies bounded
 exact integer contact filters. Unsupported numerical ranges fall back to Python.
-Read-only audit checkpoints poll STOP at0.1s and resource accounting at1s; all
-pre-write quota/journal checks remain. SQL batches stay<=128rows, grouped into
-transactions of<=2048rows. No global SQL materialization or output-sized RAM index.
+Read-only audit checkpoints poll STOP at 0.1 s and resource accounting at 1 s; all
+pre-write quota/journal checks remain. SQL batches stay <=128 rows, grouped into
+transactions of <=2048 rows. No global SQL materialization or output-sized RAM index.
 STATUS.audit records subphase and counters without altering accepted audit receipts.
 CPU supervision records `enforced_limit=RLIMIT_AS` and `child_address_ceiling`;
 CUDA records `enforced_limit=RLIMIT_DATA` and `child_data_ceiling`, plus the same
-aggregate RSS observation. Native GPU buffers are fixed-size and require256MiB
+aggregate RSS observation. Native GPU buffers are fixed-size and require 256 MiB
 free VRAM. Large virtual CUDA mappings are not reported as resident RAM.
 
-This integration is experimental preparation under the approved quality-first
-amendment. Geometry/integrity and ≤3 GiB remain final acceptance requirements;
-comparative RAM/time are `UNMEASURED` (`NO_COMPARISON`, reference OOM). Neither
-measured speedup nor whole-W acceptance follows from CLI tests or an ROI result.
+This route is experimental. Geometry/integrity and the admitted memory envelope
+are required for publication. Neither a speedup guarantee nor whole-field
+acceptance follows from an ROI result.
