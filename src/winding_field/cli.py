@@ -61,7 +61,7 @@ def main(argv=None):
         p.add_argument('--no-previews',dest='previews',action='store_false')
         p.add_argument('--surface-output',choices=['native','atlas','tifxyz'],default='native')
         p.add_argument('--flattening-method',choices=['default','original'],default='default',help='original global LSCM; independent of field resolution')
-        p.add_argument('--original-config',help='original recipe JSON: output_frame, optional pitch and memory_gib')
+        p.add_argument('--flattening-config',help='flattening JSON: output_frame, optional pitch and memory_gib')
         p.add_argument('--coverage-target',type=float,default=1.,help='native mapped mesh area target, fraction in(0,1]')
         p.add_argument('--surface-time-limit',dest='surface_time_limit_s',type=float,default=1800.,help='cumulative active seconds per native W')
         p.add_argument('--export-tifxyz',action='store_true',help='also write mesh-derived XYZ TIFFs when valid')
@@ -85,7 +85,7 @@ def main(argv=None):
     p.add_argument('--levels',nargs='+',type=float)
     p.add_argument('--source',required=True,help='original CT Zarr')
     p.add_argument('--level',type=int,default=0);p.add_argument('--voxel-um',type=float)
-    p.add_argument('--output',required=True);p.add_argument('--original-config',required=True)
+    p.add_argument('--output',required=True);p.add_argument('--flattening-config',required=True)
     p.add_argument('--flattening-method',choices=['original'],required=True)
     p.add_argument('--export-tifxyz',action='store_true');p.add_argument('--resume',action='store_true')
     p=sub.add_parser('demo',help='offline synthetic original-CT demonstration')
@@ -116,14 +116,14 @@ def main(argv=None):
             from .config import validate_config,read_tifxyz_request
             from .util import digest
             config=vars(args).copy(); command=config.pop('command'); until=config.pop('until')
-            original=config.pop('original_config')
+            original=config.pop('flattening_config')
             if original:
                 config['original_request']=json.loads(Path(original).read_bytes())
             if config['flattening_method']=='original':
                 from .original_pipeline import settings
                 settings(config.get('original_request'))
             elif original:
-                raise ValueError('--original-config requires --flattening-method original')
+                raise ValueError('--flattening-config requires --flattening-method original')
             request=config.pop('tifxyz_config')
             if request:
                 config['tifxyz_request']=read_tifxyz_request(request)

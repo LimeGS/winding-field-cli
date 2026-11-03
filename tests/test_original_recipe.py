@@ -116,7 +116,7 @@ def test_original_bundle_resume_and_tamper(tmp_path,monkeypatch):
         config=tmp_path/'original.json';config.write_text(json.dumps(request))
         args=['export-sheets','--mesh-bundle',str(run/'meshes'),'--source',str(source),
               '--output',str(tmp_path/'cli-output'),'--flattening-method','original',
-              '--original-config',str(config),'--export-tifxyz']
+              '--flattening-config',str(config),'--export-tifxyz']
         assert main(args)==0
         assert main(args+['--resume'])==0
         (out/'level-0000/mask.png').write_bytes(b'changed')
