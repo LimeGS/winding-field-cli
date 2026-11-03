@@ -3,7 +3,11 @@
 The CLI owns mesh extraction, surface export, flattening, atlases and pictures.
 The numerical library owns field construction and numerical benchmarks.
 
-## Migrating from winding-field
+For normal CT-run surfaces and mesh-derived TIFXYZ start with
+[the flattening guide](FLATTENING.md). The commands below serve prepared NPY
+fields, frozen inspection cases and custom geometry integrations.
+
+## Command map
 
 | Former core path/import | CLI command or import |
 | --- | --- |
@@ -36,6 +40,12 @@ winding-field surface-probe --help
 winding-field surface-atlas --help
 winding-field surface-geometry-check --help
 ```
+
+Use a new output directory with an existing parent. `new-surface/surface.obj`
+and `surface.npz` contain geometry, `uv.npz`/`grid.npz` contain its mapping, and
+`ct_preview.png`/`ct_stack.npz` contain sampled CT when supplied. Inspect
+`receipt.json` for gates, hashes and failures. This export has no resume flag;
+retry with a new directory and preserve the failed receipt for diagnosis.
 
 `surface-export` uses PCA unless `--app-run PATH` selects an external Flatboi
 launcher. The launcher and geometry-gate programs are external inputs, not bundled
