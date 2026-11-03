@@ -34,7 +34,7 @@ class Plane:
 
 
 def execute(request,out,token):
-    from winding_field._core.surface_mesh import MeshReader
+    from winding_field.surface_mesh import MeshReader
     from winding_field.native_mesh import extract_mesh
     from winding_field.io import Volume
     interrupted=False

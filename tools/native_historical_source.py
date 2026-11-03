@@ -15,8 +15,8 @@ import sys
 
 import numpy as np
 
-from winding_field._core.field_store import _json_load,_read_file,_triple
-from winding_field._core.surface_sources import _File
+from field_store import _json_load,_read_file,_triple
+from winding_field.surface_sources import _File
 from winding_field.util import file_sha
 
 HISTORICAL_PROOF=dict(

@@ -2,6 +2,8 @@
 
 import fcntl
 import itertools
+import importlib.metadata
+import importlib.util
 import json
 import math
 import os
@@ -15,7 +17,7 @@ import time
 import numpy as np
 
 from . import __version__
-from .config import validate_config,field_geometry,tifxyz_settings
+from .config import validate_config,validate_observations,field_geometry,tifxyz_settings
 from .io import Volume,bounds,resolve_source
 from .util import atomic_json,digest,file_sha
 
@@ -34,11 +36,23 @@ def stage_path(config):
 
 def implementation_sha():
     package=Path(__file__).parent
-    return digest({str(p.relative_to(package)):file_sha(p) for p in sorted(package.rglob('*.py'))})
+    files={str(p.relative_to(package)):file_sha(p) for p in sorted(package.rglob('*'))
+           if p.suffix in ('.py','.json')}
+    dependencies={name:importlib.metadata.version(name) for name in
+                  ('torch','numpy','scipy','numba','dynamic-network-architectures','avf-spline-generator',
+                   'winding-field-experiments')}
+    core=importlib.metadata.distribution('winding-field-experiments')
+    files['winding-field-experiments']={name:file_sha(importlib.util.find_spec(name).origin)
+                                      for name in sorted(core.read_text('top_level.txt').splitlines())}
+    for name in ('avf_spline_generator','dynamic_network_architectures'):
+        root=Path(next(iter(importlib.util.find_spec(name).submodule_search_locations)))
+        files[name]={str(p.relative_to(root)):file_sha(p) for p in sorted(root.rglob('*.py'))}
+    return digest(dict(files=files,dependencies=dependencies))
 
 
 def snapshot_exports(root,stage):
-    patterns={'prepare':['lasagna/**/*'],'fibres':['fibres/*.afv'],
+    patterns={'prepare':['lasagna/**/*','LASAGNA.json','lasagna-source/IDENTITY.json','lasagna-source/WORK.json',
+                         'lasagna-source/input.sqlite'],'fibres':['fibres/*.afv'],
               'field':[],'mesh':['meshes/*.obj'],
               'flatten':['flat/*.obj','flat/*.png','flat/atlas.sqlite'],
               'surfaces':['surfaces/NATIVE.json','surfaces/LEVELS.json','surfaces/level-*/LEVEL.json',
@@ -78,11 +92,14 @@ def plan(config,volume=None,stages=()):
         shape=(hi-lo-1)//stride+1
         if min(shape)<2:
             raise ValueError('ROI needs at least two observation samples per axis')
+        validate_observations(config,volume,shape)
+        method='external-afv' if config.get('fibres') else config.get('prediction','classical')
         halo=40*stride
         input_lo=np.maximum(0,lo-halo); input_hi=np.minimum(volume.shape,hi+halo)
-        if config.get('prediction','classical')=='sd2':
-            start=(lo//stride)//32*32
-            end=((lo//stride+shape-1)//32+1)*32
+        if method in ('sd2','qual-v2'):
+            core=48 if method=='qual-v2' else 32
+            start=(lo//stride)//core*core
+            end=((lo//stride+shape-1)//core+1)*core
             input_lo=np.maximum(0,lo%stride+start*stride-halo)
             input_hi=np.minimum(volume.shape,lo%stride+(end+40-1)*stride+1)
         chunk_count=np.prod((input_hi-1)//volume.chunks-input_lo//volume.chunks+1,dtype=np.int64)
@@ -90,20 +107,38 @@ def plan(config,volume=None,stages=()):
         observations=dict(shape_zyx=shape.tolist(),spacing_xyz=(np.asarray(volume.spacing_xyz)*stride).tolist(),
                           origin_xyz=(np.asarray(volume.origin_xyz)+lo[::-1]*volume.spacing_xyz).tolist(),
                           frame=digest(volume.identity))
+        lasagna_staging=lasagna_workspace=0
+        if method!='classical':
+            from .lasagna import input_geometry,CHUNK,BORDER
+            staged=input_geometry(volume,dict(observations,stride=stride,roi_lo_zyx=lo.tolist()))
+            stage_shape=np.asarray(staged['shape_zyx'])
+            lasagna_staging=math.prod(((stage_shape+CHUNK-1)//CHUNK*CHUNK).tolist())*volume.dtype.itemsize
+            lasagna_workspace=math.prod((stage_shape+2*BORDER).tolist())*32+lasagna_staging*8
+            stage_lo=np.asarray(staged['source_start_zyx']); stage_hi=stage_lo+(stage_shape-1)*stride+1
+            input_lo=np.minimum(input_lo,stage_lo); input_hi=np.maximum(input_hi,stage_hi)
+            chunk_count=np.prod((input_hi-1)//volume.chunks-input_lo//volume.chunks+1,dtype=np.int64)
+            ct_bytes=int(chunk_count)*math.prod(volume.chunks)*volume.dtype.itemsize
         field=field_geometry(observations,config.get('field_spacing_um'))
         observation_nodes=math.prod(shape.tolist()); field_nodes=math.prod(field['shape_zyx'])
-        output_bytes=observation_nodes*60+field_nodes*40
+        prepare_bytes=observation_nodes*48+lasagna_staging+lasagna_workspace
+        fibre_bytes=observation_nodes*12
+        if config.get('fibres'): fibre_bytes+=Path(config['fibres']).stat().st_size*4
+        spline_bytes=0
+        if method=='qual-v2':
+            spline_bytes=observation_nodes*8+math.prod((shape//2).tolist())*18
+            fibre_bytes+=observation_nodes*8+spline_bytes
+        output_bytes=prepare_bytes+fibre_bytes+field_nodes*40
         path=stage_path(config); terminal=path[-1][0]; extra={}
-        folders=('maps','lasagna','fibres','field','meshes','flat','surfaces')
+        folders=('maps','lasagna','lasagna-source','fibres','field','meshes','flat','surfaces','original')
         product_reserve=config.get('reserve_bytes',1<<30)
         if terminal=='tifxyz':
             request=config['tifxyz_request']; scratch=int(request['scratch_gib']*(1<<30))
             reserve=int(request['reserve_disk_gib']*(1<<30))
             # Bounded retained work + TIFF allowance, independent of native face count.
             direct_bytes=min(scratch,36_000_000+(256<<20)+256*request['max_pixels']*len(request['levels']))
-            products=dict(prepare=observation_nodes*48,fibres=observation_nodes*12,
+            products=dict(prepare=prepare_bytes,fibres=fibre_bytes,
                           field=field_nodes*40,tifxyz=direct_bytes)
-            output_bytes=sum(products.values()); folders=('maps','lasagna','fibres','field','tifxyz')
+            output_bytes=sum(products.values()); folders=('maps','lasagna','lasagna-source','fibres','field','tifxyz')
             product_reserve=max(product_reserve,reserve)
             extra=dict(stages=[name for name,_ in path],estimated_products_by_stage=products,
                        tifxyz_scratch_bytes=scratch,tifxyz_reserve_disk_bytes=reserve,reserve_ram_bytes=2<<30,
@@ -128,10 +163,12 @@ def plan(config,volume=None,stages=()):
             mode='download' if volume.remote and fits else 'stream' if volume.remote else 'local'
         if mode=='download' and not fits and volume.remote and not stages:
             raise ValueError('requested CT download exceeds cache or available-space budget; increase budget or use stream')
-        return dict(source=volume.identity,roi_lo_zyx=lo.tolist(),roi_hi_zyx=hi.tolist(),shape_zyx=shape.tolist(),
+        return dict(source=volume.identity,prediction=method,roi_lo_zyx=lo.tolist(),roi_hi_zyx=hi.tolist(),shape_zyx=shape.tolist(),
                      observations=observations,field=field,
                     input_lo_zyx=input_lo.tolist(),input_hi_zyx=input_hi.tolist(),ct_policy=mode,
-                    estimated_ct_bytes=ct_bytes,estimated_products_bytes=output_bytes,
+                     estimated_ct_bytes=ct_bytes,estimated_products_bytes=output_bytes,
+                      estimated_spline_dense_bytes=spline_bytes,
+                      estimated_lasagna_staging_bytes=lasagna_staging,estimated_lasagna_workspace_bytes=lasagna_workspace,
                     existing_products_bytes=written,estimated_remaining_bytes=remaining,free_bytes=free,
                      reserve_bytes=reserve,cache_free_bytes=cache_free,shared_filesystem=shared,
                      physical_accuracy='UNVALIDATED',**extra)
@@ -142,6 +179,10 @@ def plan(config,volume=None,stages=()):
 
 def _validate_products(root,state,stop=None,volume=None):
     from .artifacts import Tiles
+    from .lasagna import validate_retained as validate_lasagna
+    from .afv import validate_retained as validate_afv
+    validate_lasagna(root,state.get('config',{}))
+    if state.get('config',{}).get('fibres'): validate_afv(root,state['config'])
     if state['stages']:
         with sqlite3.connect((root/'products.sqlite').resolve().as_uri()+'?mode=ro',uri=True) as db:
             for name,sha in db.execute('SELECT path,sha FROM exports'):
@@ -158,15 +199,18 @@ def _validate_products(root,state,stop=None,volume=None):
         if expected!=actual:
             raise ValueError('prepared maps changed')
     if 'fibres' in state['stages']:
-        expected=json.loads((root/'FIBRES.json').read_bytes())['sha256']
-        if file_sha(root/'fibres/fibres.sqlite')!=expected:
+        expected=json.loads((root/'FIBRES.json').read_bytes())
+        if file_sha(root/'fibres/fibres.sqlite')!=expected['sha256']:
             raise ValueError('fibres changed')
+        if ('probabilities_sha256' in expected
+                and file_sha(root/'fibres/probabilities.npy')!=expected['probabilities_sha256']):
+            raise ValueError('spline probabilities changed')
     if 'field' in state['stages']:
         from .field import open_field
         with open_field(root) as source:
             source.validate(hashes=True)
     if 'mesh' in state['stages']:
-        from ._core.surface_mesh import MeshReader
+        from .surface_mesh import MeshReader
         reader=MeshReader(root/'meshes'); reader.close()
     if 'original' in state['stages'] and volume is not None:
         from .original_pipeline import verify_missing_ct
@@ -283,6 +327,18 @@ def run(config,resume=False,until=None,extra_surface_seconds=0):
     torch.set_num_threads(config.get('threads',min(4,os.cpu_count() or 1)))
     if root.exists() and not resume:
         raise FileExistsError('output exists; use resume or a new directory')
+    if not resume:
+        probe=open_volume(config)
+        try:
+            plan(config,probe)
+            if config.get('fibres'):
+                from .afv import source_identity
+                source_identity(config['fibres'],config.get('fibres_geometry'),probe.identity)
+        finally: probe.close()
+        if config.get('fibres') or config.get('prediction','classical')!='classical':
+            from . import lasagna
+            lasagna.runtime_identity(config.get('lasagna_python'))
+            lasagna.checkpoint(config.get('lasagna_model_path'),config.get('offline',False),prediction='lasagna')
     root.mkdir(parents=True,exist_ok=resume)
     with (root/'.run.lock').open('a') as lock:
         fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
@@ -318,6 +374,12 @@ def run(config,resume=False,until=None,extra_surface_seconds=0):
             if 'source' in state and state['source']!=volume.identity:
                 raise ValueError('source metadata changed')
             state['source']=volume.identity
+            if config.get('fibres'):
+                from .afv import source_identity
+                fibres_input=source_identity(config['fibres'],config.get('fibres_geometry'),volume.identity)
+                if 'fibres_input' in state and state['fibres_input']!=fibres_input:
+                    raise ValueError('external AFV input identity changed')
+                state['fibres_input']=fibres_input
             volume.bind_ledger(root/'source.sqlite')
             if resume:
                 volume.validate_used(); result=_validate_products(root,state,stop,volume)

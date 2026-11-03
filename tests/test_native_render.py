@@ -9,7 +9,7 @@ from test_native_geometry import plane_bundle
 
 
 def ready_plane(tmp_path):
-    from winding_field._core.surface_mesh import MeshReader
+    from winding_field.surface_mesh import MeshReader
     from winding_field.native_geometry import flatten_mesh,assemble
     from winding_field.native_store import Journal
     with MeshReader(plane_bundle(tmp_path)) as reader:
@@ -149,7 +149,7 @@ def test_tifxyz_declines_a_cell_bridging_discontinuous_geometry(tmp_path):
 
 
 def test_existing_mesh_export_binds_the_producer_implementation(tmp_path,monkeypatch):
-    from winding_field._core.surface_mesh import MeshReader
+    from winding_field.surface_mesh import MeshReader
     from winding_field.native_pipeline import render_mesh
     with MeshReader(plane_bundle(tmp_path)) as reader, analytic_ct(tmp_path) as volume:
         out=tmp_path/'render'
@@ -166,7 +166,7 @@ def test_mesh_render_usability_requires_measured_ct_contrast(tmp_path,offset,slo
     import tifffile
     from ct_fixture import write_ct
     from winding_field.io import Volume
-    from winding_field._core.surface_mesh import MeshReader
+    from winding_field.surface_mesh import MeshReader
     from winding_field.native_pipeline import render_mesh
     z,y,x=np.indices((12,12,12))
     source=write_ct(tmp_path/'ct.zarr',(offset+slope*(x+2*y+3*z)).astype(np.float32))
@@ -201,7 +201,7 @@ def test_mesh_render_usability_requires_measured_ct_contrast(tmp_path,offset,slo
 def test_different_constant_components_do_not_establish_image_contrast(tmp_path):
     from ct_fixture import write_ct
     from winding_field.io import Volume
-    from winding_field._core.surface_mesh import MeshReader
+    from winding_field.surface_mesh import MeshReader
     from winding_field.native_pipeline import render_mesh
     z=np.indices((12,12,12))[0]
     source=write_ct(tmp_path/'ct.zarr',z.astype(np.float32))
@@ -215,7 +215,7 @@ def test_different_constant_components_do_not_establish_image_contrast(tmp_path)
 
 
 def test_completed_mesh_export_revalidates_the_original_ct_payload(tmp_path):
-    from winding_field._core.surface_mesh import MeshReader
+    from winding_field.surface_mesh import MeshReader
     from winding_field.native_pipeline import render_mesh
     from winding_field.io import Volume
     mesh=plane_bundle(tmp_path); out=tmp_path/'render'
@@ -231,7 +231,7 @@ def test_completed_mesh_export_revalidates_the_original_ct_payload(tmp_path):
 def test_uv_budget_leaves_time_to_publish_a_partial_render(tmp_path,monkeypatch):
     import time
     import winding_field.native_geometry as geometry
-    from winding_field._core.surface_mesh import MeshReader
+    from winding_field.surface_mesh import MeshReader
     from winding_field.native_pipeline import render_mesh
     original=geometry._pieces
     def slow(*args,**kwargs):
@@ -250,7 +250,7 @@ def test_uv_budget_leaves_time_to_publish_a_partial_render(tmp_path,monkeypatch)
 
 
 def test_render_refuses_to_reuse_tiles_after_geometry_changes(tmp_path):
-    from winding_field._core.surface_mesh import MeshReader
+    from winding_field.surface_mesh import MeshReader
     from winding_field.native_geometry import flatten_mesh,assemble
     from winding_field.native_store import Journal,Paused
     from winding_field.native_render import render
@@ -269,7 +269,7 @@ def test_resume_finishes_the_frozen_partial_raster_without_moving_its_geometry(t
     import time
     import sqlite3
     import winding_field.native_geometry as geometry
-    from winding_field._core.surface_mesh import MeshReader
+    from winding_field.surface_mesh import MeshReader
     from winding_field.native_pipeline import render_mesh
     original=geometry._pieces
     def slow(*args,**kwargs):
@@ -309,7 +309,7 @@ def test_optional_tiff_cancel_keeps_published_image_and_hides_incomplete_segment
 
 
 def test_changing_parameterizer_runtime_cannot_relabel_completed_geometry(tmp_path,monkeypatch):
-    from winding_field._core.surface_mesh import MeshReader
+    from winding_field.surface_mesh import MeshReader
     from winding_field.native_pipeline import render_mesh
     import winding_field.native_geometry as geometry
     with MeshReader(plane_bundle(tmp_path)) as reader, analytic_ct(tmp_path) as volume:
@@ -322,7 +322,7 @@ def test_changing_parameterizer_runtime_cannot_relabel_completed_geometry(tmp_pa
 
 def test_mesh_render_recovers_an_unregistered_level_receipt(tmp_path,monkeypatch):
     import winding_field.native_pipeline as pipeline
-    from winding_field._core.surface_mesh import MeshReader
+    from winding_field.surface_mesh import MeshReader
     from winding_field.native_store import Paused
     original=pipeline.atomic_json
     def interrupted(path,value):
@@ -340,7 +340,7 @@ def test_mesh_render_recovers_an_unregistered_level_receipt(tmp_path,monkeypatch
 
 @pytest.mark.parametrize('low,high,outer',[(.4,.6,(0.,1.)),(.2,.3,(0.,1.)),(0.,1.,(-1.,2.))])
 def test_tifxyz_cannot_fill_a_source_mesh_hole_inside_valid_corners(tmp_path,monkeypatch,low,high,outer):
-    from winding_field._core.surface_mesh import import_mesh,MeshReader
+    from winding_field.surface_mesh import import_mesh,MeshReader
     from winding_field.native_pipeline import render_mesh
     from winding_field.util import file_sha
     import winding_field.native_geometry as geometry
@@ -367,7 +367,7 @@ def test_tifxyz_cannot_fill_a_source_mesh_hole_inside_valid_corners(tmp_path,mon
 def test_frozen_ct_snapshot_is_not_the_mutable_working_ledger(tmp_path):
     from ct_fixture import write_ct
     from winding_field.io import Volume
-    from winding_field._core.surface_mesh import MeshReader
+    from winding_field.surface_mesh import MeshReader
     from winding_field.native_pipeline import render_mesh
     source=write_ct(tmp_path/'ct.zarr',np.full((40,40,40),128,np.uint8),chunk=16)
     with MeshReader(plane_bundle(tmp_path)) as reader, closing(Volume(source,cache=tmp_path/'cache')) as volume:
@@ -379,7 +379,7 @@ def test_frozen_ct_snapshot_is_not_the_mutable_working_ledger(tmp_path):
 
 
 def ring_bundle(tmp_path,monkeypatch,size=6,low=2.2,high=2.3):
-    from winding_field._core.surface_mesh import import_mesh
+    from winding_field.surface_mesh import import_mesh
     from winding_field.util import file_sha
     import winding_field.native_geometry as geometry
     def xy_projection(v,f):
@@ -410,7 +410,7 @@ def read_tifxyz(folder):
 
 @pytest.mark.parametrize('low,high',[(2.2,2.3),(2.4,2.6)])
 def test_partial_tifxyz_retains_supported_cells_without_changing_png_or_source(tmp_path,monkeypatch,low,high):
-    from winding_field._core.surface_mesh import MeshReader
+    from winding_field.surface_mesh import MeshReader
     from winding_field.native_pipeline import render_mesh
     from winding_field.native_store import Journal
     from winding_field.native_render import _TiffTiles
@@ -454,7 +454,7 @@ def test_partial_tifxyz_retains_supported_cells_without_changing_png_or_source(t
 def test_partial_tifxyz_masks_cross_tile_corners_and_tails(tmp_path,monkeypatch,size,cell):
     from ct_fixture import write_ct
     from winding_field.io import Volume
-    from winding_field._core.surface_mesh import MeshReader
+    from winding_field.surface_mesh import MeshReader
     from winding_field.native_geometry import flatten_mesh,assemble
     from winding_field.native_render import render
     from winding_field.native_store import Journal
@@ -483,7 +483,7 @@ def test_partial_tifxyz_masks_cross_tile_corners_and_tails(tmp_path,monkeypatch,
 
 @pytest.mark.parametrize('interrupt',['mask_commit','mask_unregistered','channel'])
 def test_partial_tifxyz_resume_preserves_committed_masks_and_projection(tmp_path,monkeypatch,interrupt):
-    from winding_field._core.surface_mesh import MeshReader
+    from winding_field.surface_mesh import MeshReader
     from winding_field.native_geometry import flatten_mesh,assemble
     from winding_field.native_render import render
     from winding_field.native_store import Journal,Paused

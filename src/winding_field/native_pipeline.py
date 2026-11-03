@@ -165,7 +165,7 @@ def render_mesh(reader,output,volume,config,stop=None):
 
 
 def work(run,config,until='render',stop=None,token=None,started_epoch=None):
-    from ._core.surface_mesh import MeshReader
+    from .surface_mesh import MeshReader
     from .native_mesh import extract_mesh
     from .field import open_field
     from .meshes import select_levels

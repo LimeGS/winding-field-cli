@@ -167,7 +167,7 @@ def test_final_verification_and_summary_cost_is_not_hidden_from_result_time(tool
 
 def test_nonzero_mesh_level_is_bound_into_renderer_identity(tool, inputs, tmp_path):
     from test_native_mesh import Field
-    from winding_field._core.surface_mesh import extract_mesh
+    from winding_field.surface_mesh import extract_mesh
     source = Field(); mesh = tmp_path/'level-two'
     extract_mesh(source, mesh, [2.], tile=8)
     frame = json.loads(inputs[2].read_bytes()); frame['id'] = 'analytic'; inputs[2].write_text(json.dumps(frame))
@@ -393,7 +393,7 @@ def test_kill_between_payload_commit_and_phase_seal_never_rewrites_payload(
 
 
 def test_non_um_mesh_and_absent_component_reject_without_implicit_selection(tool, inputs, tmp_path):
-    from winding_field._core.surface_mesh import import_mesh
+    from winding_field.surface_mesh import import_mesh
     from winding_field.util import file_sha
     mesh, ct, frame = inputs
     out = tmp_path/'absent'; request = tool.make_request(arguments(tool, inputs, out, '--component', '2'))
@@ -472,7 +472,7 @@ def test_real_linux_command_runs_fresh_math_without_saved_uvs(tool, inputs, tmp_
 
 @pytest.mark.parametrize('member', ['mesh.sqlite', 'RUN.json'])
 def test_source_mutation_after_reader_validate_cannot_be_checkpointed(tool, inputs, tmp_path, monkeypatch, member):
-    from winding_field._core.surface_mesh import MeshReader
+    from winding_field.surface_mesh import MeshReader
     mesh = inputs[0]; out = tmp_path/'output'; out.mkdir()
     request = tool.make_request(arguments(tool, inputs, out))
     original = MeshReader.validate; calls = []; changed = []

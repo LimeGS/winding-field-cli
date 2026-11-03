@@ -7,7 +7,7 @@ from pathlib import Path
 
 import numpy as np
 
-from ._core.surface_mesh import extract_mesh
+from .surface_mesh import extract_mesh
 from .artifacts import Tiles
 from .field import open_field,map_axes
 from .util import atomic_json
@@ -32,7 +32,8 @@ def select_levels(run,config,source,stop=None):
                 if not valid.any():
                     continue
                 low=min(low,float(field[valid].min())); high=max(high,float(field[valid].max()))
-                presence=maps.sample(('presence',),map_axes(meta,geometry,lo,hi))['presence']; weight=presence[valid]
+                channel='surface_phase' if meta.get('surface_method')=='lasagna' else 'presence'
+                presence=maps.sample((channel,),map_axes(meta,geometry,lo,hi))[channel]; weight=presence[valid]
                 phase+=np.sum(weight*np.exp(2j*np.pi*field[valid])); total+=float(weight.sum())
         finally:
             maps.close()
@@ -62,5 +63,6 @@ def mesh(run,config,stop=None):
     if not sum(item['faces'] for item in result['levels']):
         raise ValueError('requested levels contain no supported mesh cells')
     atomic_json(run/'MESHES.json',dict(result,phase_concentration=concentration,
-                level_selection='explicit' if config.get('levels') else 'CT-presence circular phase'))
+                level_selection='explicit' if config.get('levels') else
+                    ('Lasagna cos circular phase' if json.loads((run/'PREPARED.json').read_bytes()).get('surface_method')=='lasagna' else 'CT-presence circular phase')))
     return result

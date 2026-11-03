@@ -12,7 +12,7 @@ import sqlite3
 import numpy as np
 from PIL import Image
 
-from ._core.surface_mesh import MeshReader
+from .surface_mesh import MeshReader
 from .original_recipe import make_map,raster_sheet,sample_points
 from .util import atomic_json,digest,file_sha
 
@@ -135,7 +135,7 @@ def verify_missing_ct(volume,record):
 
 
 def export_mesh(mesh_path,out,volume,request,*,export_tifxyz=False,stop=lambda:False,reserve_bytes=0):
-    from ._core.field_runtime import check_resources
+    from field_runtime import check_resources
     from .original_tifxyz import export_xyz
     from .workflow import implementation_sha
     cfg=settings(request);frame=cfg['output_frame'];out=Path(out)
@@ -239,8 +239,8 @@ def run_original(run,config,volume,stop=None):
 
 def export_existing(args):
     import fcntl
-    from ._core.surface_sources import FieldSource
-    from ._core.surface_mesh import extract_mesh
+    from .surface_sources import FieldSource
+    from .surface_mesh import extract_mesh
     from .io import Volume
     from .workflow import implementation_sha
     out=Path(args.output).expanduser().resolve()

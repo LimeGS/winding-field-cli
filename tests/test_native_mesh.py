@@ -5,7 +5,7 @@ import sqlite3
 import numpy as np
 import pytest
 
-from winding_field._core import surface_mesh as reference
+from winding_field import surface_mesh as reference
 
 
 class Field:

@@ -314,7 +314,7 @@ def check_sources(request, out):
 
 def source_phase(store, request, out):
     import numpy as np
-    from winding_field._core.surface_mesh import MeshReader
+    from winding_field.surface_mesh import MeshReader
     started = time.monotonic(); mesh = Path(request['mesh'])
     signatures = {name: file_signature(mesh/name) for name in ('MESH.json', 'RUN.json', 'mesh.sqlite')}
     frame_signature = file_signature(request['frame_path'])
