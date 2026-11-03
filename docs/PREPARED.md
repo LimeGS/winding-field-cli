@@ -26,6 +26,12 @@ the placeholder paths, SHA-256 hashes and calibration with your prepared inputs.
 Paths resolve relative to the JSON. Raw CT/AFV preparation and physical
 calibration belong to the caller's recipe.
 
+**Results and restart:** `OUTPUT/CHECKPOINT.json` is the field; `RUN.json` binds
+its inputs and `STATUS.json` reports progress. Keep referenced blocks beside the
+checkpoint. Remove `OUTPUT/STOP` before `prepared resume`; for supervised work
+also remove `OUTPUT.service/STOP`. Reuse the same config and original runtime.
+These commands accept prepared observations, not raw CT or prediction manifests.
+
 `winding-field-run-v1` requires:
 
 - `frame`, positive `voxel_um` and `sheet_step`, and explicit `calibration`
@@ -87,6 +93,11 @@ winding-field prepared render --mesh /path/to/another-bundle --output /path/to/n
 Start from [surface-run.example.json](../examples/surface-run.example.json).
 `winding-surfaces-v1` has exactly one `field` or `mesh`, explicit `geometry`, and
 optional `execution`/`render`. Paths belong to the configuration, not CWD.
+
+**Results:** `level-*.obj`, an indexed `mesh.sqlite` bundle and `renders/*.png`.
+The PNGs show geometry, not CT. For original CT and XYZ TIFFs use
+[export-sheets](FLATTENING.md). In the example, `voxel_um=8` and spacing 2 means
+16 µm; declare `voxel_um=1` for micrometre coordinates.
 
 - Field geometry: `frame`, positive `voxel_um`, `origin_xyz`, positive
   `spacing_xyz`, `shape_zyx` (at least two nodes/axis), positive `sheet_step`;

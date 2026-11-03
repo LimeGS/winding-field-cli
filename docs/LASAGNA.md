@@ -47,9 +47,14 @@ only this pinned checkpoint; model and runtime identities are recorded in
 CT='s3://vesuvius-challenge-open-data/PHerc0175A/volumes/20250521115057-8.640um-1.2m-116keV-masked.zarr'
 winding-field run --source "$CT" --voxel-um 8.64 \
   --roi 1488 1536 4032 4080 6048 6096 --field-spacing-um 17 \
-  --sweeps 1 --ct-mode stream --cache-gib .25 --reserve-gib .25 \
+  --sweeps 1 --ct-mode stream --until field \
   --output runs/175a-lasagna
 ```
+
+Results: `lasagna-source/output/` holds official predictions,
+`fibres/fibres.afv` holds calibrated splines, and `FIELD.json` describes the field.
+This example pauses after field construction. `winding-field render
+runs/175a-lasagna` continues the saved native surface pipeline.
 
 Qual requires uint8, isotropic 8.64–9.6 µm observations. Lasagna accepts upstream's
 uint8/uint16 input normalization (uint16 is quantized by integer division by 257).
@@ -65,7 +70,7 @@ preparation is reused without rerunning model inference:
 ```bash
 winding-field fibres /path/to/run   # trace the saved Qual predictions
 winding-field field /path/to/run    # build the field; also finishes fibres if needed
-winding-field resume /path/to/run   # continue through meshes and flattening
+winding-field resume /path/to/run   # finish the saved output branch
 ```
 
 Standalone `.lasagna.json` / OME-Zarr predictions cannot currently be imported
