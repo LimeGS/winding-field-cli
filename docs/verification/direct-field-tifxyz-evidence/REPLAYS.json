@@ -1,0 +1,22 @@
+[
+  {
+    "candidate": 1,
+    "stride": 16,
+    "returncode": 0
+  },
+  {
+    "candidate": 1,
+    "stride": 8,
+    "returncode": 0
+  },
+  {
+    "candidate": 2,
+    "stride": 16,
+    "returncode": 0
+  },
+  {
+    "candidate": 3,
+    "stride": 16,
+    "returncode": 0
+  }
+]

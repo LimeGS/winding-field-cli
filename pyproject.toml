@@ -15,6 +15,7 @@ dependencies = ["winding-field-experiments==1.3.0.dev1", "numpy>=1.26,<3", "scip
 [project.optional-dependencies]
 plot = ["matplotlib>=3.8,<4"]
 test = ["pytest>=8", "build>=1", "matplotlib>=3.8,<4"]
+tifxyz = ["libigl==2.6.3", "tifffile>=2023.7"]
 
 [project.scripts]
 winding-field = "winding_field.cli:main"
@@ -26,12 +27,13 @@ Documentation = "https://github.com/LimeGS/winding-field-cli/blob/main/README.md
 [tool.setuptools.packages.find]
 where = ["src"]
 
-[tool.setuptools.data-files]
-"share/winding-field-cli/provenance" = ["provenance/core.json", "provenance/villa.json", "provenance/qual.json", "provenance/lasagna.json"]
-"share/winding-field-cli" = ["THIRD_PARTY.md"]
-
 [tool.setuptools.package-data]
+winding_field = ["native/predicates.h", "native/predicates.cpp", "native/predicates.cu"]
 "winding_field._vendor" = ["qual_plans.json"]
+
+[tool.setuptools.data-files]
+"share/winding-field-cli/provenance" = ["provenance/core.json", "provenance/villa.json", "provenance/qual.json", "provenance/lasagna.json", "provenance/tifxyz-guide.json", "provenance/original-recipe.json"]
+"share/winding-field-cli" = ["THIRD_PARTY.md"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -1,0 +1,45 @@
+{
+  "candidate": 3,
+  "epoch": 1793358827.4785476,
+  "field_binding": {
+    "config_sha256": "4fdac93398fa748a51d4b43d0e27c89b041ef41ee880dff44df661b2d6594d81",
+    "conformance": {
+      "bytes": 17292,
+      "sha256": "680a1adbc3da6d7f9c401a6168216f44a1e7eedf665f9d4114b175bb9e84608f"
+    },
+    "guide": {
+      "faces": {
+        "bytes": 88136,
+        "sha256": "1f84f9f6cfd1d114d4848f001ac9cb377cbab41f3a49c43a407754c54cc5de26"
+      },
+      "normals": {
+        "bytes": 46328,
+        "sha256": "572f65d58d99f3d238e8de0de9e8682fa53e1a0d618c423063199fb26c51bee2"
+      },
+      "source_vertices": {
+        "bytes": 15528,
+        "sha256": "3ad3dd51e0a7992894042e2a85362a31353eff6d1be530a5ea67243ee0429df7"
+      },
+      "uv": {
+        "bytes": 30928,
+        "sha256": "5fd7d37f935c72d669f2c7b3621869cfb93387206ae19e83d0d3d7aff5e40224"
+      },
+      "world": {
+        "bytes": 46328,
+        "sha256": "c1f27f91e8a117f4d2f9f19d3688e72018c88469440d51b383349e043a29bc6c"
+      }
+    },
+    "pilot": {
+      "bytes": 1523,
+      "sha256": "93b479a32367055baa307288f264e26d26d48f98fd1aac328dbc5a63d7fb4671"
+    }
+  },
+  "pixel_yx": [
+    456,
+    640
+  ],
+  "segments": 87,
+  "status": "SOURCE_AND_GUIDE_REPLAY_VERIFIED",
+  "stride": 16,
+  "witness_sha256": "88701869a87305c42194ad1e0888246f50f3b4aba4ef2542c4f189790aa8a4e5"
+}

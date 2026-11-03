@@ -1,8 +1,37 @@
 """Shared preflight contracts; no source or model I/O."""
 
 import math
+from pathlib import Path
 
 import numpy as np
+
+
+def read_tifxyz_request(path):
+    from .tifxyz_contract import validate_request
+    from .tifxyz_field import read_metadata
+    return validate_request(read_metadata(Path(path).expanduser())[0])
+
+
+def tifxyz_settings(out,request=None,*,resume=False):
+    """Reuse the worker's frozen effective settings; never resolve geometry here."""
+    from .tifxyz_contract import Settings,validate_request
+    from .tifxyz_field import read_metadata
+    from .util import digest
+    if not resume:
+        if request is None:
+            raise ValueError('--config is required for a new tifxyz export')
+        return validate_request(request)
+    out=Path(out)
+    if any(p.is_symlink() for p in (out,*out.parents)):
+        raise ValueError('symlink in export path')
+    saved=read_metadata(out/'EXPORT.json')[0]
+    try:
+        settings=Settings(**saved['effective_settings'])
+    except (KeyError,TypeError) as error:
+        raise ValueError('invalid saved tifxyz settings') from error
+    if request is not None and digest(validate_request(request))!=settings.request_sha256:
+        raise ValueError('tifxyz request changed; use a new output')
+    return settings
 
 
 def validate_observations(config,volume,shape):
@@ -65,6 +94,28 @@ def validate_config(config):
             raise ValueError('levels must be nonempty finite numbers')
         if len(set(config['levels']))!=len(config['levels']):
             raise ValueError('duplicate levels')
-    for name,choices in [('prediction',('classical','sd2','qual-v2')),('ct_mode',('auto','download','stream'))]:
+    for name,choices in [('prediction',('classical','sd2','qual-v2')),('ct_mode',('auto','download','stream')),
+                          ('surface_output',('atlas','tifxyz','native')),('flattening_method',('default','original'))]:
         if name in config and config[name] not in choices:
             raise ValueError('invalid '+name)
+    if config.get('flattening_method')=='original' and config.get('surface_output')=='tifxyz':
+        raise ValueError('original flattening uses --export-tifxyz, not the direct-field surface-output branch')
+    if config.get('surface_output','atlas')=='native':
+        coverage=config.get('coverage_target',1.)
+        seconds=config.get('surface_time_limit_s',1800.)
+        if type(coverage) not in (int,float) or not math.isfinite(coverage) or not 0<coverage<=1:
+            raise ValueError('coverage_target must be finite in(0,1]')
+        if type(seconds) not in (int,float) or not math.isfinite(seconds) or seconds<=0:
+            raise ValueError('surface time limit must be positive finite seconds')
+        if type(config.get('export_tifxyz',False)) is not bool:
+            raise ValueError('export_tifxyz must be boolean')
+    if config.get('surface_output','atlas')=='tifxyz':
+        from .tifxyz_contract import validate_request
+        from .util import digest
+        request=validate_request(config.get('tifxyz_request'))
+        if config.get('tifxyz_request_sha256')!=digest(request):
+            raise ValueError('tifxyz request digest differs')
+        if config.get('levels') is not None and config['levels']!=request['levels']:
+            raise ValueError('--levels must exactly agree with tifxyz JSON levels')
+    elif config.get('tifxyz_request') is not None:
+        raise ValueError('--tifxyz-config requires --surface-output tifxyz')

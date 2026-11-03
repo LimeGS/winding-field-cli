@@ -1,0 +1,7 @@
+{
+  "origin": "vesubius-challenge/tools/mesh_to_tifxyz/geometry.py",
+  "source_sha256": "26b17a649860cdc45f63cb6abd95068d2638fe3abd68921e375ca9a9b54b2d3d",
+  "license": "MIT",
+  "adapted_functions": ["validate_input", "validate_orientation", "validate_map", "_cut_flags", "_sphere_seam", "parameterize", "relax_map"],
+  "changes": "Bounded guide only, no largest selection or OBJ/native raster conversion; preserve seam normals; interruptible SLIM iterations."
+}

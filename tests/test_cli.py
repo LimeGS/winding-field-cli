@@ -81,3 +81,22 @@ def test_resume_admits_remaining_products_and_completed_runs(tmp_path,monkeypatc
     assert run(state['config'],resume=True)['status']=='COMPLETE'
     free=8192
     assert run(state['config'],resume=True)['status']=='COMPLETE'
+
+
+def test_legacy_saved_config_is_not_backfilled_and_code_identity_stays_strict(tmp_path):
+    import pytest
+    from winding_field.demo import synthetic
+    from winding_field.workflow import run
+    from winding_field.util import atomic_json
+    root=tmp_path/'run'
+    config=dict(source=synthetic(tmp_path/'ct.zarr'),output=str(root),prediction='classical',
+                reserve_bytes=0,cache=str(tmp_path/'cache'))
+    state=run(config,until='prepare')
+    assert state['config']==config
+    assert run(config,resume=True,until='prepare')['config']==config
+    state['implementation_sha256']='b'*64
+    atomic_json(root/'RUN.json',state)
+    before=(root/'RUN.json').read_bytes()
+    with pytest.raises(ValueError,match='implementation changed'):
+        run(config,resume=True)
+    assert (root/'RUN.json').read_bytes()==before

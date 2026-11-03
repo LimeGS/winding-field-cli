@@ -254,8 +254,9 @@ class Volume:
             old = self._ledger.execute('SELECT sha FROM chunks WHERE key=?', (key,)).fetchone()
             if old and old[0] != sha:
                 raise ValueError('source chunk changed: '+key)
-            self._ledger.execute('INSERT OR IGNORE INTO chunks VALUES (?,?)', (key,sha))
-            self._ledger.commit()
+            if old is None:
+                self._ledger.execute('INSERT INTO chunks VALUES (?,?)', (key,sha))
+                self._ledger.commit()
         return data
 
     def validate_used(self):

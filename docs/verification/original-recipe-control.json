@@ -1,0 +1,26 @@
+{
+  "date": "2026-11-03",
+  "worker": "work-4",
+  "control_level": 31,
+  "scope": "Packaged numerical kernel, historical saved map, frozen cached CT adapter; not a full installed-CLI source-to-map comparison",
+  "package_kernel_sha256": "e702414db50e2a7a05cdb8de9071ac5ac1b9aee750c11302f487900dda2c4846",
+  "frozen_whole_sheets_sha256": "5617511ff97cfc8e63ded78e10c2e0879cb83962617df13008c6f5f80db6ea67",
+  "synthetic_map_arrays_exactly_equal": true,
+  "historical_image": {
+    "different_pixels": 0,
+    "reference_file_sha256": "4a7e97fe3722be4370160308021788da76ef31b9f504db9f436f8c99ae2ecf59"
+  },
+  "historical_mask": {
+    "different_pixels": 0,
+    "reference_file_sha256": "505610facc398f6d1d43c60217c7676908864268f12d83616352e980ac907be7"
+  },
+  "canvas": {
+    "width": 4096,
+    "height": 4096,
+    "pitch": 3.5358847757241643,
+    "u0": -14859.780768340031,
+    "v_top": 2692.2756988006013
+  },
+  "physical_acceptance": false,
+  "vc3d_open_verified": false
+}
