@@ -205,6 +205,11 @@ exports/W-31/original/level-0000/
 `level-0000` means the first requested W (here −31), not W=0.
 See [flattening setup and advanced reference](docs/FLATTENING.md) for details.
 
+For aligned neighbouring W levels, use [`export-uvw`](docs/UVW.md) with an
+existing original map as reference. It exports CT and TIFXYZ on one shared UV
+grid, with validity masks and resumable processing. Outputs are diagnostic;
+inspect coverage and deformation before using side cuts through the stack.
+
 </details>
 
 <details>
