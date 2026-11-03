@@ -1,0 +1,1796 @@
+{
+  "samples": [
+    {
+      "pixel_yx": [
+        40,
+        464
+      ],
+      "reason": "ONE_SIMPLE_ROOT",
+      "roots": [
+        {
+          "error_um": 0.007595811976947202,
+          "event": null,
+          "incident_segments": 1,
+          "one_sided": false,
+          "requires_other_side": false,
+          "residual": 1.9008229874550864e-06,
+          "slope": 1,
+          "t_bounds": [
+            0.001088120821447166,
+            0.011226711923561816
+          ],
+          "xyz_um": [
+            34283.58177067049,
+            11298.137456088003,
+            13649.680865949516
+          ]
+        }
+      ],
+      "status": "UNIQUE"
+    },
+    {
+      "pixel_yx": [
+        49,
+        479
+      ],
+      "reason": "ONE_SIMPLE_ROOT",
+      "roots": [
+        {
+          "error_um": 0.00515610725038602,
+          "event": null,
+          "incident_segments": 1,
+          "one_sided": false,
+          "requires_other_side": false,
+          "residual": 5.757220016278097e-07,
+          "slope": 1,
+          "t_bounds": [
+            -0.0014754318328205416,
+            0.005383686703450593
+          ],
+          "xyz_um": [
+            34283.60522546875,
+            11340.496373810494,
+            13335.948172278839
+          ]
+        }
+      ],
+      "status": "UNIQUE"
+    },
+    {
+      "pixel_yx": [
+        516,
+        546
+      ],
+      "reason": "ONE_SIMPLE_ROOT",
+      "roots": [
+        {
+          "error_um": 0.008354553526848808,
+          "event": null,
+          "incident_segments": 1,
+          "one_sided": false,
+          "requires_other_side": false,
+          "residual": -1.8488728299459467e-06,
+          "slope": 1,
+          "t_bounds": [
+            0.0024473100972356317,
+            0.013240019045051269
+          ],
+          "xyz_um": [
+            36995.89771550321,
+            15397.30928239194,
+            7741.45784800816
+          ]
+        }
+      ],
+      "status": "UNIQUE"
+    },
+    {
+      "pixel_yx": [
+        464,
+        40
+      ],
+      "reason": "ONE_SIMPLE_ROOT",
+      "roots": [
+        {
+          "error_um": 0.004759217833885271,
+          "event": null,
+          "incident_segments": 1,
+          "one_sided": false,
+          "requires_other_side": false,
+          "residual": 6.93322048661571e-07,
+          "slope": 1,
+          "t_bounds": [
+            -0.009399789350834723,
+            -0.0027621192958836144
+          ],
+          "xyz_um": [
+            39749.421765595784,
+            18800.56505682631,
+            14266.658768871373
+          ]
+        }
+      ],
+      "status": "UNIQUE"
+    },
+    {
+      "pixel_yx": [
+        479,
+        49
+      ],
+      "reason": "ONE_SIMPLE_ROOT",
+      "roots": [
+        {
+          "error_um": 0.006606948852333791,
+          "event": null,
+          "incident_segments": 1,
+          "one_sided": false,
+          "requires_other_side": false,
+          "residual": -1.9118568097553634e-06,
+          "slope": 1,
+          "t_bounds": [
+            -0.018995338881447863,
+            -0.009721178833538192
+          ],
+          "xyz_um": [
+            39779.278230103155,
+            18800.559528151272,
+            13951.500725434018
+          ]
+        }
+      ],
+      "status": "UNIQUE"
+    },
+    {
+      "pixel_yx": [
+        183,
+        595
+      ],
+      "reason": "ONE_SIMPLE_ROOT",
+      "roots": [
+        {
+          "error_um": 0.0043388987828778085,
+          "event": null,
+          "incident_segments": 1,
+          "one_sided": false,
+          "requires_other_side": false,
+          "residual": -7.162302013696831e-07,
+          "slope": 1,
+          "t_bounds": [
+            0.0031070406062524546,
+            0.008693606308997355
+          ],
+          "xyz_um": [
+            34283.65205149411,
+            11922.059691129709,
+            10137.329034530716
+          ]
+        }
+      ],
+      "status": "UNIQUE"
+    },
+    {
+      "pixel_yx": [
+        75,
+        514
+      ],
+      "reason": "ONE_SIMPLE_ROOT",
+      "roots": [
+        {
+          "error_um": 0.007434948554244937,
+          "event": null,
+          "incident_segments": 1,
+          "one_sided": false,
+          "requires_other_side": false,
+          "residual": -3.956466567700545e-07,
+          "slope": 1,
+          "t_bounds": [
+            -0.0019781632381320703,
+            0.007816364884017964
+          ],
+          "xyz_um": [
+            34283.65502656655,
+            11457.38192503165,
+            12555.070672963277
+          ]
+        }
+      ],
+      "status": "UNIQUE"
+    },
+    {
+      "pixel_yx": [
+        154,
+        580
+      ],
+      "reason": "ONE_SIMPLE_ROOT",
+      "roots": [
+        {
+          "error_um": 0.008318616538683354,
+          "event": null,
+          "incident_segments": 1,
+          "one_sided": false,
+          "requires_other_side": false,
+          "residual": 2.3256009828998003e-07,
+          "slope": 1,
+          "t_bounds": [
+            -0.00418015662749997,
+            0.006581043104286835
+          ],
+          "xyz_um": [
+            34283.67204810539,
+            11797.862748072244,
+            10715.191998030677
+          ]
+        }
+      ],
+      "status": "UNIQUE"
+    },
+    {
+      "pixel_yx": [
+        66,
+        503
+      ],
+      "reason": "ONE_SIMPLE_ROOT",
+      "roots": [
+        {
+          "error_um": 0.00672050178386699,
+          "event": null,
+          "incident_segments": 1,
+          "one_sided": false,
+          "requires_other_side": false,
+          "residual": 9.088415477975786e-07,
+          "slope": 1,
+          "t_bounds": [
+            0.0007925614617725965,
+            0.009674623853830944
+          ],
+          "xyz_um": [
+            34283.6867214639,
+            11417.327102925648,
+            12809.120958596655
+          ]
+        }
+      ],
+      "status": "UNIQUE"
+    },
+    {
+      "pixel_yx": [
+        149,
+        577
+      ],
+      "reason": "ONE_SIMPLE_ROOT",
+      "roots": [
+        {
+          "error_um": 0.006677669957057061,
+          "event": null,
+          "incident_segments": 1,
+          "one_sided": false,
+          "requires_other_side": false,
+          "residual": 8.725578215518226e-07,
+          "slope": 1,
+          "t_bounds": [
+            0.004613719211746964,
+            0.013260855029731032
+          ],
+          "xyz_um": [
+            34283.68989826299,
+            11776.560310821535,
+            10818.532101743795
+          ]
+        }
+      ],
+      "status": "UNIQUE"
+    },
+    {
+      "pixel_yx": [
+        4,
+        361
+      ],
+      "reason": "ONE_SIMPLE_ROOT",
+      "roots": [
+        {
+          "error_um": 0.0051643109100366,
+          "event": null,
+          "incident_segments": 1,
+          "one_sided": false,
+          "requires_other_side": false,
+          "residual": -1.539256575533443e-06,
+          "slope": 1,
+          "t_bounds": [
+            -0.006188722525666555,
+            0.0008832378547372596
+          ],
+          "xyz_um": [
+            34283.6940616054,
+            11098.499365443053,
+            15623.796494074246
+          ]
+        }
+      ],
+      "status": "UNIQUE"
+    },
+    {
+      "pixel_yx": [
+        580,
+        154
+      ],
+      "reason": "ONE_SIMPLE_ROOT",
+      "roots": [
+        {
+          "error_um": 0.00674411058664063,
+          "event": null,
+          "incident_segments": 1,
+          "one_sided": false,
+          "requires_other_side": false,
+          "residual": 3.571755518017028e-07,
+          "slope": 1,
+          "t_bounds": [
+            -0.0020032685367198776,
+            0.00765341118597471
+          ],
+          "xyz_um": [
+            39848.12702598238,
+            18800.515322621584,
+            11293.106614764389
+          ]
+        }
+      ],
+      "status": "UNIQUE"
+    },
+    {
+      "pixel_yx": [
+        124,
+        560
+      ],
+      "reason": "ONE_SIMPLE_ROOT",
+      "roots": [
+        {
+          "error_um": 0.006026566442631126,
+          "event": null,
+          "incident_segments": 1,
+          "one_sided": false,
+          "requires_other_side": false,
+          "residual": -4.7590876750547295e-07,
+          "slope": 1,
+          "t_bounds": [
+            -3.861861903635642e-05,
+            0.007804305001627216
+          ],
+          "xyz_um": [
+            34283.69693886582,
+            11669.497039983338,
+            11355.221722363249
+          ]
+        }
+      ],
+      "status": "UNIQUE"
+    },
+    {
+      "pixel_yx": [
+        1,
+        336
+      ],
+      "reason": "ONE_SIMPLE_ROOT",
+      "roots": [
+        {
+          "error_um": 0.0051013455565340725,
+          "event": null,
+          "incident_segments": 1,
+          "one_sided": false,
+          "requires_other_side": false,
+          "residual": 1.5416403087442632e-07,
+          "slope": 1,
+          "t_bounds": [
+            -0.00259720390350685,
+            0.004433379921061393
+          ],
+          "xyz_um": [
+            34283.74607028259,
+            11068.67480400622,
+            16078.489700606775
+          ]
+        }
+      ],
+      "status": "UNIQUE"
+    },
+    {
+      "pixel_yx": [
+        70,
+        508
+      ],
+      "reason": "ONE_SIMPLE_ROOT",
+      "roots": [
+        {
+          "error_um": 0.007086422132960512,
+          "event": null,
+          "incident_segments": 1,
+          "one_sided": false,
+          "requires_other_side": false,
+          "residual": 1.195073568993621e-06,
+          "slope": 1,
+          "t_bounds": [
+            0.0013869445096830171,
+            0.010737941242328249
+          ],
+          "xyz_um": [
+            34283.76153540918,
+            11435.20753039154,
+            12694.620969293142
+          ]
+        }
+      ],
+      "status": "UNIQUE"
+    },
+    {
+      "pixel_yx": [
+        595,
+        183
+      ],
+      "reason": "ONE_SIMPLE_ROOT",
+      "roots": [
+        {
+          "error_um": 0.007694464863803393,
+          "event": null,
+          "incident_segments": 1,
+          "one_sided": false,
+          "requires_other_side": false,
+          "residual": -9.866702663785532e-07,
+          "slope": 1,
+          "t_bounds": [
+            -0.004303614620772162,
+            0.006544206352759555
+          ],
+          "xyz_um": [
+            39821.16153556367,
+            18800.465341118754,
+            10702.693547963554
+          ]
+        }
+      ],
+      "status": "UNIQUE"
+    },
+    {
+      "pixel_yx": [
+        514,
+        75
+      ],
+      "reason": "ONE_SIMPLE_ROOT",
+      "roots": [
+        {
+          "error_um": 0.00572716778600676,
+          "event": null,
+          "incident_segments": 1,
+          "one_sided": false,
+          "requires_other_side": false,
+          "residual": -1.7631435484943836e-06,
+          "slope": 1,
+          "t_bounds": [
+            -0.008584355679546397,
+            -0.00040430472674933175
+          ],
+          "xyz_um": [
+            39833.297031451795,
+            18800.477145890607,
+            13163.795138196978
+          ]
+        }
+      ],
+      "status": "UNIQUE"
+    },
+    {
+      "pixel_yx": [
+        279,
+        621
+      ],
+      "reason": "ONE_SIMPLE_ROOT",
+      "roots": [
+        {
+          "error_um": 0.005824527155102165,
+          "event": null,
+          "incident_segments": 1,
+          "one_sided": false,
+          "requires_other_side": false,
+          "residual": 8.684643955092497e-07,
+          "slope": 1,
+          "t_bounds": [
+            0.005784017439696945,
+            0.013203182660493562
+          ],
+          "xyz_um": [
+            34283.76352509856,
+            12340.375314505342,
+            8379.12220579143
+          ]
+        }
+      ],
+      "status": "UNIQUE"
+    },
+    {
+      "pixel_yx": [
+        55,
+        488
+      ],
+      "reason": "ONE_SIMPLE_ROOT",
+      "roots": [
+        {
+          "error_um": 0.008007060688939709,
+          "event": null,
+          "incident_segments": 1,
+          "one_sided": false,
+          "requires_other_side": false,
+          "residual": -9.675036984901908e-07,
+          "slope": 1,
+          "t_bounds": [
+            -0.005492104269634739,
+            0.005131078731566165
+          ],
+          "xyz_um": [
+            34283.787280780765,
+            11367.88876267512,
+            13142.065435945091
+          ]
+        }
+      ],
+      "status": "UNIQUE"
+    },
+    {
+      "pixel_yx": [
+        99,
+        539
+      ],
+      "reason": "ONE_SIMPLE_ROOT",
+      "roots": [
+        {
+          "error_um": 0.004346900372476963,
+          "event": null,
+          "incident_segments": 1,
+          "one_sided": false,
+          "requires_other_side": false,
+          "residual": -1.398902941041058e-06,
+          "slope": 1,
+          "t_bounds": [
+            -0.0009872436878412662,
+            0.004701774445129587
+          ],
+          "xyz_um": [
+            34283.82499224935,
+            11562.060035213073,
+            11936.43295943124
+          ]
+        }
+      ],
+      "status": "UNIQUE"
+    },
+    {
+      "pixel_yx": [
+        560,
+        124
+      ],
+      "reason": "ONE_SIMPLE_ROOT",
+      "roots": [
+        {
+          "error_um": 0.00738181817781594,
+          "event": null,
+          "incident_segments": 1,
+          "one_sided": false,
+          "requires_other_side": false,
+          "residual": 8.558588970863923e-07,
+          "slope": 1,
+          "t_bounds": [
+            -0.0036056523513964193,
+            0.007170869804648061
+          ],
+          "xyz_um": [
+            39860.57447084666,
+            18800.41160622967,
+            11945.756299049031
+          ]
+        }
+      ],
+      "status": "UNIQUE"
+    },
+    {
+      "pixel_yx": [
+        577,
+        149
+      ],
+      "reason": "ONE_SIMPLE_ROOT",
+      "roots": [
+        {
+          "error_um": 0.005541239091267327,
+          "event": null,
+          "incident_segments": 1,
+          "one_sided": false,
+          "requires_other_side": false,
+          "residual": -2.7434472613663274e-06,
+          "slope": 1,
+          "t_bounds": [
+            -0.005578351035297361,
+            0.00237812237415925
+          ],
+          "xyz_um": [
+            39851.31265134941,
+            18800.400789150415,
+            11398.589150865771
+          ]
+        }
+      ],
+      "status": "UNIQUE"
+    },
+    {
+      "pixel_yx": [
+        621,
+        279
+      ],
+      "reason": "ONE_SIMPLE_ROOT",
+      "roots": [
+        {
+          "error_um": 0.005404900805972961,
+          "event": null,
+          "incident_segments": 1,
+          "one_sided": false,
+          "requires_other_side": false,
+          "residual": 1.612066119260902e-06,
+          "slope": 1,
+          "t_bounds": [
+            0.003966880646512266,
+            0.011286972042689157
+          ],
+          "xyz_um": [
+            39654.85811581282,
+            18800.381455932944,
+            8903.325955985645
+          ]
+        }
+      ],
+      "status": "UNIQUE"
+    },
+    {
+      "pixel_yx": [
+        530,
+        533
+      ],
+      "reason": "ONE_SIMPLE_ROOT",
+      "roots": [
+        {
+          "error_um": 0.005250525971107833,
+          "event": null,
+          "incident_segments": 1,
+          "one_sided": false,
+          "requires_other_side": false,
+          "residual": -1.405347743066443e-06,
+          "slope": 1,
+          "t_bounds": [
+            0.024335320542712556,
+            0.031134035050705
+          ],
+          "xyz_um": [
+            37215.24238583229,
+            15664.569735747804,
+            7741.510014886238
+          ]
+        }
+      ],
+      "status": "UNIQUE"
+    },
+    {
+      "pixel_yx": [
+        503,
+        66
+      ],
+      "reason": "ONE_SIMPLE_ROOT",
+      "roots": [
+        {
+          "error_um": 0.004671230934470737,
+          "event": null,
+          "incident_segments": 1,
+          "one_sided": false,
+          "requires_other_side": false,
+          "residual": -2.858448969966787e-06,
+          "slope": 1,
+          "t_bounds": [
+            -0.008195479518311111,
+            -0.0015609305979614953
+          ],
+          "xyz_um": [
+            39818.88852624841,
+            18800.411547610373,
+            13420.573031508246
+          ]
+        }
+      ],
+      "status": "UNIQUE"
+    },
+    {
+      "pixel_yx": [
+        6,
+        372
+      ],
+      "reason": "ONE_SIMPLE_ROOT",
+      "roots": [
+        {
+          "error_um": 0.0069004155226611305,
+          "event": null,
+          "incident_segments": 1,
+          "one_sided": false,
+          "requires_other_side": false,
+          "residual": -1.858314083946766e-06,
+          "slope": 1,
+          "t_bounds": [
+            -0.007903736516242656,
+            0.0015213773185299136
+          ],
+          "xyz_um": [
+            34283.88265048513,
+            11113.97745835884,
+            15421.892788865769
+          ]
+        }
+      ],
+      "status": "UNIQUE"
+    },
+    {
+      "pixel_yx": [
+        361,
+        4
+      ],
+      "reason": "ONE_SIMPLE_ROOT",
+      "roots": [
+        {
+          "error_um": 0.008103097979152483,
+          "event": null,
+          "incident_segments": 1,
+          "one_sided": false,
+          "requires_other_side": false,
+          "residual": -1.9618638003038313e-07,
+          "slope": 1,
+          "t_bounds": [
+            -0.008031944877600563,
+            0.0028861563131659857
+          ],
+          "xyz_um": [
+            39458.055237587345,
+            18800.40796929728,
+            16228.906079339713
+          ]
+        }
+      ],
+      "status": "UNIQUE"
+    },
+    {
+      "pixel_yx": [
+        458,
+        586
+      ],
+      "reason": "ONE_SIMPLE_ROOT",
+      "roots": [
+        {
+          "error_um": 0.006593437046006628,
+          "event": null,
+          "incident_segments": 1,
+          "one_sided": false,
+          "requires_other_side": false,
+          "residual": -9.051379725733e-07,
+          "slope": 1,
+          "t_bounds": [
+            0.0014270591808281058,
+            0.009889084784997221
+          ],
+          "xyz_um": [
+            36162.0551884644,
+            14429.465110112757,
+            7741.534640425553
+          ]
+        }
+      ],
+      "status": "UNIQUE"
+    },
+    {
+      "pixel_yx": [
+        129,
+        59
+      ],
+      "reason": "ONE_SIMPLE_ROOT",
+      "roots": [
+        {
+          "error_um": 0.004946815062069647,
+          "event": null,
+          "incident_segments": 1,
+          "one_sided": false,
+          "requires_other_side": false,
+          "residual": -2.061736032565875e-06,
+          "slope": 1,
+          "t_bounds": [
+            0.03224860055298066,
+            0.03905190749183766
+          ],
+          "xyz_um": [
+            37446.74245320317,
+            15236.045778204038,
+            16588.75485835129
+          ]
+        }
+      ],
+      "status": "UNIQUE"
+    },
+    {
+      "pixel_yx": [
+        508,
+        70
+      ],
+      "reason": "ONE_SIMPLE_ROOT",
+      "roots": [
+        {
+          "error_um": 0.008232360842613081,
+          "event": null,
+          "incident_segments": 1,
+          "one_sided": false,
+          "requires_other_side": false,
+          "residual": -4.511529636985756e-06,
+          "slope": 1,
+          "t_bounds": [
+            -0.013387161687653797,
+            -0.001664317236455178
+          ],
+          "xyz_um": [
+            39825.67329792038,
+            18800.346438124816,
+            13304.891037288748
+          ]
+        }
+      ],
+      "status": "UNIQUE"
+    },
+    {
+      "pixel_yx": [
+        84,
+        524
+      ],
+      "reason": "ONE_SIMPLE_ROOT",
+      "roots": [
+        {
+          "error_um": 0.006646472106234399,
+          "event": null,
+          "incident_segments": 1,
+          "one_sided": false,
+          "requires_other_side": false,
+          "residual": 1.6808692695491345e-06,
+          "slope": 1,
+          "t_bounds": [
+            0.0020946135540444665,
+            0.010830382914563596
+          ],
+          "xyz_um": [
+            34283.970110031354,
+            11497.040948184977,
+            12314.79602834609
+          ]
+        }
+      ],
+      "status": "UNIQUE"
+    },
+    {
+      "pixel_yx": [
+        586,
+        458
+      ],
+      "reason": "ONE_SIMPLE_ROOT",
+      "roots": [
+        {
+          "error_um": 0.006660927373116234,
+          "event": null,
+          "incident_segments": 1,
+          "one_sided": false,
+          "requires_other_side": false,
+          "residual": 2.800549764092608e-06,
+          "slope": 1,
+          "t_bounds": [
+            0.01079712716809292,
+            0.019513575194505983
+          ],
+          "xyz_um": [
+            38254.35926487667,
+            17009.933269066736,
+            7741.531587815822
+          ]
+        }
+      ],
+      "status": "UNIQUE"
+    },
+    {
+      "pixel_yx": [
+        20,
+        421
+      ],
+      "reason": "ONE_SIMPLE_ROOT",
+      "roots": [
+        {
+          "error_um": 0.00712243632698274,
+          "event": null,
+          "incident_segments": 1,
+          "one_sided": false,
+          "requires_other_side": false,
+          "residual": -5.944834455817727e-07,
+          "slope": 1,
+          "t_bounds": [
+            -0.004436604939956201,
+            0.005169603926837784
+          ],
+          "xyz_um": [
+            34284.00152357076,
+            11198.674111664335,
+            14502.556243899515
+          ]
+        }
+      ],
+      "status": "UNIQUE"
+    },
+    {
+      "pixel_yx": [
+        208,
+        605
+      ],
+      "reason": "ONE_SIMPLE_ROOT",
+      "roots": [
+        {
+          "error_um": 0.007822036860295626,
+          "event": null,
+          "incident_segments": 1,
+          "one_sided": false,
+          "requires_other_side": false,
+          "residual": -2.1933551153097142e-07,
+          "slope": 1,
+          "t_bounds": [
+            0.0002980004629984225,
+            0.010335709028094598
+          ],
+          "xyz_um": [
+            34283.995666849405,
+            12030.046635104589,
+            9662.225217997491
+          ]
+        }
+      ],
+      "status": "UNIQUE"
+    },
+    {
+      "pixel_yx": [
+        60,
+        495
+      ],
+      "reason": "ONE_SIMPLE_ROOT",
+      "roots": [
+        {
+          "error_um": 0.0075970719796159955,
+          "event": null,
+          "incident_segments": 1,
+          "one_sided": false,
+          "requires_other_side": false,
+          "residual": -1.2365872832376112e-06,
+          "slope": 1,
+          "t_bounds": [
+            -0.0062950597468063195,
+            0.003765221804796849
+          ],
+          "xyz_um": [
+            34284.02929156399,
+            11390.615528582633,
+            12987.978847321345
+          ]
+        }
+      ],
+      "status": "UNIQUE"
+    },
+    {
+      "pixel_yx": [
+        581,
+        467
+      ],
+      "reason": "ONE_SIMPLE_ROOT",
+      "roots": [
+        {
+          "error_um": 0.006891857891965574,
+          "event": null,
+          "incident_segments": 1,
+          "one_sided": false,
+          "requires_other_side": false,
+          "residual": -1.3082578522727317e-06,
+          "slope": 1,
+          "t_bounds": [
+            0.004586528550387244,
+            0.013591002529755009
+          ],
+          "xyz_um": [
+            38143.694543512414,
+            16860.05123499203,
+            7741.547611473218
+          ]
+        }
+      ],
+      "status": "UNIQUE"
+    },
+    {
+      "pixel_yx": [
+        622,
+        332
+      ],
+      "reason": "ONE_SIMPLE_ROOT",
+      "roots": [
+        {
+          "error_um": 0.006349451637937412,
+          "event": null,
+          "incident_segments": 1,
+          "one_sided": false,
+          "requires_other_side": false,
+          "residual": 2.1358052286757356e-06,
+          "slope": 1,
+          "t_bounds": [
+            0.0008625068158654447,
+            0.009336768355024214
+          ],
+          "xyz_um": [
+            39522.80604745422,
+            18800.236279999324,
+            7952.270890425242
+          ]
+        }
+      ],
+      "status": "UNIQUE"
+    },
+    {
+      "pixel_yx": [
+        467,
+        581
+      ],
+      "reason": "ONE_SIMPLE_ROOT",
+      "roots": [
+        {
+          "error_um": 0.008137173964472954,
+          "event": null,
+          "incident_segments": 1,
+          "one_sided": false,
+          "requires_other_side": false,
+          "residual": -2.413510983068079e-06,
+          "slope": 1,
+          "t_bounds": [
+            -0.005594851696431961,
+            0.004857506497531929
+          ],
+          "xyz_um": [
+            36285.95590966382,
+            14568.602330941032,
+            7741.562933040347
+          ]
+        }
+      ],
+      "status": "UNIQUE"
+    },
+    {
+      "pixel_yx": [
+        51,
+        482
+      ],
+      "reason": "ONE_SIMPLE_ROOT",
+      "roots": [
+        {
+          "error_um": 0.00672981807302449,
+          "event": null,
+          "incident_segments": 1,
+          "one_sided": false,
+          "requires_other_side": false,
+          "residual": 1.7677951049677176e-06,
+          "slope": 1,
+          "t_bounds": [
+            0.00026013229848821905,
+            0.00920322785542735
+          ],
+          "xyz_um": [
+            34284.062497899446,
+            11349.870330575537,
+            13271.188849970142
+          ]
+        }
+      ],
+      "status": "UNIQUE"
+    },
+    {
+      "pixel_yx": [
+        539,
+        99
+      ],
+      "reason": "ONE_SIMPLE_ROOT",
+      "roots": [
+        {
+          "error_um": 0.007726074834947754,
+          "event": null,
+          "incident_segments": 1,
+          "one_sided": false,
+          "requires_other_side": false,
+          "residual": -5.346853564347498e-06,
+          "slope": 1,
+          "t_bounds": [
+            -0.011058907345202287,
+            0.0001348745941168524
+          ],
+          "xyz_um": [
+            39855.63216303072,
+            18800.269335466972,
+            12536.778962497256
+          ]
+        }
+      ],
+      "status": "UNIQUE"
+    },
+    {
+      "pixel_yx": [
+        488,
+        55
+      ],
+      "reason": "ONE_SIMPLE_ROOT",
+      "roots": [
+        {
+          "error_um": 0.008599615206189445,
+          "event": null,
+          "incident_segments": 1,
+          "one_sided": false,
+          "requires_other_side": false,
+          "residual": 5.0568397345074345e-06,
+          "slope": 1,
+          "t_bounds": [
+            -0.015000391712018966,
+            -0.0028810349085894088
+          ],
+          "xyz_um": [
+            39795.16368936802,
+            18800.27080133213,
+            13756.323156940516
+          ]
+        }
+      ],
+      "status": "UNIQUE"
+    },
+    {
+      "pixel_yx": [
+        291,
+        622
+      ],
+      "reason": "ONE_SIMPLE_ROOT",
+      "roots": [
+        {
+          "error_um": 0.005242879430288455,
+          "event": null,
+          "incident_segments": 1,
+          "one_sided": false,
+          "requires_other_side": false,
+          "residual": 1.4831107955082246e-06,
+          "slope": 1,
+          "t_bounds": [
+            0.006891080466989232,
+            0.01356155338622831
+          ],
+          "xyz_um": [
+            34284.07425627584,
+            12394.04138463431,
+            8168.200021354515
+          ]
+        }
+      ],
+      "status": "UNIQUE"
+    },
+    {
+      "pixel_yx": [
+        53,
+        485
+      ],
+      "reason": "ONE_SIMPLE_ROOT",
+      "roots": [
+        {
+          "error_um": 0.0070409986537083745,
+          "event": null,
+          "incident_segments": 1,
+          "one_sided": false,
+          "requires_other_side": false,
+          "residual": 1.4222656892215468e-06,
+          "slope": 1,
+          "t_bounds": [
+            -3.0148331425276183e-05,
+            0.009320315845065914
+          ],
+          "xyz_um": [
+            34284.11344758956,
+            11359.060227885297,
+            13206.575115758076
+          ]
+        }
+      ],
+      "status": "UNIQUE"
+    },
+    {
+      "pixel_yx": [
+        533,
+        530
+      ],
+      "reason": "ONE_SIMPLE_ROOT",
+      "roots": [
+        {
+          "error_um": 0.005204857460621848,
+          "event": null,
+          "incident_segments": 1,
+          "one_sided": false,
+          "requires_other_side": false,
+          "residual": -3.2241849989844695e-07,
+          "slope": 1,
+          "t_bounds": [
+            0.007554471856024276,
+            0.014295997791474516
+          ],
+          "xyz_um": [
+            37263.528174637926,
+            15724.24594060442,
+            7741.568973222063
+          ]
+        }
+      ],
+      "status": "UNIQUE"
+    },
+    {
+      "pixel_yx": [
+        227,
+        611
+      ],
+      "reason": "ONE_SIMPLE_ROOT",
+      "roots": [
+        {
+          "error_um": 0.0045190353685088894,
+          "event": null,
+          "incident_segments": 1,
+          "one_sided": false,
+          "requires_other_side": false,
+          "residual": 1.0536556094287164e-06,
+          "slope": 1,
+          "t_bounds": [
+            0.008216791271685656,
+            0.013999840796739549
+          ],
+          "xyz_um": [
+            34284.12617464332,
+            12112.202579192977,
+            9311.176041422817
+          ]
+        }
+      ],
+      "status": "UNIQUE"
+    },
+    {
+      "pixel_yx": [
+        217,
+        608
+      ],
+      "reason": "ONE_SIMPLE_ROOT",
+      "roots": [
+        {
+          "error_um": 0.008615827675548722,
+          "event": null,
+          "incident_segments": 1,
+          "one_sided": false,
+          "requires_other_side": false,
+          "residual": 8.073723147816736e-07,
+          "slope": 1,
+          "t_bounds": [
+            0.005340645586988327,
+            0.016382330312965418
+          ],
+          "xyz_um": [
+            34284.13348262204,
+            12068.854016048968,
+            9495.067777512326
+          ]
+        }
+      ],
+      "status": "UNIQUE"
+    },
+    {
+      "pixel_yx": [
+        27,
+        438
+      ],
+      "reason": "ONE_SIMPLE_ROOT",
+      "roots": [
+        {
+          "error_um": 0.007717046247182156,
+          "event": null,
+          "incident_segments": 1,
+          "one_sided": false,
+          "requires_other_side": false,
+          "residual": -2.250983728302458e-06,
+          "slope": 1,
+          "t_bounds": [
+            -0.00844514059984266,
+            0.001925313783503068
+          ],
+          "xyz_um": [
+            34284.1948442388,
+            11235.018216671759,
+            14171.695159025969
+          ]
+        }
+      ],
+      "status": "UNIQUE"
+    },
+    {
+      "pixel_yx": [
+        622,
+        291
+      ],
+      "reason": "ONE_SIMPLE_ROOT",
+      "roots": [
+        {
+          "error_um": 0.0060690116168334125,
+          "event": null,
+          "incident_segments": 1,
+          "one_sided": false,
+          "requires_other_side": false,
+          "residual": -1.387852043066573e-06,
+          "slope": 1,
+          "t_bounds": [
+            0.001992549874128588,
+            0.01018643611126328
+          ],
+          "xyz_um": [
+            39627.05585019083,
+            18800.115124878586,
+            8687.385142171304
+          ]
+        }
+      ],
+      "status": "UNIQUE"
+    },
+    {
+      "pixel_yx": [
+        3,
+        354
+      ],
+      "reason": "ONE_SIMPLE_ROOT",
+      "roots": [
+        {
+          "error_um": 0.0075501184793009745,
+          "event": null,
+          "incident_segments": 1,
+          "one_sided": false,
+          "requires_other_side": false,
+          "residual": 8.159704489862918e-07,
+          "slope": 1,
+          "t_bounds": [
+            -0.002999907271146387,
+            0.007357437907330348
+          ],
+          "xyz_um": [
+            34284.24795433591,
+            11090.138966282248,
+            15750.903947899811
+          ]
+        }
+      ],
+      "status": "UNIQUE"
+    },
+    {
+      "pixel_yx": [
+        63,
+        499
+      ],
+      "reason": "ONE_SIMPLE_ROOT",
+      "roots": [
+        {
+          "error_um": 0.00445790555406986,
+          "event": null,
+          "incident_segments": 1,
+          "one_sided": false,
+          "requires_other_side": false,
+          "residual": -7.3987830528921e-07,
+          "slope": 1,
+          "t_bounds": [
+            -0.003645617938385988,
+            0.0022533026979443425
+          ],
+          "xyz_um": [
+            34284.23783527441,
+            11404.262419964874,
+            12898.470738834489
+          ]
+        }
+      ],
+      "status": "UNIQUE"
+    },
+    {
+      "pixel_yx": [
+        163,
+        585
+      ],
+      "reason": "ONE_SIMPLE_ROOT",
+      "roots": [
+        {
+          "error_um": 0.004568113447443904,
+          "event": null,
+          "incident_segments": 1,
+          "one_sided": false,
+          "requires_other_side": false,
+          "residual": -1.1993220434547425e-06,
+          "slope": 1,
+          "t_bounds": [
+            0.002803271860720268,
+            0.008702116311963914
+          ],
+          "xyz_um": [
+            34284.22919297118,
+            11836.69353553547,
+            10533.124395857749
+          ]
+        }
+      ],
+      "status": "UNIQUE"
+    },
+    {
+      "pixel_yx": [
+        605,
+        208
+      ],
+      "reason": "ONE_SIMPLE_ROOT",
+      "roots": [
+        {
+          "error_um": 0.007145637498873916,
+          "event": null,
+          "incident_segments": 1,
+          "one_sided": false,
+          "requires_other_side": false,
+          "residual": -2.2954413392284323e-07,
+          "slope": 1,
+          "t_bounds": [
+            -0.0017133711271861065,
+            0.008231263931858083
+          ],
+          "xyz_um": [
+            39788.0573349915,
+            18800.095134689385,
+            10216.59132464818
+          ]
+        }
+      ],
+      "status": "UNIQUE"
+    },
+    {
+      "pixel_yx": [
+        98,
+        538
+      ],
+      "reason": "ONE_SIMPLE_ROOT",
+      "roots": [
+        {
+          "error_um": 0.008353822415974618,
+          "event": null,
+          "incident_segments": 1,
+          "one_sided": false,
+          "requires_other_side": false,
+          "residual": -1.253852257576682e-07,
+          "slope": 1,
+          "t_bounds": [
+            -0.003212261360021983,
+            0.007724468436235385
+          ],
+          "xyz_um": [
+            34284.267392273425,
+            11558.02193141649,
+            11961.65727229823
+          ]
+        }
+      ],
+      "status": "UNIQUE"
+    },
+    {
+      "pixel_yx": [
+        2,
+        346
+      ],
+      "reason": "ONE_SIMPLE_ROOT",
+      "roots": [
+        {
+          "error_um": 0.005013710622713929,
+          "event": null,
+          "incident_segments": 1,
+          "one_sided": false,
+          "requires_other_side": false,
+          "residual": 1.438135291742526e-06,
+          "slope": 1,
+          "t_bounds": [
+            0.00017764090041228874,
+            0.007069089526465342
+          ],
+          "xyz_um": [
+            34284.31526941199,
+            11080.509831779284,
+            15896.396759436813
+          ]
+        }
+      ],
+      "status": "UNIQUE"
+    },
+    {
+      "pixel_yx": [
+        190,
+        598
+      ],
+      "reason": "ONE_SIMPLE_ROOT",
+      "roots": [
+        {
+          "error_um": 0.006807136073737306,
+          "event": null,
+          "incident_segments": 1,
+          "one_sided": false,
+          "requires_other_side": false,
+          "residual": -1.5987348476187435e-06,
+          "slope": 1,
+          "t_bounds": [
+            -0.00406995531550787,
+            0.00468542958515511
+          ],
+          "xyz_um": [
+            34284.26097143714,
+            11952.45567140011,
+            10003.16370708514
+          ]
+        }
+      ],
+      "status": "UNIQUE"
+    },
+    {
+      "pixel_yx": [
+        108,
+        547
+      ],
+      "reason": "ONE_SIMPLE_ROOT",
+      "roots": [
+        {
+          "error_um": 0.007787153801739696,
+          "event": null,
+          "incident_segments": 1,
+          "one_sided": false,
+          "requires_other_side": false,
+          "residual": 1.2296149796142686e-06,
+          "slope": 1,
+          "t_bounds": [
+            0.0028328810932357245,
+            0.013000821351856732
+          ],
+          "xyz_um": [
+            34284.32691666999,
+            11601.389449385117,
+            11722.07737921566
+          ]
+        }
+      ],
+      "status": "UNIQUE"
+    },
+    {
+      "pixel_yx": [
+        24,
+        431
+      ],
+      "reason": "ONE_SIMPLE_ROOT",
+      "roots": [
+        {
+          "error_um": 0.0062140568952618125,
+          "event": null,
+          "incident_segments": 1,
+          "one_sided": false,
+          "requires_other_side": false,
+          "residual": 1.521759291911451e-07,
+          "slope": 1,
+          "t_bounds": [
+            -0.002102931209823615,
+            0.006263207588470714
+          ],
+          "xyz_um": [
+            34284.348321731784,
+            11219.835708886996,
+            14308.564384530815
+          ]
+        }
+      ],
+      "status": "UNIQUE"
+    },
+    {
+      "pixel_yx": [
+        85,
+        525
+      ],
+      "reason": "ONE_SIMPLE_ROOT",
+      "roots": [
+        {
+          "error_um": 0.005955995931067116,
+          "event": null,
+          "incident_segments": 1,
+          "one_sided": false,
+          "requires_other_side": false,
+          "residual": 1.4465727162793485e-06,
+          "slope": 1,
+          "t_bounds": [
+            0.002913287177550562,
+            0.010739169496919478
+          ],
+          "xyz_um": [
+            34284.356515457344,
+            11501.63492305668,
+            12289.559781383328
+          ]
+        }
+      ],
+      "status": "UNIQUE"
+    },
+    {
+      "pixel_yx": [
+        524,
+        84
+      ],
+      "reason": "ONE_SIMPLE_ROOT",
+      "roots": [
+        {
+          "error_um": 0.007510662245893224,
+          "event": null,
+          "incident_segments": 1,
+          "one_sided": false,
+          "requires_other_side": false,
+          "residual": -3.802589842116788e-06,
+          "slope": 1,
+          "t_bounds": [
+            -0.00796427991270802,
+            0.0028245856623956484
+          ],
+          "xyz_um": [
+            39843.89300504075,
+            18800.06262024698,
+            12920.497911489058
+          ]
+        }
+      ],
+      "status": "UNIQUE"
+    },
+    {
+      "pixel_yx": [
+        611,
+        227
+      ],
+      "reason": "ONE_SIMPLE_ROOT",
+      "roots": [
+        {
+          "error_um": 0.007817627310764437,
+          "event": null,
+          "incident_segments": 1,
+          "one_sided": false,
+          "requires_other_side": false,
+          "residual": 5.662534161565702e-07,
+          "slope": 1,
+          "t_bounds": [
+            0.0011433319776366887,
+            0.011939789934597836
+          ],
+          "xyz_um": [
+            39757.66883745204,
+            18799.973305425945,
+            9857.324495162107
+          ]
+        }
+      ],
+      "status": "UNIQUE"
+    },
+    {
+      "pixel_yx": [
+        211,
+        606
+      ],
+      "reason": "ONE_SIMPLE_ROOT",
+      "roots": [
+        {
+          "error_um": 0.004607492362708047,
+          "event": null,
+          "incident_segments": 1,
+          "one_sided": false,
+          "requires_other_side": false,
+          "residual": -6.086710948594032e-07,
+          "slope": 1,
+          "t_bounds": [
+            -0.002169843527589176,
+            0.003740525640882939
+          ],
+          "xyz_um": [
+            34284.41233348624,
+            12043.20687808121,
+            9606.755879071708
+          ]
+        }
+      ],
+      "status": "UNIQUE"
+    },
+    {
+      "pixel_yx": [
+        181,
+        594
+      ],
+      "reason": "ONE_SIMPLE_ROOT",
+      "roots": [
+        {
+          "error_um": 0.00481550870355061,
+          "event": null,
+          "incident_segments": 1,
+          "one_sided": false,
+          "requires_other_side": false,
+          "residual": 1.0130408543140845e-06,
+          "slope": 1,
+          "t_bounds": [
+            0.006173564858057686,
+            0.012376216006485958
+          ],
+          "xyz_um": [
+            34284.423091722034,
+            11914.020003544378,
+            10177.25966169032
+          ]
+        }
+      ],
+      "status": "UNIQUE"
+    },
+    {
+      "pixel_yx": [
+        103,
+        80
+      ],
+      "reason": "ONE_SIMPLE_ROOT",
+      "roots": [
+        {
+          "error_um": 0.00489861014618637,
+          "event": null,
+          "incident_segments": 1,
+          "one_sided": false,
+          "requires_other_side": false,
+          "residual": -2.2122149072600905e-06,
+          "slope": 1,
+          "t_bounds": [
+            0.002267597528534288,
+            0.009044886659164418
+          ],
+          "xyz_um": [
+            37119.243073324644,
+            14727.31888560834,
+            16588.715706577652
+          ]
+        }
+      ],
+      "status": "UNIQUE"
+    },
+    {
+      "pixel_yx": [
+        372,
+        6
+      ],
+      "reason": "ONE_SIMPLE_ROOT",
+      "roots": [
+        {
+          "error_um": 0.006059931822884984,
+          "event": null,
+          "incident_segments": 1,
+          "one_sided": false,
+          "requires_other_side": false,
+          "residual": -4.568707049124043e-06,
+          "slope": 1,
+          "t_bounds": [
+            -0.0071291597521326465,
+            0.0010642099504526046
+          ],
+          "xyz_um": [
+            39495.79134784186,
+            18800.076451443965,
+            16029.901994026235
+          ]
+        }
+      ],
+      "status": "UNIQUE"
+    }
+  ]
+}

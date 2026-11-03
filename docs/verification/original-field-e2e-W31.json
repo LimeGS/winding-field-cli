@@ -1,0 +1,213 @@
+{
+  "scope": "installed CLI from SHA-bound field, fresh extraction and mapping",
+  "comparison": {
+    "image": {
+      "equal": true,
+      "different_pixels": 0,
+      "reference_sha256": "4a7e97fe3722be4370160308021788da76ef31b9f504db9f436f8c99ae2ecf59"
+    },
+    "mask": {
+      "equal": true,
+      "different_pixels": 0,
+      "reference_sha256": "505610facc398f6d1d43c60217c7676908864268f12d83616352e980ac907be7"
+    }
+  },
+  "mesh": [
+    {
+      "area_world2": 51281975.47559804,
+      "boundary_edges": 2976,
+      "components": 149,
+      "duplicate_faces": 0,
+      "faces": 609010,
+      "id": 0,
+      "inconsistent_edges": 0,
+      "level": 31.0,
+      "nonmanifold_edges": 0,
+      "vertices": 306233
+    }
+  ],
+  "level_receipt": {
+    "coverage": {
+      "main_component": 1,
+      "source_main_component_area_um2": 3785818290.880685,
+      "total_source_area_um2": 3828178956.4631643,
+      "total_source_components": 149,
+      "total_source_faces": 609010,
+      "unplaced_other_component_area_um2": 42360665.582479216
+    },
+    "files": {
+      "image.png": "4a7e97fe3722be4370160308021788da76ef31b9f504db9f436f8c99ae2ecf59",
+      "map.npz": "6834bfc830746bdce1277fd8ad52c4f4a2d89f1ebbdef89638a4188b8a714c06",
+      "mask.png": "505610facc398f6d1d43c60217c7676908864268f12d83616352e980ac907be7",
+      "tifxyz/VERIFIED.json": "2ceff7ec3fc1d93eae684937bfa8cf030afa6dae0e804199013ce2246c533b08",
+      "tifxyz/meta.json": "76153b281f83b33bf0a9cf7c48b008d63c6444eb794adf809ff3728a5ad25a71",
+      "tifxyz/valid-mask.png": "2ab2058316a3bef7aff3f380be4faadfdac88252f1d334607ac82bf9478dc59c",
+      "tifxyz/x.tif": "8fa53fefdb7e944b512d31d3084814859359cb4e7a4d38d8e10e0487c46496d4",
+      "tifxyz/y.tif": "3d3c4a111d9b00d61c284baf51e233bd56ed435866d1954bf316dad79724b1ed",
+      "tifxyz/z.tif": "f1d48d3bbf21587b4d8054d3ee6db31b6cd637c302cc7cf1480baee64c8631d9"
+    },
+    "identity": {
+      "ct": {
+        "level": 0,
+        "metadata_sha256": "790645c228050973984fb605027057c3470752815cf4248253a832011017ac9a",
+        "origin_xyz": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "shape": [
+          6374,
+          4682,
+          4682
+        ],
+        "source": "https://vesuvius-challenge-open-data.s3.amazonaws.com/PHerc0175A/volumes/20250521115057-8.640um-1.2m-116keV-masked.zarr/1",
+        "spacing_xyz": [
+          17.28,
+          17.28,
+          17.28
+        ]
+      },
+      "export_tifxyz": true,
+      "implementation_sha256": "2a0a45c3e433016876b00c86cb4923c838bd65efa9637a857cb22ab91acf6243",
+      "level": 31.0,
+      "level_id": 0,
+      "mesh_sha256": "883ca85b9cb148a3f5ea6ef5169aa346c570e260e333941889756b08ca59fa26",
+      "runtime": {
+        "Pillow": "13.0.0",
+        "libigl": "2.6.3",
+        "numpy": "2.4.3",
+        "scipy": "1.18.1"
+      },
+      "settings": {
+        "memory_gib": 8.0,
+        "output_frame": {
+          "id": "PHerc0175A/20250521115057",
+          "origin_xyz_um": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "voxel_um": 8.64
+        },
+        "pitch": 3.5358847757241643
+      }
+    },
+    "mapping": {
+      "calibration": {
+        "anisotropic_or_nonlinear_fit": false,
+        "definition": "sum_unique_xyz_edge_lengths / sum_unique_uv_edge_lengths",
+        "unique_edges": 877451,
+        "uv_edge_length_sum": 8980126.817660416,
+        "uv_origin_removed": [
+          -8.351830139051316,
+          -2641.512797926845
+        ],
+        "world_units_per_uv_unit": 1.4927593861176096,
+        "xyz_edge_length_sum": 13405168.595589045
+      },
+      "connected_pieces_after_mask": 215,
+      "high_saddle_cut_radians": -0.1,
+      "mapping_boundary_loops": 482,
+      "mapping_domain_area_world2": 49002914.9683177,
+      "mapping_domain_faces": 581079,
+      "mapping_domain_genus": 0.0,
+      "method": "global LSCM on one connected genus-zero domain; holes retained, no patch packing",
+      "original_XYZ_preserved": true,
+      "original_faces_retained_in_source": true,
+      "physical_acceptance": false,
+      "quality": {
+        "display_area_fraction": 0.6955493763976508,
+        "inverted_or_invalid_area_fraction": 0.0,
+        "maximum_visual_anisotropy": 1.25,
+        "maximum_visual_scale_factor": 2.0,
+        "p95_valid_face_metric_distortion": 15.239005100001963,
+        "scientific_acceptance": false,
+        "scientific_area_fraction": 0.017938610927275795,
+        "scientific_limit": 0.02
+      },
+      "source_area_world2": 50714515.42782177,
+      "source_faces": 601060,
+      "topology_masked_area_world2": 1450494.8404060397,
+      "unmapped_source_faces": 19981,
+      "unplaced_connected_piece_area_world2": 261105.61909803003,
+      "uv_bounds": [
+        [
+          -14539.541041108767,
+          -9241.362310546285
+        ],
+        [
+          -700.5723389808451,
+          146.46555155703305
+        ]
+      ]
+    },
+    "physical_acceptance": false,
+    "rendering": {
+      "CT_missing_pixels": 2994664,
+      "CT_observed_pixels": 980904,
+      "ambiguous_pixels": 1407359,
+      "black_is_unmapped_or_unsupported": true,
+      "black_unmapped_pixels": 11394289,
+      "canvas": {
+        "height": 4096,
+        "pitch": 3.5358847757241643,
+        "u0": -14859.780768340031,
+        "v_top": 2692.2756988006013,
+        "width": 4096
+      },
+      "original_UV_positions_preserved": true,
+      "patch_repacking": false,
+      "physical_acceptance": false
+    },
+    "tifxyz": {
+      "exclusions": "domain-boundary rectangles, jumps >8*pitch, collapsed/folded cells, orphan nodes",
+      "files": {
+        "meta.json": {
+          "bytes": 963,
+          "sha256": "76153b281f83b33bf0a9cf7c48b008d63c6444eb794adf809ff3728a5ad25a71"
+        },
+        "valid-mask.png": {
+          "bytes": 37267,
+          "sha256": "2ab2058316a3bef7aff3f380be4faadfdac88252f1d334607ac82bf9478dc59c"
+        },
+        "x.tif": {
+          "bytes": 13949578,
+          "sha256": "8fa53fefdb7e944b512d31d3084814859359cb4e7a4d38d8e10e0487c46496d4"
+        },
+        "y.tif": {
+          "bytes": 13026888,
+          "sha256": "3d3c4a111d9b00d61c284baf51e233bd56ed435866d1954bf316dad79724b1ed"
+        },
+        "z.tif": {
+          "bytes": 13411370,
+          "sha256": "f1d48d3bbf21587b4d8054d3ee6db31b6cd637c302cc7cf1480baee64c8631d9"
+        }
+      },
+      "geometry_mask_includes_CT_missing": true,
+      "max_float32_error_world": 0.00048828107719600666,
+      "original_mapped_nodes": 3975568,
+      "physical_acceptance": false,
+      "removed_nodes": 59020,
+      "retained_cells": 3900777,
+      "retained_nodes": 3916548,
+      "status": "TIFXYZ_READBACK_VERIFIED",
+      "vc3d_readback": false
+    },
+    "unavailable_ct_chunks": []
+  },
+  "physical_acceptance": false,
+  "independent_tifffile_comparison": {
+    "x": {
+      "equal": true,
+      "different_values": 0
+    },
+    "y": {
+      "equal": true,
+      "different_values": 0
+    },
+    "z": {
+      "equal": true,
+      "different_values": 0
+    }
+  }
+}

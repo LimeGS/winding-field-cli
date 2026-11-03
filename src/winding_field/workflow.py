@@ -15,12 +15,21 @@ import time
 import numpy as np
 
 from . import __version__
-from .config import validate_config,field_geometry
+from .config import validate_config,field_geometry,tifxyz_settings
 from .io import Volume,bounds,resolve_source
 from .util import atomic_json,digest,file_sha
 
 STAGES=['prepare','fibres','field','mesh','flatten']
 RECEIPTS=['PREPARED.json','FIBRES.json','FIELD.json','MESHES.json','FLAT.json']
+
+
+def stage_path(config):
+    legacy=tuple(zip(STAGES,RECEIPTS))
+    if config.get('flattening_method')=='original':
+        return legacy[:4]+(('original','ORIGINAL.json'),)
+    if config.get('surface_output')=='native':
+        return legacy[:3]+(('surfaces','SURFACES.json'),)
+    return legacy[:3]+(('tifxyz','tifxyz/TIFXYZ.json'),) if config.get('surface_output','atlas')=='tifxyz' else legacy
 
 
 def implementation_sha():
@@ -31,11 +40,16 @@ def implementation_sha():
 def snapshot_exports(root,stage):
     patterns={'prepare':['lasagna/**/*'],'fibres':['fibres/*.afv'],
               'field':[],'mesh':['meshes/*.obj'],
-              'flatten':['flat/*.obj','flat/*.png','flat/atlas.sqlite']}
+              'flatten':['flat/*.obj','flat/*.png','flat/atlas.sqlite'],
+              'surfaces':['surfaces/NATIVE.json','surfaces/LEVELS.json','surfaces/level-*/LEVEL.json',
+                          'surfaces/level-*/IDENTITY.json','surfaces/level-*/work.sqlite'],
+              'tifxyz':['tifxyz/**/*'],'original':['original/IDENTITY.json','original/ORIGINAL.json','original/publications.sqlite','original/level-*/**/*']}
     with sqlite3.connect(root/'products.sqlite') as db:
         db.execute('CREATE TABLE IF NOT EXISTS exports (path TEXT PRIMARY KEY,stage TEXT,sha TEXT)')
         for pattern in patterns[stage]:
             for path in root.glob(pattern):
+                if stage=='tifxyz' and path.name in ('.lock','STOP'):
+                    continue
                 if path.is_file():
                     db.execute('INSERT OR REPLACE INTO exports VALUES (?,?,?)',
                                (str(path.relative_to(root)),stage,file_sha(path)))
@@ -77,18 +91,38 @@ def plan(config,volume=None,stages=()):
                           origin_xyz=(np.asarray(volume.origin_xyz)+lo[::-1]*volume.spacing_xyz).tolist(),
                           frame=digest(volume.identity))
         field=field_geometry(observations,config.get('field_spacing_um'))
-        output_bytes=math.prod(shape.tolist())*60+math.prod(field['shape_zyx'])*40
+        observation_nodes=math.prod(shape.tolist()); field_nodes=math.prod(field['shape_zyx'])
+        output_bytes=observation_nodes*60+field_nodes*40
+        path=stage_path(config); terminal=path[-1][0]; extra={}
+        folders=('maps','lasagna','fibres','field','meshes','flat','surfaces')
+        product_reserve=config.get('reserve_bytes',1<<30)
+        if terminal=='tifxyz':
+            request=config['tifxyz_request']; scratch=int(request['scratch_gib']*(1<<30))
+            reserve=int(request['reserve_disk_gib']*(1<<30))
+            # Bounded retained work + TIFF allowance, independent of native face count.
+            direct_bytes=min(scratch,36_000_000+(256<<20)+256*request['max_pixels']*len(request['levels']))
+            products=dict(prepare=observation_nodes*48,fibres=observation_nodes*12,
+                          field=field_nodes*40,tifxyz=direct_bytes)
+            output_bytes=sum(products.values()); folders=('maps','lasagna','fibres','field','tifxyz')
+            product_reserve=max(product_reserve,reserve)
+            extra=dict(stages=[name for name,_ in path],estimated_products_by_stage=products,
+                       tifxyz_scratch_bytes=scratch,tifxyz_reserve_disk_bytes=reserve,reserve_ram_bytes=2<<30,
+                       experimental=True,comparison_status='UNMEASURED',comparison_reason='reference OOM')
+        elif terminal=='surfaces':
+            extra=dict(stages=[name for name,_ in path],surface_time_limit_s=config.get('surface_time_limit_s',1800.),
+                       coverage_target=config.get('coverage_target',1.),performance_target='UNMEASURED',
+                       optional_mesh_derived_tifxyz=config.get('export_tifxyz',False))
         output=Path(config['output']); parent=output if output.exists() else output.parent
-        written=sum(p.stat().st_size for name in ('maps','lasagna','fibres','field','meshes','flat')
+        written=sum(p.stat().st_size for name in folders
                     for p in (output/name).rglob('*') if p.is_file())
-        remaining=0 if 'flatten' in stages else max(0,output_bytes-written)
+        remaining=0 if terminal in stages else max(0,output_bytes-written)
         while not parent.exists():
             parent=parent.parent
         free=shutil.disk_usage(parent).free; reserve=config.get('reserve_bytes',1<<30)
         cache_free=shutil.disk_usage(volume.cache).free
         shared=os.stat(parent).st_dev==os.stat(volume.cache).st_dev
         fits=(ct_bytes<=volume.limit and ct_bytes+reserve<cache_free
-              and remaining+reserve+(ct_bytes if shared else 0)<free)
+              and remaining+product_reserve+(ct_bytes if shared else 0)<free)
         mode=config.get('ct_mode','auto')
         if mode=='auto':
             mode='download' if volume.remote and fits else 'stream' if volume.remote else 'local'
@@ -100,13 +134,13 @@ def plan(config,volume=None,stages=()):
                     estimated_ct_bytes=ct_bytes,estimated_products_bytes=output_bytes,
                     existing_products_bytes=written,estimated_remaining_bytes=remaining,free_bytes=free,
                      reserve_bytes=reserve,cache_free_bytes=cache_free,shared_filesystem=shared,
-                     physical_accuracy='UNVALIDATED')
+                     physical_accuracy='UNVALIDATED',**extra)
     finally:
         if own:
             volume.close()
 
 
-def _validate_products(root,state):
+def _validate_products(root,state,stop=None,volume=None):
     from .artifacts import Tiles
     if state['stages']:
         with sqlite3.connect((root/'products.sqlite').resolve().as_uri()+'?mode=ro',uri=True) as db:
@@ -134,6 +168,10 @@ def _validate_products(root,state):
     if 'mesh' in state['stages']:
         from ._core.surface_mesh import MeshReader
         reader=MeshReader(root/'meshes'); reader.close()
+    if 'original' in state['stages'] and volume is not None:
+        from .original_pipeline import verify_missing_ct
+        for record in json.loads((root/'ORIGINAL.json').read_bytes())['levels']:
+            verify_missing_ct(volume,record)
     if 'flatten' in state['stages']:
         # Immutable chart payload hashes are checked by the normal stage resume.
         db=sqlite3.connect((root/'flat/atlas.sqlite').resolve().as_uri()+'?mode=ro',uri=True)
@@ -143,10 +181,97 @@ def _validate_products(root,state):
                     raise ValueError('flat chart changed')
         finally:
             db.close()
+    if 'surfaces' in state['stages']:
+        from .native_pipeline import run_native
+        native=json.loads((root/'surfaces/NATIVE.json').read_bytes())
+        receipt=json.loads((root/'SURFACES.json').read_bytes())
+        if digest(native)!=receipt['identity_sha256'] or native['field_sha256']!=file_sha(root/'FIELD.json'):
+            raise ValueError('native publication identity changed')
+        return run_native(root,state['config'],stop=stop)
+    if 'tifxyz' in state['stages']:
+        from .tifxyz import verify_export
+        result=verify_export(root/'tifxyz',stop=stop)
+        if result['status'] not in ('TIFXYZ_VERIFIED','TIFXYZ_PARTIAL_VERIFIED','PAUSED','BLOCKED','FAILED'):
+            raise ValueError('unexpected tifxyz verification result')
+        if result['status'] in ('TIFXYZ_VERIFIED','TIFXYZ_PARTIAL_VERIFIED'):
+            config=state['config'];record=state['stages']['tifxyz']
+            marker_sha=_tifxyz_ready(root/'tifxyz',result,config['tifxyz_request_sha256'],
+                                     config['tifxyz_request'].get('coverage_policy','strict'))
+            status='READY' if result['status']=='TIFXYZ_VERIFIED' else 'PARTIAL'
+            if (record.get(status.lower()+'_sha256')!=marker_sha or record.get('status')!=status
+                    or record.get('coverage_complete') is not (status=='READY')):
+                raise ValueError('tifxyz stage publication differs')
+        return result
 
 
-def run(config,resume=False,until='flatten'):
+def _tifxyz_ready(out,result,request_sha,coverage_policy='strict'):
+    """Bind child publication and quality before registering or resuming its stage."""
+    from .tifxyz import FLAGS,READER,_audit_status
+    from .tifxyz_field import read_metadata
+    markers=[out/name for name in ('READY.json','PARTIAL.json')
+             if (out/name).exists() or (out/name).is_symlink()]
+    if len(markers)!=1:
+        raise ValueError('tifxyz requires exactly one READY/PARTIAL publication marker')
+    marker,marker_record=read_metadata(markers[0]);status=markers[0].stem;complete=status=='READY'
+    receipt,receipt_record=read_metadata(out/'TIFXYZ.json')
+    identity,_=read_metadata(out/'EXPORT.json')
+    for value in (result,marker,receipt,identity):
+        if any(type(value.get(k)) is not type(v) or value.get(k)!=v for k,v in FLAGS.items()):
+            raise ValueError('tifxyz acceptance flags differ')
+    expected_verify='TIFXYZ_VERIFIED' if complete else 'TIFXYZ_PARTIAL_VERIFIED'
+    if (result.get('status') not in (status,expected_verify)
+            or any(value.get('coverage_complete') is not complete for value in (result,marker,receipt))
+            or marker.get('status')!=status or receipt.get('status')!=status
+            or marker.get('tifxyz_sha256')!=receipt_record['sha256']
+            or marker.get('identity_sha256')!=digest(identity)
+            or receipt.get('identity_sha256')!=digest(identity)
+            or receipt.get('reader')!=READER or identity.get('reader')!=READER
+            or identity.get('effective_settings',{}).get('request_sha256')!=request_sha):
+        raise ValueError('tifxyz publication binding/quality differs')
+    settings=identity['effective_settings'];policy=settings.get('coverage_policy','strict')
+    if (policy not in ('strict','allow_partial') or policy!=coverage_policy
+            or (not complete and policy!='allow_partial')):
+        raise ValueError('tifxyz partial publication requires explicit allow_partial policy')
+    levels=receipt.get('levels');requested=settings.get('levels')
+    if not isinstance(levels,list) or not levels or not isinstance(requested,list) or len(levels)!=len(requested):
+        raise ValueError('tifxyz level count differs')
+    all_complete=True
+    for index,item in enumerate(levels):
+        if (not isinstance(item,dict) or item.get('status') not in ('READY','PARTIAL')
+                or item.get('coverage_complete') is not (item['status']=='READY')
+                or item.get('segment')!=f'level-{index:04d}' or item.get('level')!=requested[index]):
+            raise ValueError('tifxyz level quality/selection differs')
+        verified,verified_record=read_metadata(out/item['segment']/'VERIFIED.json')
+        if (any(verified.get(k)!=item[k] or type(verified.get(k)) is not type(item[k])
+                for k in ('status','coverage_complete'))
+                or any(type(verified.get(k)) is not type(v) or verified.get(k)!=v for k,v in FLAGS.items())
+                or item.get('manifest',{}).get('files',{}).get('VERIFIED.json',{}).get('sha256')!=verified_record['sha256']):
+            raise ValueError('tifxyz VERIFIED quality/binding differs')
+        if _audit_status(verified.get('audit',{}),policy)!=item['status']:
+            raise ValueError('tifxyz audit/publication quality differs')
+        all_complete=all_complete and item['coverage_complete']
+    if complete!=all_complete:
+        raise ValueError('tifxyz aggregate coverage differs')
+    return marker_record['sha256']
+
+
+def run(config,resume=False,until=None,extra_surface_seconds=0):
     validate_config(config)
+    if config.get('flattening_method')=='original':
+        from .original_pipeline import settings
+        settings(config.get('original_request'))
+    elif config.get('surface_output')=='native':
+        from .native_pipeline import _settings
+        _settings(config)
+    path=stage_path(config); terminal=path[-1][0]; until=until or terminal
+    native_until='render'
+    if terminal=='surfaces' and until in ('mesh','flatten','assemble','render'):
+        native_until=until; until=terminal
+    if (type(extra_surface_seconds) not in (int,float) or not math.isfinite(extra_surface_seconds)
+            or extra_surface_seconds<0 or extra_surface_seconds and (not resume or terminal!='surfaces')):
+        raise ValueError('extra surface seconds require a native resume and a finite nonnegative allowance')
+    if until not in dict(path):
+        raise ValueError('invalid final stage for selected surface output')
     import torch
     from .predict import prepare
     from .fibres import trace
@@ -154,8 +279,6 @@ def run(config,resume=False,until='flatten'):
     from .meshes import mesh
     from .flatten import flatten
     from .exports import export_lasagna,export_afv
-    if until not in STAGES:
-        raise ValueError('invalid final stage')
     config=dict(config); root=Path(config['output']).expanduser().resolve(); config['output']=str(root)
     torch.set_num_threads(config.get('threads',min(4,os.cpu_count() or 1)))
     if root.exists() and not resume:
@@ -173,12 +296,22 @@ def run(config,resume=False,until='flatten'):
         else:
             state=dict(schema='winding-field-run-v1',version=__version__,config=config,stages={},
                        status='STARTING',physical_acceptance=False,created=time.time(),implementation_sha256=implementation_sha())
+            if terminal=='tifxyz':
+                state.update(experimental=True,comparison_status='UNMEASURED',comparison_reason='reference OOM',
+                             native_face_identity=False,native_topology_equivalence='UNMEASURED')
             atomic_json(root/'RUN.json',state)
         interrupted=False
         def handle(signum,frame):
             nonlocal interrupted
             interrupted=True
         previous={sig:signal.signal(sig,handle) for sig in (signal.SIGINT,signal.SIGTERM)}
+        stop=lambda:interrupted or (root/'STOP').exists()
+        def unfinished(result):
+            if result.get('status') not in ('PAUSED','BLOCKED','FAILED'):
+                raise ValueError('unexpected tifxyz worker result')
+            state.update(status=result['status'],tifxyz_result=result,updated=time.time())
+            atomic_json(root/'RUN.json',state)
+            return state
         volume=None
         try:
             volume=open_volume(config)
@@ -187,11 +320,24 @@ def run(config,resume=False,until='flatten'):
             state['source']=volume.identity
             volume.bind_ledger(root/'source.sqlite')
             if resume:
-                volume.validate_used(); _validate_products(root,state)
+                volume.validate_used(); result=_validate_products(root,state,stop,volume)
+                if result is not None:
+                    if terminal=='surfaces':
+                        state['native_result']=result
+                        if result['status'] not in ('COMPLETE','PARTIAL'):
+                            state.update(status=result['status'],updated=time.time())
+                            atomic_json(root/'RUN.json',state)
+                            return state
+                    else:
+                        if result['status'] not in ('TIFXYZ_VERIFIED','TIFXYZ_PARTIAL_VERIFIED'):
+                            return unfinished(result)
+                        state['tifxyz_result']=result
             estimate=plan(config,volume,state['stages']); state['plan']=estimate
-            if 'flatten' not in state['stages'] and estimate['free_bytes']<estimate['estimated_remaining_bytes']+estimate['reserve_bytes']:
+            reserve=max(estimate['reserve_bytes'],estimate.get('tifxyz_reserve_disk_bytes',0))
+            if terminal not in state['stages'] and estimate['free_bytes']<estimate['estimated_remaining_bytes']+reserve:
+                if terminal=='tifxyz':
+                    return unfinished(dict(status='BLOCKED',reasons=[dict(code='DISK_HEADROOM',detail='planned products and reserve')]))
                 raise OSError('insufficient disk space for products and reserve; choose explicit stride/ROI or another disk')
-            stop=lambda:interrupted or (root/'STOP').exists()
             if estimate['ct_policy']=='download' and not state['stages']:
                 low=np.array(estimate['input_lo_zyx']); high=np.array(estimate['input_hi_zyx']); chunks=np.array(volume.chunks)
                 for key in itertools.product(*(range(a//c,(b-1)//c+1) for a,b,c in zip(low,high,chunks))):
@@ -199,7 +345,7 @@ def run(config,resume=False,until='flatten'):
                     volume.read(a,b)
                     if stop():
                         state['status']='PAUSED'; atomic_json(root/'RUN.json',state); return state
-            for stage,receipt in zip(STAGES,RECEIPTS):
+            for stage,receipt in path:
                 if stage not in state['stages']:
                     state.update(status='RUNNING',active_stage=stage,updated=time.time())
                     atomic_json(root/'RUN.json',state)
@@ -222,20 +368,50 @@ def run(config,resume=False,until='flatten'):
                         result=solve(root,config,stop)
                     elif stage=='mesh':
                         result=mesh(root,config,stop)
+                    elif stage=='original':
+                        from .original_pipeline import run_original
+                        result=run_original(root,config,volume,stop)
+                    elif stage=='tifxyz':
+                        from .tifxyz import export_field
+                        out=root/'tifxyz'; continuing=out.exists()
+                        settings=tifxyz_settings(out,config['tifxyz_request'],resume=continuing)
+                        result=export_field(root,out,settings,resume=continuing,stop=stop)
+                        if result.get('status') not in ('READY','PARTIAL'):
+                            return unfinished(result)
+                        marker_sha=_tifxyz_ready(out,result,config['tifxyz_request_sha256'],
+                                                config['tifxyz_request'].get('coverage_policy','strict'))
+                        state['tifxyz_result']=result
+                    elif stage=='surfaces':
+                        from .native_pipeline import run_native
+                        result=run_native(root,config,stop,native_until,extra_seconds=extra_surface_seconds)
+                        state['native_result']=result
+                        if result.get('status') not in ('COMPLETE','PARTIAL'):
+                            state.update(status=result.get('status','FAILED'),updated=time.time())
+                            atomic_json(root/'RUN.json',state)
+                            return state
                     else:
                         result=flatten(root,config,volume if config.get('previews',True) else None,stop)
                     if result['status']=='PAUSED':
                         state['status']='PAUSED'; atomic_json(root/'RUN.json',state); return state
                     snapshot_exports(root,stage)
                     state['stages'][stage]=dict(receipt=receipt,sha256=file_sha(root/receipt),seconds=time.monotonic()-started)
+                    if stage=='tifxyz':
+                        state['stages'][stage].update(status=result['status'],coverage_complete=result['coverage_complete'],
+                                                     **{result['status'].lower()+'_sha256':marker_sha})
                     state['io']=volume.stats()
                     atomic_json(root/'RUN.json',state)
                     print(f'[{stage}] ready ({state["stages"][stage]["seconds"]:.2f}s)',file=sys.stderr,flush=True)
                 if stage==until:
                     break
-            state.update(status='COMPLETE' if 'flatten' in state['stages'] else 'PAUSED',updated=time.time(),io=volume.stats())
+            state.update(status='COMPLETE' if terminal in state['stages'] else 'PAUSED',updated=time.time(),io=volume.stats())
+            if terminal=='tifxyz' and terminal in state['stages']:
+                state['coverage_complete']=state['stages'][terminal]['coverage_complete']
+                if not state['coverage_complete']:
+                    state['status']='PARTIAL'
+            if terminal=='surfaces' and terminal in state['stages']:
+                state['status']=json.loads((root/'SURFACES.json').read_bytes())['status']
             atomic_json(root/'RUN.json',state)
-            if state['status']=='COMPLETE':
+            if state['status']=='COMPLETE' and terminal=='flatten':
                 from .demo import gallery
                 gallery(root)
             return state

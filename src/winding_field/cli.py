@@ -3,10 +3,28 @@
 import argparse
 import json
 from pathlib import Path
+import signal
 import sys
 
 from . import __version__
 from .io import Volume,resolve_source
+
+
+def tifxyz_exit_code(result):
+    status=result.get('status')
+    if status in ('READY','TIFXYZ_VERIFIED','COMPLETE','PAUSED'):
+        return 0
+    if status in ('PARTIAL','TIFXYZ_PARTIAL_VERIFIED'):
+        return 2
+    if status=='BLOCKED':
+        reasons=result.get('tifxyz_result',result).get('reasons',[])
+        if not reasons:
+            return 1
+        resource={'RUNTIME_UNSUPPORTED','RSS_OBSERVATION','CPU_AFFINITY',
+                  'RTREE_UNAVAILABLE','BUDGET_ENVELOPE','WORKER_RESOURCE_EXIT','ACCELERATOR_UNAVAILABLE'}
+        return 75 if any(r.get('code','') in resource or r.get('code','').endswith(
+            ('_LIMIT','_BUDGET','_HEADROOM')) for r in reasons) else 2
+    return 1
 
 
 def main(argv=None):
@@ -41,10 +59,35 @@ def main(argv=None):
         p.add_argument('--levels',nargs='+',type=float); p.add_argument('--mesh-tile',type=int,default=64)
         p.add_argument('--chart-faces',type=int,default=1024); p.add_argument('--threads',type=int,default=4)
         p.add_argument('--no-previews',dest='previews',action='store_false')
-        p.add_argument('--until',choices=['prepare','fibres','field','mesh','flatten'],default='flatten')
-    for command in ('resume','status','prepare','fibres','field','mesh','flatten'):
+        p.add_argument('--surface-output',choices=['native','atlas','tifxyz'],default='native')
+        p.add_argument('--flattening-method',choices=['default','original'],default='default',help='original global LSCM; independent of field resolution')
+        p.add_argument('--original-config',help='original recipe JSON: output_frame, optional pitch and memory_gib')
+        p.add_argument('--coverage-target',type=float,default=1.,help='native mapped mesh area target, fraction in(0,1]')
+        p.add_argument('--surface-time-limit',dest='surface_time_limit_s',type=float,default=1800.,help='cumulative active seconds per native W')
+        p.add_argument('--export-tifxyz',action='store_true',help='also write mesh-derived XYZ TIFFs when valid')
+        p.add_argument('--tifxyz-config',help='experimental direct-export JSON; frozen by content')
+        p.add_argument('--until',choices=['prepare','fibres','field','mesh','flatten','assemble','render','tifxyz','original'],
+                       help='default: terminal stage of the selected branch')
+    for command in ('resume','status','prepare','fibres','field','mesh','flatten','assemble','render'):
         p=sub.add_parser(command,help='continue or inspect an existing run')
         p.add_argument('run')
+        if command=='resume':
+            p.add_argument('--extra-surface-seconds',type=float,default=0.,help='explicit extra native budget; original elapsed/target retained')
+    p=sub.add_parser('tifxyz',help='experimental direct export of an existing field; Linux runtime')
+    p.add_argument('field_run'); p.add_argument('--output',required=True)
+    p.add_argument('--config'); p.add_argument('--resume',action='store_true')
+    p=sub.add_parser('verify-tifxyz',help='read-only verification in an admitted Linux worker')
+    p.add_argument('output')
+    p=sub.add_parser('export-sheets',help='original flattening of an existing field descriptor or immutable mesh bundle')
+    inputs=p.add_mutually_exclusive_group(required=True)
+    inputs.add_argument('--field-config',help='JSON containing field and geometry accepted by FieldSource')
+    inputs.add_argument('--mesh-bundle')
+    p.add_argument('--levels',nargs='+',type=float)
+    p.add_argument('--source',required=True,help='original CT Zarr')
+    p.add_argument('--level',type=int,default=0);p.add_argument('--voxel-um',type=float)
+    p.add_argument('--output',required=True);p.add_argument('--original-config',required=True)
+    p.add_argument('--flattening-method',choices=['original'],required=True)
+    p.add_argument('--export-tifxyz',action='store_true');p.add_argument('--resume',action='store_true')
     p=sub.add_parser('demo',help='offline synthetic original-CT demonstration')
     p.add_argument('--output',required=True)
     p.add_argument('--prediction',choices=['classical','sd2'],default='classical')
@@ -53,6 +96,7 @@ def main(argv=None):
     p=sub.add_parser('models',help='download and verify pinned SD2 checkpoint')
     p.add_argument('--path')
     args=parser.parse_args(argv)
+    direct=False; native=False
     try:
         if args.command=='inspect':
             volume=Volume(args.source,voxel_um=args.voxel_um,level=args.level)
@@ -68,9 +112,29 @@ def main(argv=None):
             from .models import checkpoint,MODEL_SHA
             result=dict(path=str(checkpoint(args.path)),sha256=MODEL_SHA)
         elif args.command in ('run','plan'):
-            from .workflow import run,plan
-            from .config import validate_config
+            from .workflow import run,plan,stage_path
+            from .config import validate_config,read_tifxyz_request
+            from .util import digest
             config=vars(args).copy(); command=config.pop('command'); until=config.pop('until')
+            original=config.pop('original_config')
+            if original:
+                config['original_request']=json.loads(Path(original).read_bytes())
+            if config['flattening_method']=='original':
+                from .original_pipeline import settings
+                settings(config.get('original_request'))
+            elif original:
+                raise ValueError('--original-config requires --flattening-method original')
+            request=config.pop('tifxyz_config')
+            if request:
+                config['tifxyz_request']=read_tifxyz_request(request)
+                config['tifxyz_request_sha256']=digest(config['tifxyz_request'])
+            direct=config['surface_output']=='tifxyz' and command=='run'
+            native=config['surface_output']=='native' and config['flattening_method']!='original' and command=='run'
+            validate_config(config)
+            stages=stage_path(config)
+            until=until or stages[-1][0]
+            if until not in dict(stages) and not (config['surface_output']=='native' and until in ('mesh','flatten','assemble','render')):
+                raise ValueError('--until '+until+' is incompatible with the selected surface output')
             config['output']=str(Path(config['output']).expanduser().resolve())
             for key in ('local','cache','model_path'):
                 if config.get(key):
@@ -92,6 +156,36 @@ def main(argv=None):
             if not config['source'].startswith(('http://','https://','s3://')):
                 config['source']=str(Path(config['source']).expanduser().resolve())
             result=plan(config) if command=='plan' else run(config,until=until)
+        elif args.command=='export-sheets':
+            from .original_pipeline import export_existing
+            result=export_existing(args)
+        elif args.command in ('tifxyz','verify-tifxyz'):
+            from .tifxyz import _path,export_field,verify_export
+            from .config import read_tifxyz_request,tifxyz_settings
+            direct=True
+            out=_path(Path(args.output).expanduser())
+            interrupted=False
+            def handle(signum,frame):
+                nonlocal interrupted
+                interrupted=True
+            previous={sig:signal.signal(sig,handle) for sig in (signal.SIGINT,signal.SIGTERM)}
+            stop=lambda:interrupted or (out/'STOP').exists()
+            try:
+                if args.command=='verify-tifxyz':
+                    result=verify_export(out,stop=stop)
+                    if result.get('status') not in ('TIFXYZ_VERIFIED','TIFXYZ_PARTIAL_VERIFIED','PAUSED','BLOCKED','FAILED'):
+                        raise ValueError('unexpected tifxyz verification result')
+                else:
+                    source=_path(Path(args.field_run).expanduser())
+                    if out==source or source in out.parents:
+                        raise ValueError('standalone output must be outside the read-only field run')
+                    request=read_tifxyz_request(args.config) if args.config else None
+                    settings=tifxyz_settings(out,request,resume=args.resume)
+                    result=export_field(source,out,settings,resume=args.resume,stop=stop)
+            finally:
+                for sig,handler in previous.items():
+                    signal.signal(sig,handler)
+            result=dict(result,experimental=True,comparison_status='UNMEASURED',comparison_reason='reference OOM')
         elif args.command=='demo':
             from .demo import synthetic
             from .workflow import run
@@ -107,10 +201,23 @@ def main(argv=None):
             from .workflow import run
             root=Path(args.run).expanduser().resolve()
             state=json.loads((root/'RUN.json').read_bytes())
-            result=state if args.command=='status' else run(state['config'],resume=True,
-                    until='flatten' if args.command=='resume' else args.command)
+            direct=state['config'].get('surface_output','atlas')=='tifxyz' and args.command!='status'
+            native=state['config'].get('surface_output','atlas')=='native' and state['config'].get('flattening_method')!='original' and args.command!='status'
+            if args.command=='status':
+                result=state
+                progress=root/'surfaces/STATUS.json'
+                if progress.is_file():
+                    result=dict(state,native_progress=json.loads(progress.read_bytes()))
+            else:
+                result=run(state['config'],resume=True,until=None if args.command=='resume' else args.command,
+                           extra_surface_seconds=getattr(args,'extra_surface_seconds',0.))
         print(json.dumps(result,indent=2,allow_nan=False))
-        return 0
+        if native:
+            native_result=result.get('native_result',result)
+            if result.get('status')=='PAUSED' and native_result.get('reason') in ('TIME_LIMIT','RSS_LIMIT','RSS_OBSERVATION','DISK_HEADROOM','SCRATCH_LIMIT'):
+                return 75
+            return 2 if result.get('status')=='PARTIAL' else 1 if result.get('status')=='FAILED' else 0
+        return tifxyz_exit_code(result) if direct else 0
     except (ValueError,OSError,RuntimeError) as error:
         print(f'winding-field: {error}',file=sys.stderr)
         return 1

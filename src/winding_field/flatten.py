@@ -9,6 +9,7 @@ import numpy as np
 from scipy.sparse import coo_matrix
 from scipy.sparse.csgraph import connected_components
 from scipy.sparse.linalg import lsqr
+from scipy.spatial import cKDTree
 
 from ._core.surface_mesh import MeshReader
 from .util import atomic_bytes,atomic_json,digest,file_sha
@@ -18,31 +19,74 @@ def cross2(a,b):
     return a[...,0]*b[...,1]-a[...,1]*b[...,0]
 
 
-def overlap_pairs(uv,faces):
+def iter_overlap_pairs(uv,faces,check=None,*,max_candidates=None,max_tests=None,report=None):
+    """Yield the existing predicate's face pairs; exhaustion alone completes an audit."""
+    stats={} if report is None else report
+    stats.update(complete=False,narrow_tests=0,pairs=0)
+    if check:check()
+    if not len(faces):
+        stats['complete']=True
+        return
+    limit=max(65536,len(faces)) if max_candidates is None else max_candidates
+    if type(limit) is not int or limit<=0 or max_tests is not None and (type(max_tests) is not int or max_tests<0):
+        raise ValueError('invalid overlap work bounds')
     triangles=uv[faces]; lows=triangles.min(1); highs=triangles.max(1)
-    count=0
-    for i,triangle in enumerate(triangles):
-        candidates=np.flatnonzero(np.all(np.minimum(highs[i],highs)-np.maximum(lows[i],lows)>1e-9,axis=1))
-        for j in candidates[candidates>i]:
-            polygon=list(triangles[j])
-            for a,b in zip(triangle,np.roll(triangle,-1,axis=0)):
-                clipped=[]
-                for p,q in zip(polygon,polygon[1:]+polygon[:1]):
-                    dp=float(cross2(b-a,p-a)); dq=float(cross2(b-a,q-a))
-                    if dp>=0:
-                        clipped.append(p)
-                    if (dp>=0)!=(dq>=0):
-                        clipped.append(p+(q-p)*dp/(dp-dq))
-                polygon=clipped
-                if not polygon:
-                    break
-            if len(polygon)>=3:
-                polygon=np.asarray(polygon)
-                area=abs(np.sum(cross2(polygon,np.roll(polygon,-1,axis=0))))*.5
-                scale=abs(float(cross2(triangle[1]-triangle[0],triangle[2]-triangle[0])))
-                if area>max(scale*1e-7,1e-10):
-                    count+=1
-    return count
+    centres=(lows+highs)*.5
+    radii=np.linalg.norm(highs-lows,axis=1)*.5+64*np.finfo(float).eps*np.maximum(1,np.abs(triangles).max(axis=(1,2)))
+    tree=cKDTree(centres); largest=float(radii.max(initial=0.))
+    first=0
+    while first<len(triangles):
+        if check:check()
+        radius=np.nextafter(radii[first:first+64]+largest,np.inf)
+        counts=tree.query_ball_point(centres[first:first+64],radius,return_length=True)
+        count=int(np.searchsorted(np.cumsum(counts),limit,side='right'))
+        if not count:raise RuntimeError('overlap candidate materialization bound exceeded')
+        neighbours=tree.query_ball_point(centres[first:first+count],radius[:count])
+        left=np.repeat(np.arange(first,first+len(neighbours)),[len(n) for n in neighbours])
+        right=np.concatenate(neighbours).astype(np.int64)
+        first+=count
+        keep=right>left; left,right=left[keep],right[keep]
+        keep=np.all(np.minimum(highs[left],highs[right])-np.maximum(lows[left],lows[right])>1e-9,axis=1)
+        left,right=left[keep],right[keep]
+        for start in range(0,len(left),4096):
+            if check:check()
+            ii,jj=left[start:start+4096],right[start:start+4096]
+            if max_tests is not None and stats['narrow_tests']+len(ii)>max_tests:
+                raise RuntimeError('overlap narrow-test budget exceeded')
+            stats['narrow_tests']+=len(ii)
+            a,b=triangles[ii],triangles[jj]
+            ea=np.roll(a,-1,axis=1)-a; eb=np.roll(b,-1,axis=1)-b
+            # A separating edge rejects interior overlap, including shared mesh edges.
+            side_a=cross2(ea[:,:,None,:],b[:,None,:,:]-a[:,:,None,:])
+            side_b=cross2(eb[:,:,None,:],a[:,None,:,:]-b[:,:,None,:])
+            possible=(side_a.max(2)>0).all(1)&(side_b.max(2)>0).all(1)
+            for i,j in zip(ii[possible],jj[possible]):
+                triangle=triangles[i]; polygon=list(triangles[j])
+                for p0,p1 in zip(triangle,np.roll(triangle,-1,axis=0)):
+                    clipped=[]
+                    for p,q in zip(polygon,polygon[1:]+polygon[:1]):
+                        dp=float(cross2(p1-p0,p-p0)); dq=float(cross2(p1-p0,q-p0))
+                        if dp>=0:
+                            clipped.append(p)
+                        if (dp>=0)!=(dq>=0):
+                            clipped.append(p+(q-p)*dp/(dp-dq))
+                    polygon=clipped
+                    if not polygon:
+                        break
+                if len(polygon)>=3:
+                    polygon=np.asarray(polygon)
+                    polygon=polygon-polygon[0]
+                    area=abs(np.sum(cross2(polygon,np.roll(polygon,-1,axis=0))))*.5
+                    scale=abs(float(cross2(triangle[1]-triangle[0],triangle[2]-triangle[0])))
+                    if area>max(scale*1e-7,1e-10):
+                        stats['pairs']+=1
+                        yield int(i),int(j)
+    if check:check()
+    stats['complete']=True
+
+
+def overlap_pairs(uv,faces):
+    return sum(1 for _ in iter_overlap_pairs(uv,faces))
 
 
 def parameterize(vertices,faces):

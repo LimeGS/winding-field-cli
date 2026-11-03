@@ -1,0 +1,13 @@
+{
+  "samples": [
+    {
+      "pixel_yx": [
+        456,
+        640
+      ],
+      "reason": "NO_ROOT",
+      "roots": [],
+      "status": "ABSENT"
+    }
+  ]
+}

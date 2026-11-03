@@ -1,0 +1,87 @@
+{
+  "status": "DIAGNOSTIC_COMPARISON",
+  "production_code_changed": false,
+  "physical_acceptance": false,
+  "175A": {
+    "case": "W-50 selected source component 1; experimental global command",
+    "source_root": "gpu-1:/ssd/draft/native-global-command-20261102-01/W-50",
+    "qualified_faces": 584001,
+    "mapped_source_area_mm2": 57.98413331188509,
+    "original_topology": {
+      "components": 1,
+      "boundary_edges": 0,
+      "euler_characteristic": -40,
+      "genus": 21,
+      "edge_manifold": true,
+      "vertex_manifold": true
+    },
+    "png": {
+      "shape_yx": [1083, 1071],
+      "geometry_pixels": 696824,
+      "outside_geometry_mask": 463069,
+      "zero_gray_inside_geometry": 198406,
+      "exact_zero_CT_samples": 198342,
+      "positive_CT_samples_below_half": 64,
+      "saturated_CT_255_samples": 24,
+      "CT_quantiles_probabilities": [0, 0.25, 0.5, 0.75, 0.95, 1],
+      "CT_quantiles": [0, 0, 53.675065994262695, 105.90519523620605, 145.1485511779785, 255],
+      "note": "PNG precedes TIF safe-cell masking; TIF corner removal does not explain PNG holes. In-bounds or zero CT does not establish papyrus support."
+    },
+    "UV_distortion": {
+      "scope": "physical-to-UV triangle Jacobian on all qualified faces, weighted by 3D source area",
+      "quantile_probabilities": [0.5, 0.9, 0.95, 0.99],
+      "sigma_max": [1.0895135008136152, 1.3381097716247004, 1.4935907854814146, 1.9179764095229075],
+      "sigma_min": [0.876771704890971, 1.0159954255486319, 1.0562000758801027, 1.1150660205818907],
+      "anisotropy": [1.3180138549659213, 2.306783439889738, 2.671321930979298, 3.536680085610105],
+      "area_fraction_anisotropy_gt_1_25": 0.5797769737168268,
+      "area_fraction_anisotropy_gt_2": 0.1605670564468415,
+      "area_fraction_singular_values_outside_025_4": 0.005824156062258524,
+      "note": "Edge-length bounds are not Jacobian/isometry bounds. No acceptance threshold was changed."
+    },
+    "CT_alignment_probe": {
+      "receipt": "gpu-1:/ssd/draft/W50-image-ct-analysis-20261102-01/RESULT.json",
+      "selection": "36 purposive texture-bearing pixels,12 each in left arc,lower bands,upper right; not a population estimate",
+      "stable_at_two_scales": 26,
+      "unknown": 10,
+      "left_arc_median_degrees": 35.465676071148636,
+      "lower_bands_median_degrees": 30.518010805951427,
+      "upper_right_median_degrees": 13.032344537436474,
+      "witness_pixel_xy_105_690_angles_degrees": [75.3, 73.3],
+      "witness_pixel_xy_170_770_angles_degrees": [53.0, 50.6],
+      "original_CT_center_values_exact": 36,
+      "source_files_hashes_and_mtimes_unchanged": 159,
+      "note": "Surface normal versus dominant CT-gradient structure tensor; fibre edges/damage/nearby interfaces are alternatives. This is not physical-sheet ground truth."
+    },
+    "field_recipe": "1.5843640137880175*native_old + trilinear(coarse_delta)",
+    "support_policy": "stored",
+    "field_spacing_um": 17.28,
+    "CT_voxel_um": 8.64
+  },
+  "Paris4": {
+    "case": "historical recovered W-100 diagnostic",
+    "local_receipt": "/Users/user/Downloads/Paris4-six-surfaces-CT-evaluated-20261018/entrega-mas-completa/provenance/b9fb36a434dc6f64eb24cdf62eae91ff15ed4ec497e10312a5524fa33832a7a5.json",
+    "checkpoint_sha256": "a74ee5ffcb4354342fef281c2b97e8798f741a240a7132211d533e46bcfa47a5",
+    "acceptance": "UNACCEPTED",
+    "source_faces": 31832266,
+    "source_area_mm2": 3967.3140699243913,
+    "mapped_source_area_mm2": 3719.782705596151,
+    "mapped_fraction": 0.9376073182093805,
+    "missing_CT_pixels": 0,
+    "mapping": "original umbi.json control-point axis; angular negative-X cut; global chart pose optimization and shared-edge welding",
+    "code": "experiments/winding-field-exp/six-surfaces-opt-20261016/global_sheet.py:251-267,314-341,95-162",
+    "field": "pinned fine-band snapshot with a coarse reference; W=phi/1.192497988541921",
+    "field_spacing_um": 19.2,
+    "CT_level": 2,
+    "CT_voxel_um": 9.6,
+    "global_render_pitch_um": 19.2,
+    "historical_mapping_RSS_cap_GiB": 20,
+    "matched_CT_normal_probe_done": false
+  },
+  "interpretation_limits": [
+    "Different field recipes, source regions, mapping methods and resource envelopes; not a controlled cross-scroll benchmark.",
+    "Local 175A orientation mismatches support oblique layer-crossing in sampled regions, not a proof about every surface point.",
+    "Mapped-area and retained-grid connectivity do not measure physical-sheet correctness.",
+    "The current W-50 output is much smaller in geometric source area than the historical Paris4 W-100 output.",
+    "No inherent material or scan-quality ranking is established."
+  ]
+}

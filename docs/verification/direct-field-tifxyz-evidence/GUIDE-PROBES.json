@@ -1,0 +1,22 @@
+[
+  {
+    "candidate": 0,
+    "returncode": 0,
+    "epoch": 1793313044.6331496
+  },
+  {
+    "candidate": 1,
+    "returncode": 0,
+    "epoch": 1793313288.9522004
+  },
+  {
+    "candidate": 2,
+    "returncode": 0,
+    "epoch": 1793313481.7900872
+  },
+  {
+    "candidate": 3,
+    "returncode": 0,
+    "epoch": 1793313646.1200309
+  }
+]
