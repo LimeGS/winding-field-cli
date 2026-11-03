@@ -19,7 +19,7 @@ from .util import atomic_json,digest,file_sha
 
 def settings(request):
     if not isinstance(request,dict):
-        raise ValueError('--original-config requires an output_frame object')
+        raise ValueError('--flattening-config requires an output_frame object')
     unknown=set(request)-{'output_frame','pitch','memory_gib'}
     if unknown:raise ValueError('unknown original settings: '+str(sorted(unknown)))
     frame=request.get('output_frame',{})
@@ -244,7 +244,7 @@ def export_existing(args):
     from .io import Volume
     from .workflow import implementation_sha
     out=Path(args.output).expanduser().resolve()
-    request=settings(json.loads(Path(args.original_config).read_bytes()))
+    request=settings(json.loads(Path(args.flattening_config).read_bytes()))
     descriptor=json.loads(Path(args.field_config).read_bytes()) if args.field_config else None
     if descriptor is not None and not args.levels:raise ValueError('--levels required with --field-config')
     if args.mesh_bundle and args.levels:raise ValueError('mesh bundle already binds its levels; omit --levels')

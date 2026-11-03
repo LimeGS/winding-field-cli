@@ -84,7 +84,7 @@ Install the pinned mapping dependency in your environment:
 python -m pip install '.[tifxyz]'
 ```
 
-Create `original.json` with the **output coordinate frame**, independently of the
+Create `flattening.json` with the **output coordinate frame**, independently of the
 field spacing and selected CT pyramid level. This example exports L0 coordinates
 for a scan with 8.64 µm isotropic L0 voxels:
 
@@ -112,13 +112,13 @@ valid XYZ must be nonnegative; `-1` is reserved for invalid nodes.
 ```bash
 winding-field run --source /data/scroll.zarr --voxel-um 8.64 \
   --field-spacing-um 17.28 --levels 1 2 3 \
-  --flattening-method original --original-config original.json \
+  --flattening-method original --flattening-config flattening.json \
   --export-tifxyz --output runs/original-fine
 
 # Same recipe at a coarser field resolution: change only the field spacing
 winding-field run --source /data/scroll.zarr --voxel-um 8.64 \
   --field-spacing-um 138.24 --levels 1 2 3 \
-  --flattening-method original --original-config original.json \
+  --flattening-method original --flattening-config flattening.json \
   --export-tifxyz --output runs/original-coarse
 
 winding-field resume runs/original-fine
@@ -141,7 +141,7 @@ the source:
 ```bash
 winding-field export-sheets --mesh-bundle /data/existing-run/meshes \
   --source /data/scroll.zarr --voxel-um 8.64 \
-  --flattening-method original --original-config original.json \
+  --flattening-method original --flattening-config flattening.json \
   --export-tifxyz --output exports/original
 ```
 
@@ -182,13 +182,13 @@ corrections are not inferred: supply a supported, already-corrected field.
 ```bash
 winding-field export-sheets --field-config field.json --levels 1 2 3 \
   --source /data/scroll.zarr --voxel-um 8.64 \
-  --flattening-method original --original-config original.json \
+  --flattening-method original --flattening-config flattening.json \
   --export-tifxyz --output exports/from-field
 
 # Resume with exactly the same arguments and configuration, plus --resume
 winding-field export-sheets --field-config field.json --levels 1 2 3 \
   --source /data/scroll.zarr --voxel-um 8.64 \
-  --flattening-method original --original-config original.json \
+  --flattening-method original --flattening-config flattening.json \
   --export-tifxyz --output exports/from-field --resume
 ```
 
@@ -220,7 +220,7 @@ this is not a certification that VC3D opened the product or that it is one
 physically continuous papyrus sheet.
 
 By default each level fits its eligible UV extent into a centered 4096² canvas.
-For a common minimum pitch add `"pitch": NUMBER` to `original.json`, in output
+For a common minimum pitch add `"pitch": NUMBER` to `flattening.json`, in output
 frame voxels per pixel; larger domains increase it to fit. To reproduce the
 November 3 175A canvas floor, use `pitch: 3.5358847757241643` with its 8.64 µm
 L0 frame. Other scans should choose their own sampling pitch.
@@ -523,14 +523,14 @@ retry the new-export command with `--config` (there is no export to resume).
 | `--chart-faces 1024 --no-previews` | Chart size; `--no-previews` skips only legacy per-chart images |
 | `--surface-output native\|atlas\|tifxyz` | New-run default native; legacy atlas and experimental direct-field alternatives |
 | `--flattening-method default\|original` | Select flattening mathematics independently of coarse/fine resolution; default preserves the selected output branch |
-| `--original-config original.json` | Original recipe's explicit output frame, optional minimum canvas pitch and memory admission estimate |
+| `--flattening-config flattening.json` | Original recipe's explicit output frame, optional minimum canvas pitch and memory admission estimate |
 | `--coverage-target 1 --surface-time-limit 1800` | Native mapped-area target and cumulative active seconds per W |
 | `--export-tifxyz` | Optional mesh-derived TIFXYZ alongside native or original-recipe CT renders |
 | `--tifxyz-config export.json` | Frozen direct-export request; separate memory, scratch and disk reserves |
 
 For existing inputs, `export-sheets` requires either `--field-config field.json`
 with `--levels`, or `--mesh-bundle PATH` with its saved levels, plus `--source`,
-`--output`, `--flattening-method original` and `--original-config`. Add
+`--output`, `--flattening-method original` and `--flattening-config`. Add
 `--export-tifxyz` for XYZ TIFFs and `--resume` to continue the same export.
 See the [complete examples above](#reuse-an-existing-mesh-or-field).
 
