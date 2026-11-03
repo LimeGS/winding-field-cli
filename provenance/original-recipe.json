@@ -1,0 +1,11 @@
+{
+  "recipe": "November 3 original global CT and mesh-derived TIFXYZ",
+  "source": "Project-owned frozen whole-code-05/whole_sheets.py",
+  "source_sha256": "5617511ff97cfc8e63ded78e10c2e0879cb83962617df13008c6f5f80db6ea67",
+  "ports": ["original_recipe.py", "original_tifxyz.py"],
+  "related_source": ["surface_export.scale_uv_to_world", "flatten_ct.inside_triangles", "global_sheet_render._barycentric_xyz", "global_sheet_render._merge", "global_sheet_render.sample_points", "fleet_tifxyz.export_xyz"],
+  "mapping_dependency": "libigl==2.6.3",
+  "xyz_tolerance_output_frame_units": 0.005,
+  "physical_acceptance": false,
+  "experimental_anchor_replacements": false
+}

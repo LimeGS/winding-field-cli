@@ -1,0 +1,24 @@
+{
+  "elapsed_s": 22.28319973498583,
+  "results": [
+    {
+      "candidate": 3,
+      "pixel_yx": [
+        456,
+        640
+      ],
+      "reason": "NO_ROOT",
+      "sampled": 1,
+      "status": "RAY_WITNESS_CAPTURED_NOT_YET_INDEPENDENTLY_VALIDATED",
+      "stride": 16,
+      "witness": {
+        "bytes": 105953,
+        "sha256": "88701869a87305c42194ad1e0888246f50f3b4aba4ef2542c4f189790aa8a4e5"
+      }
+    }
+  ],
+  "source_reads": {
+    "crop_bytes": 32131125,
+    "read_calls": 13
+  }
+}
