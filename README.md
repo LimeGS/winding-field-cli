@@ -512,21 +512,47 @@ retry the new-export command with `--config` (there is no export to resume).
 | `--prediction sd2\|classical` | Pretrained SD2 by default; `classical` uses CT threshold/structure tensor |
 | `--model-path /path/sd2.pt` | Use a pinned, hash-verified checkpoint; `winding-field models` prefetches it |
 | `--device cpu\|cuda:0` | Compute device; default `cpu` |
-| `--level 0 --stride 1` | CT observation sampling; stride accepts 1–8 |
-| `--chunk 64 --field-chunk 64` | Storage tile / solve block sizes; SD2 inference windows stay fixed |
+| `--source PATH_OR_URL` | CT Zarr input; alternatively use public catalog `--scroll ID --scan ID` |
+| `--local PATH` | Local mirror of source CT chunks |
+| `--output PATH` | Run or export directory, depending on the command |
+| `--level 0` | CT pyramid level, **not** winding W |
+| `--levels -31 -30` | Winding W isovalues to extract, **not** CT pyramid levels |
+| `--voxel-um 8.64` | Micrometre scale for unitless CT geometry; explicit metadata units take precedence |
+| `--stride 1` | CT observation sampling step, 1–8; not an output TIFXYZ pitch |
+| `--field-spacing-um 17.28` | Isotropic field-grid pitch; default: observation pitch |
+| `--roi Z0 Z1 Y0 Y1 X0 X1` | Half-open voxel bounds at the selected CT pyramid level; default: whole volume |
+| `--chunk 64 --field-chunk 64` | Observation tile edge in sampled voxels / solver block edge in field samples; SD2 inference windows stay fixed |
+| `--mesh-tile 64` | Mesh extraction tile edge in field-grid cells |
+| `--threshold VALUE` | Classical predictor CT intensity threshold; default: calibrated Otsu; unused by SD2 |
+| `--seed-stride 8 --fibre-weight 1` | Fibre seed spacing in observation samples / solver fibre constraint weight |
+| `--threads 4` | PyTorch CPU threads; not a global worker or RAM limit |
 | `--sweeps 4 --maxiter 2000 --rtol 1e-6` | Solver sweep budget, per-block iterations and tolerance |
 | `--ct-mode auto\|download\|stream` | Default `auto`: download if cache/storage permits, otherwise stream |
 | `--cache /disk/cache --cache-gib 2` | Shared, bounded CT payload cache |
 | `--reserve-gib 1` | Free-space reserve on output and cache filesystems |
-| `--offline` | Cached/local data only; `--scroll` needs a cached catalog |
+| `--offline` | CT network access disabled; `--scroll` needs a cached catalog; prefetch SD2 weights separately |
 | `--invalid-value 0` | Declare acquisition fill explicitly; otherwise zero is valid CT |
-| `--chart-faces 1024 --no-previews` | Chart size; `--no-previews` skips only legacy per-chart images |
-| `--surface-output native\|atlas\|tifxyz` | New-run default native; legacy atlas and experimental direct-field alternatives |
+| `--chart-faces 1024 --no-previews` | Native/atlas local chart budget, not original global flattening; `--no-previews` skips only legacy per-chart images |
+| `--surface-output native\|atlas\|tifxyz` | Pipeline branch, not file format: native (default), legacy atlas, or experimental direct-field TIFXYZ |
 | `--flattening-method default\|original` | Select flattening mathematics independently of coarse/fine resolution; default preserves the selected output branch |
 | `--flattening-config flattening.json` | Original recipe's explicit output frame, optional minimum canvas pitch and memory admission estimate |
 | `--coverage-target 1 --surface-time-limit 1800` | Native mapped-area target and cumulative active seconds per W |
 | `--export-tifxyz` | Optional mesh-derived TIFXYZ alongside native or original-recipe CT renders |
 | `--tifxyz-config export.json` | Frozen direct-export request; separate memory, scratch and disk reserves |
+| `--until STAGE` | Stop after a stage supported by the selected branch; default: its terminal stage |
+| `resume RUN --extra-surface-seconds N` | Add N seconds to the saved native surface budget |
+
+**Input and output resolution:** `--level`/`--voxel-um` describe CT input,
+`--stride` controls observation sampling, and `--field-spacing-um` controls the
+field grid. The output XYZ coordinate scale and canvas pitch belong in
+`--flattening-config`; they do not change the field resolution.
+
+**Two TIFXYZ routes:** `--export-tifxyz` adds mesh-derived XYZ TIFFs to native
+or original-recipe CT renders. `--surface-output tifxyz` instead selects the
+experimental direct-field pipeline and uses `--tifxyz-config`. The standalone
+`tifxyz FIELD_RUN` command calls that latter JSON `--config`; its `--resume`
+continues the saved request. `export-sheets --resume` requires the same input
+arguments and configuration as the initial export.
 
 For existing inputs, `export-sheets` requires either `--field-config field.json`
 with `--levels`, or `--mesh-bundle PATH` with its saved levels, plus `--source`,
