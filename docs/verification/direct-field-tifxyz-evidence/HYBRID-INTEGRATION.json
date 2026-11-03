@@ -1,0 +1,91 @@
+{
+  "status": "IMPLEMENTED_REAL_AUDIT_BLOCKED_ORIGINAL_PAUSED_BY_USER",
+  "production_integration": true,
+  "repo_base": "6b84457",
+  "committed": false,
+  "local_suite": {"passed": 461, "skipped": 17, "seconds": 153.05},
+  "linux_focused_suite": {"passed": 189, "seconds": 42.70},
+  "independent_review": {
+    "session": "ses_e6f0f322fffeUGyWod7yurzxXa",
+    "important_findings": 1,
+    "fixed": "Accelerator identity is checked before native loading for each bound audit and again before publication/verification success",
+    "regression": "four export/verify before/after-audit replacement cases RED to GREEN"
+  },
+  "complete_audit_benchmark": {
+    "host": "gpu-1",
+    "root": "/ssd/draft/hybrid-tifxyz-20261031-01",
+    "input": "33x33 synthetic plane, nonzero physical origin, field spacing17.28um and destination voxel8.64um",
+    "cpu_affinity": [1],
+    "nice": 19,
+    "warmups": 1,
+    "timed_repeats": 3,
+    "scope": "all audit phases, not complete export and not real W-level timing",
+    "same_audit_receipt_all_backends": true,
+    "median_seconds": {
+      "frozen_reference": 46.95606951834634,
+      "numpy": 27.712496988940984,
+      "compiled_cpu": 17.851186016574502,
+      "cuda_hybrid": 17.278416241984814
+    },
+    "speedup_vs_reference": {
+      "numpy": 1.6944005275700975,
+      "compiled_cpu": 2.6304173557291084,
+      "cuda_hybrid": 2.7176142107427537
+    },
+    "counts": {"nodes": 1089, "cells": 1024, "triangles": 4096, "intersection_tests": 64544, "subcells": 8192}
+  },
+  "supervised_synthetic_pipelines": {
+    "cpu": "READY then TIFXYZ_VERIFIED",
+    "cuda": "READY then TIFXYZ_VERIFIED",
+    "cuda_enforced_limit": "RLIMIT_DATA plus aggregate RSS supervision",
+    "cuda_child_data_ceiling": 3104952320,
+    "cuda_export_peak_worker_and_parent_rss": 229257216,
+    "cuda_export_seconds": 8.820496552158147,
+    "cuda_verify_seconds": 3.1018554801121354,
+    "proof_root": "/ssd/draft/hybrid-tifxyz-20261031-01"
+  },
+  "wheel": {
+    "status": "INSTALLED_HYBRID_WHEEL_PASS",
+    "sha256": "fd801238c0d032a2838e88ab6bb3278d34c97e003d591d2cec32dbfbe0c2df84",
+    "bytes": 206953,
+    "package_files": 55,
+    "native_sources": 3,
+    "native_build_from_installed_package": true,
+    "external_cwd_legacy_demo_and_resume": "PASS",
+    "proof": "/var/folders/s_/nnzqmcgs1sdffgsfx68wj7wr0000gn/T/opencode/hybrid-tifxyz-20261031-01/wheel/RESULT.json"
+  },
+  "real_data_audit": {
+    "status": "DIAGNOSTIC_AUDIT_BLOCKED",
+    "path": "/ssd/draft/hybrid-tifxyz-20261031-01/real-cuda",
+    "supervisor_pid": 679285,
+    "last_observed_phase": "coverage",
+    "last_observed_elapsed_s": 12416.575046544895,
+    "reason": {"code": "COVERAGE_DEPTH_LIMIT", "cell_zyx": [511, 62, 0]},
+    "indexed_nodes": 1218172,
+    "indexed_triangles": 4862732,
+    "visited_support_stencils": 13792359,
+    "producer": "/ssd/draft/direct-tifxyz-qf-candidate1-20261030-r2-4c61d9a0",
+    "scope": "whole-ROI audit of copied retained projection tiles; original stores are read-only",
+    "root_reprojection_performed": false,
+    "can_publish_export_ready": false
+  },
+  "original_run_stop": {
+    "authorized_by_user": true,
+    "status": "PAUSED",
+    "controller_and_worker_exited": true,
+    "follower_status": "PILOT_NOT_ACCEPTED",
+    "follower_exited": true,
+    "work_files_preserved": 129,
+    "work_sizes_and_mtimes_unchanged": true,
+    "ready_exists": false,
+    "receipt": "/ssd/draft/direct-tifxyz-acceptance-r3b-20261030-4ef592c0/USER-STOP-RECEIPT-1793451699.json"
+  },
+  "limits": {
+    "real_W_speedup": "UNMEASURED",
+    "native_mesh_comparison": "NO_COMPARISON",
+    "physical_acceptance": false,
+    "native_topology_equivalence": "UNMEASURED",
+    "frozen_r3b_runtime_modified": false,
+    "linux_installed_cli_note": "geometry venv lacks numcodecs; supervised public export/verify APIs tested remotely, installed CLI tested on Mac"
+  }
+}

@@ -1,0 +1,64 @@
+{
+  "status": "IMPLEMENTED_E2E_CONTROL_PASS_REAL_RUN_IN_PROGRESS",
+  "policy": {"default": "strict", "opt_in": "allow_partial"},
+  "partial_exit_code": 2,
+  "partial_marker": "PARTIAL.json",
+  "partial_verifier_status": "TIFXYZ_PARTIAL_VERIFIED",
+  "local_suite": {"passed": 545, "skipped": 17, "seconds": 247.86},
+  "review": {
+    "session": "ses_e6d628273ffeOvhmIUh6lKhU65",
+    "important_findings": 1,
+    "fixed": "Parent registration now uses the authoritative audit validator; four semantic forgery tests RED to GREEN"
+  },
+  "linux_end_to_end": {
+    "status": "PARTIAL_END_TO_END_PASS",
+    "root": "/ssd/draft/partial-tifxyz-20261031-02",
+    "scope": "asymmetric synthetic field, actual libigl/CUDA/supervision/VC3D",
+    "field_shape_zyx": [3, 9, 19],
+    "export_status": "PARTIAL",
+    "verify_status": "TIFXYZ_PARTIAL_VERIFIED",
+    "resume_status": "PARTIAL",
+    "independent_reprojection": true,
+    "ready_created": false,
+    "readonly_resume": true,
+    "export_seconds": 1.5761284376494586,
+    "verify_seconds": 1.517858772072941,
+    "reader_vertices": 9,
+    "reader_faces": 8,
+    "reader_maximum_xyz_error": 4.534301751846215e-7,
+    "source_artifacts_unchanged": true,
+    "harness_note": "The symmetric controls produced complete READY outputs. An asymmetric natural incomplete case was selected; typed Settings corrected the test harness resume call, without production changes."
+  },
+  "wheel": {
+    "status": "INSTALLED_PARTIAL_WHEEL_PASS",
+    "sha256": "908b7a3d0e507b4be5e434931ba06a7168503f4a2a0c4e18e649ce1110d5864e",
+    "bytes": 209840,
+    "package_files": 55,
+    "native_build_from_installed_package": true,
+    "legacy_demo_and_resume": "PASS",
+    "proof": "/var/folders/s_/nnzqmcgs1sdffgsfx68wj7wr0000gn/T/opencode/partial-tifxyz-20261031-01/wheel/RESULT.json"
+  },
+  "real_run": {
+    "status": "RUNNING",
+    "root": "/ssd/draft/partial-tifxyz-real-candidate1-20261031-01",
+    "controller_pid": 2428473,
+    "freeze_sha256": "c42547d81817312554a89f04592907fe85918b2f73cf2c098c0f2e0ccea72737",
+    "level": -4.0,
+    "roi_lo_zyx": [448, 576, 1984],
+    "roi_hi_zyx": [961, 1089, 2497],
+    "tolerance_um": 17.28,
+    "coverage_policy": "allow_partial",
+    "audit_backend": "cuda",
+    "chain": ["export", "independent verify", "real VC3D reader"],
+    "old_outputs_preserved": true,
+    "real_export_accepted": false
+  },
+  "limits": {
+    "coverage_failure_is_not_an_exhaustive_missing_area_map": true,
+    "geometry_integrity_resources_remain_mandatory": true,
+    "old_runtime_work_not_silently_relabelled": true,
+    "physical_acceptance": false,
+    "native_topology_equivalence": "UNMEASURED",
+    "whole_W_acceptance": false
+  }
+}

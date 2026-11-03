@@ -14,6 +14,7 @@ dependencies = ["numpy>=1.26,<3", "scipy>=1.11", "torch>=2.2", "scikit-image>=0.
 
 [project.optional-dependencies]
 test = ["pytest>=8", "build>=1"]
+tifxyz = ["libigl==2.6.3", "tifffile>=2023.7"]
 
 [project.scripts]
 winding-field = "winding_field.cli:main"
@@ -25,8 +26,11 @@ Documentation = "https://github.com/LimeGS/winding-field-cli/blob/main/README.md
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[tool.setuptools.package-data]
+winding_field = ["native/predicates.h", "native/predicates.cpp", "native/predicates.cu"]
+
 [tool.setuptools.data-files]
-"share/winding-field-cli/provenance" = ["provenance/core.json", "provenance/villa.json"]
+"share/winding-field-cli/provenance" = ["provenance/core.json", "provenance/villa.json", "provenance/tifxyz-guide.json", "provenance/original-recipe.json"]
 "share/winding-field-cli" = ["THIRD_PARTY.md"]
 
 [tool.pytest.ini_options]

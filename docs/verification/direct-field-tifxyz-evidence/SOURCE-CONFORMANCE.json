@@ -1,0 +1,1285 @@
+{
+  "cases": 127,
+  "config_sha256": "4fdac93398fa748a51d4b43d0e27c89b041ef41ee880dff44df661b2d6594d81",
+  "elapsed_s": 101.15200816234574,
+  "kernel_reference": {
+    "bytes": 28111,
+    "sha256": "d4b5988c5f0cc4cdf565ce4b4fd02aa67e1153afdc64e39f4ed82514a8a37d6e"
+  },
+  "peak_rss_bytes": 495325184,
+  "physical_acceptance": false,
+  "rows": [
+    {
+      "exact": true,
+      "faces": 56799,
+      "level": -6,
+      "tile": [
+        2,
+        9,
+        9
+      ]
+    },
+    {
+      "exact": true,
+      "faces": 12606,
+      "level": -5,
+      "tile": [
+        2,
+        9,
+        9
+      ]
+    },
+    {
+      "exact": true,
+      "faces": 7695,
+      "level": -10,
+      "tile": [
+        2,
+        18,
+        18
+      ]
+    },
+    {
+      "exact": true,
+      "faces": 52010,
+      "level": -9,
+      "tile": [
+        2,
+        18,
+        18
+      ]
+    },
+    {
+      "exact": true,
+      "faces": 36,
+      "level": 1,
+      "tile": [
+        2,
+        27,
+        27
+      ]
+    },
+    {
+      "exact": true,
+      "faces": 1072,
+      "level": 2,
+      "tile": [
+        2,
+        27,
+        27
+      ]
+    },
+    {
+      "exact": true,
+      "faces": 2595,
+      "level": 3,
+      "tile": [
+        2,
+        27,
+        27
+      ]
+    },
+    {
+      "exact": true,
+      "faces": 4405,
+      "level": 4,
+      "tile": [
+        2,
+        27,
+        27
+      ]
+    },
+    {
+      "exact": true,
+      "faces": 6829,
+      "level": 5,
+      "tile": [
+        2,
+        27,
+        27
+      ]
+    },
+    {
+      "exact": true,
+      "faces": 9805,
+      "level": 6,
+      "tile": [
+        2,
+        27,
+        27
+      ]
+    },
+    {
+      "exact": true,
+      "faces": 13715,
+      "level": 7,
+      "tile": [
+        2,
+        27,
+        27
+      ]
+    },
+    {
+      "exact": true,
+      "faces": 18133,
+      "level": 8,
+      "tile": [
+        2,
+        27,
+        27
+      ]
+    },
+    {
+      "exact": true,
+      "faces": 23416,
+      "level": 9,
+      "tile": [
+        2,
+        27,
+        27
+      ]
+    },
+    {
+      "exact": true,
+      "faces": 28868,
+      "level": 10,
+      "tile": [
+        2,
+        27,
+        27
+      ]
+    },
+    {
+      "exact": true,
+      "faces": 33602,
+      "level": 11,
+      "tile": [
+        2,
+        27,
+        27
+      ]
+    },
+    {
+      "exact": true,
+      "faces": 39798,
+      "level": 12,
+      "tile": [
+        2,
+        27,
+        27
+      ]
+    },
+    {
+      "exact": true,
+      "faces": 46870,
+      "level": 13,
+      "tile": [
+        2,
+        27,
+        27
+      ]
+    },
+    {
+      "exact": true,
+      "faces": 55020,
+      "level": 14,
+      "tile": [
+        2,
+        27,
+        27
+      ]
+    },
+    {
+      "exact": true,
+      "faces": 69900,
+      "level": 15,
+      "tile": [
+        2,
+        27,
+        27
+      ]
+    },
+    {
+      "exact": true,
+      "faces": 74748,
+      "level": 16,
+      "tile": [
+        2,
+        27,
+        27
+      ]
+    },
+    {
+      "exact": true,
+      "faces": 77702,
+      "level": 17,
+      "tile": [
+        2,
+        27,
+        27
+      ]
+    },
+    {
+      "exact": true,
+      "faces": 75845,
+      "level": 18,
+      "tile": [
+        2,
+        27,
+        27
+      ]
+    },
+    {
+      "exact": true,
+      "faces": 73298,
+      "level": 19,
+      "tile": [
+        2,
+        27,
+        27
+      ]
+    },
+    {
+      "exact": true,
+      "faces": 70650,
+      "level": 20,
+      "tile": [
+        2,
+        27,
+        27
+      ]
+    },
+    {
+      "exact": true,
+      "faces": 67951,
+      "level": 21,
+      "tile": [
+        2,
+        27,
+        27
+      ]
+    },
+    {
+      "exact": true,
+      "faces": 64213,
+      "level": 22,
+      "tile": [
+        2,
+        27,
+        27
+      ]
+    },
+    {
+      "exact": true,
+      "faces": 61169,
+      "level": 23,
+      "tile": [
+        2,
+        27,
+        27
+      ]
+    },
+    {
+      "exact": true,
+      "faces": 58339,
+      "level": 24,
+      "tile": [
+        2,
+        27,
+        27
+      ]
+    },
+    {
+      "exact": true,
+      "faces": 55565,
+      "level": 25,
+      "tile": [
+        2,
+        27,
+        27
+      ]
+    },
+    {
+      "exact": true,
+      "faces": 52459,
+      "level": 26,
+      "tile": [
+        2,
+        27,
+        27
+      ]
+    },
+    {
+      "exact": true,
+      "faces": 50243,
+      "level": 27,
+      "tile": [
+        2,
+        27,
+        27
+      ]
+    },
+    {
+      "exact": true,
+      "faces": 46962,
+      "level": 28,
+      "tile": [
+        2,
+        27,
+        27
+      ]
+    },
+    {
+      "exact": true,
+      "faces": 43836,
+      "level": 29,
+      "tile": [
+        2,
+        27,
+        27
+      ]
+    },
+    {
+      "exact": true,
+      "faces": 40944,
+      "level": 30,
+      "tile": [
+        2,
+        27,
+        27
+      ]
+    },
+    {
+      "exact": true,
+      "faces": 37638,
+      "level": 31,
+      "tile": [
+        2,
+        27,
+        27
+      ]
+    },
+    {
+      "exact": true,
+      "faces": 34614,
+      "level": 32,
+      "tile": [
+        2,
+        27,
+        27
+      ]
+    },
+    {
+      "exact": true,
+      "faces": 31238,
+      "level": 33,
+      "tile": [
+        2,
+        27,
+        27
+      ]
+    },
+    {
+      "exact": true,
+      "faces": 27716,
+      "level": 34,
+      "tile": [
+        2,
+        27,
+        27
+      ]
+    },
+    {
+      "exact": true,
+      "faces": 24171,
+      "level": 35,
+      "tile": [
+        2,
+        27,
+        27
+      ]
+    },
+    {
+      "exact": true,
+      "faces": 20289,
+      "level": 36,
+      "tile": [
+        2,
+        27,
+        27
+      ]
+    },
+    {
+      "exact": true,
+      "faces": 16853,
+      "level": 37,
+      "tile": [
+        2,
+        27,
+        27
+      ]
+    },
+    {
+      "exact": true,
+      "faces": 13771,
+      "level": 38,
+      "tile": [
+        2,
+        27,
+        27
+      ]
+    },
+    {
+      "exact": true,
+      "faces": 10295,
+      "level": 39,
+      "tile": [
+        2,
+        27,
+        27
+      ]
+    },
+    {
+      "exact": true,
+      "faces": 6689,
+      "level": 40,
+      "tile": [
+        2,
+        27,
+        27
+      ]
+    },
+    {
+      "exact": true,
+      "faces": 2033,
+      "level": 41,
+      "tile": [
+        2,
+        27,
+        27
+      ]
+    },
+    {
+      "exact": true,
+      "faces": 51589,
+      "level": 9,
+      "tile": [
+        2,
+        9,
+        27
+      ]
+    },
+    {
+      "exact": true,
+      "faces": 3939,
+      "level": 10,
+      "tile": [
+        2,
+        9,
+        27
+      ]
+    },
+    {
+      "exact": true,
+      "faces": 9903,
+      "level": -12,
+      "tile": [
+        6,
+        9,
+        9
+      ]
+    },
+    {
+      "exact": true,
+      "faces": 41982,
+      "level": -11,
+      "tile": [
+        6,
+        9,
+        9
+      ]
+    },
+    {
+      "exact": true,
+      "faces": 72428,
+      "level": -10,
+      "tile": [
+        6,
+        9,
+        9
+      ]
+    },
+    {
+      "exact": true,
+      "faces": 44569,
+      "level": -9,
+      "tile": [
+        6,
+        9,
+        9
+      ]
+    },
+    {
+      "exact": true,
+      "faces": 2731,
+      "level": -8,
+      "tile": [
+        6,
+        9,
+        9
+      ]
+    },
+    {
+      "exact": true,
+      "faces": 4515,
+      "level": -19,
+      "tile": [
+        6,
+        18,
+        18
+      ]
+    },
+    {
+      "exact": true,
+      "faces": 48104,
+      "level": -18,
+      "tile": [
+        6,
+        18,
+        18
+      ]
+    },
+    {
+      "exact": true,
+      "faces": 40592,
+      "level": -17,
+      "tile": [
+        6,
+        18,
+        18
+      ]
+    },
+    {
+      "exact": true,
+      "faces": 2,
+      "level": 16,
+      "tile": [
+        6,
+        27,
+        27
+      ]
+    },
+    {
+      "exact": true,
+      "faces": 963,
+      "level": 17,
+      "tile": [
+        6,
+        27,
+        27
+      ]
+    },
+    {
+      "exact": true,
+      "faces": 3918,
+      "level": 18,
+      "tile": [
+        6,
+        27,
+        27
+      ]
+    },
+    {
+      "exact": true,
+      "faces": 9058,
+      "level": 19,
+      "tile": [
+        6,
+        27,
+        27
+      ]
+    },
+    {
+      "exact": true,
+      "faces": 13978,
+      "level": 20,
+      "tile": [
+        6,
+        27,
+        27
+      ]
+    },
+    {
+      "exact": true,
+      "faces": 18290,
+      "level": 21,
+      "tile": [
+        6,
+        27,
+        27
+      ]
+    },
+    {
+      "exact": true,
+      "faces": 22916,
+      "level": 22,
+      "tile": [
+        6,
+        27,
+        27
+      ]
+    },
+    {
+      "exact": true,
+      "faces": 27162,
+      "level": 23,
+      "tile": [
+        6,
+        27,
+        27
+      ]
+    },
+    {
+      "exact": true,
+      "faces": 32350,
+      "level": 24,
+      "tile": [
+        6,
+        27,
+        27
+      ]
+    },
+    {
+      "exact": true,
+      "faces": 34858,
+      "level": 25,
+      "tile": [
+        6,
+        27,
+        27
+      ]
+    },
+    {
+      "exact": true,
+      "faces": 38524,
+      "level": 26,
+      "tile": [
+        6,
+        27,
+        27
+      ]
+    },
+    {
+      "exact": true,
+      "faces": 41820,
+      "level": 27,
+      "tile": [
+        6,
+        27,
+        27
+      ]
+    },
+    {
+      "exact": true,
+      "faces": 44886,
+      "level": 28,
+      "tile": [
+        6,
+        27,
+        27
+      ]
+    },
+    {
+      "exact": true,
+      "faces": 48780,
+      "level": 29,
+      "tile": [
+        6,
+        27,
+        27
+      ]
+    },
+    {
+      "exact": true,
+      "faces": 52384,
+      "level": 30,
+      "tile": [
+        6,
+        27,
+        27
+      ]
+    },
+    {
+      "exact": true,
+      "faces": 55116,
+      "level": 31,
+      "tile": [
+        6,
+        27,
+        27
+      ]
+    },
+    {
+      "exact": true,
+      "faces": 59452,
+      "level": 32,
+      "tile": [
+        6,
+        27,
+        27
+      ]
+    },
+    {
+      "exact": true,
+      "faces": 61864,
+      "level": 33,
+      "tile": [
+        6,
+        27,
+        27
+      ]
+    },
+    {
+      "exact": true,
+      "faces": 67674,
+      "level": 34,
+      "tile": [
+        6,
+        27,
+        27
+      ]
+    },
+    {
+      "exact": true,
+      "faces": 68127,
+      "level": 35,
+      "tile": [
+        6,
+        27,
+        27
+      ]
+    },
+    {
+      "exact": true,
+      "faces": 68148,
+      "level": 36,
+      "tile": [
+        6,
+        27,
+        27
+      ]
+    },
+    {
+      "exact": true,
+      "faces": 68146,
+      "level": 37,
+      "tile": [
+        6,
+        27,
+        27
+      ]
+    },
+    {
+      "exact": true,
+      "faces": 68327,
+      "level": 38,
+      "tile": [
+        6,
+        27,
+        27
+      ]
+    },
+    {
+      "exact": true,
+      "faces": 66755,
+      "level": 39,
+      "tile": [
+        6,
+        27,
+        27
+      ]
+    },
+    {
+      "exact": true,
+      "faces": 63956,
+      "level": 40,
+      "tile": [
+        6,
+        27,
+        27
+      ]
+    },
+    {
+      "exact": true,
+      "faces": 62036,
+      "level": 41,
+      "tile": [
+        6,
+        27,
+        27
+      ]
+    },
+    {
+      "exact": true,
+      "faces": 59764,
+      "level": 42,
+      "tile": [
+        6,
+        27,
+        27
+      ]
+    },
+    {
+      "exact": true,
+      "faces": 57280,
+      "level": 43,
+      "tile": [
+        6,
+        27,
+        27
+      ]
+    },
+    {
+      "exact": true,
+      "faces": 54978,
+      "level": 44,
+      "tile": [
+        6,
+        27,
+        27
+      ]
+    },
+    {
+      "exact": true,
+      "faces": 55080,
+      "level": 45,
+      "tile": [
+        6,
+        27,
+        27
+      ]
+    },
+    {
+      "exact": true,
+      "faces": 44091,
+      "level": 46,
+      "tile": [
+        6,
+        27,
+        27
+      ]
+    },
+    {
+      "exact": true,
+      "faces": 28832,
+      "level": 47,
+      "tile": [
+        6,
+        27,
+        27
+      ]
+    },
+    {
+      "exact": true,
+      "faces": 1734,
+      "level": 48,
+      "tile": [
+        6,
+        27,
+        27
+      ]
+    },
+    {
+      "exact": true,
+      "faces": 56167,
+      "level": 11,
+      "tile": [
+        6,
+        9,
+        27
+      ]
+    },
+    {
+      "exact": true,
+      "faces": 14677,
+      "level": 12,
+      "tile": [
+        6,
+        9,
+        27
+      ]
+    },
+    {
+      "exact": true,
+      "faces": 3133,
+      "level": -19,
+      "tile": [
+        10,
+        9,
+        9
+      ]
+    },
+    {
+      "exact": true,
+      "faces": 29293,
+      "level": -18,
+      "tile": [
+        10,
+        9,
+        9
+      ]
+    },
+    {
+      "exact": true,
+      "faces": 48997,
+      "level": -17,
+      "tile": [
+        10,
+        9,
+        9
+      ]
+    },
+    {
+      "exact": true,
+      "faces": 53120,
+      "level": -16,
+      "tile": [
+        10,
+        9,
+        9
+      ]
+    },
+    {
+      "exact": true,
+      "faces": 53874,
+      "level": -15,
+      "tile": [
+        10,
+        9,
+        9
+      ]
+    },
+    {
+      "exact": true,
+      "faces": 44793,
+      "level": -14,
+      "tile": [
+        10,
+        9,
+        9
+      ]
+    },
+    {
+      "exact": true,
+      "faces": 15572,
+      "level": -13,
+      "tile": [
+        10,
+        9,
+        9
+      ]
+    },
+    {
+      "exact": true,
+      "faces": 35,
+      "level": -12,
+      "tile": [
+        10,
+        9,
+        9
+      ]
+    },
+    {
+      "exact": true,
+      "faces": 3581,
+      "level": -22,
+      "tile": [
+        10,
+        18,
+        18
+      ]
+    },
+    {
+      "exact": true,
+      "faces": 9025,
+      "level": -21,
+      "tile": [
+        10,
+        18,
+        18
+      ]
+    },
+    {
+      "exact": true,
+      "faces": 18702,
+      "level": -20,
+      "tile": [
+        10,
+        18,
+        18
+      ]
+    },
+    {
+      "exact": true,
+      "faces": 34290,
+      "level": -19,
+      "tile": [
+        10,
+        18,
+        18
+      ]
+    },
+    {
+      "exact": true,
+      "faces": 46535,
+      "level": -18,
+      "tile": [
+        10,
+        18,
+        18
+      ]
+    },
+    {
+      "exact": true,
+      "faces": 71194,
+      "level": -17,
+      "tile": [
+        10,
+        18,
+        18
+      ]
+    },
+    {
+      "exact": true,
+      "faces": 85539,
+      "level": -16,
+      "tile": [
+        10,
+        18,
+        18
+      ]
+    },
+    {
+      "exact": true,
+      "faces": 107949,
+      "level": -15,
+      "tile": [
+        10,
+        18,
+        18
+      ]
+    },
+    {
+      "exact": true,
+      "faces": 111339,
+      "level": -14,
+      "tile": [
+        10,
+        18,
+        18
+      ]
+    },
+    {
+      "exact": true,
+      "faces": 98837,
+      "level": -13,
+      "tile": [
+        10,
+        18,
+        18
+      ]
+    },
+    {
+      "exact": true,
+      "faces": 81197,
+      "level": -12,
+      "tile": [
+        10,
+        18,
+        18
+      ]
+    },
+    {
+      "exact": true,
+      "faces": 61407,
+      "level": -11,
+      "tile": [
+        10,
+        18,
+        18
+      ]
+    },
+    {
+      "exact": true,
+      "faces": 49527,
+      "level": -10,
+      "tile": [
+        10,
+        18,
+        18
+      ]
+    },
+    {
+      "exact": true,
+      "faces": 33293,
+      "level": -9,
+      "tile": [
+        10,
+        18,
+        18
+      ]
+    },
+    {
+      "exact": true,
+      "faces": 25333,
+      "level": -8,
+      "tile": [
+        10,
+        18,
+        18
+      ]
+    },
+    {
+      "exact": true,
+      "faces": 17127,
+      "level": -7,
+      "tile": [
+        10,
+        18,
+        18
+      ]
+    },
+    {
+      "exact": true,
+      "faces": 10719,
+      "level": -6,
+      "tile": [
+        10,
+        18,
+        18
+      ]
+    },
+    {
+      "exact": true,
+      "faces": 2267,
+      "level": -5,
+      "tile": [
+        10,
+        18,
+        18
+      ]
+    },
+    {
+      "exact": true,
+      "faces": 289,
+      "level": 42,
+      "tile": [
+        10,
+        27,
+        27
+      ]
+    },
+    {
+      "exact": true,
+      "faces": 2635,
+      "level": 43,
+      "tile": [
+        10,
+        27,
+        27
+      ]
+    },
+    {
+      "exact": true,
+      "faces": 6329,
+      "level": 44,
+      "tile": [
+        10,
+        27,
+        27
+      ]
+    },
+    {
+      "exact": true,
+      "faces": 10970,
+      "level": 45,
+      "tile": [
+        10,
+        27,
+        27
+      ]
+    },
+    {
+      "exact": true,
+      "faces": 14934,
+      "level": 46,
+      "tile": [
+        10,
+        27,
+        27
+      ]
+    },
+    {
+      "exact": true,
+      "faces": 19840,
+      "level": 47,
+      "tile": [
+        10,
+        27,
+        27
+      ]
+    },
+    {
+      "exact": true,
+      "faces": 84050,
+      "level": 48,
+      "tile": [
+        10,
+        27,
+        27
+      ]
+    },
+    {
+      "exact": true,
+      "faces": 95816,
+      "level": 49,
+      "tile": [
+        10,
+        27,
+        27
+      ]
+    },
+    {
+      "exact": true,
+      "faces": 17038,
+      "level": 50,
+      "tile": [
+        10,
+        27,
+        27
+      ]
+    },
+    {
+      "exact": true,
+      "faces": 19314,
+      "level": 12,
+      "tile": [
+        10,
+        9,
+        27
+      ]
+    },
+    {
+      "exact": true,
+      "faces": 48747,
+      "level": 13,
+      "tile": [
+        10,
+        9,
+        27
+      ]
+    }
+  ],
+  "status": "HISTORICAL_SOURCE_ADAPTER_VERIFIED",
+  "tiles": 12
+}
