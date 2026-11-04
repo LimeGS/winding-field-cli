@@ -314,6 +314,18 @@ class FieldSource:
             for file in self._payloads.values():
                 file.read()
 
+    def validate_region(self, lo: Sequence[int], hi: Sequence[int]) -> None:
+        """Validate retained crop inputs with the same metadata/payload checks as read, without decoding."""
+        self._validate(payloads=False)
+        low,high=field_store._triple(lo),field_store._triple(hi)
+        if any(b<=a or b>n for a,b,n in zip(low,high,self.shape)):raise ValueError('field read outside grid')
+        if self._kind!='npy':
+            keys=itertools.product(*(range(a//self._chunk,(b-1)//self._chunk+1) for a,b in zip(low,high)))
+            for key in keys:
+                file=self._payloads.get('-'.join(map(str,key)))
+                if file is not None:file.check()
+        self._validate(payloads=False)
+
     @staticmethod
     def _charge(value: _Chunk) -> int:
         return value[0].nbytes + value[2].nbytes + 512

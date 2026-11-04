@@ -43,11 +43,17 @@ def frame_coordinates(xyz,frame,world_unit_um=1.):
     return xyz*(world_unit_um/frame['voxel_um'])-np.asarray(frame['origin_xyz_um'])/frame['voxel_um']
 
 
-def sample_ct(volume,xyz,frame=None,missing=None):
+def sample_ct(volume,xyz,frame=None,missing=None,*,stop=None):
     from numcodecs import get_codec
     def chunk(index):
+        if stop and stop():raise InterruptedError('CT sampling paused')
         name=volume.metadata.get('dimension_separator','.').join(map(str,index))
         key=volume.array_path+'/'+name if volume.array_path else name
+        if hasattr(volume,'decoded_chunk'):
+            try:return volume.decoded_chunk(key)
+            except FileNotFoundError:
+                if missing is None:raise
+                missing.add(key);return None
         try:raw=volume._chunk_bytes(key)
         except FileNotFoundError:
             if missing is None:raise

@@ -15,6 +15,37 @@ winding-field export-uvw \
   --canvas-samples 512 --output exports/uvw
 ```
 
+For read-only process geometry parallelism, add `--workers 2` (1–8, default 1).
+`--cache-mib 256` is the total retained decoded-CT plus field-region RAM cache
+budget (0–8192 MiB; 0 disables both). Half goes to CT in the coordinator;
+the remainder is divided between field readers, including the coordinator.
+A chunk/region larger than its allowance is read without retention. Allow for
+decoded payload bytes plus 512 bytes per retained entry when choosing a budget.
+This is not a total RSS limit: each process also owns the reference map/index,
+and output arrays, one transient CT decode and bounded in-flight batches use
+additional memory. Start with 1/2 workers and measure before using 4/8.
+
+Workers use `spawn` and inherit one-thread native-library limits before imports.
+They open their own read-only field/reference; only the coordinator reads CT or
+writes cache/source/publication SQLite databases and checkpoints. A window of
+at most `workers * 1024` samples feeds the existing chunk-sorted trilinear
+sampler, preserving output order and positive-weight missingness. CT grouping
+is reused, not duplicated. SIGINT/STOP cancels pending geometry and signals
+running workers; shutdown waits for their bounded work to exit.
+
+Decoded CT hits check encoded-file identity (inode/size/mtime/ctime); cold reads
+retain SHA and source-ledger validation. Field-region hits validate metadata
+and every touched payload before and after copying cells. `validate_used()`
+clears decoded RAM entries and forces fresh authoritative CT checks, even in
+the same reader. UVW publication uses `validate_used(fresh=False)` within that
+invocation: it hashes encoded local/cache bytes against the ledger while reusing
+each chunk's remote verification. New or evicted chunks still require a fetch.
+Resume starts a fresh verification epoch. This per-chunk read snapshot is not
+an atomic snapshot of the remote volume; remote changes after a chunk's read
+are detected on explicit fresh validation/resume, not every level publication.
+Only advisory encoded-cache access-time updates are batched;
+new source-ledger entries and published checkpoint commits remain durable.
+
 Repeat exactly the same command with `--resume` to continue. A file named
 `exports/uvw/STOP`, SIGINT or SIGTERM pauses at bounded work boundaries. Remove
 `STOP` before resuming. Completed batches and publications are checked against
@@ -95,6 +126,40 @@ Batches are at most 16,384 points; the exporter checkpoints 1,024 at a time.
 `Reference(world_um, faces, uv_um, reference_w, band=(lo, hi))` also accepts
 programmatically constructed maps. `export_existing(args, stop=callback)` in
 `uvw_pipeline` is the orchestration entry point; `args` has the CLI fields.
+
+### Performance measurements
+
+Per-level `quality.json` contains `timings` for geometry wall time, recorded
+geometry/reference worker time, CT sampling, checkpoint work, Jacobian checks,
+publication preparation and fresh source validation. Preparation excludes the
+final receipt/rename itself; aggregate invocation time includes completed
+level publication. Resumed worker-time counters include saved batches, while
+wall-time counters describe the current invocation. Cache/read counters and
+per-worker PID/peak RSS are included; individual process peaks are not a
+measurement of simultaneous aggregate RSS. Worker/cache settings are pinned
+in the resume identity, but do not change numerical coordinates or masks.
+
+For fixed physical-UV point benchmarks, use:
+
+```python
+from winding_field.uvw_workers import GeometryWorkers
+
+jobs = [{"uv": uv_um_batch, "w": 32., "reference_data": None}]
+with GeometryWorkers(descriptor, reference_path, [30., 31., 32.], 512,
+                     workers=2, region_cache_bytes=64 << 20) as pool:
+    cold = list(pool.map(jobs))
+    warm = list(pool.map(jobs))
+# Each result is (numeric_arrays, timing_and_cache_metrics).
+```
+
+Use a `__main__` guard in scripts that spawn workers. Batches are <=16,384;
+at most twice the worker count is queued. The low-level serial equivalent is
+`uvw_workers.compute_geometry(reference, field, frame, uv, w, ...)`.
+CT-only measurements use `Volume(..., decoded_cache_bytes=...)` with
+`original_pipeline.sample_ct`; default `Volume` caching remains disabled.
+Cold/warm RAM timings must be distinguished from encoded disk, OS and HTTP
+cache state. Compare identical frozen points and masks before reporting speedups;
+synthetic timings do not establish performance or physical coverage on a scroll.
 
 ## Numerical scope
 

@@ -121,11 +121,15 @@ def bounds(lo, hi, shape):
 
 class Volume:
     def __init__(self, source, *, local=None, cache=None, cache_bytes=2 << 30,
-                 offline=False, voxel_um=None, level=0, reserve_bytes=0):
+                 offline=False, voxel_um=None, level=0, reserve_bytes=0, decoded_cache_bytes=0):
         if type(cache_bytes) is not int or cache_bytes < 0 or type(level) is not int or level < 0:
             raise ValueError('invalid cache budget or pyramid level')
         if type(reserve_bytes) is not int or reserve_bytes<0:
             raise ValueError('invalid cache reserve')
+        if type(decoded_cache_bytes) is not int or decoded_cache_bytes<0:raise ValueError('invalid decoded cache budget')
+        from collections import OrderedDict
+        self._decoded=OrderedDict();self._decoded_bytes=0;self._decoded_limit=decoded_cache_bytes
+        self._accesses={};self._access_count=0
         self.reserve=reserve_bytes
         self.source = http_url(source)
         self.remote = self.source.startswith(('https://', 'http://'))
@@ -136,6 +140,7 @@ class Volume:
         self.cache.mkdir(parents=True, exist_ok=True)
         self.limit, self.offline = cache_bytes, offline
         self._stats = dict(local_hits=0, cache_hits=0, downloads=0, downloaded_bytes=0)
+        self._stats.update(decoded_hits=0,decodes=0,decoded_evictions=0,advisory_commits=0)
         self._validated = set()
         self._verified_local = {}
         self._ledger = None
@@ -179,6 +184,7 @@ class Volume:
             yield
 
     def _evict(self, incoming):
+        self._flush_accesses()
         size = self.db.execute('SELECT coalesce(sum(size),0) FROM cache').fetchone()[0]
         for key, n in self.db.execute('SELECT key,size FROM cache ORDER BY at').fetchall():
             if size + incoming <= self.limit:
@@ -187,6 +193,17 @@ class Volume:
             self.db.execute('DELETE FROM cache WHERE key=?', (key,))
             size -= n
         self.db.commit()
+
+    def _flush_accesses(self):
+        # Access times only guide eviction; source-ledger writes remain immediate.
+        if self._accesses:
+            self.db.executemany('UPDATE cache SET at=? WHERE key=?',[(at,key) for key,at in self._accesses.items()])
+            self.db.commit();self._stats['advisory_commits']+=1
+            self._accesses.clear();self._access_count=0
+
+    def _touch(self,token):
+        self._accesses[token]=time.time();self._access_count+=1
+        if self._access_count>=128:self._flush_accesses()
 
     def _metadata(self, key, optional=False):
         cached = self.cache/('meta-'+digest([self.source,key])+'.json')
@@ -244,6 +261,7 @@ class Volume:
 
     def bind_ledger(self, path):
         """Pin every consumed encoded chunk; changed bytes cannot enter a resumed run."""
+        self._decoded.clear();self._decoded_bytes=0
         self._ledger = sqlite3.connect(path)
         self._ledger.execute('CREATE TABLE IF NOT EXISTS chunks (key TEXT PRIMARY KEY, sha TEXT NOT NULL)')
         self._ledger.commit()
@@ -259,7 +277,17 @@ class Volume:
                 self._ledger.commit()
         return data
 
-    def validate_used(self):
+    def validate_used(self,*,fresh=True):
+        """Check ledger-bound encoded bytes, bypassing decoded RAM.
+
+        Fresh checks start a new remote verification epoch (including resume).
+        Within an invocation, fresh=False reuses per-chunk remote verification;
+        local/cache bytes are still hashed against the ledger on every check.
+        This is a per-chunk read snapshot, not an atomic remote-volume snapshot.
+        """
+        if fresh:
+            self._decoded.clear();self._decoded_bytes=0
+            self._validated.clear();self._verified_local.clear()
         if self._ledger is not None:
             for (key,) in self._ledger.execute('SELECT key FROM chunks'):
                 self._chunk_bytes(key)
@@ -295,8 +323,7 @@ class Volume:
                 raw = None
             if raw is not None and (self.offline or token in self._validated):
                 self._stats['cache_hits'] += 1
-                self.db.execute('UPDATE cache SET at=? WHERE key=?', (time.time(),token))
-                self.db.commit()
+                self._touch(token)
                 return self._record(key,None if record[0]==MISSING_ETAG else raw)
             if self.offline:
                 raise FileNotFoundError(f'offline cache miss: {key}')
@@ -325,6 +352,50 @@ class Volume:
                 self.db.commit()
             self._validated.add(token)
             return self._record(key,None if etag==MISSING_ETAG else data)
+
+    def _encoded_signature(self,key):
+        local=self.local/key if self.local else Path(self.source)/key if not self.remote else None
+        path=local if local and local.is_file() else self.cache/digest([self._namespace,key]) if self.remote else local
+        try:info=path.stat()
+        except FileNotFoundError:return path,None
+        return path,(info.st_dev,info.st_ino,info.st_size,info.st_mtime_ns,info.st_ctime_ns)
+
+    def decoded_chunk(self,key):
+        """Opt-in bounded immutable decoded chunks; stat-checked hits, cold SHA/ledger validation.
+
+        General read/_chunk_bytes behavior is unchanged. validate_used discards this
+        cache and revalidates authoritative sources, even within the same Volume.
+        """
+        before=self._encoded_signature(key) if self._decoded_limit else None
+        cached=self._decoded.get(key)
+        if cached is not None:
+            array,signature=cached
+            if before==signature:
+                self._decoded.move_to_end(key);self._stats['decoded_hits']+=1
+                return array
+            self._decoded_bytes-=array.nbytes+512;del self._decoded[key]
+        raw=self._chunk_bytes(key)
+        if raw is None:return None
+        retained_signature=None
+        if self._decoded_limit:
+            after=self._encoded_signature(key)
+            if after[1] is not None:
+                if before!=after:
+                    if after[0].read_bytes()!=raw or self._encoded_signature(key)!=after:
+                        raise ValueError('CT source/cache changed during decode')
+                retained_signature=after
+        if self.metadata.get('compressor'):raw=get_codec(self.metadata['compressor']).decode(raw)
+        for spec in reversed(self.metadata.get('filters') or []):raw=get_codec(spec).decode(raw)
+        array=np.frombuffer(raw,dtype=self.dtype)
+        if array.size!=math.prod(self.chunks):raise ValueError('corrupt CT chunk: '+key)
+        array=array.reshape(self.chunks,order=self.metadata['order']);array.flags.writeable=False
+        self._stats['decodes']+=1;charge=array.nbytes+512
+        if retained_signature is not None and charge<=self._decoded_limit:
+            while self._decoded_bytes+charge>self._decoded_limit:
+                _,(retired,_)=self._decoded.popitem(last=False)
+                self._decoded_bytes-=retired.nbytes+512;self._stats['decoded_evictions']+=1
+            self._decoded[key]=(array,retained_signature);self._decoded_bytes+=charge
+        return array
 
     def read(self, lo_zyx, hi_zyx):
         lo, hi = bounds(lo_zyx,hi_zyx,self.shape)
@@ -376,9 +447,13 @@ class Volume:
 
     def stats(self):
         return dict(self._stats, cache_bytes=self.db.execute('SELECT coalesce(sum(size),0) FROM cache').fetchone()[0],
+                    decoded_cache_bytes=self._decoded_bytes,pending_accesses=len(self._accesses),
                     backend='portable-zarr-v2')
 
     def close(self):
-        self.db.close()
-        if self._ledger is not None:
-            self._ledger.close()
+        self._decoded.clear();self._decoded_bytes=0
+        try:
+            with self._lock():self._flush_accesses()
+        finally:
+            self.db.close()
+            if self._ledger is not None:self._ledger.close()
