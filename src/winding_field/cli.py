@@ -121,6 +121,8 @@ def main(argv=None):
     p.add_argument('--voxel-um',type=float,help='CT units when metadata lacks them')
     p.add_argument('--level',type=int,default=0,help='CT pyramid level, not winding W')
     p.add_argument('--canvas-samples',type=int,default=512,help='shared square UV grid edge, 2..1024 (default: 512)')
+    p.add_argument('--workers',type=int,default=1,help='read-only geometry processes, 1..8; CT/publication stay in coordinator')
+    p.add_argument('--cache-mib',type=int,default=256,help='total decoded CT + field-region RAM cache budget, 0..8192 MiB (default: 256)')
     p.add_argument('--output',required=True)
     p.add_argument('--resume',action='store_true',help='resume identical source/settings; remove output/STOP to continue')
     p=sub.add_parser('demo',help='offline synthetic original-CT demonstration')
