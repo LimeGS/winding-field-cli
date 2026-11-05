@@ -25,6 +25,7 @@ import numpy as np
 from numcodecs import get_codec
 
 from .util import atomic_bytes, atomic_json, digest, file_sha
+from .ct_reader import cache_size,trim_cache
 
 CATALOG = 'https://vesuvius-challenge-open-data.s3.amazonaws.com/metadata.json'
 MISSING_ETAG = 'winding-field:authoritative-404'
@@ -144,6 +145,8 @@ class Volume:
         self._validated = set()
         self._verified_local = {}
         self._ledger = None
+        self._native = None
+        self._transport = 'portable'
         self.db = sqlite3.connect(self.cache/'index.sqlite', timeout=120)
         self.db.execute('CREATE TABLE IF NOT EXISTS cache (key TEXT PRIMARY KEY, size INTEGER, at REAL, etag TEXT, sha TEXT)')
         self.db.commit()
@@ -176,6 +179,20 @@ class Volume:
                              spacing_xyz=self.spacing_xyz, origin_xyz=self.origin_xyz,
                              metadata_sha256=digest([attrs,m]))
         self._namespace = digest(self.identity)
+        # Tiny/zero budgets retain streaming reads of objects larger than the cache.
+        if self.remote and self.limit >= 256 << 20:
+            try:
+                from vc_reader import _reader
+            except ModuleNotFoundError as exc:
+                if exc.name not in ('vc_reader', 'vc_reader._reader'):
+                    raise
+            else:
+                from .ct_reader import EncodedTransport
+                with self._lock():
+                    legacy = self.db.execute('SELECT coalesce(sum(size),0) FROM cache').fetchone()[0]
+                    self._native = EncodedTransport(self.cache/'vc-reader', max(0,self.limit-legacy),
+                                                    offline=self.offline,reserve=self.reserve)
+                self._transport = 'vc_reader.EncodedFiles'
 
     @contextmanager
     def _lock(self):
@@ -185,7 +202,7 @@ class Volume:
 
     def _evict(self, incoming):
         self._flush_accesses()
-        size = self.db.execute('SELECT coalesce(sum(size),0) FROM cache').fetchone()[0]
+        size = self.db.execute('SELECT coalesce(sum(size),0) FROM cache').fetchone()[0] + cache_size(self.cache/'vc-reader')
         for key, n in self.db.execute('SELECT key,size FROM cache ORDER BY at').fetchall():
             if size + incoming <= self.limit:
                 break
@@ -193,6 +210,8 @@ class Volume:
             self.db.execute('DELETE FROM cache WHERE key=?', (key,))
             size -= n
         self.db.commit()
+        if size+incoming>self.limit:
+            trim_cache(self.cache/'vc-reader',max(0,self.limit-incoming))
 
     def _flush_accesses(self):
         # Access times only guide eviction; source-ledger writes remain immediate.
@@ -288,6 +307,7 @@ class Volume:
         if fresh:
             self._decoded.clear();self._decoded_bytes=0
             self._validated.clear();self._verified_local.clear()
+            if self._native is not None:self._native.new_epoch()
         if self._ledger is not None:
             for (key,) in self._ledger.execute('SELECT key FROM chunks'):
                 self._chunk_bytes(key)
@@ -298,6 +318,12 @@ class Volume:
             raw = local.read_bytes()
             sha = hashlib.sha256(raw).hexdigest()
             if self.remote and not self.offline and self._verified_local.get(key) != sha:
+                if self._native is not None:
+                    if self._native_bytes(key) != raw:
+                        raise ValueError('local CT chunk differs from original source: '+key)
+                    self._verified_local[key] = sha
+                    self._stats['local_hits'] += 1
+                    return self._record(key,raw)
                 # S3 single-part ETags are MD5s; a 304 verifies the mirror without a payload download.
                 s3 = (urlparse(self.source).hostname or '').endswith('.s3.amazonaws.com')
                 headers = {'If-None-Match':'"'+hashlib.md5(raw,usedforsecurity=False).hexdigest()+'"'} if s3 else {}
@@ -316,6 +342,9 @@ class Volume:
             raise FileNotFoundError(f'missing local CT chunk (not known air): {key}')
         token = digest([self._namespace,key])
         path = self.cache/token
+        # Reuse verified legacy objects in place; native owns new cache misses.
+        if self._native is not None and not path.exists():
+            return self._record(key,self._native_bytes(key))
         with self._lock():
             record = self.db.execute('SELECT etag,sha FROM cache WHERE key=?', (token,)).fetchone()
             raw = path.read_bytes() if record and path.exists() else None
@@ -353,9 +382,27 @@ class Volume:
             self._validated.add(token)
             return self._record(key,None if etag==MISSING_ETAG else data)
 
+    def _native_bytes(self,key):
+        with self._lock():
+            if not self._native.path(self.source+'/'+key).exists():
+                self._evict(min(self.limit,256<<20))
+            legacy = self.db.execute('SELECT coalesce(sum(size),0) FROM cache').fetchone()[0]
+            self._native.limit = max(0,self.limit-legacy)
+            before = self._native.files.bytes_read
+            hits = self._native.files.cache_hits
+            try:
+                return self._native.read(self.source+'/'+key)
+            finally:
+                received = self._native.files.bytes_read-before
+                self._stats['downloaded_bytes'] += received
+                self._stats['downloads'] += int(received>0)
+                self._stats['cache_hits'] += self._native.files.cache_hits-hits
+
     def _encoded_signature(self,key):
         local=self.local/key if self.local else Path(self.source)/key if not self.remote else None
         path=local if local and local.is_file() else self.cache/digest([self._namespace,key]) if self.remote else local
+        if self._native is not None and not path.exists():
+            path=self._native.path(self.source+'/'+key)
         try:info=path.stat()
         except FileNotFoundError:return path,None
         return path,(info.st_dev,info.st_ino,info.st_size,info.st_mtime_ns,info.st_ctime_ns)
@@ -371,8 +418,11 @@ class Volume:
         if cached is not None:
             array,signature=cached
             if before==signature:
-                self._decoded.move_to_end(key);self._stats['decoded_hits']+=1
-                return array
+                # Filesystems can report identical timestamps for same-tick writes.
+                if self._ledger is not None:self._chunk_bytes(key)
+                if self._encoded_signature(key)==signature:
+                    self._decoded.move_to_end(key);self._stats['decoded_hits']+=1
+                    return array
             self._decoded_bytes-=array.nbytes+512;del self._decoded[key]
         raw=self._chunk_bytes(key)
         if raw is None:return None
@@ -446,7 +496,7 @@ class Volume:
         return result
 
     def stats(self):
-        return dict(self._stats, cache_bytes=self.db.execute('SELECT coalesce(sum(size),0) FROM cache').fetchone()[0],
+        return dict(self._stats, transport=self._transport, cache_bytes=self.db.execute('SELECT coalesce(sum(size),0) FROM cache').fetchone()[0]+cache_size(self.cache/'vc-reader'),
                     decoded_cache_bytes=self._decoded_bytes,pending_accesses=len(self._accesses),
                     backend='portable-zarr-v2')
 
@@ -457,3 +507,4 @@ class Volume:
         finally:
             self.db.close()
             if self._ledger is not None:self._ledger.close()
+            if self._native is not None:self._native.close()
