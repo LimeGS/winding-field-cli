@@ -48,6 +48,32 @@ there is no universal hard RSS/VRAM cap.
 `RUN.json.io` reports downloaded bytes, payload downloads, cache hits, local hits
 and cached payload bytes. Include cache state when comparing timings.
 
+### Bounded Qual CPU execution
+
+Bounded Qual tracing and coverage replay use the pinned Numba kernels with
+globally addressed tile readers. Cached scalar reads stay compiled; a tile miss
+calls the existing Python loader. Each field keeps one bounded LRU cache shared
+by Python and compiled access. Crossing a tile boundary does not restart or clip
+a fibre, and seeds still commit sequentially before their coverage becomes visible.
+Paged spline fitting is compiled serially because the tile caches are mutable.
+
+The numerical reference for new bounded Qual runs is the pinned original
+compiled Numba implementation (accepted November 5, 2026), not the former
+Python rebound kernels. NumPy/Python scalar promotion can round intermediate
+values to float32 where the original Numba kernels use float64. On four saved
+real seeds, paged tracing matched original dense Numba bit for bit; legacy
+Python differed by up to 4.96e-5 in coordinates. The former 1e-5 comparison
+against Python is therefore not a compatibility guarantee or an acceptance
+gate for new runs; it remains a diagnostic, not a relaxed tolerance.
+Regression comparisons use the original compiled kernels. This scoped parity
+does not establish whole-volume equivalence or physical-sheet correctness.
+
+The first use of each compiled signature includes JIT startup; measure warm
+kernel time separately. This accelerates CPU kernels, not model inference or CT
+transport, and does not establish whole-volume feasibility. Existing runs retain
+their implementation fingerprint: use their frozen package to resume, or a new
+output directory for the new implementation.
+
 Install the pinned native transport with `pip install '.[ct]'` (requires a
 compatible C++ build environment). For remote volumes with a cache budget of
 at least 256 MiB, an available native extension enables

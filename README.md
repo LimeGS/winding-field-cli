@@ -149,6 +149,20 @@ winding-field resume "$RUN" --extra-surface-seconds 600
 Already published partial native levels are immutable; extra time does not remap
 them. Inspect status and coverage rather than treating a pause as completion.
 
+If a `--bounded-preparation` field exhausted its sweeps without passing global
+verification, increase its **absolute total** budget (for example, from 4 to 8):
+
+```bash
+winding-field resume "$RUN" --field-sweeps 8
+```
+
+The original configuration stays immutable. At an exhausted sweep boundary, the
+CLI atomically records the budget extension in the checkpoint, preserving all
+field chunks and solver progress. Repeating the same target does not add sweeps;
+lower targets and changes to published fields are rejected. Numerical verification
+still gates publication. The embedded history records previous-state hashes and
+budget changes, not historical copies of every field generation.
+
 </details>
 
 <details>
