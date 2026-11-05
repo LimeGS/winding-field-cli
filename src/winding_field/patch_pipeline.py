@@ -3,7 +3,7 @@
 Registration/weld equations adapted from six-surfaces-opt-20261016/global_sheet.py;
 positive-face recovery from face_recovery.py. No historical wrapper is executed.
 """
-from collections import defaultdict
+from collections import defaultdict, OrderedDict, deque
 from contextlib import contextmanager
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeout
 import heapq
@@ -35,19 +35,19 @@ def settings(request):
     if not isinstance(request,dict):raise ValueError('patch settings must be an object')
     allowed={'output_frame','pitch_um','app_run','max_patch_faces','max_depth','max_charts','tile_size',
              'memory_gib','timeout_seconds','cache_dir','cache_mib','cache_gib','native_recipe',
-             'workers','native_cpus','reuse_export','reuse_identity_sha256','process_tree_gib','disk_reserve_gib'}
+             'workers','raster_workers','native_cpus','reuse_export','reuse_identity_sha256','process_tree_gib','disk_reserve_gib'}
     if set(request)-allowed:raise ValueError('unknown patch settings: '+str(sorted(set(request)-allowed)))
     frame_settings({'output_frame':request.get('output_frame')})
     cfg=dict(pitch_um=19.2,max_patch_faces=4096,max_depth=3,max_charts=4096,tile_size=1024,
              memory_gib=2.,timeout_seconds=120.,cache_mib=64,cache_gib=2.,
-             cache_dir='~/.cache/winding-field/patch-ct',native_recipe='historical',workers=1,
+              cache_dir='~/.cache/winding-field/patch-ct',native_recipe='historical',workers=1,raster_workers=1,
              native_cpus=None,reuse_export=None,reuse_identity_sha256=None,process_tree_gib=11.,disk_reserve_gib=8.)
     cfg.update(request)
     if not isinstance(cfg['native_recipe'],str) or cfg['native_recipe'] not in NATIVE_RECIPES:raise ValueError('unknown native_recipe')
     if not isinstance(cfg.get('app_run'),str) or not cfg['app_run']:raise ValueError('patch app_run required')
     for key in ('pitch_um','memory_gib','timeout_seconds','cache_gib','process_tree_gib','disk_reserve_gib'):
         if type(cfg[key]) not in (int,float) or not math.isfinite(cfg[key]) or cfg[key]<=0:raise ValueError('invalid patch '+key)
-    for key,lo,hi in (('workers',1,4),('max_patch_faces',1,100000),('max_depth',0,16),('max_charts',1,100000),('tile_size',2,2048),('cache_mib',0,8192)):
+    for key,lo,hi in (('workers',1,4),('raster_workers',1,4),('max_patch_faces',1,100000),('max_depth',0,16),('max_charts',1,100000),('tile_size',2,2048),('cache_mib',0,8192)):
         if type(cfg[key]) is not int or not lo<=cfg[key]<=hi:raise ValueError('invalid patch '+key)
     if raster_memory(cfg)>=cfg['memory_gib']*2**30:raise ValueError('patch memory budget cannot hold raster, CT cache and runtime reserve')
     cpus=cfg['native_cpus']
@@ -59,13 +59,17 @@ def settings(request):
     return cfg
 
 
-def raster_memory(cfg):return (cfg['tile_size']+4)**2*160+cfg['cache_mib']*2**20+(128<<20)
+def raster_memory(cfg):
+    pixels=(cfg['tile_size']+4)**2
+    # Eight-corner jobs, concatenation, stable sort and reordered arrays coexist.
+    sampling=min(pixels,100000)*1024
+    return (pixels*160+sampling)*cfg.get('raster_workers',1)+cfg['cache_mib']*2**20+(128<<20)
 
 
 def ct_memory(chunks,dtype,cfg):
     decoded=math.prod(chunks)*np.dtype(dtype).itemsize
     # Native decode + codec workspace + new Python bytes + previous sampler chunk.
-    reserved=4*decoded
+    reserved=4*decoded*cfg.get('raster_workers',1)
     if raster_memory(cfg)+reserved>=cfg['memory_gib']*2**30:
         raise ValueError('CT chunk memory exceeds whole patch memory budget')
     return reserved
@@ -394,45 +398,69 @@ def build_map(vertices,faces,output,*,flatten,max_patch_faces=4096,max_depth=3,m
                 omitted_face_rows=np.asarray(omitted,int),display=eligible,scientific=scientific,report=report)
 
 
-def render_map(mapped,output,sample,frame,*,pitch_um=19.2,tile_size=1024,export_tifxyz=False,guard=lambda:None,binding=None):
+def render_map(mapped,output,sample,frame,*,pitch_um=19.2,tile_size=1024,export_tifxyz=False,guard=lambda:None,binding=None,raster_workers=1):
     from .original_tifxyz import export_xyz
     from PIL import Image
+    if type(raster_workers) is not int or not 1<=raster_workers<=4:raise ValueError('invalid raster_workers')
     output=Path(output);output.mkdir(parents=True,exist_ok=False)
     pitch=pitch_um/frame['voxel_um'];uv=mapped['uv'];faces=mapped['faces']
     totals={k:0 for k in ('CT_observed_pixels','CT_missing_pixels','ambiguous_pixels','black_unmapped_pixels')};tiles=[]
     if not len(faces):return dict(tiles=tiles,**totals,status='EMPTY_UV')
     low,high=uv.min(0),uv.max(0);wh=np.ceil((high-low)/pitch).astype(np.int64)+1
     if (wh<=0).any() or (wh>2**31).any():raise ValueError('patch canvas exceeds integer bounds')
-    # Two-node halo: orphan membership -> adjacent pruned nodes -> incident unsafe cells.
-    for row in range(0,int(wh[1]),tile_size-1):
-        for col in range(0,int(wh[0]),tile_size-1):
-            guard();directory=f'tile-{row:09d}-{col:09d}';root=output/directory;root.mkdir()
-            canvas=dict(width=min(tile_size,int(wh[0])-col),height=min(tile_size,int(wh[1])-row),pitch=pitch,u0=float(low[0]+col*pitch),v_top=float(high[1]-row*pitch))
-            canvas.update(global_u0=float(low[0]),global_v_top=float(high[1]),column_offset=col,row_offset=row)
-            r0,c0=max(0,row-2),max(0,col-2)
-            r1,c1=min(int(wh[1]),row+canvas['height']+2),min(int(wh[0]),col+canvas['width']+2)
-            expanded=dict(canvas,width=c1-c0,height=r1-r0,u0=float(low[0]+c0*pitch),v_top=float(high[1]-r0*pitch),column_offset=c0,row_offset=r0)
-            crop=(slice(row-r0,row-r0+canvas['height']),slice(col-c0,col-c0+canvas['width']))
-            xyz_report={}
-            def capture(xyz,mask,owner):
-                own=owner[crop]
-                np.savez_compressed(root/'mapping.npz',xyz=xyz[crop],mask=mask[crop],source_face_rows=np.where(own>=0,mapped['source_face_rows'][np.maximum(own,0)],-1))
-                if export_tifxyz:
-                    try:xyz_report.update(export_xyz(root/'tifxyz',xyz,mask,faces,uv,mapped['display'],expanded,frame,guard,binding=binding,publish=(crop,canvas)))
-                    except ValueError as error:
-                        if str(error)!='TIFXYZ contains no retained surface cells':raise
-                        xyz_report.update(status='EMPTY_TIFXYZ',reason=str(error))
-            image,mask,report=raster_sheet(mapped['world'],faces,uv,mapped['display'],sample,expanded,
-                window=(0,255),guard=guard,capture=capture,xyz_tolerance=.048/frame['voxel_um'])
-            image,mask=image[crop],mask[crop];report['canvas']=canvas
-            for value,key in enumerate(('black_unmapped_pixels','CT_missing_pixels','CT_observed_pixels','ambiguous_pixels')):report[key]=int((mask==value).sum())
-            report['disconnected_components_translated']=len(mapped.get('report',{}).get('registrations',[]))>1
-            report['patch_repacking']=report['disconnected_components_translated']
-            Image.fromarray(image).save(root/'image.png');Image.fromarray(mask).save(root/'mask.png')
-            for k in totals:totals[k]+=report[k]
-            record=dict(directory=directory,canvas=canvas,rendering=report,tifxyz=xyz_report,
-                        files={str(p.relative_to(root)):file_sha(p) for p in sorted(root.rglob('*')) if p.is_file()})
-            atomic_json(root/'TILE.json',record);tiles.append(record)
+    stopped=threading.Event()
+    def check():
+        if stopped.is_set():raise InterruptedError('raster cancelled')
+        guard()
+    def render_tile(position):
+        row,col=position
+        check();directory=f'tile-{row:09d}-{col:09d}';root=output/directory;root.mkdir()
+        canvas=dict(width=min(tile_size,int(wh[0])-col),height=min(tile_size,int(wh[1])-row),pitch=pitch,u0=float(low[0]+col*pitch),v_top=float(high[1]-row*pitch))
+        canvas.update(global_u0=float(low[0]),global_v_top=float(high[1]),column_offset=col,row_offset=row)
+        # Two-node halo: orphan membership -> adjacent pruned nodes -> incident unsafe cells.
+        r0,c0=max(0,row-2),max(0,col-2)
+        r1,c1=min(int(wh[1]),row+canvas['height']+2),min(int(wh[0]),col+canvas['width']+2)
+        expanded=dict(canvas,width=c1-c0,height=r1-r0,u0=float(low[0]+c0*pitch),v_top=float(high[1]-r0*pitch),column_offset=c0,row_offset=r0)
+        crop=(slice(row-r0,row-r0+canvas['height']),slice(col-c0,col-c0+canvas['width']))
+        xyz_report={}
+        def capture(xyz,mask,owner):
+            own=owner[crop]
+            np.savez_compressed(root/'mapping.npz',xyz=xyz[crop],mask=mask[crop],source_face_rows=np.where(own>=0,mapped['source_face_rows'][np.maximum(own,0)],-1))
+            if export_tifxyz:
+                try:xyz_report.update(export_xyz(root/'tifxyz',xyz,mask,faces,uv,mapped['display'],expanded,frame,check,binding=binding,publish=(crop,canvas)))
+                except ValueError as error:
+                    if str(error)!='TIFXYZ contains no retained surface cells':raise
+                    xyz_report.update(status='EMPTY_TIFXYZ',reason=str(error))
+        image,mask,report=raster_sheet(mapped['world'],faces,uv,mapped['display'],sample,expanded,
+            window=(0,255),guard=check,capture=capture,xyz_tolerance=.048/frame['voxel_um'])
+        image,mask=image[crop],mask[crop];report['canvas']=canvas
+        for value,key in enumerate(('black_unmapped_pixels','CT_missing_pixels','CT_observed_pixels','ambiguous_pixels')):report[key]=int((mask==value).sum())
+        report['disconnected_components_translated']=len(mapped.get('report',{}).get('registrations',[]))>1
+        report['patch_repacking']=report['disconnected_components_translated']
+        Image.fromarray(image).save(root/'image.png');Image.fromarray(mask).save(root/'mask.png')
+        return dict(directory=directory,canvas=canvas,rendering=report,tifxyz=xyz_report,
+                    files={str(p.relative_to(root)):file_sha(p) for p in sorted(root.rglob('*')) if p.is_file()})
+    def publish(record):
+        check();atomic_json(output/record['directory']/'TILE.json',record);tiles.append(record)
+        for k in totals:totals[k]+=record['rendering'][k]
+    positions=iter((row,col) for row in range(0,int(wh[1]),tile_size-1) for col in range(0,int(wh[0]),tile_size-1))
+    if raster_workers==1:
+        for position in positions:publish(render_tile(position))
+    else:
+        with ThreadPoolExecutor(max_workers=raster_workers) as pool:
+            pending=deque()
+            try:
+                for _ in range(raster_workers):
+                    position=next(positions,None)
+                    if position is not None:pending.append(pool.submit(render_tile,position))
+                while pending:
+                    publish(pending.popleft().result())
+                    position=next(positions,None)
+                    if position is not None:pending.append(pool.submit(render_tile,position))
+            except BaseException:
+                stopped.set()
+                for future in pending:future.cancel()
+                raise
     return dict(tiles=tiles,**totals,shape_yx=wh[::-1].tolist(),pitch_um=pitch_um,
                 counts_include_tile_overlap=True,row_direction='decreasing UV v',window=[0,255],sampling='central trilinear',physical_acceptance=False)
 
@@ -502,13 +530,13 @@ def export_mesh(mesh_path,out,volume,request,*,export_tifxyz=False,stop=lambda:F
         from .native_patches import NativeReuse,ResourceGuard
         reuse=NativeReuse(cfg['reuse_export'],cfg['reuse_identity_sha256'],identity) if cfg['reuse_export'] else None
         if reuse:identity['native_reuse']=dict(export=str(reuse.root),identity_sha256=reuse.identity_sha256,inventory=reuse.inventory)
-        resources=ResourceGuard(out,cfg['process_tree_gib'],cfg['disk_reserve_gib']) if cfg['workers']>1 else None
+        resources=ResourceGuard(out,cfg['process_tree_gib'],cfg['disk_reserve_gib']) if max(cfg['workers'],cfg['raster_workers'])>1 else None
         cancelled=threading.Event()
         atomic_json(out/'IDENTITY.json',identity)
         def guard():
             if stop():raise InterruptedError('patch export paused; use a fresh output for retry')
             if resources:resources()
-            required=max(64<<20,cfg['tile_size']**2*128)
+            required=max(64<<20,cfg['tile_size']**2*128*cfg['raster_workers'])+int(cfg['disk_reserve_gib']*2**30)
             if shutil.disk_usage(out).free<required:raise RuntimeError('insufficient disk for next patch tile')
         records=[]
         try:
@@ -546,7 +574,7 @@ def export_mesh(mesh_path,out,volume,request,*,export_tifxyz=False,stop=lambda:F
                 binding=dict(identity=identity,map_sha256=file_sha(target/'map.npz'),slot=level)
                 del v,f,vi,fi,vk,fk,world,embedded,parent,rows
                 rendered=render_map(mapped,target/'render',lambda xyz:volume.sample(xyz,frame),frame,
-                    pitch_um=cfg['pitch_um'],tile_size=cfg['tile_size'],export_tifxyz=export_tifxyz,guard=guard,binding=binding)
+                    pitch_um=cfg['pitch_um'],tile_size=cfg['tile_size'],export_tifxyz=export_tifxyz,guard=guard,binding=binding,raster_workers=cfg['raster_workers'])
                 record=dict(slot=level,semantics=source_identity,mapping=mapped['report'],rendering=rendered,
                             source_geometry=reader.metadata,output_frame=frame,map_sha256=binding['map_sha256'])
                 if source_identity['kind']!='continuous_range':record['saved_level_value']=value
@@ -578,40 +606,62 @@ class PatchCT:
         import sqlite3
         self.volume=Volume(source,voxel_um=voxel_um,level=level,cache=cfg['cache_dir'],cache_bytes=int(cfg['cache_gib']*2**30))
         self.chunks,self.dtype=self.volume.chunks,self.volume.dtype
+        self._lock=threading.RLock();self._chunks=OrderedDict();self._cache_bytes=0
+        self._cache_limit=cfg['cache_mib']*2**20
+        self._cache_path=Path(cfg['cache_dir']).expanduser()
+        self._disk_reserve=int(cfg['disk_reserve_gib']*2**30)
         try:self.chunk_workspace_bytes=ct_memory(self.chunks,self.dtype,cfg)
         except Exception:
             self.volume.close();raise
-        self.db=sqlite3.connect(Path(output)/'ct-chunks.sqlite')
+        self.db=sqlite3.connect(Path(output)/'ct-chunks.sqlite',check_same_thread=False)
         self.db.execute('CREATE TABLE chunks (key TEXT PRIMARY KEY,sha TEXT)')
         try:
             url=self.volume.source.rstrip('/')+('/'+self.volume.array_path if self.volume.array_path else '')
-            self.native=open_zarr(url,threads=1,connections=1,auth=None,memory_cache=cfg['cache_mib']*2**20,
+            self.native=open_zarr(url,threads=1,connections=1,auth=None,memory_cache=0,
                 cache_dir=str(Path(cfg['cache_dir']).expanduser()/'native'),cache_max_bytes=int(cfg['cache_gib']*2**30),
                 compress_cache=False,allow_lossy_cache=False)
             if self.native.meta.raw!=self.volume.metadata:raise ValueError('vc_reader metadata differs')
             self.identity=dict(self.volume.identity,backend='vc_reader',extension_sha256=file_sha(_reader.__file__),
-                               threads=1,memory_cache_bytes=cfg['cache_mib']*2**20,disk_cache_bytes=int(cfg['cache_gib']*2**30),chunk_workspace_bytes=self.chunk_workspace_bytes)
+                               threads=1,memory_cache_bytes=self._cache_limit,memory_cache_owner='verified-python-chunks',
+                               disk_cache_bytes=int(cfg['cache_gib']*2**30),chunk_workspace_bytes=self.chunk_workspace_bytes)
         except Exception:
             self.db.close();self.volume.close();raise
 
-    def sample(self,xyz,frame):
+    def _chunk(self,index):
         import hashlib
-        from .original_recipe import sample_points
-        v=self.volume
-        def chunk(index):
-            key=','.join(map(str,index));raw=self.native._array.load_chunk(list(index)).to_bytes()
+        key=','.join(map(str,index));v=self.volume
+        with self._lock:
+            if key in self._chunks:
+                value=self._chunks.pop(key);self._chunks[key]=value
+                return value
+            needed=math.prod(v.chunks)*v.dtype.itemsize
+            if shutil.disk_usage(self._cache_path).free<self._disk_reserve+2*needed:
+                raise RuntimeError('insufficient CT cache disk reserve')
+            while self._chunks and self._cache_bytes+needed+512>self._cache_limit:
+                _,old=self._chunks.popitem(last=False);self._cache_bytes-=512+(0 if old is None else old.nbytes)
+            raw=self.native._array.load_chunk(list(index)).to_bytes()
+            if raw is not None and len(raw)!=needed:raise ValueError('invalid native CT chunk size')
             sha=None if raw is None else hashlib.sha256(raw).hexdigest()
             saved=self.db.execute('SELECT sha FROM chunks WHERE key=?',(key,)).fetchone()
             if saved is not None and saved[0]!=sha:raise ValueError('CT chunk changed during export: '+key)
             self.db.execute('INSERT OR IGNORE INTO chunks VALUES (?,?)',(key,sha))
-            if raw is None:return None
-            if len(raw)!=math.prod(v.chunks)*v.dtype.itemsize:raise ValueError('invalid native CT chunk size')
-            return np.frombuffer(raw,dtype=v.dtype).reshape(v.chunks,order=v.metadata['order'])
+            value=None if raw is None else np.frombuffer(raw,dtype=v.dtype).reshape(v.chunks,order=v.metadata['order'])
+            if value is not None:value.flags.writeable=False
+            size=512+(0 if value is None else value.nbytes)
+            if size<=self._cache_limit:
+                self._chunks[key]=value;self._cache_bytes+=size
+            return value
+
+    def sample(self,xyz,frame):
+        from .original_recipe import sample_points
+        v=self.volume
         grid=(xyz*frame['voxel_um']+np.asarray(frame['origin_xyz_um'])-v.origin_xyz)/v.spacing_xyz
-        result=sample_points(grid,v.shape,v.chunks,chunk);self.db.commit()
+        result=sample_points(grid,v.shape,v.chunks,self._chunk)
+        with self._lock:self.db.commit()
         return result
 
     def close(self):
+        self._chunks.clear();self._cache_bytes=0
         self.db.close();self.volume.close();self.native.close();self.native=None
 
 

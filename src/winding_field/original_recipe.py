@@ -194,6 +194,20 @@ def _merge(xyz,bounds,owner,mask,rows,cols,points,chart_id,tolerance):
     owner[rows[conflict],cols[conflict]]=-2;xyz[rows[conflict],cols[conflict]]=np.nan
 
 
+def raster_candidates(faces,uv,canvas,guard=lambda:None):
+    """Conservative pixel bounds in bounded batches; keep original IDs and order."""
+    pitch=canvas['pitch'];u0=canvas.get('global_u0',canvas['u0']);top=canvas.get('global_v_top',canvas['v_top'])
+    col=canvas.get('column_offset',0);row=canvas.get('row_offset',0)
+    for start in range(0,len(faces),65536):
+        guard();tri=uv[faces[start:start+65536]]
+        finite=np.isfinite(tri).all((1,2));ids=np.flatnonzero(finite);tri=tri[finite]
+        if not len(ids):continue
+        pixel=np.stack(((tri[:,:,0]-u0)/pitch-col,(top-tri[:,:,1])/pitch-row),axis=-1)
+        lower=np.maximum(0,np.ceil(pixel.min(1)-1e-10))
+        upper=np.minimum([canvas['width']-1,canvas['height']-1],np.floor(pixel.max(1)+1e-10))
+        for index in ids[(lower<=upper).all(1)]:yield start+int(index)
+
+
 def raster_sheet(vertices,faces,uv,eligible,sample,canvas,*,window=(0.,180.),guard=lambda:None,capture=None,xyz_tolerance=.005):
     v,f,uv=np.asarray(vertices,float),np.asarray(faces,np.int64),np.asarray(uv,float)
     width,height=int(canvas['width']),int(canvas['height']);pitch=float(canvas['pitch'])
@@ -204,7 +218,7 @@ def raster_sheet(vertices,faces,uv,eligible,sample,canvas,*,window=(0.,180.),gua
     guard()
     xyz=np.full((height,width,3),np.nan);bounds=np.full((height,width,2,3),np.nan)
     owner=np.full((height,width),-1,np.int32);mask=np.zeros((height,width),np.uint8)
-    for index in range(len(f)):
+    for index in raster_candidates(f,uv,canvas,guard):
         if index%2048==0:guard()
         t=uv[f[index]]
         if not np.isfinite(t).all():continue

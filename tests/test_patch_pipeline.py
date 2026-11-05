@@ -168,6 +168,10 @@ def test_native_ct_positive_weight_missing_and_hash_change(tmp_path):
     import sqlite3
     from types import SimpleNamespace
     ct=object.__new__(p.PatchCT)
+    from collections import OrderedDict
+    import threading
+    ct._lock=threading.RLock();ct._chunks=OrderedDict();ct._cache_bytes=0;ct._cache_limit=0
+    ct._cache_path=tmp_path;ct._disk_reserve=0
     ct.db=sqlite3.connect(tmp_path/'chunks.sqlite');ct.db.execute('CREATE TABLE chunks(key TEXT PRIMARY KEY,sha TEXT)')
     ct.volume=SimpleNamespace(origin_xyz=np.array([20.,30.,40.]),spacing_xyz=np.array([2.,3.,4.]),
         shape=(4,4,4),chunks=(2,2,2),dtype=np.dtype('uint8'),metadata={'order':'C'})
@@ -185,6 +189,32 @@ def test_native_ct_positive_weight_missing_and_hash_change(tmp_path):
     np.testing.assert_allclose(values[:3],[0,3,6]);assert np.isnan(values[3])
     changed=True
     with pytest.raises(ValueError,match='CT chunk changed'):ct.sample(xyz[:1],frame)
+    ct.db.close()
+
+
+def test_native_ct_verified_cache_reuses_and_detects_change_after_eviction(tmp_path,monkeypatch):
+    from collections import OrderedDict
+    from types import SimpleNamespace
+    import sqlite3,threading
+    p=pipeline();ct=object.__new__(p.PatchCT)
+    ct._lock=threading.RLock();ct._chunks=OrderedDict();ct._cache_bytes=0;ct._cache_limit=520
+    ct._cache_path=tmp_path;ct._disk_reserve=0
+    ct.db=sqlite3.connect(tmp_path/'chunks.sqlite');ct.db.execute('CREATE TABLE chunks(key TEXT PRIMARY KEY,sha TEXT)')
+    ct.volume=SimpleNamespace(chunks=(2,2,2),dtype=np.dtype('u1'),metadata={'order':'C'})
+    loads=[];value=[1]
+    def load(index):
+        loads.append(index)
+        return SimpleNamespace(to_bytes=lambda:bytes([value[0]])*8)
+    ct.native=SimpleNamespace(_array=SimpleNamespace(load_chunk=load))
+    a=ct._chunk((0,0,0));b=ct._chunk((0,0,0))
+    assert a is b and len(loads)==1 and not a.flags.writeable
+    ct._chunk((0,0,1));assert ct._cache_bytes<=ct._cache_limit
+    value[0]=2
+    with pytest.raises(ValueError,match='CT chunk changed'):ct._chunk((0,0,0))
+    before=len(loads)
+    monkeypatch.setattr(p.shutil,'disk_usage',lambda path:SimpleNamespace(free=0))
+    with pytest.raises(RuntimeError,match='CT cache disk reserve'):ct._chunk((1,0,0))
+    assert len(loads)==before
     ct.db.close()
 
 
