@@ -98,7 +98,8 @@ def test_exact_resume_matches_uninterrupted_and_allows_reader_budget_changes(tmp
         return cp.exists() and json.loads(cp.read_text())["progress"].get("next_block") == 1
 
     assert workflow().run_field(path, root, stop=stop)["status"] == "CHECKPOINTED_STOP"
-    config["execution"].update(cache_bytes=1024**2, read_workers=2)
+    config["execution"].update(cache_bytes=1024**2, read_workers=2, prepared_cache_bytes=1024**2,
+                               spatial_index_bytes=1024**2, template_cache_policy="stable", status_policy="checkpoints")
     path.write_text(json.dumps(config))
     result = workflow().run_field(path, root, resume=True, prefetch=True)
     full, expected, support = stored(tmp_path / "full")
@@ -107,6 +108,93 @@ def test_exact_resume_matches_uninterrupted_and_allows_reader_budget_changes(tmp
     np.testing.assert_array_equal(observed, support)
     assert actual["progress"]["completed_sweeps"] == full["progress"]["completed_sweeps"]
     assert result["prefetch_parity"] is True
+
+
+def test_cli_prepared_budget_reaches_real_core_and_reuses_workspaces(tmp_path, monkeypatch, capsys):
+    import block_solver
+    import torch
+
+    from winding_field.cli import main
+
+    path, config = prepared(tmp_path, constraints=True)
+    assert workflow().load_run_config(path)["execution"]["prepared_cache_bytes"] == 0
+    workflow().run_field(path, tmp_path / "uncached")
+    config["execution"].update(prepared_cache_bytes=1 << 20, constraint_cache_bytes=0,
+                               spatial_index_bytes=1 << 20, template_cache_policy="stable", status_policy="checkpoints")
+    path.write_text(json.dumps(config))
+    calls = []
+    solve = block_solver.solve_blocks
+
+    def observed(*args, **kwargs):
+        calls.append(kwargs["prepared_cache_bytes"])
+        assert kwargs["status_policy"] == "checkpoints"
+        assert kwargs["constraints"].template_cache_policy == "stable"
+        assert kwargs["constraints"].max_spatial_index_bytes == 1 << 20
+        return solve(*args, **kwargs)
+
+    monkeypatch.setattr(block_solver, "solve_blocks", observed)
+    assert main(["prepared", "build", "--config", str(path), "--output", str(tmp_path / "cached")]) == 0
+    result = json.loads(capsys.readouterr().out)
+    assert calls == [1 << 20]
+    assert result["prepared_cache_stats"]["hits"] > 0
+    assert 0 < result["prepared_cache_stats"]["peak_bytes"] <= 1 << 20
+    assert result["prepared_cache_stats"]["retained_bytes"] == 0
+    assert result["effective_threads"] == torch.get_num_threads()
+    metadata = json.loads((tmp_path / "cached/RUN.json").read_text())
+    assert metadata["effective_threads"] == torch.get_num_threads()
+    before, expected, support = stored(tmp_path / "uncached")
+    after, actual, observed_support = stored(tmp_path / "cached")
+    assert before["identity"] == after["identity"]
+    np.testing.assert_array_equal(actual, expected)
+    np.testing.assert_array_equal(observed_support, support)
+
+
+@pytest.mark.parametrize("value", [-1, True, 1.5, "10", None])
+def test_invalid_prepared_budget_fails_before_output(tmp_path, value):
+    path, config = prepared(tmp_path)
+    config["execution"]["prepared_cache_bytes"] = value
+    path.write_text(json.dumps(config))
+    assert workflow().main(["build", "--config", str(path), "--output", str(tmp_path / "field")]) == 2
+    assert not (tmp_path / "field").exists()
+
+
+@pytest.mark.parametrize("supervised", [False, True])
+def test_spectral_rejected_before_prepared_output(tmp_path, supervised):
+    path, config = prepared(tmp_path)
+    config["solver"]["preconditioner"] = "spectral"
+    path.write_text(json.dumps(config))
+    command = ["build", "--config", str(path), "--output", str(tmp_path / "field")]
+    assert workflow().main(command + (["--supervised"] if supervised else [])) == 2
+    assert not (tmp_path / "field").exists()
+    assert not (tmp_path / "field.service").exists()
+
+
+@pytest.mark.parametrize("change", [{"spatial_index_bytes": -1}, {"spatial_index_bytes": True},
+                                  {"template_cache_policy": "random"}, {"status_policy": "none"}])
+def test_invalid_execution_policies_fail_before_output(tmp_path, change):
+    path, config = prepared(tmp_path)
+    config["execution"].update(change)
+    path.write_text(json.dumps(config))
+    with pytest.raises(ValueError):
+        workflow().run_field(path, tmp_path / "field")
+    assert not (tmp_path / "field").exists()
+
+
+def test_explicit_jacobi_reaches_actual_block_solver(tmp_path, monkeypatch):
+    import block_solver
+    path, config = prepared(tmp_path)
+    config["solver"]["preconditioner"] = "jacobi"
+    path.write_text(json.dumps(config))
+    solve = block_solver.solve_blocks
+    calls = []
+
+    def observed(*args, **kwargs):
+        calls.append(kwargs["preconditioner"])
+        return solve(*args, **kwargs)
+
+    monkeypatch.setattr(block_solver, "solve_blocks", observed)
+    assert workflow().run_field(path, tmp_path / "field")["status"] == "SWEEP_BUDGET_REACHED"
+    assert calls == ["jacobi"]
 
 
 def test_fixed_values_keep_double_precision_and_zero_gauge_is_not_substituted(tmp_path):

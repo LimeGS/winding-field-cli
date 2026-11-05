@@ -77,7 +77,7 @@ def validate_config(config):
     integers={'stride':(1,8),'chunk':(4,128),'field_chunk':(4,256),'level':(0,None),
               'sweeps':(1,None),'maxiter':(1,None),'seed_stride':(1,None),
               'mesh_tile':(1,256),'chart_faces':(1,8192),'threads':(1,None),
-              'cache_bytes':(0,None),'reserve_bytes':(0,None)}
+              'cache_bytes':(0,None),'reserve_bytes':(0,None),'prepared_cache_bytes':(0,None)}
     for name,(low,high) in integers.items():
         if name in config:
             value=config[name]
@@ -89,6 +89,8 @@ def validate_config(config):
                 or (name in ('voxel_um','field_spacing_um','rtol') and value<=0)
                 or (name=='fibre_weight' and value<0)):
             raise ValueError('invalid '+name)
+    if config.get('preconditioner','jacobi')!='jacobi':
+        raise ValueError("block workflows require preconditioner='jacobi'; spectral requires a compatible monolithic solve_field")
     if config.get('levels') is not None:
         if not config['levels'] or not all(math.isfinite(v) for v in config['levels']):
             raise ValueError('levels must be nonempty finite numbers')

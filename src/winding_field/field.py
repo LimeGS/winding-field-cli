@@ -9,6 +9,7 @@ import sqlite3
 from tempfile import TemporaryDirectory
 
 import numpy as np
+import torch
 
 from block_solver import solve_blocks
 from field_constraints import pair_constraints
@@ -107,6 +108,11 @@ def spline_samples(points,low,high,step):
 
 
 def solve(run,config,stop=None):
+    budget=config.get('prepared_cache_bytes',0)
+    if type(budget) is not int or budget<0:
+        raise ValueError('prepared_cache_bytes must be a nonnegative integer')
+    if config.get('preconditioner','jacobi')!='jacobi':
+        raise ValueError("block workflows require preconditioner='jacobi'; spectral requires a compatible monolithic solve_field")
     run=Path(run); meta=json.loads((run/'PREPARED.json').read_bytes())
     fibres=json.loads((run/'FIBRES.json').read_bytes())
     maps=Tiles(run/'maps')
@@ -126,7 +132,9 @@ def solve(run,config,stop=None):
                  order=list(itertools.product(*(range((n-1)//chunk+1) for n in shape))),
                  halo=2,sweeps=config.get('sweeps',4),rtol=config.get('rtol',1e-6),
                  maxiter=config.get('maxiter',2000),dtype='float64',device=config.get('device','cpu'),
-                 cache_bytes=64<<20,reserve_bytes=config.get('reserve_bytes',0))
+                 cache_bytes=64<<20,prepared_cache_bytes=budget,reserve_bytes=config.get('reserve_bytes',0))
+    if 'preconditioner' in config:
+        options['preconditioner']=config['preconditioner']
     db=sqlite3.connect((run/'fibres/fibres.sqlite').resolve().as_uri()+'?mode=ro',uri=True)
     row_count=0
 
@@ -192,9 +200,11 @@ def solve(run,config,stop=None):
                 progress['initialization_done']=True
                 store.save_progress(progress)
         result=solve_blocks(root,shape,chunk,identity,load,resume=True,stop=stop,**options)
+        result['effective_threads']=torch.get_num_threads()
         if result['status']!='SWEEP_BUDGET_REACHED':
             return dict(status='PAUSED',solver=result)
         receipt=dict(status='FIELD_READY',geometry=geometry,checkpoint_sha256=file_sha(checkpoint),
+                     effective_threads=torch.get_num_threads(),
                      calibration=cal,solver=result,global_converged=False,physical_acceptance=False,
                      fibre_constraint_rows=row_count,numerical_status='local solves converged; sweep budget exhausted')
         atomic_json(run/'FIELD.json',receipt)
