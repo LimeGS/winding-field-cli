@@ -134,7 +134,12 @@ def load_run_config(path: str | Path) -> dict[str, Any]:
             if name in config:
                 config[name] = _artifact(config[name], path.parent)
         solver = {"device": "cpu", "dtype": "float64", "rtol": 1e-5, "maxiter": 4000, **config.get("solver", {})}
-        _keys(solver, {"device", "dtype", "rtol", "maxiter"}, "solver")
+        _keys(solver, {"device", "dtype", "rtol", "maxiter", "preconditioner"}, "solver")
+        if solver.get("preconditioner", "jacobi") != "jacobi":
+            raise ValueError(
+                "prepared block workflows require preconditioner='jacobi'; "
+                "spectral requires a compatible monolithic solve_field"
+            )
         if solver["dtype"] not in ("float32", "float64") or solver["device"] not in ("cpu", "cuda:0"):
             raise ValueError("solver requires float32/float64 and cpu or allocated cuda:0")
         positive(solver["rtol"], "rtol")
@@ -149,6 +154,10 @@ def load_run_config(path: str | Path) -> dict[str, Any]:
                 "cache_bytes",
                 "read_workers",
                 "constraint_cache_bytes",
+                "prepared_cache_bytes",
+                "spatial_index_bytes",
+                "template_cache_policy",
+                "status_policy",
                 "max_bytes",
                 "reserve_bytes",
             },
@@ -160,9 +169,18 @@ def load_run_config(path: str | Path) -> dict[str, Any]:
             ("cache_bytes", 0, 0),
             ("read_workers", 1, 1),
             ("constraint_cache_bytes", 0, 0),
+            ("prepared_cache_bytes", 0, 0),
+            ("spatial_index_bytes", 0, 0),
             ("reserve_bytes", 0, 0),
         ):
             execution[name] = _integer(execution.get(name, default), name, minimum)
+        for name, policy_default, choices in (
+            ("template_cache_policy", "lru", ("lru", "stable")),
+            ("status_policy", "all", ("all", "checkpoints")),
+        ):
+            execution[name] = execution.get(name, policy_default)
+            if execution[name] not in choices:
+                raise ValueError("invalid " + name)
         if execution.get("max_bytes") is not None:
             _integer(execution["max_bytes"], "max_bytes")
         if not execution["halo"] and any(n > execution["chunk"] for n in shape):
@@ -246,7 +264,12 @@ def _prepare_run(config: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]
     if "constraints" in config:
         rows = _prepared_artifact(
             config["constraints"],
-            lambda stream: StencilConstraints.load(stream, cache_bytes=execution["constraint_cache_bytes"]),
+            lambda stream: StencilConstraints.load(
+                stream,
+                cache_bytes=execution["constraint_cache_bytes"],
+                spatial_index_bytes=execution["spatial_index_bytes"],
+                template_cache_policy=execution["template_cache_policy"],
+            ),
         )
         if rows.shape != shape:
             raise ValueError("constraint/grid shape differs")
@@ -290,6 +313,7 @@ def _prepare_run(config: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]
         **{k: config[k] for k in ("frame", "voxel_um", "grid", "sheet_step", "calibration")},
         config_path=config["config_path"],
         config_sha256=config["config_sha256"],
+        effective_threads=torch.get_num_threads(),
     )
     options = dict(
         shape=shape,
@@ -305,6 +329,8 @@ def _prepare_run(config: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]
         sweeps=execution["sweeps"],
         **solver,
         cache_bytes=execution["cache_bytes"],
+        prepared_cache_bytes=execution["prepared_cache_bytes"],
+        status_policy=execution["status_policy"],
         read_workers=execution["read_workers"],
         max_bytes=execution.get("max_bytes"),
         reserve_bytes=execution["reserve_bytes"],
@@ -370,7 +396,9 @@ def run_field(
             client = ObservationPrefetch(
                 options["load_observations"], options["shape"], max_bytes=math.prod(window) * 17 + 1024**2
             )
-        return solve_blocks(output, **options, resume=resume, stop=stop, admit=admission, prefetch=client)
+        result = solve_blocks(output, **options, resume=resume, stop=stop, admit=admission, prefetch=client)
+        result["effective_threads"] = metadata["effective_threads"]
+        return result
 
 
 def _supervised(config_path: Path, output: Path, *, resume: bool, prefetch: bool) -> int:

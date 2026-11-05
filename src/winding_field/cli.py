@@ -80,6 +80,8 @@ def main(argv=None):
         p.add_argument('--invalid-value',type=float,help='acquisition fill value to exclude; zero remains valid unless declared')
         p.add_argument('--field-chunk',type=int,default=64,help='field solver block edge in field-grid samples (default: 64)'); p.add_argument('--sweeps',type=int,default=4,help='field solver block sweeps (default: 4)')
         p.add_argument('--maxiter',type=int,default=2000,help='iteration limit per local field solve (default: 2000)'); p.add_argument('--rtol',type=float,default=1e-6,help='relative tolerance of local field solves (default: 1e-6)')
+        p.add_argument('--prepared-cache-bytes',type=int,default=0,help='retained solver workspace budget; callable CT constraints bypass retention (default: 0)')
+        p.add_argument('--preconditioner',choices=['jacobi','spectral'],default=argparse.SUPPRESS,help='default: jacobi; spectral is rejected for block workflows')
         p.add_argument('--seed-stride',type=int,default=8,help='fibre seed grid spacing in observation samples (default: 8)'); p.add_argument('--fibre-weight',type=float,default=1.,help='field solver fibre constraint weight (default: 1)')
         p.add_argument('--levels',nargs='+',type=float,help='winding W isovalues to extract, e.g. --levels -31; not CT pyramid levels'); p.add_argument('--mesh-tile',type=int,default=64,help='mesh extraction tile edge in field-grid cells (default: 64)')
         p.add_argument('--chart-faces',type=int,default=1024,help='native/atlas local chart face budget (default: 1024); not original global flattening'); p.add_argument('--threads',type=int,default=4,help='PyTorch CPU thread count (default: 4); not a global worker limit')

@@ -16,5 +16,5 @@
   },
   "constraints": {"path": "../my-data/constraints.npz", "sha256": "0000000000000000000000000000000000000000000000000000000000000000"},
   "solver": {"device": "cpu", "dtype": "float64", "rtol": 0.000001, "maxiter": 4000},
-  "execution": {"chunk": 32, "halo": 4, "sweeps": 4, "cache_bytes": 0, "read_workers": 1}
+  "execution": {"chunk": 32, "halo": 4, "sweeps": 4, "cache_bytes": 0, "constraint_cache_bytes": 0, "prepared_cache_bytes": 0, "spatial_index_bytes": 0, "template_cache_policy": "lru", "status_policy": "all", "read_workers": 1}
 }

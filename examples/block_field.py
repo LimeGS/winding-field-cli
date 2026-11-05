@@ -144,7 +144,8 @@ def create_case(folder):
             constraints=dict(path="constraints.npz", sha256=sha(folder / "constraints.npz")),
             solver=dict(device="cpu", dtype="float64", rtol=1e-10, maxiter=1000),
             execution=dict(
-                chunk=4, halo=2, sweeps=2, cache_bytes=1 << 20, read_workers=2, constraint_cache_bytes=1 << 20
+                chunk=4, halo=2, sweeps=2, cache_bytes=1 << 20, read_workers=2,
+                constraint_cache_bytes=1 << 20, prepared_cache_bytes=1 << 20
             ),
         ),
     )

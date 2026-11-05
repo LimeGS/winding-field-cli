@@ -6,6 +6,30 @@ constraints, block storage and observation sources. The CLI owns recipes,
 command dispatch, prepared execution, field readers for postprocessing,
 geometric extraction, surface exports and PNG rendering.
 
+The v3 execution controls below require `winding-field-experiments==1.3.0.dev2`.
+Install matching CLI/core wheels together. A CLI-only wheel installed with
+`--no-deps` against a source checkout verifies that adapter, not dependency
+resolution or the final installed-package dependency closure.
+
+Local v3 validation used matching wheels and `pip check` successfully. The core
+pin in `provenance/core.json` is local commit
+`51802c339caedc94c71f1317005ce2697f54a4ea`, with verified module hashes; it has not
+been published, so install the local core wheel alongside this CLI wheel.
+Installed-module paths were checked outside the source tree. The complete installed
+suite passed **1396 tests with 10 skips** (external controls or Linux/CUDA checks),
+and the final core/field/workflow/example gate passed **89 tests**. Installed
+STOP/resume and supervised execution also passed. This functional environment
+used Python 3.11, NumPy 2.4.6, SciPy 1.17.1 and Torch 2.15.0.
+
+Lint/format are not clean baseline gates: under the available user Ruff config,
+the whole CLI reports 1641 findings and 130 files needing format. The seven touched
+Python files retain exactly their prior 89 findings and seven format failures;
+unrelated files were not reformatted. Scoped mypy passes for the four changed
+production modules. Build/wheel checks pass. Raw logs and installed-example
+artifacts live in the sibling research workspace's `artifacts/perf-v3-20261104/`;
+solver timing tables and reproduction commands are in the core's
+`docs/PERFORMANCE_V3.md`, using its separately recorded one-thread environment.
+
 ## Build and resume a prepared field
 
 ```bash
@@ -45,10 +69,42 @@ These commands accept prepared observations, not raw CT or prediction manifests.
   be finite and weights positive even where observed is false. Unsupported is
   not a measured zero or a physical boundary anchor.
 - `execution.chunk`, `halo`, `sweeps`; multiple cores require positive halo.
-  Optional `cache_bytes=0`, `read_workers=1`, `constraint_cache_bytes=0`,
+  Optional `cache_bytes=0`, `read_workers=1`, `constraint_cache_bytes=0`, `prepared_cache_bytes=0`,
   `reserve_bytes=0`, `max_bytes=null` retain the library's resource controls.
 - Optional `solver`: `device="cpu"`, `dtype="float64"`, `rtol=1e-5`,
-  `maxiter=4000`; float32 also supported.
+  `maxiter=4000`, `preconditioner="jacobi"`; float32 also supported. All CLI field
+  workflows use block solves with arbitrary fixed masks, so `"spectral"` is
+  rejected before output creation. Spectral is available only through the core's
+  compatible monolithic `solve_field` API, not these workflows.
+
+The nonnegative integer byte budgets have independent owners:
+
+| Execution setting | Retained data | Owner |
+| --- | --- | --- |
+| `cache_bytes` | decoded field storage blocks | `BlockStore` |
+| `constraint_cache_bytes` | restriction templates | `StencilConstraints` |
+| `prepared_cache_bytes` | static solver workspaces (CPU/device) | `solve_blocks` |
+| `spatial_index_bytes` | optional constraint spatial index | `StencilConstraints` |
+
+Zero disables the respective cache. These are retention limits, not total RAM,
+VRAM or transient allocator peaks. Prepared retention supports absent constraints
+or resident `StencilConstraints`, checks live observations/receipts on every visit,
+and refreshes exterior targets and fixed values. It is released on exit, never
+checkpointed, and its budget may change on direct resume without changing problem
+identity. The CT pipeline's callable fibre constraints bypass prepared retention;
+`--prepared-cache-bytes` does not make that provider immutable.
+
+Prepared execution also accepts `template_cache_policy="lru"` (default) or
+`"stable"` for restriction-template admission, and `status_policy="all"` (default)
+or `"checkpoints"` to reduce intermediate status publication. These settings and
+`spatial_index_bytes=0` are independent of the prepared-workspace budget and are
+excluded from prepared problem identity; direct resume may change them.
+
+The CLI records `effective_threads` (PyTorch intra-op threads) in prepared
+`RUN.json` at initial admission and in each returned result; the CT workflow also
+records it in `FIELD.json`. It is diagnostic, not a global worker limit or a core
+solver setting. Prepared runs inherit PyTorch's thread configuration (for example
+`OMP_NUM_THREADS=4`); the CT CLI's existing `--threads` sets it.
 
 Optional `fixed` pins a float32/float64 ZYX NPY: finite values are exact fixed
 nodes, NaN means free. Without finite anchors the first node fixes the numerical
