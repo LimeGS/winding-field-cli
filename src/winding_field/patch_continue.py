@@ -84,7 +84,7 @@ def continue_export(source,mesh,output,*,identity_sha256,overrides,stop=lambda:F
     source=Path(source).resolve();mesh=Path(mesh).resolve();output=Path(output).resolve()
     for original in (source,mesh):
         if output==original or output in original.parents or original in output.parents:raise ValueError('continuation requires disjoint output')
-    if set(overrides)-{'cache_dir','cache_mib','cache_gib','memory_gib','raster_workers','process_tree_gib','disk_reserve_gib'}:
+    if set(overrides)-{'cache_dir','cache_mib','cache_gib','memory_gib','raster_workers','ct_workers','process_tree_gib','disk_reserve_gib'}:
         raise ValueError('continuation cannot change geometric settings')
     if file_sha(source/'IDENTITY.json')!=identity_sha256:raise ValueError('source identity differs')
     previous=json.loads((source/'IDENTITY.json').read_text())
