@@ -9,7 +9,7 @@ from itertools import product
 import numpy as np
 
 
-def sample_points(xyz,shape,chunks,chunk):
+def sample_points(xyz,shape,chunks,chunk,*,prefetch=None):
     """Frozen positive-weight trilinear accumulation; chunk returns array or None."""
     xyz=np.asarray(xyz)
     if xyz.ndim!=2 or xyz.shape[1]!=3 or len(xyz)>100000:raise ValueError('expected <=100000 XYZ points')
@@ -30,7 +30,10 @@ def sample_points(xyz,shape,chunks,chunk):
         order=np.argsort(keys,kind='stable')
         keys,targets,offsets,weights=[a[order] for a in (keys,targets,offsets,weights)]
         cuts=np.r_[0,np.flatnonzero(np.diff(keys))+1,len(keys)]
-        for a,b in zip(cuts[:-1],cuts[1:]):
+        for position,(a,b) in enumerate(zip(cuts[:-1],cuts[1:])):
+            if prefetch is not None and position%4==0:
+                batch=[int(keys[start]) for start in cuts[position: min(position+4,len(cuts)-1)]]
+                prefetch([(k//int(grid[1]*grid[2]),k//int(grid[2])%int(grid[1]),k%int(grid[2])) for k in batch])
             key=int(keys[a]);index=(key//int(grid[1]*grid[2]),key//int(grid[2])%int(grid[1]),key%int(grid[2]))
             data=chunk(index)
             if data is None:valid[targets[a:b]]=False

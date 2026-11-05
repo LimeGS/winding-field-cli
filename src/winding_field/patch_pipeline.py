@@ -5,7 +5,7 @@ positive-face recovery from face_recovery.py. No historical wrapper is executed.
 """
 from collections import defaultdict, OrderedDict, deque
 from contextlib import contextmanager
-from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeout
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeout, wait
 import heapq
 import json
 import math
@@ -35,19 +35,19 @@ def settings(request):
     if not isinstance(request,dict):raise ValueError('patch settings must be an object')
     allowed={'output_frame','pitch_um','app_run','max_patch_faces','max_depth','max_charts','tile_size',
              'memory_gib','timeout_seconds','cache_dir','cache_mib','cache_gib','native_recipe',
-             'workers','raster_workers','native_cpus','reuse_export','reuse_identity_sha256','process_tree_gib','disk_reserve_gib'}
+             'workers','raster_workers','ct_workers','native_cpus','reuse_export','reuse_identity_sha256','process_tree_gib','disk_reserve_gib'}
     if set(request)-allowed:raise ValueError('unknown patch settings: '+str(sorted(set(request)-allowed)))
     frame_settings({'output_frame':request.get('output_frame')})
     cfg=dict(pitch_um=19.2,max_patch_faces=4096,max_depth=3,max_charts=4096,tile_size=1024,
              memory_gib=2.,timeout_seconds=120.,cache_mib=64,cache_gib=2.,
-              cache_dir='~/.cache/winding-field/patch-ct',native_recipe='historical',workers=1,raster_workers=1,
+              cache_dir='~/.cache/winding-field/patch-ct',native_recipe='historical',workers=1,raster_workers=1,ct_workers=1,
              native_cpus=None,reuse_export=None,reuse_identity_sha256=None,process_tree_gib=11.,disk_reserve_gib=8.)
     cfg.update(request)
     if not isinstance(cfg['native_recipe'],str) or cfg['native_recipe'] not in NATIVE_RECIPES:raise ValueError('unknown native_recipe')
     if not isinstance(cfg.get('app_run'),str) or not cfg['app_run']:raise ValueError('patch app_run required')
     for key in ('pitch_um','memory_gib','timeout_seconds','cache_gib','process_tree_gib','disk_reserve_gib'):
         if type(cfg[key]) not in (int,float) or not math.isfinite(cfg[key]) or cfg[key]<=0:raise ValueError('invalid patch '+key)
-    for key,lo,hi in (('workers',1,4),('raster_workers',1,4),('max_patch_faces',1,100000),('max_depth',0,16),('max_charts',1,100000),('tile_size',2,2048),('cache_mib',0,8192)):
+    for key,lo,hi in (('workers',1,4),('raster_workers',1,4),('ct_workers',1,4),('max_patch_faces',1,100000),('max_depth',0,16),('max_charts',1,100000),('tile_size',2,2048),('cache_mib',0,8192)):
         if type(cfg[key]) is not int or not lo<=cfg[key]<=hi:raise ValueError('invalid patch '+key)
     if raster_memory(cfg)>=cfg['memory_gib']*2**30:raise ValueError('patch memory budget cannot hold raster, CT cache and runtime reserve')
     cpus=cfg['native_cpus']
@@ -69,7 +69,7 @@ def raster_memory(cfg):
 def ct_memory(chunks,dtype,cfg):
     decoded=math.prod(chunks)*np.dtype(dtype).itemsize
     # Native decode + codec workspace + new Python bytes + previous sampler chunk.
-    reserved=4*decoded*cfg.get('raster_workers',1)
+    reserved=4*decoded*(cfg.get('raster_workers',1)+(cfg.get('ct_workers',1) if cfg.get('ct_workers',1)>1 else 0))
     if raster_memory(cfg)+reserved>=cfg['memory_gib']*2**30:
         raise ValueError('CT chunk memory exceeds whole patch memory budget')
     return reserved
@@ -627,10 +627,11 @@ class PatchCT:
         self.db.execute('CREATE TABLE chunks (key TEXT PRIMARY KEY,sha TEXT)')
         try:
             url=self.volume.source.rstrip('/')+('/'+self.volume.array_path if self.volume.array_path else '')
-            self.native=open_zarr(url,threads=1,connections=1,auth=None,memory_cache=0,
+            self.native=open_zarr(url,threads=1,connections=cfg['ct_workers'],auth=None,memory_cache=0,
                 cache_dir=str(Path(cfg['cache_dir']).expanduser()/'native'),cache_max_bytes=int(cfg['cache_gib']*2**30),
                 compress_cache=False,allow_lossy_cache=False)
             if self.native.meta.raw!=self.volume.metadata:raise ValueError('vc_reader metadata differs')
+            self._ct_pool=ThreadPoolExecutor(max_workers=cfg['ct_workers']) if cfg['ct_workers']>1 else None
             self.identity=dict(self.volume.identity,backend='vc_reader',extension_sha256=file_sha(_reader.__file__),
                                threads=1,memory_cache_bytes=self._cache_limit,memory_cache_owner='verified-python-chunks',
                                disk_cache_bytes=int(cfg['cache_gib']*2**30),chunk_workspace_bytes=self.chunk_workspace_bytes)
@@ -662,15 +663,34 @@ class PatchCT:
                 self._chunks[key]=value;self._cache_bytes+=size
             return value
 
+    def _prefetch(self,indices):
+        # Publish bounded batches to SSD; the scalar demand path still verifies every hash.
+        with self._lock:
+            missing=[index for index in indices if ','.join(map(str,index)) not in self._chunks]
+            needed=math.prod(self.volume.chunks)*self.volume.dtype.itemsize
+            if missing and shutil.disk_usage(self._cache_path).free<self._disk_reserve+2*needed*len(missing):
+                raise RuntimeError('insufficient CT cache disk reserve')
+            def fetch(index):
+                self.native._array.load_chunk(list(index))
+                if not self.native._array.publish_chunk(list(index)):raise RuntimeError('CT prefetch publication failed')
+            futures=[self._ct_pool.submit(fetch,index) for index in missing]
+            try:
+                for future in futures:future.result()
+            finally:
+                for future in futures:future.cancel()
+                # Do not release shared cache access while a failed batch still writes.
+                wait(futures)
+
     def sample(self,xyz,frame):
         from .original_recipe import sample_points
         v=self.volume
         grid=(xyz*frame['voxel_um']+np.asarray(frame['origin_xyz_um'])-v.origin_xyz)/v.spacing_xyz
-        result=sample_points(grid,v.shape,v.chunks,self._chunk)
+        result=sample_points(grid,v.shape,v.chunks,self._chunk,prefetch=self._prefetch if getattr(self,'_ct_pool',None) else None)
         with self._lock:self.db.commit()
         return result
 
     def close(self):
+        if getattr(self,'_ct_pool',None):self._ct_pool.shutdown(wait=True,cancel_futures=True)
         self._chunks.clear();self._cache_bytes=0
         self.db.close();self.volume.close();self.native.close();self.native=None
 
