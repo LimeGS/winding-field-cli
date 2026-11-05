@@ -69,6 +69,8 @@ def main(argv=None):
         p.add_argument('--roi',nargs=6,type=int,metavar=('Z0','Z1','Y0','Y1','X0','X1'),help='half-open CT voxel bounds at the selected pyramid level; default: whole volume')
         p.add_argument('--stride',type=int,default=1,help='CT observation sampling step; keep 1 for fine inference')
         p.add_argument('--field-spacing-um',type=float,help='exact isotropic field pitch in micrometres; default: observation pitch')
+        p.add_argument('--bounded-preparation',action='store_true',help='recompute native Lasagna/Qual windows; retain endpoint-aligned coarse observations and global fibres')
+        p.add_argument('--bounded-gib',type=float,default=12.,help='bounded producer retained/scratch allowance, excluding CT cache and disk reserve (default: 12 GiB)')
         p.add_argument('--chunk',type=int,default=64,help='observation tile edge in sampled voxels (default: 64)')
         p.add_argument('--prediction',choices=['classical','sd2','qual-v2'],default='qual-v2',help='fibre predictor (default: qual-v2); learned predictors use Lasagna surfaces, classical uses CT intensity')
         p.add_argument('--model-path',help='local checkpoint for the selected fibre predictor'); p.add_argument('--device',default='cpu',help='PyTorch prediction/field device, e.g. cpu or cuda (default: cpu)')
@@ -97,6 +99,7 @@ def main(argv=None):
         p=sub.add_parser(command,help='continue or inspect an existing run')
         p.add_argument('run')
         if command=='resume':
+            p.add_argument('--field-sweeps',type=int,help='absolute total sweep budget for an unpublished bounded field; retries do not add sweeps')
             p.add_argument('--extra-surface-seconds',type=float,default=0.,help='explicit extra native budget; original elapsed/target retained')
     p=sub.add_parser('tifxyz',help='experimental direct export of an existing field; Linux runtime')
     p.add_argument('field_run',help='existing run directory containing the field'); p.add_argument('--output',required=True,help='direct-field TIFXYZ export directory')
@@ -189,7 +192,7 @@ def main(argv=None):
             if config.get('lasagna_python'):
                 # Resolving the venv executable symlink would select the base interpreter.
                 config['lasagna_python']=str(Path(config['lasagna_python']).expanduser().absolute())
-            for key in ('cache','reserve'):
+            for key in ('cache','reserve','bounded'):
                 value=config.pop(key+'_gib')
                 if not 0<=value<=1e6:
                     raise ValueError('invalid storage budget')
@@ -279,7 +282,8 @@ def main(argv=None):
                     result=dict(state,native_progress=json.loads(progress.read_bytes()))
             else:
                 result=run(state['config'],resume=True,until=None if args.command=='resume' else args.command,
-                           extra_surface_seconds=getattr(args,'extra_surface_seconds',0.))
+                           extra_surface_seconds=getattr(args,'extra_surface_seconds',0.),
+                           field_sweeps=getattr(args,'field_sweeps',None))
         print(json.dumps(result,indent=2,allow_nan=False))
         if native:
             native_result=result.get('native_result',result)

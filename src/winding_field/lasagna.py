@@ -166,7 +166,7 @@ def prepare(volume,run,config,geometry,stop=None):
     identity=dict(source=volume.identity,geometry=geometry,input=staged,runtime=runtime,
         checkpoint_sha256=LASAGNA_MODEL_SHA,worker_sha256=file_sha(worker),
         invalid_value=config.get('invalid_value'),tile=TILE,overlap=32,border=BORDER,
-        device=config.get('device','cpu'),precision='float32-cpu/bfloat16-cuda',output_scaledown=1)
+        device=config.get('device','cpu'),precision='float32-cpu-preampere/bfloat16-ampere',output_scaledown=1)
     run=Path(run); root=run/'lasagna-source'; root.mkdir(parents=True,exist_ok=True)
     bind(root/'IDENTITY.json',identity)
     validate_retained(run,config)
