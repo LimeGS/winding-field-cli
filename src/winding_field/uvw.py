@@ -3,7 +3,7 @@
 The ODE is dX/dW = grad(W)/|grad(W)|². Checks are local and sampled:
 neither an accepted point nor a raster certifies global invertibility.
 """
-from dataclasses import dataclass
+from dataclasses import dataclass,replace
 import itertools
 
 import numpy as np
@@ -89,7 +89,7 @@ def transport(field,xyz_um,target_w,settings=None,*,stop=None):
     cause=np.full(n,'',dtype='<U24');cause[~valid]='invalid_field'
     zero=valid&(norm<=1e-12/h);cause[zero]='zero_gradient';valid&=~zero
     bad=~np.isfinite(target);cause[bad]='invalid_target';valid&=~bad
-    steps=np.zeros(n,np.int32);scale=np.ones(n);residual=np.full(n,np.nan)
+    steps=np.zeros(n,np.int32);scale=np.ones(n);residual=np.full(n,np.nan);integration_error=np.zeros(n)
     def velocity(p):
         w,grad,ok=sample_w_gradient(field,p);square=np.sum(grad*grad,axis=1)
         ok&=np.isfinite(square)&(square>(1e-12/h)**2)
@@ -128,13 +128,15 @@ def transport(field,xyz_um,target_w,settings=None,*,stop=None):
             failed=ids[selected[~good]];valid[failed]=False;cause[failed]='unsupported_path'
             selected=selected[good];take=ids[selected]
             x[take]=fine[selected];value[take]=wnew[selected];norm[take]=np.linalg.norm(gnew[selected],axis=1)
+            integration_error[take]+=4*error[selected]
             steps[take]+=1;scale[take]=np.minimum(1.,scale[take]*np.where(error[selected]<atol/8,2.,1.))
             nonfinite=~np.isfinite(norm[take]);valid[take[nonfinite]]=False;cause[take[nonfinite]]='invalid_field'
             zero=norm[take]<=1e-12/h;valid[take[zero]]=False;cause[take[zero]]='zero_gradient'
     residual[valid]=abs(target[valid]-value[valid])/norm[valid]
     failed=valid&(residual>cfg.residual_fraction*h);valid[failed]=False;cause[failed]='nonconvergence'
     x[~valid]=np.nan
-    return x,valid,dict(cause=cause,normal_residual_um=residual,steps=steps)
+    return x,valid,dict(cause=cause,normal_residual_um=residual,steps=steps,
+        position_error_um=integration_error+residual)
 
 
 class Reference:
@@ -159,6 +161,10 @@ class Reference:
             if display.shape!=(len(self.faces),):raise ValueError('invalid reference display mask')
             self.face_valid&=display.astype(bool)
         self.normal=normal
+        # Compact vertex-to-face connectivity; no Python object per mesh edge/vertex.
+        order=np.argsort(self.faces.ravel(),kind='stable')
+        self.vertex_faces=order//3
+        self.vertex_face_offsets=np.r_[0,np.cumsum(np.bincount(self.faces.ravel(),minlength=len(self.world)))]
         self._indices=[]
         for triangles in (self.uvtri,self.tri):
             centers=triangles.mean(1);radii=np.linalg.norm(triangles-centers[:,None],axis=2).max(1)
@@ -170,12 +176,13 @@ class Reference:
         if len(ids):ids=ids[np.linalg.norm(tree.data[ids]-point,axis=1)<=radii[ids]+tolerance]
         return ids[self.face_valid[ids]]
 
-    def locate_uv(self,uv,*,with_faces=False):
+    def locate_uv(self,uv,*,with_faces=False,with_provenance=False):
         uv=_points(uv,2);xyz=np.full((len(uv),3),np.nan);valid=np.zeros(len(uv),bool)
         owner=np.zeros(len(uv),np.int64)
+        barycentric=np.full((len(uv),3),np.nan)
         for i,p in enumerate(uv):
             if not np.isfinite(p).all():continue
-            ids=self.candidates(p,tolerance=1e-9)
+            ids=np.sort(self.candidates(p,tolerance=1e-9))
             if not len(ids):continue
             tri=self.uvtri[ids];matrix=np.stack((tri[:,1]-tri[:,0],tri[:,2]-tri[:,0]),axis=2)
             ab=np.linalg.solve(matrix,(p-tri[:,0])[...,None])[...,0]
@@ -183,12 +190,20 @@ class Reference:
             candidates=np.einsum('ni,nij->nj',weights[inside],self.tri[ids[inside]])
             if len(candidates) and np.max(np.linalg.norm(candidates-candidates[0],axis=1))<1e-7:
                 xyz[i]=candidates[0];valid[i]=True;owner[i]=ids[inside][0]
+                barycentric[i]=weights[inside][0]
+        if with_provenance:return xyz,valid,dict(face=np.where(valid,owner,-1),barycentric=barycentric)
         return (xyz,valid,owner) if with_faces else (xyz,valid)
 
 
-def reference_points(reference,field,uv,*,stop=None):
+def correspondence_transport(field,xyz,target,settings,*,stop=None):
+    # Resolve mesh-edge correspondence more tightly than the physical acceptance bounds.
+    return transport(field,xyz,target,replace(settings,error_fraction=min(settings.error_fraction,1e-10)),stop=stop)
+
+
+def reference_points(reference,field,uv,*,stop=None,with_provenance=False):
     """Admit small original extraction residuals, then project along the same flow."""
-    raw,valid,owner=reference.locate_uv(uv,with_faces=True);h=float(min(field.spacing_um));cfg=reference.settings
+    raw,valid,provenance=reference.locate_uv(uv,with_provenance=True)
+    owner=np.maximum(provenance['face'],0);h=float(min(field.spacing_um));cfg=reference.settings
     values,g,ok=sample_w_gradient(field,raw);norm=np.linalg.norm(g,axis=1)
     valid&=ok&(norm>1e-12/h)&(abs(values-reference.w)<=cfg.projection_fraction*h*norm)
     normals=reference.normal[owner]
@@ -196,11 +211,11 @@ def reference_points(reference,field,uv,*,stop=None):
     xyz=np.full_like(raw,np.nan)
     ids=np.flatnonzero(valid)
     if len(ids):
-        moved,ok,_=transport(field,raw[ids],reference.w,cfg,stop=stop)
+        moved,ok,_=correspondence_transport(field,raw[ids],reference.w,cfg,stop=stop)
         ok&=np.linalg.norm(moved-raw[ids],axis=1)<=cfg.projection_fraction*h
         xyz[ids]=moved;valid[ids]&=ok
     xyz[~valid]=np.nan
-    return xyz,valid
+    return (xyz,valid,provenance) if with_provenance else (xyz,valid)
 
 
 def _forward(reference,field,uvw,*,stop=None):
@@ -208,8 +223,8 @@ def _forward(reference,field,uvw,*,stop=None):
     if reference.band is not None:valid&=(uvw[:,2]>=reference.band[0])&(uvw[:,2]<=reference.band[1])
     ids=np.flatnonzero(valid)
     if len(ids):
-        moved,ok,_=transport(field,xyz[ids],uvw[ids,2],reference.settings,stop=stop)
-        back,back_ok,_=transport(field,moved,reference.w,reference.settings,stop=stop)
+        moved,ok,_=correspondence_transport(field,xyz[ids],uvw[ids,2],reference.settings,stop=stop)
+        back,back_ok,_=correspondence_transport(field,moved,reference.w,reference.settings,stop=stop)
         ok&=back_ok&(np.linalg.norm(back-xyz[ids],axis=1)<=reference.settings.roundtrip_fraction*min(field.spacing_um))
         xyz[ids]=moved;valid[ids]&=ok
     xyz[~valid]=np.nan
@@ -232,39 +247,15 @@ def _triangle_distance(point,triangles):
     return distance
 
 
-def _affine_neighborhood(field,points,radius):
-    """Certify straight flow only when all enclosing supported cells have identical edge slopes."""
-    grid=(points-field.origin_um)/field.spacing_um;extent=radius/field.spacing_um
-    shape=np.array(field.shape[::-1]);low=grid-extent;high=grid+extent
-    inside=((low>=0)&(high<=shape-1)).all(1)
-    lo=np.clip(np.floor(low).astype(np.int64),0,shape-2);hi=np.clip(np.floor(high).astype(np.int64),0,shape-2)
-    inside&=(hi-lo<=1).all(1)
-    corners=np.concatenate([np.where(bits,hi,lo)[:,::-1] for bits in itertools.product((0,1),repeat=3)])
-    cells,inverse=np.unique(corners,axis=0,return_inverse=True)
-    affine=np.zeros(len(cells),bool);slopes=np.zeros((len(cells),3))
-    for start in range(0,len(cells),16384):
-        values,support=field.read_cells(cells[start:start+16384]);ok=support&np.isfinite(values).all((1,2,3))
-        for axis in range(3):
-            edges=np.diff(values,axis=axis+1).reshape(len(values),-1)
-            ok&=np.isfinite(edges).all(1)&(edges==edges[:,:1]).all(1)
-            slopes[start:start+len(values),axis]=edges[:,0]
-        affine[start:start+len(values)]=ok
-    gradients=slopes[inverse].reshape(8,len(points),3)
-    return inside&affine[inverse].reshape(8,-1).all(0)&(gradients==gradients[:1]).all((0,2))
-
-
-def _inverse(reference,field,xyz_um,*,stop=None):
-    """Shared ambiguity admission, without calls to the public forward API.
-
-    A nearby triangle missed by the straight normal is unresolved under curved
-    flow, not absent. Reject it unless the surrounding field is certified affine.
-    """
+def _inverse(reference,field,xyz_um,*,stop=None,with_details=False):
+    """Shared curved-flow branch admission, without recursive public API calls."""
+    from .uvw_intersections import trajectory_hits
     xyz=_points(xyz_um);w,g,valid=sample_w_gradient(field,xyz)
     if reference.band is not None:valid&=(w>=reference.band[0])&(w<=reference.band[1])
-    base,ok,_=transport(field,xyz,reference.w,reference.settings,stop=stop);valid&=ok
-    _,gradient,ok=sample_w_gradient(field,base);valid&=ok
-    result=np.full_like(xyz,np.nan);h=float(min(field.spacing_um));tolerance=reference.settings.projection_fraction*h
+    base,ok,back_info=correspondence_transport(field,xyz,reference.w,reference.settings,stop=stop);valid&=ok
+    result=np.full_like(xyz,np.nan);h=float(min(field.spacing_um))
     found=np.zeros(len(xyz),bool);ambiguous=found.copy();unresolved=found.copy();pending=[];owners=[]
+    cause=np.full(len(xyz),'invalid_field',dtype='<U24');cause[valid]='reference_domain'
     def check_candidates():
         if not pending:return
         candidates=np.concatenate(pending);indices=np.concatenate(owners)
@@ -279,31 +270,22 @@ def _inverse(reference,field,xyz_um,*,stop=None):
         pending.clear();owners.clear()
     for i in np.flatnonzero(valid):
         if stop and stop():raise InterruptedError('UVW inverse paused')
-        direction=gradient[i]/np.linalg.norm(gradient[i]);ids=reference.candidates(base[i],True,tolerance)
-        ids=ids[_triangle_distance(base[i],reference.tri[ids])<=tolerance+1e-9]
-        nearby_ids=ids.copy()
-        tri=reference.tri[ids];normal=reference.normal[ids];den=normal@direction
-        transverse=abs(den)>1e-8*np.linalg.norm(normal,axis=1)
-        tri=tri[transverse];ids=ids[transverse];normal=normal[transverse];den=den[transverse]
-        distance=np.einsum('ij,ij->i',normal,tri[:,0]-base[i])/den
-        nearby=abs(distance)<=tolerance+1e-9;tri=tri[nearby];ids=ids[nearby];distance=distance[nearby]
-        if not len(ids):valid[i]=False;continue
-        hit=base[i]+distance[:,None]*direction
-        a=tri[:,1]-tri[:,0];b=tri[:,2]-tri[:,0];d=hit-tri[:,0]
-        aa=np.sum(a*a,1);bb=np.sum(b*b,1);ab=np.sum(a*b,1);ad=np.sum(a*d,1);bd=np.sum(b*d,1)
-        determinant=aa*bb-ab*ab
-        s=(bb*ad-ab*bd)/determinant;t=(aa*bd-ab*ad)/determinant
-        weights=np.column_stack((1-s-t,s,t));inside=(weights>=-1e-8).all(1)
-        unresolved[i]=not np.isin(nearby_ids,ids[inside]).all()
-        uv=np.einsum('ni,nij->nj',weights[inside],reference.uvtri[ids[inside]])
+        hits,resolved=trajectory_hits(reference,field,base[i],stop=stop,uncertainty_um=back_info['position_error_um'][i])
+        if not resolved:valid[i]=False;cause[i]='reference_unresolved';continue
+        uv=[]
+        for face,weights,point in hits:
+            candidate=weights@reference.uvtri[face]
+            if not any(np.linalg.norm(candidate-previous)<=1e-6 for previous in uv):uv.append(candidate)
         candidates=np.column_stack((uv,np.full(len(uv),w[i])))
         if len(candidates):
             pending.append(candidates);owners.append(np.full(len(candidates),i,np.int64))
         if sum(len(p) for p in pending)>=4096:check_candidates()
-    check_candidates();valid&=found&~ambiguous
-    ids=np.flatnonzero(valid&unresolved)
-    if len(ids):valid[ids]&=_affine_neighborhood(field,base[ids],tolerance)
+    check_candidates();valid&=found&~ambiguous&~unresolved
+    cause[unresolved]='reference_unresolved';cause[ambiguous]='reference_ambiguous';cause[valid]='valid'
     result[~valid]=np.nan
+    if with_details:
+        _,_,provenance=reference.locate_uv(result[:,:2],with_provenance=True)
+        return result,valid,dict(provenance,cause=cause)
     return result,valid
 
 
@@ -311,11 +293,12 @@ def uvw_to_xyz(reference,field,uvw,*,stop=None):
     """Forward transport with the same ambiguity admission as the inverse/exporter."""
     xyz,valid=_forward(reference,field,uvw,stop=stop);ids=np.flatnonzero(valid)
     if len(ids):
-        _,unique=_inverse(reference,field,xyz[ids],stop=stop);valid[ids]&=unique
+        recovered,unique=_inverse(reference,field,xyz[ids],stop=stop)
+        valid[ids]&=unique&(np.linalg.norm(recovered[:,:2]-np.asarray(uvw)[ids,:2],axis=1)<=1e-6)
     xyz[~valid]=np.nan
     return xyz,valid
 
 
-def xyz_to_uvw(reference,field,xyz_um,*,stop=None):
-    """Local inverse; unresolved nearby curved-flow branches are conservatively invalid."""
-    return _inverse(reference,field,xyz_um,stop=stop)
+def xyz_to_uvw(reference,field,xyz_um,*,stop=None,with_details=False):
+    """Local inverse; distinct branches and unresolved curved intersections are invalid."""
+    return _inverse(reference,field,xyz_um,stop=stop,with_details=with_details)

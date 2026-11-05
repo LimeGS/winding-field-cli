@@ -98,9 +98,10 @@ level, not W. Up to 16 distinct W targets are admitted.
   `cell-mask.png` has dimensions `(height-1, width-1)`.
 
 `cause-mask.png` codes: 0 valid, 1 reference outside/excess projection,
-2 ambiguous or unresolved reference, 3 invalid initial field, 4 zero gradient,
+2 distinct reference UV branches, 3 invalid initial field, 4 zero gradient,
 5 unsupported integration path, 6 nonconvergence, 7 roundtrip failure,
-8 sampled Jacobian failure, 9 invalid target, 10 coordinate precision loss.
+8 sampled Jacobian failure, 9 invalid target, 10 coordinate precision loss,
+11 unresolved reference intersection (including tangency, support or search bounds).
 Unsupported paths include
 out-of-field or unusable intermediate samples. CT missingness is separate.
 The preview uses the original fixed intensity window 0–180. Black pixels
@@ -126,6 +127,16 @@ Batches are at most 16,384 points; the exporter checkpoints 1,024 at a time.
 `Reference(world_um, faces, uv_um, reference_w, band=(lo, hi))` also accepts
 programmatically constructed maps. `export_existing(args, stop=callback)` in
 `uvw_pipeline` is the orchestration entry point; `args` has the CLI fields.
+
+`reference_points(..., with_provenance=True)` additionally returns a dictionary
+with `face` (original face index, -1 outside the UV map) and `barycentric` (N×3).
+This records the raw mesh point before projection. It does not certify uniqueness.
+`xyz_to_uvw(..., with_details=True)` additionally returns `face`, `barycentric`
+and a per-point `cause`. Default two-value return signatures are unchanged.
+Reference checkpoints and worker results retain `reference_face` and
+`reference_barycentric`; cached `reference_data` now requires these keys alongside
+`base`, `reference_valid`, and `cause`. Implementation identity prevents reuse of
+older checkpoints. Compact vertex-to-face connectivity is retained in `Reference`.
 
 ### Performance measurements
 
@@ -177,17 +188,30 @@ pass the field residual and backward roundtrip checks. TIFFs are read back
 before publication.
 
 Forward mapping, inverse mapping and export share the same ambiguity admission.
-The inverse flows back to reference W, enumerates nearby reference-triangle
-normal-line intersections, rejects distinct UV solutions, and forward-checks
-the remaining candidates without recursively calling the public forward API.
-A triangle within the allowed projection distance that the normal line misses
-is **unresolved**, not ruled out: curved flow might reach it. Such points are
-masked unless every supported field cell enclosing that neighbourhood has
-identical nodal edge slopes, certifying affine field/straight flow there.
-Failed candidate checks are treated conservatively in the same way. This
-strict certificate can exclude valid curved regions; the cause mask records
-that exclusion rather than claiming uniqueness. Nearest-triangle distance
-alone is never accepted. Raster cells additionally check both triangle
+The inverse flows back to reference W and searches the actual curved gradient
+trajectory in both W directions. It spatially enumerates **all** valid reference
+triangles within the projection ball, including disconnected charts. W extrema
+over the enclosing box bound the search range; these extrema are computed from
+each clipped trilinear cell's corners, not just reference vertices. A compact
+field crop extends two minimum spacings from the query; leaving it is unresolved.
+
+The intersection search uses SciPy DOP853 with relative tolerance 1e-11 and
+absolute tolerance 1e-11 minimum spacings. Each interval gets a displacement
+enclosure from a lower gradient-norm bound. Gradient component bounds over all
+touched cells establish monotone plane crossings; transverse roots are refined
+by Brent's method. Intervals that cannot be excluded or resolved are subdivided,
+not discarded. Limits are 4,096 candidate faces, depth 24, `max_steps * 32` ODE
+evaluations and `max_steps * 4` interval checks. A limit, unsupported cell, zero
+gradient or unresolved tangency masks the query. Numerical root/edge allowance
+is based on max(1e-9 minimum spacing, 64 machine eps × coordinate magnitude).
+These are numerical enclosures around error-controlled trajectories, **not a
+formally rounded interval-ODE proof**; extreme conditioning can remain unresolved.
+
+Equal-UV edge/vertex hits collapse at 1e-6 µm; distinct UV branches reject the
+query. Face/barycentric provenance is retained but never used as uniqueness
+evidence. Candidate UVs must also pass the unchanged forward physical roundtrip
+checks, without recursive public API calls. Nearest-face or adjacency heuristics
+never establish uniqueness. Raster cells additionally check both triangle
 orientations and the sampled ODE W Jacobian against the reference Jacobian,
 using gradients at each surface's own XYZ; their area ratios are reported.
 These are **sampled local checks, not a proof of global injectivity**. Missing
