@@ -34,6 +34,17 @@ worker cancellation without publishing later receipts.
   Serial 5.304/4.117 s; two workers 3.212/2.959 s. Mean speedup 1.53× applies
   only to these subwindows, excluding compression and publication.
 
+- Full 1024×1024 tiles, including PNG, compressed mapping NPZ, hashes, ordered
+  receipts and file fsync: serial 5.569/5.430 s; two workers 4.059/3.919 s.
+  Means: 5.500 versus 3.989 s, **1.38× throughput (27.5% less elapsed time)**.
+  Same source, reader and coordinates; all 111 chunks (232,840,704 accounted
+  bytes) stayed in RAM, with zero native loads in every measured pass. Exact
+  XYZ/mask/source-owner/image hash assertions passed. Both modes had CPU6–7;
+  the process had a 1152 MiB hard cap and zero swap. These complete tiles have
+  partial surface coverage (76,389 and 98,040 observed pixels). The benchmark
+  maps saved source face IDs, rather than transient source face row indices.
+  TIFXYZ and dense-tile throughput were not measured.
+
 The serial default remains appropriate until full-workload gains are established.
 No measurement here establishes a complete extraction/flattening/export speedup
 or physical-sheet continuity. Frozen active jobs are not upgraded in place.
@@ -44,3 +55,4 @@ Remote evidence directories:
 - `/ssd/draft/paris4-native-sampling-20261105-02`
 - `/ssd/draft/paris4-raster-threads-20261105`
 - `/ssd/draft/paris4-raster-threads-cached-20261105`
+- `/ssd/draft/paris4-full-tile-benchmark-20261105-02`
