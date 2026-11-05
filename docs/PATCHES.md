@@ -46,6 +46,34 @@ locally and is reported, not certified away. Frame coordinates obey
 
 ## Bounded source-key mapping
 
+### Continue verified PNG tiles
+
+For a single saved `level-0000` PNG export, continue in a fresh directory:
+
+```sh
+python -m winding_field.patch_continue \
+  --source-export old-export/patches --mesh-bundle original-joined-range \
+  --source-identity-sha256 SHA256_OF_OLD_IDENTITY_JSON \
+  --config resource-overrides.json --output new-export
+```
+
+The source needs its hash-bound `map.npz`, `keys.sqlite`, `MAPPING.json`, original
+mesh, CT ledger at `old-export/ct-chunks.sqlite`, and either a saved
+`MAP-REPORT.json` or completed `LEVEL.json`. Ordinary interrupted exports without
+either report cannot be continued this way. Paris4's gated runner saves the map
+report before rasterization. Stop the old producer before operational handoff.
+
+Overrides are limited to cache location/budgets, raster workers and memory/disk
+resource limits. Geometry, lattice, CT identity and numerical runtime remain
+bound to the source. Complete tiles are copied after receipt/payload validation;
+their original receipts and identity are retained as provenance. Incomplete tiles
+are recomputed. Source face row indices are reconstructed from sorted original
+mesh IDs. The prior CT hash ledger is inherited so reloads still detect changes.
+
+The command performs no extraction or flattening. It supports PNG/mapping
+continuation only; TIFXYZ and multiple levels are rejected. The existing
+`export-sheets --resume` behavior is unchanged. Results remain diagnostic.
+
 ### Parallel native calls and verified reuse
 
 The same public `--flattening-config` accepts `"workers": 1` (default) through

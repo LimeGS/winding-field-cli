@@ -398,10 +398,13 @@ def build_map(vertices,faces,output,*,flatten,max_patch_faces=4096,max_depth=3,m
                 omitted_face_rows=np.asarray(omitted,int),display=eligible,scientific=scientific,report=report)
 
 
-def render_map(mapped,output,sample,frame,*,pitch_um=19.2,tile_size=1024,export_tifxyz=False,guard=lambda:None,binding=None,raster_workers=1):
+def render_map(mapped,output,sample,frame,*,pitch_um=19.2,tile_size=1024,export_tifxyz=False,guard=lambda:None,binding=None,raster_workers=1,reuse=None):
     from .original_tifxyz import export_xyz
     from PIL import Image
     if type(raster_workers) is not int or not 1<=raster_workers<=4:raise ValueError('invalid raster_workers')
+    if reuse:
+        if export_tifxyz:raise ValueError('tile continuation supports PNG only')
+        reuse.validate()
     output=Path(output);output.mkdir(parents=True,exist_ok=False)
     pitch=pitch_um/frame['voxel_um'];uv=mapped['uv'];faces=mapped['faces']
     totals={k:0 for k in ('CT_observed_pixels','CT_missing_pixels','ambiguous_pixels','black_unmapped_pixels')};tiles=[]
@@ -414,9 +417,13 @@ def render_map(mapped,output,sample,frame,*,pitch_um=19.2,tile_size=1024,export_
         guard()
     def render_tile(position):
         row,col=position
-        check();directory=f'tile-{row:09d}-{col:09d}';root=output/directory;root.mkdir()
+        check();directory=f'tile-{row:09d}-{col:09d}';root=output/directory
         canvas=dict(width=min(tile_size,int(wh[0])-col),height=min(tile_size,int(wh[1])-row),pitch=pitch,u0=float(low[0]+col*pitch),v_top=float(high[1]-row*pitch))
         canvas.update(global_u0=float(low[0]),global_v_top=float(high[1]),column_offset=col,row_offset=row)
+        if reuse:
+            saved=reuse.get(directory,canvas,root)
+            if saved is not None:return saved
+        root.mkdir()
         # Two-node halo: orphan membership -> adjacent pruned nodes -> incident unsafe cells.
         r0,c0=max(0,row-2),max(0,col-2)
         r1,c1=min(int(wh[1]),row+canvas['height']+2),min(int(wh[0]),col+canvas['width']+2)
@@ -461,6 +468,9 @@ def render_map(mapped,output,sample,frame,*,pitch_um=19.2,tile_size=1024,export_
                 stopped.set()
                 for future in pending:future.cancel()
                 raise
+    if reuse:
+        reuse.validate()
+        if not set(reuse.receipts)<={t['directory'] for t in tiles}:raise ValueError('unexpected reused tile outside canvas')
     return dict(tiles=tiles,**totals,shape_yx=wh[::-1].tolist(),pitch_um=pitch_um,
                 counts_include_tile_overlap=True,row_direction='decreasing UV v',window=[0,255],sampling='central trilinear',physical_acceptance=False)
 
