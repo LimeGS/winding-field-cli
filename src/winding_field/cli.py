@@ -103,15 +103,23 @@ def main(argv=None):
     p.add_argument('--config',help='direct-field export request JSON; required for a new export'); p.add_argument('--resume',action='store_true',help='continue the saved export request in --output')
     p=sub.add_parser('verify-tifxyz',help='read-only verification in an admitted Linux worker')
     p.add_argument('output')
-    p=sub.add_parser('export-sheets',help='original flattening of an existing field descriptor or immutable mesh bundle')
+    p=sub.add_parser('extract-range',help='extract a calibrated continuous W range')
+    p.add_argument('--config',required=True,help='immutable field/geometry/umbilicus recipe JSON')
+    p.add_argument('--w-range',nargs=2,required=True,metavar=('A','B'),help='exact decimal bounds on the global W lattice')
+    p.add_argument('--output',required=True)
+    p.add_argument('--resume',action='store_true')
+    p=sub.add_parser('join-ranges',help='join compatible contiguous continuous ranges exactly')
+    p.add_argument('inputs',nargs='+')
+    p.add_argument('--output',required=True)
+    p=sub.add_parser('export-sheets',help='original or patch flattening of immutable surface geometry')
     inputs=p.add_mutually_exclusive_group(required=True)
     inputs.add_argument('--field-config',help='input field JSON: data path/hash and grid geometry; requires --levels')
-    inputs.add_argument('--mesh-bundle',help='existing immutable mesh bundle directory with saved W levels')
+    inputs.add_argument('--mesh-bundle',help='immutable mesh bundle; patches also accepts a RANGE wrapper (join ranges first)')
     p.add_argument('--levels',nargs='+',type=float,help='winding W isovalues, e.g. -31; required with --field-config, forbidden with --mesh-bundle')
     p.add_argument('--source',required=True,help='original CT Zarr')
     p.add_argument('--level',type=int,default=0,help='CT Zarr pyramid level (default: 0); not a winding W value');p.add_argument('--voxel-um',type=float,help='micrometre scale for CT geometry lacking units; not field/output spacing')
-    p.add_argument('--output',required=True,help='sheet export directory');p.add_argument('--flattening-config',required=True,help='JSON: output coordinate frame, optional canvas pitch and memory admission estimate')
-    p.add_argument('--flattening-method',choices=['original'],required=True,help='global LSCM recipe; resolution comes from input geometry')
+    p.add_argument('--output',required=True,help='sheet export directory');p.add_argument('--flattening-config',required=True,help='JSON: output frame; patches requires app_run and accepts physical pitch_um (default 19.2), see docs/PATCHES.md')
+    p.add_argument('--flattening-method',choices=['original','patches'],required=True,help='original global LSCM or historical Flatboi patches; patches accepts RANGE wrappers')
     p.add_argument('--export-tifxyz',action='store_true',help='add XYZ TIFFs and validity mask alongside CT renders');p.add_argument('--resume',action='store_true',help='continue the same export; repeat identical inputs and settings')
     p=sub.add_parser('export-uvw',help='aligned diagnostic W band from one original global UV map')
     p.add_argument('--field-config',required=True,help='SHA-bound field descriptor JSON')
@@ -208,8 +216,17 @@ def main(argv=None):
             try:result=export_existing(args,stop=lambda:interrupted)
             finally:
                 for sig,handler in previous.items():signal.signal(sig,handler)
+        elif args.command=='extract-range':
+            from .range_surface import extract_range
+            result=extract_range(json.loads(Path(args.config).read_bytes()),args.w_range,args.output,resume=args.resume)
+        elif args.command=='join-ranges':
+            from .range_surface import join_ranges
+            result=join_ranges(args.inputs,args.output)
         elif args.command=='export-sheets':
-            from .original_pipeline import export_existing
+            if args.flattening_method=='patches':
+                from .patch_pipeline import export_existing
+            else:
+                from .original_pipeline import export_existing
             result=export_existing(args)
         elif args.command in ('tifxyz','verify-tifxyz'):
             from .tifxyz import _path,export_field,verify_export
