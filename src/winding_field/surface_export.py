@@ -489,7 +489,8 @@ def scale_uv_to_world(vertices_xyz, faces, uv):
     )
 
 
-def flatten_native(vertices_xyz, faces, app_run, output_dir, *, iters=200, timeout=120, expected_sha256=None):
+def flatten_native(vertices_xyz, faces, app_run, output_dir, *, iters=200, timeout=120, expected_sha256=None,
+                   guard=lambda: None, cpu_affinity=None, threads=None):
     """Run local Flatboi in a new directory; return UV/receipt, including failures."""
     output_dir = Path(output_dir).resolve()
     output_dir.mkdir(exist_ok=False)
@@ -526,36 +527,71 @@ def flatten_native(vertices_xyz, faces, app_run, output_dir, *, iters=200, timeo
         receipt["app_run_sha256"] = _sha(app_run)
         if expected_sha256 is not None and receipt["app_run_sha256"] != expected_sha256:
             raise ValueError("AppRun SHA256 mismatch (this pins the launcher, not the AppImage)")
+        binary = app_run.parent / 'usr/bin/flatboi'
+        terminal_exit_known = binary.is_file() and _sha(binary) == '2f89bfc96512bebf7ef44b25de01c5afd01c7af058e452515b03bc52cf6afd6a'
         with mesh.open("x") as stream:
             np.savetxt(stream, vertices_xyz, fmt="v %.17g %.17g %.17g")
             np.savetxt(stream, np.asarray(faces) + 1, fmt="f %d %d %d")
         receipt["input_mesh_sha256"] = _sha(mesh)
         with (output_dir / "stdout.log").open("xb") as stdout, (output_dir / "stderr.log").open("xb") as stderr:
+            launch = command
+            if cpu_affinity is not None:
+                if not cpu_affinity or any(type(c) is not int or c < 0 for c in cpu_affinity):
+                    raise ValueError('invalid native CPU affinity')
+                launch = ['taskset', '-c', ','.join(map(str, cpu_affinity)), *command]
+            env = os.environ.copy()
+            if threads is not None:
+                if type(threads) is not int or threads < 1:raise ValueError('invalid native threads')
+                for key in ('PASTIX_NUM_THREADS','OMP_NUM_THREADS','OPENBLAS_NUM_THREADS','MKL_NUM_THREADS','NUMEXPR_NUM_THREADS'):
+                    env[key] = str(threads)
+            receipt['launch_command'] = launch
+            receipt['cpu_affinity'] = cpu_affinity
+            receipt['threads'] = threads
             try:
                 process = subprocess.Popen(
-                    command,
+                    launch,
                     cwd=output_dir,
                     stdin=subprocess.DEVNULL,
                     stdout=stdout,
                     stderr=stderr,
                     start_new_session=True,
+                    env=env,
                 )
             except OSError:
                 receipt["status"] = "UNAVAILABLE"
                 raise
             try:
-                receipt["returncode"] = process.wait(timeout=timeout)
+                deadline = time.monotonic() + timeout
+                while True:
+                    try:guard()
+                    except Exception as error:raise InterruptedError(str(error)) from error
+                    if terminal_exit_known:
+                        with (output_dir / 'stderr.log').open('rb') as errors:
+                            errors.seek(max(0, os.fstat(errors.fileno()).st_size - 65536))
+                            terminal = b'Negative diagonal term' in errors.read().splitlines()
+                        if terminal:
+                            # This pinned binary prints the line then calls exit(1); threaded teardown can hang.
+                            receipt['terminal_native_error'] = 'Negative diagonal term'
+                            raise ValueError('native terminal error: Negative diagonal term (exit(1) teardown)')
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:raise subprocess.TimeoutExpired(command, timeout)
+                    try:
+                        receipt['returncode'] = process.wait(timeout=min(.1, remaining))
+                        break
+                    except subprocess.TimeoutExpired:pass
             except subprocess.TimeoutExpired:
                 receipt["timed_out"], receipt["status"] = True, "TIMEOUT"
+                raise ValueError("native flattening timed out; owned process group terminated")
+            finally:
+                # Also reap on cancellation, guard failure and KeyboardInterrupt.
                 if os.name == "posix":
                     try:
                         os.killpg(process.pid, signal.SIGKILL)
                     except ProcessLookupError:
                         pass
-                else:
+                elif process.poll() is None:
                     process.kill()
                 receipt["returncode"] = process.wait()
-                raise ValueError("native flattening timed out; owned process group terminated")
         if receipt["returncode"] != 0:
             raise ValueError(f"Flatboi exited {receipt['returncode']}")
         if _sha(mesh) != receipt["input_mesh_sha256"] or _sha(app_run) != receipt["app_run_sha256"]:
@@ -568,6 +604,9 @@ def flatten_native(vertices_xyz, faces, app_run, output_dir, *, iters=200, timeo
         receipt["uv_gate"] = validate_uv(vertices_xyz, faces, uv)
         receipt["status"] = receipt["uv_gate"]["status"]
         receipt["reasons"] = receipt["uv_gate"]["reasons"]
+    except InterruptedError:
+        receipt['status'] = 'CANCELLED'
+        raise
     except (ValueError, OSError, RuntimeError) as error:
         uv = None
         receipt["reasons"].append(f"{type(error).__name__}: {error}")
