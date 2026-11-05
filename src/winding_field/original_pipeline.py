@@ -141,6 +141,8 @@ def verify_missing_ct(volume,record):
 
 
 def export_mesh(mesh_path,out,volume,request,*,export_tifxyz=False,stop=lambda:False,reserve_bytes=0):
+    from .range_surface import reject_scalar_range
+    reject_scalar_range(mesh_path)
     from field_runtime import check_resources
     from .original_tifxyz import export_xyz
     from .workflow import implementation_sha
@@ -244,6 +246,8 @@ def run_original(run,config,volume,stop=None):
 
 
 def export_existing(args):
+    from .range_surface import reject_scalar_range
+    if args.mesh_bundle:reject_scalar_range(args.mesh_bundle)
     import fcntl
     from .surface_sources import FieldSource
     from .surface_mesh import extract_mesh
