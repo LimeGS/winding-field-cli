@@ -84,7 +84,7 @@ def test_export_publications_share_verification_epoch(tmp_path,monkeypatch):
 
 def test_advisory_cache_hits_do_not_commit_each_read(served):
     root,url,_=served
-    volume=Volume(url,cache=root/'cache');volume._chunk_bytes('0/0.0.0')
+    volume=Volume(url,cache=root/'cache',cache_bytes=128<<20);volume._chunk_bytes('0/0.0.0')
     statements=[];volume.db.set_trace_callback(statements.append)
     for _ in range(20):volume._chunk_bytes('0/0.0.0')
     assert not any(s=='COMMIT' for s in statements)
@@ -92,7 +92,7 @@ def test_advisory_cache_hits_do_not_commit_each_read(served):
     volume.close()
     import sqlite3
     with sqlite3.connect(root/'cache/index.sqlite') as db:assert db.execute('SELECT COUNT(*) FROM cache').fetchone()[0]==1
-    with closing(Volume(url,cache=root/'cache',offline=True)) as resumed:
+    with closing(Volume(url,cache=root/'cache',offline=True,cache_bytes=128<<20)) as resumed:
         assert resumed._chunk_bytes('0/0.0.0') is not None
 
 
@@ -210,7 +210,7 @@ def test_spawn_cancellation_restores_environment_and_reaps_children(tmp_path,mon
 def test_remote_decoded_cache_corruption_rechecks_encoded_bytes(served):
     from winding_field.util import digest
     root,url,data=served
-    with closing(Volume(url,cache=root/'cache',decoded_cache_bytes=1024)) as volume:
+    with closing(Volume(url,cache=root/'cache',decoded_cache_bytes=1024,cache_bytes=128<<20)) as volume:
         volume.bind_ledger(root/'source.sqlite');volume.decoded_chunk('0/0.0.0')
         path=volume.cache/digest([volume._namespace,'0/0.0.0']);path.write_bytes(bytes([255])*12)
         np.testing.assert_array_equal(volume.decoded_chunk('0/0.0.0'),data[:2,:2,:3])

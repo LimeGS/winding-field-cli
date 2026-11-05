@@ -168,7 +168,8 @@ def _render_level(out,db,index,w,ref,metadata,field,volume,identity,guard,worker
         if generated:
             guard();tick=time.perf_counter()
             for start,(data,measurement) in zip(todo,generated):
-                reference_data=dict(base=data['base'],reference_valid=data['reference_valid'],cause=data['reference_cause'])
+                reference_data=dict(base=data['base'],reference_valid=data['reference_valid'],cause=data['reference_cause'],
+                    reference_face=data['reference_face'],reference_barycentric=data['reference_barycentric'])
                 _checkpoint(out,db,f'reference-{start}',lambda:(reference_data,set()),volume)
             timings['checkpoint_seconds']+=time.perf_counter()-tick
             selected=[np.flatnonzero(data['geometry']) for data,_ in generated]

@@ -9,7 +9,7 @@ import time
 
 CAUSES={'valid':0,'reference_domain':1,'reference_ambiguous':2,'invalid_field':3,
         'zero_gradient':4,'unsupported_path':5,'nonconvergence':6,'roundtrip':7,
-        'sampled_jacobian':8,'invalid_target':9,'coordinate_precision':10}
+        'sampled_jacobian':8,'invalid_target':9,'coordinate_precision':10,'reference_unresolved':11}
 THREAD_VARIABLES=('OMP_NUM_THREADS','OPENBLAS_NUM_THREADS','MKL_NUM_THREADS','VECLIB_MAXIMUM_THREADS',
                   'NUMEXPR_NUM_THREADS','BLIS_NUM_THREADS')
 _STATE=None
@@ -18,27 +18,34 @@ _STATE=None
 def compute_geometry(reference,field,frame,uv,w,*,reference_data=None,stop=None):
     """One <=16384-point batch, no CT or writes. Returns numeric arrays and timing/cache metrics."""
     import numpy as np
-    from .uvw import _points,reference_points,xyz_to_uvw,transport,sample_w_gradient
+    from .uvw import _points,reference_points,xyz_to_uvw,correspondence_transport,sample_w_gradient
     uv=_points(uv,2)
     if reference_data is not None:
-        if (not isinstance(reference_data,dict) or set(reference_data)!={'base','reference_valid','cause'}
+        if (not isinstance(reference_data,dict) or set(reference_data)!={'base','reference_valid','cause','reference_face','reference_barycentric'}
             or np.shape(reference_data['base'])!=(len(uv),3) or np.shape(reference_data['reference_valid'])!=(len(uv),)
             or np.asarray(reference_data['reference_valid']).dtype!=bool or np.shape(reference_data['cause'])!=(len(uv),)
-            or np.asarray(reference_data['cause']).dtype!=np.uint8):raise ValueError('invalid cached reference batch')
+            or np.asarray(reference_data['cause']).dtype!=np.uint8
+            or np.shape(reference_data['reference_face'])!=(len(uv),)
+            or np.asarray(reference_data['reference_face']).dtype.kind not in 'iu'
+            or np.shape(reference_data['reference_barycentric'])!=(len(uv),3)):raise ValueError('invalid cached reference batch')
     started=time.perf_counter();before=dict(field.stats);reference_seconds=0.
     if reference_data is None:
-        begin=time.perf_counter();base,valid=reference_points(reference,field,uv,stop=stop)
+        begin=time.perf_counter();base,valid,provenance=reference_points(reference,field,uv,stop=stop,with_provenance=True)
         cause=np.full(len(uv),CAUSES['reference_domain'],np.uint8);ids=np.flatnonzero(valid)
         if len(ids):
-            _,good=xyz_to_uvw(reference,field,base[ids],stop=stop)
+            recovered,good,details=xyz_to_uvw(reference,field,base[ids],stop=stop,with_details=True)
+            good&=np.linalg.norm(recovered[:,:2]-uv[ids],axis=1)<=1e-6
             cause[ids[~good]]=CAUSES['reference_ambiguous'];valid[ids]&=good
-        cause[valid]=0;reference_data=dict(base=base,reference_valid=valid,cause=cause)
+            for key in ('reference_unresolved','reference_domain','invalid_field'):
+                cause[ids[details['cause']==key]]=CAUSES[key]
+        cause[valid]=0;reference_data=dict(base=base,reference_valid=valid,cause=cause,
+            reference_face=provenance['face'],reference_barycentric=provenance['barycentric'])
         reference_seconds=time.perf_counter()-begin
     base=reference_data['base'];valid=reference_data['reference_valid'].copy();cause=reference_data['cause'].copy()
     xyz=np.full_like(base,np.nan);residual=np.full(len(base),np.nan);roundtrip=np.full(len(base),np.nan)
     rounding=np.full(len(base),np.nan);ids=np.flatnonzero(valid)
     if len(ids):
-        moved,ok,info=transport(field,base[ids],w,reference.settings,stop=stop)
+        moved,ok,info=correspondence_transport(field,base[ids],w,reference.settings,stop=stop)
         for key,code in CAUSES.items():cause[ids[info['cause']==key]]=code
         origin=np.asarray(frame['origin_xyz_um']);unit=frame['voxel_um']
         with np.errstate(over='ignore',invalid='ignore'):
@@ -47,15 +54,18 @@ def compute_geometry(reference,field,frame,uv,w,*,reference_data=None,stop=None)
         sampled,g,supported=sample_w_gradient(field,stored);norm=np.linalg.norm(g,axis=1)
         distance=abs(sampled-w)/np.maximum(norm,1e-30)
         precise=supported&(rounding[ids]<=.01*min(field.spacing_um))&(distance<=reference.settings.residual_fraction*min(field.spacing_um))
+        recovered,inverse_valid=xyz_to_uvw(reference,field,stored,stop=stop)
+        precise&=inverse_valid&(np.linalg.norm(recovered[:,:2]-uv[ids],axis=1)<=1e-6)
         cause[ids[ok&~precise]]=CAUSES['coordinate_precision'];ok&=precise
         moved=stored;moved[~ok]=np.nan
-        back,good,_=transport(field,moved,reference.w,reference.settings,stop=stop)
+        back,good,_=correspondence_transport(field,moved,reference.w,reference.settings,stop=stop)
         errors=np.linalg.norm(back-base[ids],axis=1)
         failed=ok&(~good|(errors>reference.settings.roundtrip_fraction*min(field.spacing_um)))
         cause[ids[failed]]=CAUSES['roundtrip'];ok&=~failed
         valid[ids]&=ok;xyz[ids]=moved;residual[ids]=distance;roundtrip[ids]=errors
     field.validate()
     data=dict(xyz=xyz,base=base,reference_valid=reference_data['reference_valid'],reference_cause=reference_data['cause'],
+        reference_face=reference_data['reference_face'],reference_barycentric=reference_data['reference_barycentric'],
         geometry=valid,cause=cause,residual=residual,roundtrip=roundtrip,coordinate_rounding=rounding)
     metrics=dict(pid=os.getpid(),geometry_seconds=time.perf_counter()-started,reference_seconds=reference_seconds,
         field={key:value-before.get(key,0) for key,value in field.stats.items() if key!='region_cache_bytes'},
