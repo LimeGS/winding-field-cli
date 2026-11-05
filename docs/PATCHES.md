@@ -61,8 +61,30 @@ the original DFS order, including failure subdivisions and chart-budget omission
 Speculative jobs never acquire chart IDs or budget. `_pending-*` directories
 retain uncommitted/cancelled work; only `patch-*` directories are committed.
 Native command paths record the actual invocation before the directory rename.
-Seams, registration, masks and rasterization remain serial and deterministic for
-the same saved UVs. Independent native runs are **not** promised bit-identical.
+Seams and registration remain serial. Rasterization defaults to serial and is
+deterministic for the same saved UVs. Independent native runs are **not** promised bit-identical.
+
+### Bounded raster workers and verified CT cache
+
+`raster_workers` accepts 1 (default) through 4 independently of native `workers`.
+Threads share immutable geometry and a synchronized CT reader; at most that many
+tiles are in flight. The coordinator publishes receipts in original tile order.
+Raster buffers, CT workspace and scratch admission scale with worker count.
+Threads inherit the parent CPU affinity; `native_cpus` only configures native
+children. Keep the serial default until a representative workload shows a gain.
+
+`cache_mib` budgets a shared LRU of verified, read-only decoded CT chunks,
+including per-entry overhead. The native RAM cache is disabled to avoid duplicate
+retention. RAM hits reuse the verified immutable bytes; eviction/reload checks
+the saved SHA256 again, including missing-chunk identity. Native loads and SQLite
+access are serialized; interpolation runs outside the lock.
+
+`cache_dir` may reside on a dedicated SSD; `cache_gib` caps the native disk cache.
+Cache misses require `disk_reserve_gib` free space plus two decoded chunks on that
+filesystem. Output scratch has its own reserve check. Paris4 experiments use
+`/mnt/fast2/vesuvius-ct-cache/paris4`, 64 GiB disk and 1024 MiB RAM with an 8 GiB
+reserve. These are benchmark settings, not revised defaults. Use a fresh output
+namespace; do not alter an active export's frozen implementation or cache.
 
 To reuse completed native work, set both `reuse_export` to the old export's
 `patches/` directory and `reuse_identity_sha256` to that directory's
