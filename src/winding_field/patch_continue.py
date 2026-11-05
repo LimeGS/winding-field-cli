@@ -127,7 +127,11 @@ def continue_export(source,mesh,output,*,identity_sha256,overrides,stop=lambda:F
             copy_verified_file(level/name,target/name,guard=guard,reserve_bytes=reserve_bytes)
         for name,key in (('map.npz','map_sha256'),('keys.sqlite','keys_sha256')):
             if file_sha(target/name)!=mapping_record[key]:raise ValueError('copied mapping differs')
-        atomic_json(target/'MAP-REPORT.json',mapped['report'])
+        if report_path.exists():
+            report_sha=file_sha(report_path)
+            copy_verified_file(report_path,target/'MAP-REPORT.json',guard=guard,reserve_bytes=reserve_bytes)
+            if file_sha(target/'MAP-REPORT.json')!=report_sha:raise ValueError('copied map report differs')
+        else:atomic_json(target/'MAP-REPORT.json',mapped['report'])
         copy_verified_file(source/'IDENTITY.json',products/'SOURCE-IDENTITY.json',guard=guard,reserve_bytes=reserve_bytes)
         if file_sha(products/'SOURCE-IDENTITY.json')!=identity_sha256:raise ValueError('copied identity differs')
         ledger=products/'SOURCE-CT.sqlite'

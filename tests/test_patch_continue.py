@@ -84,7 +84,7 @@ def test_continue_export_reuses_map_and_inherits_ct_ledger(tmp_path,monkeypatch)
         def sample(self,xyz,frame):return xyz[:,0]+2*xyz[:,1],np.ones(len(xyz),bool)
     old=tmp_path/'old';old.mkdir();receipt=p.export_mesh(mesh,old/'patches',CT(),cfg)
     # The active Paris4 gate persists this before rasterization; LEVEL is absent until completion.
-    atomic_json(old/'patches/level-0000/MAP-REPORT.json',receipt['levels'][0]['mapping'])
+    (old/'patches/level-0000/MAP-REPORT.json').write_text(json.dumps(receipt['levels'][0]['mapping'],separators=(',',':')))
     (old/'patches/level-0000/LEVEL.json').unlink();(old/'patches/PATCHES.json').unlink()
     db=sqlite3.connect(old/'ct-chunks.sqlite');db.execute('CREATE TABLE chunks(key TEXT PRIMARY KEY,sha TEXT)')
     db.execute('INSERT INTO chunks VALUES (?,?)',('0,0,0','b'*64));db.commit();db.close()
@@ -107,6 +107,7 @@ def test_continue_export_reuses_map_and_inherits_ct_ledger(tmp_path,monkeypatch)
     rendered=result['levels'][0]['rendering']['tiles']
     assert sum('reused_from' in t for t in rendered)==len(tiles)-1
     assert result['ct_ledger_sha256']==file_sha(out/'ct-chunks.sqlite')
+    assert (out/'patches/level-0000/MAP-REPORT.json').read_bytes()==(old/'patches/level-0000/MAP-REPORT.json').read_bytes()
     with np.load(old/'patches/level-0000/map.npz') as a,np.load(out/'patches/level-0000/map.npz') as b:
         for key in a.files:np.testing.assert_array_equal(a[key],b[key])
     for before,after in zip(tiles,rendered):
