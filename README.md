@@ -1,7 +1,5 @@
 # winding-field-cli
 
-Source-preserving constant-W preparation, checkpointed Flatboi, validation and CT:
-[constant-sheet CLI](docs/CONSTANT-SHEET.md).
 ![Illustrated workflow: original CT → Lasagna surfaces + Qual V2 fibres/splines → winding field → 3D meshes → flattened charts](docs/assets/workflow-banner.png)
 
 Build a winding field from scroll CT, then extract meshes and CT-textured surfaces.
@@ -86,6 +84,11 @@ winding-field run --source "$CT" --voxel-um 8.64 \
 **Results:** `field/CHECKPOINT.json` and field blocks, root `FIELD.json` with
 geometry/status, `fibres/fibres.afv`, and `lasagna-source/output/` predictions.
 
+For bounded preparation, add `--bounded-preparation` to both commands: recompute
+model windows, retain coarse observations and global fibre constraints, and gate
+field publication on global numerical verification. Requires `--field-spacing-um`,
+Qual V2, stride 1, no custom inputs, and ROI origins divisible by 4.
+
 Qual requires **uint8, isotropic 8.64–9.6 µm observations**. Set `--voxel-um`
 to the actual CT scale and choose `--level`/`--stride` accordingly. Field pitch
 is independent: any positive pitch fitting at least two nodes per axis is allowed;
@@ -163,12 +166,9 @@ verification, increase its **absolute total** budget (for example, from 4 to 8):
 winding-field resume "$RUN" --field-sweeps 8
 ```
 
-The original configuration stays immutable. At an exhausted sweep boundary, the
-CLI atomically records the budget extension in the checkpoint, preserving all
-field chunks and solver progress. Repeating the same target does not add sweeps;
-lower targets and changes to published fields are rejected. Numerical verification
-still gates publication. The embedded history records previous-state hashes and
-budget changes, not historical copies of every field generation.
+This extends the checkpoint budget without changing the original configuration
+or discarding progress. Repeating the target adds nothing; lower targets and
+changes to published fields are rejected. Verification still gates publication.
 
 </details>
 
@@ -226,23 +226,26 @@ exports/W-31/original/level-0000/
 `level-0000` means the first requested W (here −31), not W=0.
 See [flattening setup and advanced reference](docs/FLATTENING.md) for details.
 
-To choose the algorithm and domain independently, use the
-[explicit flattening matrix](docs/FLATTENING.md#explicit-solver--scope-matrix):
-`export-sheets --flattening-solver lscm|slim --scope patches|sheet` with a
-matrix configuration. All four combinations preserve source IDs and offer
-resumable tiled CT/XYZ export. SLIM uses the pinned native Flatboi runner;
-LSCM needs no Flatboi executable. Historical `--flattening-method` recipes remain
-available and cannot be mixed with the new flags.
+### Other export workflows
+
+| Task | Command / guide |
+| --- | --- |
+| Choose LSCM/SLIM and patches/whole sheet | `export-sheets --flattening-solver lscm\|slim --scope patches\|sheet` — [configuration](docs/FLATTENING.md#explicit-solver--scope-matrix) |
+| Extract and join continuous W ranges | `extract-range`, `join-ranges` — [recipe](docs/RANGES.md) |
+| Align neighbouring W levels on one UV grid | `export-uvw` — [reference map and settings](docs/UVW.md) |
+| Prepare, flatten and resume a constant-W sheet | `constant-sheet` — [stages](docs/CONSTANT-SHEET.md) |
+| Browse sheets and query pixel XYZ | `sheet-atlas build`, `sheet-atlas query` — [visual atlas](docs/SHEET-ATLAS.md) |
+| Continue PNG tiles from a saved patch map | `python -m winding_field.patch_continue` — [required inputs](docs/PATCHES.md#continue-verified-png-tiles) |
+
+All four solver/scope combinations preserve source IDs and support resumable CT/XYZ
+export. SLIM needs pinned Flatboi; LSCM does not. Do not mix these flags with
+historical `--flattening-method` recipes. UVW outputs are diagnostic: inspect
+coverage and deformation before using side cuts through the stack.
 
 Patch exports (`--flattening-method patches`) require `pip install '.[ct]'` and
 default to verified native float64 CT sampling. Set `"ct_sampler": "scalar"`
 in their flattening configuration to use the original sampler. Continuations
 retain their saved backend; see [measured performance and cache behavior](docs/RASTER-PERFORMANCE.md).
-
-For aligned neighbouring W levels, use [`export-uvw`](docs/UVW.md) with an
-existing original map as reference. It exports CT and TIFXYZ on one shared UV
-grid, with validity masks and resumable processing. Outputs are diagnostic;
-inspect coverage and deformation before using side cuts through the stack.
 
 </details>
 
