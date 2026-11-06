@@ -373,6 +373,37 @@ def run_field(
         return solve_blocks(output, **options, resume=resume, stop=stop, admit=admission, prefetch=client)
 
 
+def verify_field(config_path,output):
+    """Read-only global numerical verification bound to the prepared problem."""
+    from .global_residual import verify
+    from .surface_sources import FieldSource
+    config=load_run_config(config_path)
+    options,metadata,_=_prepare_run(config)
+    checkpoint=Path(output).resolve()/'CHECKPOINT.json'
+    checkpoint_sha=_sha(checkpoint)
+    saved=json.loads(checkpoint.read_bytes())
+    if saved['identity'].get('source_identity')!=metadata['identity']:
+        raise ValueError('verification problem differs from checkpoint')
+    geometry=dict(config['grid'],frame=config['frame'],voxel_um=config['voxel_um'],sheet_step=config['sheet_step'])
+    descriptor=dict(kind='chunks',path=str(checkpoint),sha256=checkpoint_sha,support_policy='stored')
+    with FieldSource(descriptor,geometry,cache_bytes=options['cache_bytes']) as source:
+        def read(lo,hi):
+            value,stored=source.read(lo,hi)
+            if not stored.all():raise ValueError('global verification requires every stored field node')
+            return value
+        rows=options['constraints']
+        gauge_offset=None
+        if options['fixed'] is None:
+            gauge_offset=source._load('0-0-0',tuple(min(options['chunk'],n) for n in options['shape']))[1]
+        result=verify(options['shape'],options['chunk'],options['spacing_xyz'],read,
+                      options['load_observations'],fixed=options['fixed'],
+                      constraints=None if rows is None else rows.restrict,rtol=options['rtol'],gauge_offset=gauge_offset)
+        source.validate(hashes=True)
+    if _sha(checkpoint)!=checkpoint_sha:raise ValueError('checkpoint changed during verification')
+    result.update(checkpoint_sha256=checkpoint_sha,config_sha256=config['config_sha256'])
+    return result
+
+
 def _supervised(config_path: Path, output: Path, *, resume: bool, prefetch: bool) -> int:
     from field_runtime import _read_json, run_supervised
 
@@ -412,7 +443,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
         return surface_main(tokens)
     parser = argparse.ArgumentParser(prog="winding-field prepared", description=__doc__)
-    parser.add_argument("action", choices=("build", "resume", "mesh", "render", "surfaces"))
+    parser.add_argument("action", choices=("build", "resume", "verify", "mesh", "render", "surfaces"))
     parser.add_argument("--config", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--prefetch", action="store_true", help="one bounded CPU observation prefetch worker")
@@ -423,6 +454,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     from field_runtime import ResourceUnavailable
 
     try:
+        if args.action=='verify':
+            if args.supervised or args.prefetch:raise ValueError('verify does not launch solver workers')
+            result=verify_field(args.config,args.output)
+            print(json.dumps(result,allow_nan=False))
+            return 0 if result['global_converged'] else 3
         if args.supervised:
             return _supervised(args.config, args.output, resume=args.action == "resume", prefetch=args.prefetch)
         result = run_field(args.config, args.output, resume=args.action == "resume", prefetch=args.prefetch)

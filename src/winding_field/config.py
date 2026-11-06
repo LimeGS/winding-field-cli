@@ -70,6 +70,17 @@ def field_geometry(meta,spacing_um=None):
 
 
 def validate_config(config):
+    if type(config.get('bounded_preparation',False)) is not bool:
+        raise ValueError('bounded_preparation must be boolean')
+    if config.get('bounded_preparation'):
+        if config.get('prediction')!='qual-v2' or config.get('fibres') or config.get('stride',1)!=1:
+            raise ValueError('bounded preparation requires native Qual V2 with stride1 and no external fibres')
+        if config.get('field_spacing_um') is None:
+            raise ValueError('bounded preparation requires --field-spacing-um')
+        if any(v%4 for v in config.get('roi_lo',[0,0,0])):
+            raise ValueError('bounded ROI origin must be a multiple of4 to preserve global seed parity')
+        budget=config.get('bounded_bytes',12<<30)
+        if type(budget) is not int or budget<16<<20:raise ValueError('bounded allowance must be at least16MiB')
     if config.get('fibres_geometry') and not config.get('fibres'):
         raise ValueError('--fibres-geometry requires --fibres')
     if config.get('fibres') and config.get('model_path'):
@@ -77,7 +88,7 @@ def validate_config(config):
     integers={'stride':(1,8),'chunk':(4,128),'field_chunk':(4,256),'level':(0,None),
               'sweeps':(1,None),'maxiter':(1,None),'seed_stride':(1,None),
               'mesh_tile':(1,256),'chart_faces':(1,8192),'threads':(1,None),
-              'cache_bytes':(0,None),'reserve_bytes':(0,None)}
+              'cache_bytes':(0,None),'reserve_bytes':(0,None),'bounded_bytes':(16<<20,None)}
     for name,(low,high) in integers.items():
         if name in config:
             value=config[name]

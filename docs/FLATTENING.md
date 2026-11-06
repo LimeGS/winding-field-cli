@@ -3,6 +3,125 @@
 Start with the [commands in README section 5](../README.md). Use original mapping
 for global CT plus optional XYZ TIFFs; native runs use their saved configuration.
 
+## Explicit solver × scope matrix
+
+`export-sheets` accepts **both** `--flattening-solver lscm|slim` and
+`--scope patches|sheet`. Install `.[tifxyz,ct]` and run on Linux. The four
+combinations use the same source-preserving preparation and tiled CT exporter:
+
+| Selection | Domain | Algorithm |
+| --- | --- | --- |
+| `--flattening-solver lscm --scope patches` | Deterministic independent patches | libigl LSCM |
+| `--flattening-solver slim --scope patches` | The same patches and cuts | Positive mean-value initialization → native Flatboi/SLIM |
+| `--flattening-solver lscm --scope sheet` | Whole connected component | libigl LSCM |
+| `--flattening-solver slim --scope sheet` | Whole connected component | Positive mean-value initialization → native Flatboi/SLIM |
+
+Minimal `matrix.json` for LSCM:
+
+```json
+{
+  "output_frame": {
+    "id": "my-scroll/my-scan",
+    "origin_xyz_um": [0, 0, 0],
+    "voxel_um": 9.6
+  },
+  "pitch_um": 19.2,
+  "memory_gib": 6
+}
+```
+
+For SLIM, add `"app_run": "/opt/vc3d/AppRun"`. This requires the pinned
+`installed-2f89bfc9` Flatboi binary used by `constant-sheet`, not an arbitrary
+executable. Its recipe remains cap200, batches10, two threads, symmetric
+Dirichlet and tolerance1e−6. SLIM runs require a cgroup v2 envelope:
+
+```sh
+systemd-run --user --wait --pipe -p MemoryMax=21G -p MemorySwapMax=64G \
+  winding-field export-sheets --mesh-bundle /data/meshes \
+  --flattening-solver slim --scope sheet --flattening-config matrix.json \
+  --source /data/scan.zarr --voxel-um 9.6 --output exports/slim-sheet
+```
+
+Change the two selection flags and output directory to choose another cell.
+`--field-config field.json --levels -59 -60 -61` may replace `--mesh-bundle`;
+it uses the existing supported field formats and preserves unsupported holes.
+Validated RANGE wrappers are also accepted; their stored slot is not a constant
+W label. Separate stored mesh levels are always exported independently.
+
+### Preparation and comparison
+
+- Patch membership depends only on geometry and `max_patch_faces` (default4096),
+  not on solver success. `max_charts` defaults to4096. These two settings are
+  accepted only for `patches`.
+- Sheet scope uses each complete connected component. It never switches to
+  patches to evade a memory/topology limit. Disconnected components are retained
+  and placed separately.
+- Both solvers use the same existing-edge disk cuts. With sheet scope, optional
+  `centerline` (an XYZ array with increasing Z) selects the current +X reference
+  seam. Optional `reference_z` records the anchor for every component crossing
+  that height. These coordinates use the declared **output frame's voxel units**.
+- Every source face and its orientation survive the cuts. Seam copies retain
+  the source vertex IDs and exact source coordinates in `field_xyz`.
+- UVs receive isotropic edge-length calibration and increasing-Z orientation
+  where Z varies. Independent domains are then translated into separate atlas
+  regions, without welding or nonlinear seam deformation. Their layout is
+  recorded; patch mode does not reproduce whole-sheet optimization.
+- Solver failures abort publication. Inverted/distorted/overlapping regions are
+  reported with diagnostic and scientific masks; no physical acceptance is
+  claimed. Neither algorithm silently substitutes for the other.
+
+### Outputs and resume
+
+```text
+exports/slim-sheet/
+├── EXPORT.json, CT-IDENTITY.json, MATRIX.json
+├── ct/ct-chunks.sqlite
+└── level-0000/
+    ├── LEVEL.json, map.npz, MAPPING.json, keys.sqlite, ct-used.sqlite
+    ├── flattening/                 # partition/cut/solver reports and checkpoints
+    └── render/tile-*/              # image.png, mask.png, mapping.npz, TILE.json
+```
+
+The map contains exact source face/vertex IDs, face rows and domain IDs; use the
+existing `winding_field.patch_mapping.PatchMapping` reader for original source
+keys. Each tile's `mapping.npz` stores XYZ and source face rows. `--export-tifxyz`
+adds the existing validated XYZ TIFF products to nonempty tiles.
+
+Repeat the identical command with `--resume`. Solver, scope, source geometry,
+configuration, runtime, code and CT identity are bound. Completed levels are
+hash-verified and reused; interrupted mapping retains completed domains and
+native UV checkpoints. Interrupted rendering retains its previous directory
+as `render-interrupted-*` and restarts that level's raster. CT ledger entries,
+including previously missing chunks, are checked before reuse; committed levels
+carry a bound CT ledger snapshot. Native continuation is a UV warm start, not
+bit-identical uninterrupted SLIM state.
+
+Use SIGTERM or an output-root `STOP` file to stop extraction, native solving or
+rendering. The native runner checks the outer command's resource/stop guard as
+well as its own checkpoint bounds. It also honors
+`level-*/flattening/domain-*/native/STOP`. Remove stop markers before resuming.
+As with existing checkpoint code identities, a checkpoint from an older runner
+must use its frozen runtime or the explicit `constant-sheet import-native`
+migration with the original runner SHA; it is never relabeled as a new run.
+
+Sampling stays isotropic at `pitch_um` (default19.2), window0–255, with bounded
+native CT caching. Common rendering settings are `tile_size`, `raster_workers`,
+`ct_workers`, `cache_dir`, `cache_mib`, `cache_gib`, and `ct_sampler`; they retain
+the patch export validation. At least8GiB disk reserve is required. Geometry/
+raster memory remains capped at6GiB, and existing topology/map bounds still
+apply. Selecting the matrix does **not** establish feasibility for full fine
+sheets or bypass their current admission limits.
+
+### Historical compatibility
+
+`--flattening-method original`, `--flattening-method patches` and the staged
+[`constant-sheet`](CONSTANT-SHEET.md) commands remain available with their
+existing recipes. Do not mix `--flattening-method` with the new pair. In
+particular, historical patches perform registration/welding, whereas the
+explicit matrix keeps independent domains; `original` retains its historical
+domain selection and canvas. The new matrix is not a bit-identical alias for
+either historical exporter.
+
 ## Configuration files
 
 ### `field.json`: the input field

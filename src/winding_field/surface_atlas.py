@@ -70,12 +70,23 @@ def local_chart(vertices, faces, face_ids):
 
 def face_components(faces, ids):
     f = faces[ids]
-    edges = np.sort(np.concatenate([f[:, [0, 1]], f[:, [1, 2]], f[:, [2, 0]]]), axis=1)
-    owners = np.tile(np.arange(len(f)), 3)
+    count_faces = len(f)
+    edges = np.concatenate([f[:, [0, 1]], f[:, [1, 2]], f[:, [2, 0]]])
+    edges.sort(axis=1)
+    del f
+    owners = np.tile(np.arange(count_faces), 3)
     order = np.lexsort((edges[:, 1], edges[:, 0]))
-    equal = (edges[order][1:] == edges[order][:-1]).all(1)
-    a, b = owners[order][:-1][equal], owners[order][1:][equal]
-    graph = coo_matrix((np.ones(len(a)), (a, b)), shape=(len(f), len(f)))
+    edges = edges[order]
+    owners = owners[order]
+    del order
+    equal = np.empty(max(0, len(edges) - 1), bool)
+    for start in range(0, len(equal), 65536):
+        stop = min(start + 65536, len(equal))
+        equal[start:stop] = (edges[start + 1:stop + 1] == edges[start:stop]).all(1)
+    del edges
+    a, b = owners[:-1][equal], owners[1:][equal]
+    del owners, equal
+    graph = coo_matrix((np.ones(len(a)), (a, b)), shape=(count_faces, count_faces))
     count, labels = connected_components(graph, directed=False)
     return sorted([ids[labels == k] for k in range(count)], key=lambda x: int(x.min()))
 

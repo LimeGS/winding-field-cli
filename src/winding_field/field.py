@@ -28,6 +28,10 @@ def calibration(maps,meta):
         coords=np.argwhere(valid)+lo
         centre+=(coords[:,::-1]*meta['spacing_xyz']+meta['origin_xyz']).sum(0)
         count+=len(coords); density_sum+=float(data['density'][valid].sum(dtype=np.float64))
+    return finish_calibration(matrix,centre,count,density_sum)
+
+
+def finish_calibration(matrix,centre,count,density_sum):
     if count==0 or density_sum<=0:
         raise ValueError('no supported sheets in the requested CT domain')
     eigenvalues,vectors=np.linalg.eigh(matrix)
@@ -106,32 +110,50 @@ def spline_samples(points,low,high,step):
             yield np.linspace(a,b,max(1,int(np.ceil(length/step)))+1)
 
 
-def solve(run,config,stop=None):
+def solve(run,config,stop=None,*,sweep_target=None):
     run=Path(run); meta=json.loads((run/'PREPARED.json').read_bytes())
     fibres=json.loads((run/'FIBRES.json').read_bytes())
-    maps=Tiles(run/'maps')
+    bounded=meta.get('bounded_preparation',False)
+    maps=Tiles(run/('coarse/maps' if bounded else 'maps'))
     if maps.identity()!=meta['tiles_sha256'] or file_sha(run/'fibres/fibres.sqlite')!=fibres['sha256']:
         raise ValueError('prepared maps or fibres changed')
-    cal=calibration(maps,meta)
+    cal=meta['calibration'] if bounded else calibration(maps,meta)
     atomic_json(run/'CALIBRATION.json',cal)
-    geometry=field_geometry(meta,config.get('field_spacing_um'))
+    geometry=field_geometry(meta,None if bounded else config.get('field_spacing_um'))
     geometry.update(voxel_um=1.,sheet_step=1.)
     shape=tuple(geometry['shape_zyx']); chunk=config.get('field_chunk',64)
     if type(chunk) is not int or not 4<=chunk<=256:
         raise ValueError('field chunk must be 4..256')
     identity=dict(maps=meta['tiles_sha256'],fibres=fibres['sha256'],geometry=geometry,calibration=cal,
                    fibre_weight=config.get('fibre_weight',1.),algorithm='physical-trilinear-prior-v2')
+    pair_provider=None
+    if bounded:
+        from .bounded_constraints import build,PairCatalog
+        status=build(run/'pairs',run/'fibres/fibres.sqlite',fibres['sha256'],geometry,
+                     weight=identity['fibre_weight'],quota_bytes=config.get('bounded_bytes',12<<30)//8,
+                     reserve_bytes=config.get('reserve_bytes',0),stop=stop)
+        if status=='PAUSED':maps.close();return dict(status='PAUSED')
+        pair_provider=PairCatalog(run/'pairs',geometry)
+        identity.update(algorithm='global-arclength-pairs-coarse-prior-v1',pairs=file_sha(run/'pairs/PAIRS.json'))
     root=run/'field'
+    from .field_budget import effective_budget,extend
+    sweeps=effective_budget(root,config.get('sweeps',4)) if bounded else config.get('sweeps',4)
+    if sweep_target is not None and (not bounded or type(sweep_target) is not int or sweep_target<sweeps):
+        raise ValueError('invalid bounded field sweep target')
     options=dict(origin_xyz=geometry['origin_xyz'],spacing_xyz=geometry['spacing_xyz'],
                  order=list(itertools.product(*(range((n-1)//chunk+1) for n in shape))),
-                 halo=2,sweeps=config.get('sweeps',4),rtol=config.get('rtol',1e-6),
+                 halo=2,sweeps=sweeps,rtol=config.get('rtol',1e-6),
                  maxiter=config.get('maxiter',2000),dtype='float64',device=config.get('device','cpu'),
-                 cache_bytes=64<<20,reserve_bytes=config.get('reserve_bytes',0))
+                  cache_bytes=64<<20,reserve_bytes=config.get('reserve_bytes',0))
+    if bounded:options['max_bytes']=config.get('bounded_bytes',12<<30)//8
     db=sqlite3.connect((run/'fibres/fibres.sqlite').resolve().as_uri()+'?mode=ro',uri=True)
     row_count=0
 
     def load(lo,hi):
-        target,weights,valid=sample_prior(maps,meta,geometry,cal,lo,hi)
+        if bounded:
+            values=maps.read_many(('target','weights','support'),lo,hi)
+            target,weights,valid=(values[k] for k in ('target','weights','support'))
+        else:target,weights,valid=sample_prior(maps,meta,geometry,cal,lo,hi)
         return target,weights,valid,{'maps':meta['tiles_sha256']}
 
     def constraints(lo,hi,read_nodes):
@@ -167,7 +189,7 @@ def solve(run,config,stop=None):
                 np.array(geometry['origin_xyz'])+lo[::-1]*geometry['spacing_xyz'],geometry['spacing_xyz'],tuple(hi-lo),
                 weight=identity['fibre_weight'])
 
-    options['constraints']=constraints
+    options['constraints']=pair_provider if bounded else constraints
     try:
         checkpoint=root/'CHECKPOINT.json'
         if not checkpoint.exists():
@@ -179,7 +201,7 @@ def solve(run,config,stop=None):
         saved=json.loads(checkpoint.read_bytes())
         if not saved['progress'].get('initialization_done') and not saved['progress'].get('solver'):
             with BlockStore(root,shape,chunk,saved['identity'],resume=True,cache_bytes=64<<20,
-                            reserve_bytes=options['reserve_bytes']) as store:
+                            reserve_bytes=options['reserve_bytes'],max_bytes=options.get('max_bytes')) as store:
                 progress=store.manifest['progress']
                 for key in options['order']:
                     if stop and stop():
@@ -191,13 +213,48 @@ def solve(run,config,stop=None):
                     store.commit(key,initial_field(coordinates(lo,hi,geometry),geometry,cal),progress,valid)
                 progress['initialization_done']=True
                 store.save_progress(progress)
+        if bounded:
+            import torch
+            device=torch.device(config.get('device','cpu'))
+            if device.type=='cuda':torch.cuda.reset_peak_memory_stats(device)
         result=solve_blocks(root,shape,chunk,identity,load,resume=True,stop=stop,**options)
+        if result['status']=='SWEEP_BUDGET_REACHED' and sweep_target is not None and sweep_target>sweeps:
+            options['sweeps']=extend(root,sweep_target,config.get('sweeps',4),
+                                   reserve_bytes=options['reserve_bytes'],max_bytes=options.get('max_bytes'))
+            result=solve_blocks(root,shape,chunk,identity,load,resume=True,stop=stop,**options)
         if result['status']!='SWEEP_BUDGET_REACHED':
             return dict(status='PAUSED',solver=result)
         receipt=dict(status='FIELD_READY',geometry=geometry,checkpoint_sha256=file_sha(checkpoint),
                      calibration=cal,solver=result,global_converged=False,physical_acceptance=False,
-                     fibre_constraint_rows=row_count,numerical_status='local solves converged; sweep budget exhausted')
+                      fibre_constraint_rows=row_count,numerical_status='local solves converged; sweep budget exhausted')
+        if bounded:
+            from .global_residual import verify
+            backend=dict(name='canonical-block-solver',device=str(torch.empty(0,device=device).device),
+                         configured_device=str(device),dtype='float64',field_chunk=chunk,halo=options['halo'])
+            if device.type=='cuda':
+                backend.update(peak_allocated_bytes=torch.cuda.max_memory_allocated(device),
+                               peak_reserved_bytes=torch.cuda.max_memory_reserved(device),
+                               gpu_name=torch.cuda.get_device_name(device))
+            descriptor=dict(kind='chunks',path=str(checkpoint.resolve()),sha256=receipt['checkpoint_sha256'],support_policy='stored')
+            with FieldSource(descriptor,geometry,cache_bytes=64<<20) as source:
+                # Decode the hash-bound gauge chunk through the same verified reader.
+                gauge_offset=source._load('0-0-0',tuple(min(chunk,n) for n in shape))[1]
+                def read(lo,hi):
+                    value,present=source.read(lo,hi)
+                    if not present.all():raise ValueError('global verification requires complete stored field')
+                    return value
+                verification=verify(shape,chunk,geometry['spacing_xyz'],read,load,
+                                    constraints=pair_provider,rtol=options['rtol'],stop=stop,gauge_offset=gauge_offset)
+                source.validate(hashes=True)
+            verification.update(checkpoint_sha256=receipt['checkpoint_sha256'],solver_backend=backend)
+            atomic_json(run/'GLOBAL_RESIDUAL.json',verification)
+            if not verification['global_converged']:
+                return dict(status='PAUSED',solver=result,verification=verification,
+                            reason='global numerical verification not passed; sweep budget is not convergence')
+            receipt.update(global_converged=True,verification=verification,solver_backend=backend,
+                           numerical_status='stored global normal equations and codec-encoded zero gauge verified')
         atomic_json(run/'FIELD.json',receipt)
         return receipt
     finally:
         maps.close(); db.close()
+        if pair_provider is not None:pair_provider.__exit__()

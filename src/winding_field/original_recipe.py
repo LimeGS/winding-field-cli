@@ -9,7 +9,7 @@ from itertools import product
 import numpy as np
 
 
-def sample_points(xyz,shape,chunks,chunk):
+def sample_points(xyz,shape,chunks,chunk,*,prefetch=None):
     """Frozen positive-weight trilinear accumulation; chunk returns array or None."""
     xyz=np.asarray(xyz)
     if xyz.ndim!=2 or xyz.shape[1]!=3 or len(xyz)>100000:raise ValueError('expected <=100000 XYZ points')
@@ -30,7 +30,10 @@ def sample_points(xyz,shape,chunks,chunk):
         order=np.argsort(keys,kind='stable')
         keys,targets,offsets,weights=[a[order] for a in (keys,targets,offsets,weights)]
         cuts=np.r_[0,np.flatnonzero(np.diff(keys))+1,len(keys)]
-        for a,b in zip(cuts[:-1],cuts[1:]):
+        for position,(a,b) in enumerate(zip(cuts[:-1],cuts[1:])):
+            if prefetch is not None and position%4==0:
+                batch=[int(keys[start]) for start in cuts[position: min(position+4,len(cuts)-1)]]
+                prefetch([(k//int(grid[1]*grid[2]),k//int(grid[2])%int(grid[1]),k%int(grid[2])) for k in batch])
             key=int(keys[a]);index=(key//int(grid[1]*grid[2]),key//int(grid[2])%int(grid[1]),key%int(grid[2]))
             data=chunk(index)
             if data is None:valid[targets[a:b]]=False
@@ -43,17 +46,23 @@ def sample_points(xyz,shape,chunks,chunk):
 
 def face_quality(vertices,faces,uv):
     v,f,uv=np.asarray(vertices,float),np.asarray(faces,np.int64),np.asarray(uv,float)
-    edges=np.stack([v[f[:,1]]-v[f[:,0]],v[f[:,2]]-v[f[:,0]]],axis=-1)
-    t=uv[f];matrix=np.stack([t[:,1]-t[:,0],t[:,2]-t[:,0]],axis=-1)
-    det=np.linalg.det(matrix);valid=np.isfinite(matrix).all((1,2))&(det>0)
-    singular=np.full((len(f),2),np.nan)
-    singular[valid]=np.linalg.svd(edges[valid]@np.linalg.inv(matrix[valid]),compute_uv=False)
-    ratio=np.full(len(f),np.inf);positive=valid&(singular[:,1]>0)
-    ratio[positive]=singular[positive,0]/singular[positive,1]
-    display=positive&(ratio<=1.25)&(singular[:,0]<=2.)&(singular[:,1]>=.5)
-    error=np.full(len(f),np.inf);error[positive]=np.max(abs(singular[positive]-1),axis=1)
-    scientific=positive&(error<=.02)
-    area=np.linalg.norm(np.cross(edges[:,:,0],edges[:,:,1]),axis=1)/2
+    area=np.empty(len(f));error=np.full(len(f),np.inf)
+    positive=np.empty(len(f),bool);display=np.empty(len(f),bool);scientific=np.empty(len(f),bool)
+    # Keep full ordered scalar arrays for the original global sums and percentile.
+    for start in range(0,len(f),4096):
+        sl=slice(start,start+4096);block=f[sl]
+        edges=np.stack([v[block[:,1]]-v[block[:,0]],v[block[:,2]]-v[block[:,0]]],axis=-1)
+        t=uv[block];matrix=np.stack([t[:,1]-t[:,0],t[:,2]-t[:,0]],axis=-1)
+        det=np.linalg.det(matrix);valid=np.isfinite(matrix).all((1,2))&(det>0)
+        singular=np.full((len(block),2),np.nan)
+        singular[valid]=np.linalg.svd(edges[valid]@np.linalg.inv(matrix[valid]),compute_uv=False)
+        ratio=np.full(len(block),np.inf);good=valid&(singular[:,1]>0)
+        ratio[good]=singular[good,0]/singular[good,1]
+        positive[sl]=good
+        display[sl]=good&(ratio<=1.25)&(singular[:,0]<=2.)&(singular[:,1]>=.5)
+        block_error=error[sl];block_error[good]=np.max(abs(singular[good]-1),axis=1)
+        scientific[sl]=good&(block_error<=.02)
+        area[sl]=np.linalg.norm(np.cross(edges[:,:,0],edges[:,:,1]),axis=1)/2
     finite=error[np.isfinite(error)]
     report=dict(scientific_limit=.02,scientific_acceptance=False,maximum_visual_scale_factor=2.,
         maximum_visual_anisotropy=1.25,display_area_fraction=float(area[display].sum()/area.sum()),
@@ -188,15 +197,31 @@ def _merge(xyz,bounds,owner,mask,rows,cols,points,chart_id,tolerance):
     owner[rows[conflict],cols[conflict]]=-2;xyz[rows[conflict],cols[conflict]]=np.nan
 
 
+def raster_candidates(faces,uv,canvas,guard=lambda:None):
+    """Conservative pixel bounds in bounded batches; keep original IDs and order."""
+    pitch=canvas['pitch'];u0=canvas.get('global_u0',canvas['u0']);top=canvas.get('global_v_top',canvas['v_top'])
+    col=canvas.get('column_offset',0);row=canvas.get('row_offset',0)
+    for start in range(0,len(faces),65536):
+        guard();tri=uv[faces[start:start+65536]]
+        finite=np.isfinite(tri).all((1,2));ids=np.flatnonzero(finite);tri=tri[finite]
+        if not len(ids):continue
+        pixel=np.stack(((tri[:,:,0]-u0)/pitch-col,(top-tri[:,:,1])/pitch-row),axis=-1)
+        lower=np.maximum(0,np.ceil(pixel.min(1)-1e-10))
+        upper=np.minimum([canvas['width']-1,canvas['height']-1],np.floor(pixel.max(1)+1e-10))
+        for index in ids[(lower<=upper).all(1)]:yield start+int(index)
+
+
 def raster_sheet(vertices,faces,uv,eligible,sample,canvas,*,window=(0.,180.),guard=lambda:None,capture=None,xyz_tolerance=.005):
     v,f,uv=np.asarray(vertices,float),np.asarray(faces,np.int64),np.asarray(uv,float)
     width,height=int(canvas['width']),int(canvas['height']);pitch=float(canvas['pitch'])
     u0,top=float(canvas['u0']),float(canvas['v_top']);lo,hi=map(float,window)
+    global_u0,global_top=canvas.get('global_u0',u0),canvas.get('global_v_top',top)
+    column_offset,row_offset=canvas.get('column_offset',0),canvas.get('row_offset',0)
     if not (1<=width<=4096 and 1<=height<=4096 and all(map(math.isfinite,(pitch,u0,top,lo,hi,xyz_tolerance))) and pitch>0 and hi>lo and xyz_tolerance>0):raise ValueError('bounded finite sheet canvas/window required')
     guard()
     xyz=np.full((height,width,3),np.nan);bounds=np.full((height,width,2,3),np.nan)
     owner=np.full((height,width),-1,np.int32);mask=np.zeros((height,width),np.uint8)
-    for index in range(len(f)):
+    for index in raster_candidates(f,uv,canvas,guard):
         if index%2048==0:guard()
         t=uv[f[index]]
         if not np.isfinite(t).all():continue
@@ -204,12 +229,12 @@ def raster_sheet(vertices,faces,uv,eligible,sample,canvas,*,window=(0.,180.),gua
         if signed==0:continue
         blocked=not eligible[index] or signed<0
         if signed<0:t=t[[0,2,1]]
-        pixel=np.column_stack([(t[:,0]-u0)/pitch,(top-t[:,1])/pitch])
+        pixel=np.column_stack([(t[:,0]-global_u0)/pitch-column_offset,(global_top-t[:,1])/pitch-row_offset])
         lower=np.maximum(0,np.ceil(pixel.min(0)-1e-10).astype(int));upper=np.minimum([width-1,height-1],np.floor(pixel.max(0)+1e-10).astype(int))
         for row in range(int(lower[1]),int(upper[1])+1,128):
             for col in range(int(lower[0]),int(upper[0])+1,128):
                 rr,cc=np.meshgrid(np.arange(row,min(row+128,int(upper[1])+1)),np.arange(col,min(col+128,int(upper[0])+1)),indexing='ij')
-                rr,cc=rr.ravel(),cc.ravel();query=np.column_stack([u0+cc*pitch,top-rr*pitch]);indices=np.full(len(rr),index,np.int64)
+                rr,cc=rr.ravel(),cc.ravel();query=np.column_stack([global_u0+(cc+column_offset)*pitch,global_top-(rr+row_offset)*pitch]);indices=np.full(len(rr),index,np.int64)
                 inside=inside_triangles(np.array([[0,1,2]]),t,np.zeros(len(rr),np.int64),query) if blocked else inside_triangles(f,uv,indices,query)
                 rr,cc,query,indices=rr[inside],cc[inside],query[inside],indices[inside]
                 if not len(rr):continue

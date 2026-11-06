@@ -4,7 +4,7 @@ from PIL import Image
 from .util import atomic_json,file_sha,digest
 
 
-def export_xyz(root,xyz,mask,faces,uv,eligible,canvas,frame,guard=lambda:None,*,binding=None):
+def export_xyz(root,xyz,mask,faces,uv,eligible,canvas,frame,guard=lambda:None,*,binding=None,publish=None):
     root.mkdir(exist_ok=False);guard()
     valid=(mask==1)|(mask==2);original=int(valid.sum());height,width=valid.shape
     unsafe=np.zeros((height-1,width-1),bool)
@@ -14,7 +14,8 @@ def export_xyz(root,xyz,mask,faces,uv,eligible,canvas,frame,guard=lambda:None,*,
     edges,counts=np.unique(edges,axis=0,return_counts=True);pitch=float(canvas['pitch'])
     for i,edge in enumerate(edges[counts!=2]):
         if i%2048==0:guard()
-        t=uv[edge];pixel=np.column_stack([(t[:,0]-canvas['u0'])/pitch,(canvas['v_top']-t[:,1])/pitch])
+        t=uv[edge];pixel=np.column_stack([(t[:,0]-canvas.get('global_u0',canvas['u0']))/pitch-canvas.get('column_offset',0),
+            (canvas.get('global_v_top',canvas['v_top'])-t[:,1])/pitch-canvas.get('row_offset',0)])
         lo=np.maximum(0,np.floor(pixel.min(0)).astype(int));hi=np.minimum([width-2,height-2],np.floor(pixel.max(0)).astype(int))
         if np.all(hi>=lo):unsafe[lo[1]:hi[1]+1,lo[0]:hi[0]+1]=True
     for y in range(0,height-1,64):
@@ -30,7 +31,12 @@ def export_xyz(root,xyz,mask,faces,uv,eligible,canvas,frame,guard=lambda:None,*,
     cells=valid[:-1,:-1]&valid[:-1,1:]&valid[1:,:-1]&valid[1:,1:];used=np.zeros_like(valid)
     for dy,dx in ((0,0),(0,1),(1,0),(1,1)):used[dy:dy+height-1,dx:dx+width-1]|=cells
     valid&=used
-    if not cells.any():raise ValueError('TIFXYZ contains no retained surface cells')
+    if publish is not None:
+        crop,canvas=publish
+        xyz,mask,valid=xyz[crop],mask[crop],valid[crop]
+        height,width=valid.shape;original=int(((mask==1)|(mask==2)).sum())
+        cells=valid[:-1,:-1]&valid[:-1,1:]&valid[1:,:-1]&valid[1:,1:]
+    if not valid.any() or (publish is None and not cells.any()):raise ValueError('TIFXYZ contains no retained surface cells')
     error=0.
     for axis,name in enumerate(('x.tif','y.tif','z.tif')):
         guard();channel=np.full(valid.shape,-1,np.float32)
@@ -50,7 +56,7 @@ def export_xyz(root,xyz,mask,faces,uv,eligible,canvas,frame,guard=lambda:None,*,
         axis_order='XYZ',invalid_value=-1,output_frame=frame,canvas=canvas,row_direction='decreasing UV v',physical_acceptance=False)
     atomic_json(root/'meta.json',meta)
     files={p.name:dict(sha256=file_sha(p),bytes=p.stat().st_size) for p in root.iterdir()}
-    report=dict(status='TIFXYZ_READBACK_VERIFIED',files=files,original_mapped_nodes=original,retained_nodes=int(valid.sum()),
+    report=dict(status='TIFXYZ_READBACK_VERIFIED' if cells.any() else 'TIFXYZ_SHARED_NODES_READBACK_VERIFIED',files=files,original_mapped_nodes=original,retained_nodes=int(valid.sum()),
         removed_nodes=original-int(valid.sum()),retained_cells=int(cells.sum()),max_float32_error_world=error,
         geometry_mask_includes_CT_missing=True,physical_acceptance=False,vc3d_readback=False,
         exclusions='domain-boundary rectangles, jumps >8*pitch, collapsed/folded cells, orphan nodes')

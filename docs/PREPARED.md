@@ -174,6 +174,26 @@ it makes no universal speedup claim.
 
 Direct prepared commands return 0 for budget/STOP, 75 for explicit resource
 unavailability, 2 for input/integrity errors, 1 for numerical/operational failure.
+For read-only global numerical verification, run:
+
+```sh
+winding-field prepared verify --config /path/to/field-run.json --output /path/to/new-field
+```
+
+This evaluates the stored field's free-node normal-equation residual over the
+whole grid, including cross-block constraint rows and complete eliminated-mean
+groups. The denominator includes fixed-value RHS elimination. Every stored node
+must be present; observations, recipe identity and checkpoint hashes are checked.
+The JSON reports residual norms, fixed-value error, observed-node count and the
+exact checkpoint hash. Exit 0 means verified, 3 means nonconverged; input and
+operational errors retain the codes above. Explicit fixed values remain exact.
+For the default zero gauge, verification accepts only its exact float32-delta
+encoding under the hash-verified origin chunk's float64 offset. The JSON retains
+the deviation from ideal zero (`fixed_max_error`), the codec offset, and the
+additional storage mismatch (`fixed_storage_max_error`, required to be zero).
+The free-node residual is still measured on the actual decoded field.
+Verification does not change the checkpoint or claim physical sheet correctness.
+
 `SWEEP_BUDGET_REACHED` is not global convergence. Quantized checkpoints and mesh
 diagnostics do not establish physical sheet correctness. Disk admission measures
 free space; it cannot reserve it against other jobs. Additional working memory

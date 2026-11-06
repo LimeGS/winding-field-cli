@@ -43,11 +43,17 @@ def frame_coordinates(xyz,frame,world_unit_um=1.):
     return xyz*(world_unit_um/frame['voxel_um'])-np.asarray(frame['origin_xyz_um'])/frame['voxel_um']
 
 
-def sample_ct(volume,xyz,frame=None,missing=None):
+def sample_ct(volume,xyz,frame=None,missing=None,*,stop=None):
     from numcodecs import get_codec
     def chunk(index):
+        if stop and stop():raise InterruptedError('CT sampling paused')
         name=volume.metadata.get('dimension_separator','.').join(map(str,index))
         key=volume.array_path+'/'+name if volume.array_path else name
+        if hasattr(volume,'decoded_chunk'):
+            try:return volume.decoded_chunk(key)
+            except FileNotFoundError:
+                if missing is None:raise
+                missing.add(key);return None
         try:raw=volume._chunk_bytes(key)
         except FileNotFoundError:
             if missing is None:raise
@@ -135,6 +141,8 @@ def verify_missing_ct(volume,record):
 
 
 def export_mesh(mesh_path,out,volume,request,*,export_tifxyz=False,stop=lambda:False,reserve_bytes=0):
+    from .range_surface import reject_scalar_range
+    reject_scalar_range(mesh_path)
     from field_runtime import check_resources
     from .original_tifxyz import export_xyz
     from .workflow import implementation_sha
@@ -238,6 +246,8 @@ def run_original(run,config,volume,stop=None):
 
 
 def export_existing(args):
+    from .range_surface import reject_scalar_range
+    if args.mesh_bundle:reject_scalar_range(args.mesh_bundle)
     import fcntl
     from .surface_sources import FieldSource
     from .surface_mesh import extract_mesh
