@@ -30,9 +30,11 @@ Minimal `matrix.json` for LSCM:
 }
 ```
 
-For SLIM, add `"app_run": "/opt/vc3d/AppRun"`. This requires the pinned
-`installed-2f89bfc9` Flatboi binary used by `constant-sheet`, not an arbitrary
-executable. Its recipe remains cap200, batches10, two threads, symmetric
+For SLIM, add `"app_run": "/opt/vc3d/AppRun"`. The default is the pinned
+`installed-2f89bfc9` Flatboi binary used by `constant-sheet`. To select the
+official Villa stable release recorded in [native provenance](../provenance/flatboi.json),
+also add `"native_recipe": "historical"`. Both launcher and binary hashes
+must match the selected recipe. Its settings remain cap200, batches10, two threads, symmetric
 Dirichlet and tolerance1e−6. SLIM runs require a cgroup v2 envelope:
 
 ```sh
@@ -103,6 +105,8 @@ well as its own checkpoint bounds. It also honors
 As with existing checkpoint code identities, a checkpoint from an older runner
 must use its frozen runtime or the explicit `constant-sheet import-native`
 migration with the original runner SHA; it is never relabeled as a new run.
+Changing `native_recipe` requires a new output; import-native also retains the
+original binary identity and cannot migrate checkpoints between these releases.
 
 Sampling stays isotropic at `pitch_um` (default19.2), window0–255, with bounded
 native CT caching. Common rendering settings are `tile_size`, `raster_workers`,

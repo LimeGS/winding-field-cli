@@ -115,7 +115,9 @@ def test_cli_matrix_ct_xyz_keys_and_completed_resume(tmp_path,capsys,solver,scop
     from winding_field.patch_mapping import PatchMapping
     mesh,ct=source_bundle(tmp_path);req=request(tmp_path)
     if scope=='patches':req['max_patch_faces']=32
-    if solver=='slim':req['app_run']=app
+    if solver=='slim':
+        req['app_run']=app
+        req['native_recipe']=os.environ.get('MATRIX_NATIVE_RECIPE','installed-2f89bfc9')
     config=tmp_path/'config.json';atomic_json(config,req);out=tmp_path/'out'
     args=['export-sheets','--mesh-bundle',str(mesh),'--source',str(ct),'--voxel-um','9.6',
           '--flattening-solver',solver,'--scope',scope,'--flattening-config',str(config),'--output',str(out)]
@@ -132,7 +134,7 @@ def test_cli_matrix_ct_xyz_keys_and_completed_resume(tmp_path,capsys,solver,scop
         domains=record['mapping']['domains']
         assert len(domains)==2 if scope=='sheet' else len(domains)>2 and max(d['faces'] for d in domains)<=32
         if solver=='slim':
-            m=matrix();v,f=geometry();other=dict(req);other.pop('app_run')
+            m=matrix();v,f=geometry();other=dict(req);other.pop('app_run');other.pop('native_recipe')
             comparison=m.build_map(v,f,tmp_path/'lscm-comparison',m.settings(other,'lscm',scope))
             assert record['mapping']['partition_sha256']==comparison['report']['partition_sha256']
             np.testing.assert_array_equal(a['domain_ids'],comparison['domain_ids'])

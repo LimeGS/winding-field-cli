@@ -1,0 +1,10 @@
+{
+  "recipe": "historical",
+  "source_url": "https://github.com/ScrollPrize/villa",
+  "revision": "fc25b4d1f160b494eee5e5f69726df2c1008bf26",
+  "url": "https://github.com/ScrollPrize/villa/releases/download/vc3d-archive-stable-363877681/VC3D-fc25b4d-2026-07-31-linux-x86_64.AppImage",
+  "sha256": "5da27c3df44c0958390ea752b550756f9d7e2c104840a95c0ba8b8651c7aee9f",
+  "squashfs_offset": 944632,
+  "launcher_sha256": "c1e0ca2ea1616967f6da5907c60ea3fe114e840834154ccde758856f85510517",
+  "binary_sha256": "d724cf0cc6940d7c959e36c73ed1a9a977d3b90bab60fc97d519fe370cc63f38"
+}

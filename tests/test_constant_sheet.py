@@ -91,13 +91,13 @@ def test_isotropic_calibration_z_orientation_and_exact_anchor():
     with pytest.raises(ValueError):p.reference_anchor(v,f,uv,[[0,0,0],[0,0,4]],10.)
 
 
-def native_fixture(prepared,tmp_path):
+def native_fixture(prepared,tmp_path,recipe='installed-2f89bfc9'):
     from winding_field import flatboi_checkpoint as r
     from winding_field.patch_pipeline import LAUNCHER_SHA,NATIVE_RECIPES
     record,mapped=preparation().load_prepared(prepared)
     root=tmp_path/'native';root.mkdir();batch=root/'batch-fixture';batch.mkdir()
     identity=dict(source_map_sha256=file_sha(prepared/'initial-map.npz'),source_obj_sha256=file_sha(prepared/'inputmesh.obj'),
-                  app_sha256=LAUNCHER_SHA,binary_sha256=NATIVE_RECIPES['installed-2f89bfc9'],runner_sha256=file_sha(r.__file__),
+                  app_sha256=LAUNCHER_SHA,binary_sha256=NATIVE_RECIPES[recipe],runner_sha256=file_sha(r.__file__),
                   source_prepared_sha256=file_sha(prepared/'PREPARED.json'),
                   batch_iterations=10,energy='symmetric_dirichlet',tolerance=1e-6,threads=2)
     # Exact planar native result; the circular initialization itself need not pass visual distortion gates.
@@ -115,10 +115,11 @@ def native_fixture(prepared,tmp_path):
 
 
 @pytest.mark.skipif(sys.platform!='linux',reason='Linux process-tree resource guard')
-def test_validate_rebinds_source_geometry_and_centerline(tmp_path):
+@pytest.mark.parametrize('recipe',['installed-2f89bfc9','historical'])
+def test_validate_rebinds_source_geometry_and_centerline(tmp_path,recipe):
     p=finishing();mesh=extracted(tmp_path);prepared=tmp_path/'prepared'
     preparation().prepare(mesh,prepared,3.5,[[0,0,0],[0,0,6]])
-    native=native_fixture(prepared,tmp_path)
+    native=native_fixture(prepared,tmp_path,recipe)
     with pytest.raises(ValueError,match='centerline'):
         p.validate(prepared,native,tmp_path/'bad',[[1,0,0],[1,0,6]],3.)
     out=tmp_path/'validated';report=p.validate(prepared,native,out,None,3.)
