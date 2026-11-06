@@ -123,6 +123,17 @@ def test_plane_export_and_fresh_readonly_verification(tmp_path, engine):
     np.testing.assert_array_equal(z, np.full((3,3), .5, np.float32))
 
 
+def test_preferred_io_size_does_not_exhaust_refinement_scratch(tmp_path,engine,monkeypatch):
+    import os
+    from winding_field.tifxyz import _verify_source
+    statvfs=os.statvfs
+    # macOS reports preferred I/O length separately from allocation size.
+    monkeypatch.setattr(os,'statvfs',lambda path:os.statvfs_result((4<<20,*statvfs(path)[1:])))
+    source,out=export_plane(tmp_path,pitch_um=2.)
+    with open_physical_field(source) as field:result=_verify_source(field,out)
+    assert result['status']=='TIFXYZ_VERIFIED',result
+
+
 def test_native_export_pins_operator_artifact_for_fresh_verification(tmp_path,engine,artifact,monkeypatch):
     import shutil
     from winding_field.tifxyz import _verify_source
@@ -467,12 +478,19 @@ def test_unresolved_or_invalid_effective_pitch_rejected_before_work(tmp_path,con
 @pytest.mark.skipif(__import__('sys').platform!='linux',reason='Linux supervised end-to-end integration')
 def test_public_export_and_separate_verifier_process(tmp_path):
     pytest.importorskip('igl')
-    from winding_field.tifxyz import export_field,verify_export
+    import subprocess,sys
     source=physical_source(tmp_path/'source');out=tmp_path/'out'
-    result=export_field(source,out,dict(levels=[0.],tolerance_um=3.,reserve_disk_gib=0))
+    # A suite that already loaded models is not the bounded CLI controller being tested.
+    def invoke(script):
+        process=subprocess.run([sys.executable,'-I','-c',script,str(source),str(out)],
+                               capture_output=True,text=True,timeout=180)
+        assert process.returncode==0,process.stderr
+        return json.loads(process.stdout)
+    result=invoke("import sys,json; from winding_field.tifxyz import export_field; "
+                  "print(json.dumps(export_field(sys.argv[1],sys.argv[2],dict(levels=[0.],tolerance_um=3.,reserve_disk_gib=0))))")
     assert result['status']=='READY',result
     before,source_before=tree_state(out),tree_state(source)
-    verified=verify_export(out)
+    verified=invoke("import sys,json; from winding_field.tifxyz import verify_export; print(json.dumps(verify_export(sys.argv[2])))")
     assert verified['status']=='TIFXYZ_VERIFIED',verified
     assert result['supervision']['pid']!=verified['supervision']['pid']
     assert tree_state(out)==before and tree_state(source)==source_before

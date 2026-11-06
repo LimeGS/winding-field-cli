@@ -18,7 +18,13 @@ _STATE=None
 def compute_geometry(reference,field,frame,uv,w,*,reference_data=None,stop=None):
     """One <=16384-point batch, no CT or writes. Returns numeric arrays and timing/cache metrics."""
     import numpy as np
+    from copy import copy
+    from dataclasses import replace
     from .uvw import _points,reference_points,xyz_to_uvw,correspondence_transport,sample_w_gradient
+    target_in_band=reference.band is None or reference.band[0]<=w<=reference.band[1]
+    reference=copy(reference)
+    # Admit the requested W; float32 XYZ can round across its endpoint during inverse verification.
+    reference.band=None
     uv=_points(uv,2)
     if reference_data is not None:
         if (not isinstance(reference_data,dict) or set(reference_data)!={'base','reference_valid','cause','reference_face','reference_barycentric'}
@@ -42,6 +48,11 @@ def compute_geometry(reference,field,frame,uv,w,*,reference_data=None,stop=None)
             reference_face=provenance['face'],reference_barycentric=provenance['barycentric'])
         reference_seconds=time.perf_counter()-begin
     base=reference_data['base'];valid=reference_data['reference_valid'].copy();cause=reference_data['cause'].copy()
+    # Tighten correspondence only as far as this batch's float64 resolution permits.
+    precision=np.spacing(np.abs(base[valid]).max(initial=0.))/min(field.spacing_um)
+    reference.settings=replace(reference.settings,error_fraction=min(reference.settings.error_fraction,1e-10,max(1e-12,precision)))
+    if not target_in_band:
+        cause[valid]=CAUSES['invalid_target'];valid[:]=False
     xyz=np.full_like(base,np.nan);residual=np.full(len(base),np.nan);roundtrip=np.full(len(base),np.nan)
     rounding=np.full(len(base),np.nan);ids=np.flatnonzero(valid)
     if len(ids):

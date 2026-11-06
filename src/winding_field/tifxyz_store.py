@@ -303,7 +303,8 @@ class TileStore:
         if type(pending_bytes) is not int or pending_bytes < 0:
             raise ValueError('invalid pending bytes')
         fs = os.statvfs(self.scope)
-        quantum = max(fs.f_frsize, fs.f_bsize, 4096)
+        # f_bsize is preferred I/O length on macOS, not allocated space per entry.
+        quantum = max(fs.f_frsize, 4096)
         device = self.scope.stat().st_dev
         def charge(path):
             info = path.lstat()

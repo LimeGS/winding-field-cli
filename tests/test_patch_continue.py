@@ -1,4 +1,5 @@
 import json,shutil
+import sys
 from pathlib import Path
 import numpy as np
 import pytest
@@ -66,6 +67,7 @@ def test_reuse_rejects_corrupt_or_incompatible_source(tmp_path,change):
 
 
 @pytest.mark.parametrize('sampler',[None,'scalar','native-float64'])
+@pytest.mark.skipif(sys.platform!='linux',reason='Linux process-tree resource guard')
 def test_continue_export_reuses_map_and_inherits_ct_ledger(tmp_path,monkeypatch,sampler):
     import sqlite3
     from test_patch_pipeline import grid,planar

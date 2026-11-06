@@ -63,6 +63,7 @@ print(f'PROGRESS {{n}}/{{n}}',flush=True)
     return app
 
 
+@pytest.mark.skipif(sys.platform!='linux',reason='Linux process-tree resource guard')
 def test_subprocess_resume_and_legacy_import_preserve_original_identity(tmp_path,monkeypatch):
     r=runner();v,f,obj,mapped=inputs(tmp_path);app=fake_native(tmp_path,monkeypatch,r)
     args=argparse.Namespace(output=tmp_path/'run',source_map=mapped,input=obj,app_run=app,native_recipe='installed-2f89bfc9',iterations=10,batch_iterations=10,hours=1.)
@@ -99,6 +100,7 @@ def test_status_distinguishes_live_calculation_from_durable_progress(tmp_path):
     assert (data['saved'],data['calculated'],data['energy'])==(10,17,7.5)
 
 
+@pytest.mark.skipif(sys.platform!='linux',reason='Linux process-tree resource guard')
 def test_native_run_binds_preparation_and_import_rejects_symlink_ancestor(tmp_path,monkeypatch):
     r=runner();v,f,obj,mapped=inputs(tmp_path);app=fake_native(tmp_path,monkeypatch,r)
     prep=tmp_path/'PREPARED.json';atomic_json(prep,dict(centerline=[[0,0,0],[0,0,1]]))
