@@ -14,6 +14,9 @@ Follow **1–2** for a full scroll or **1 → 3** for a region; **4** resumes wo
 <details>
 <summary><strong>1. Install</strong></summary>
 
+For Linux x86-64 CPU or NVIDIA CUDA containers covering the full CLI, see
+[Docker build, mounts and workflows](docs/DOCKER.md).
+
 Use **Python 3.11 or 3.12** on Linux/macOS. Install the numerical core at the
 revision recorded in this checkout, then the CLI, in the same environment:
 

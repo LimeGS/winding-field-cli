@@ -33,7 +33,7 @@ winding_field = ["native/predicates.h", "native/predicates.cpp", "native/predica
 "winding_field._vendor" = ["qual_plans.json"]
 
 [tool.setuptools.data-files]
-"share/winding-field-cli/provenance" = ["provenance/core.json", "provenance/villa.json", "provenance/qual.json", "provenance/lasagna.json", "provenance/tifxyz-guide.json", "provenance/original-recipe.json"]
+"share/winding-field-cli/provenance" = ["provenance/core.json", "provenance/villa.json", "provenance/qual.json", "provenance/lasagna.json", "provenance/flatboi.json", "provenance/tifxyz-guide.json", "provenance/original-recipe.json"]
 "share/winding-field-cli" = ["THIRD_PARTY.md"]
 
 [tool.pytest.ini_options]
