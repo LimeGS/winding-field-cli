@@ -79,7 +79,7 @@ def trace(run,config,stop=None):
             continue
         data=maps.load(key); lo,hi=maps.box(key)
         seeds=itertools.product(*(range(seed_stride//2,int(n),seed_stride) for n in hi-lo))
-        curves=streamlines(data['presence'],data['tangents'],data['support'],seeds=seeds,
+        curves=streamlines(data['presence'],data['tangents'],data.get('fibre_support',data['support']),seeds=seeds,
                  origin_xyz=(np.array(prepared['origin_xyz'])+lo[::-1]*prepared['spacing_xyz']),
                  spacing_xyz=prepared['spacing_xyz'],threshold=identity['threshold'])
         with db:

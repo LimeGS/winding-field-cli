@@ -35,7 +35,8 @@ def tifxyz_settings(out,request=None,*,resume=False):
 
 
 def validate_observations(config,volume,shape):
-    if (config.get('fibres') or config.get('prediction','classical')!='classical') and volume.dtype not in (np.dtype('uint8'),np.dtype('uint16')):
+    if (not config.get('lasagna_input') and (config.get('fibres') or config.get('prediction','classical')!='classical')
+            and volume.dtype not in (np.dtype('uint8'),np.dtype('uint16'))):
         raise ValueError('Lasagna requires uint8 or uint16 CT')
     if config.get('prediction')=='qual-v2' and not config.get('fibres'):
         spacing=np.asarray(volume.spacing_xyz)*config.get('stride',1)
@@ -73,6 +74,8 @@ def validate_config(config):
     if type(config.get('bounded_preparation',False)) is not bool:
         raise ValueError('bounded_preparation must be boolean')
     if config.get('bounded_preparation'):
+        if config.get('lasagna_input'):
+            raise ValueError('--lasagna-input conflicts with --bounded-preparation; omit bounded preparation to import surfaces')
         if config.get('prediction')!='qual-v2' or config.get('fibres') or config.get('stride',1)!=1:
             raise ValueError('bounded preparation requires native Qual V2 with stride1 and no external fibres')
         if config.get('field_spacing_um') is None:
@@ -81,6 +84,10 @@ def validate_config(config):
             raise ValueError('bounded ROI origin must be a multiple of4 to preserve global seed parity')
         budget=config.get('bounded_bytes',12<<30)
         if type(budget) is not int or budget<16<<20:raise ValueError('bounded allowance must be at least16MiB')
+    if config.get('lasagna_geometry') and not config.get('lasagna_input'):
+        raise ValueError('--lasagna-geometry requires --lasagna-input')
+    if config.get('lasagna_input') and (config.get('lasagna_model_path') or config.get('lasagna_python')):
+        raise ValueError('--lasagna-input conflicts with --lasagna-model-path and --lasagna-python')
     if config.get('fibres_geometry') and not config.get('fibres'):
         raise ValueError('--fibres-geometry requires --fibres')
     if config.get('fibres') and config.get('model_path'):
