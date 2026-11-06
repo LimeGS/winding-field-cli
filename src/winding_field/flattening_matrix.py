@@ -22,7 +22,7 @@ def settings(request,solver,scope):
              'cache_dir','cache_mib','cache_gib','ct_sampler','ct_workers','raster_workers'}
     if scope=='patches':allowed|={'max_patch_faces','max_charts'}
     else:allowed|={'centerline','reference_z'}
-    if solver=='slim':allowed|={'app_run'}
+    if solver=='slim':allowed|={'app_run','native_recipe'}
     if set(request)-allowed:raise ValueError('unsupported matrix settings for selection: '+str(sorted(set(request)-allowed)))
     extra={k:request[k] for k in ('centerline','reference_z') if k in request}
     if 'centerline' in extra:
@@ -33,6 +33,7 @@ def settings(request,solver,scope):
     base=dict(memory_gib=6.,process_tree_gib=22.,native_recipe='installed-2f89bfc9')
     base.update({k:v for k,v in request.items() if k not in extra})
     cfg=p.settings(base,native_required=solver=='slim')
+    if solver=='slim' and cfg['native_recipe'] not in p.CHECKPOINT_RECIPES:raise ValueError('native_recipe is not checkpoint-qualified')
     if cfg['disk_reserve_gib']<8 or cfg['memory_gib']>6 or cfg['process_tree_gib']>22:
         raise ValueError('matrix requires >=8GiB disk reserve, <=6GiB geometry/raster and <=22GiB process-tree budget')
     cfg.update(extra,flattening_solver=solver,scope=scope)
@@ -65,7 +66,7 @@ def solve(cut,output,cfg,guard):
             np.savetxt(stream,np.repeat(f+1,2,axis=1),fmt='f %d/%d %d/%d %d/%d')
         atomic_json(prepared,dict(initialization=initialization,files={q.name:file_sha(q) for q in (initial,obj)}))
     result=native.run(SimpleNamespace(source_map=initial,input=obj,output=output/'native',app_run=cfg['app_run'],
-                                     batch_iterations=10,iterations=200,hours=12.,native_recipe='installed-2f89bfc9'),guard=guard)
+                                     batch_iterations=10,iterations=200,hours=12.,native_recipe=cfg['native_recipe']),guard=guard)
     checkpoint=result['checkpoint'];guard()
     uv,binding=native.positive_uv(output/'native'/checkpoint['obj'],v,f,guard)
     return uv,dict(algorithm='SLIM',backend='native-Flatboi',initialization=initialization,checkpoint=checkpoint,binding=binding)
