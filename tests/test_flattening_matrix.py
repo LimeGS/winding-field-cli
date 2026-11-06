@@ -2,6 +2,7 @@
 import importlib.util
 import json
 import os
+import sys
 
 import numpy as np
 import pytest
@@ -106,6 +107,7 @@ def source_bundle(tmp_path):
 
 @pytest.mark.parametrize('solver',['lscm','slim'])
 @pytest.mark.parametrize('scope',['patches','sheet'])
+@pytest.mark.skipif(sys.platform!='linux',reason='Linux process-tree resource guard')
 def test_cli_matrix_ct_xyz_keys_and_completed_resume(tmp_path,capsys,solver,scope):
     app=os.environ.get('MATRIX_NATIVE_APP')
     if solver=='slim' and not app:pytest.skip('native qualification requires MATRIX_NATIVE_APP and bounded Linux cgroup')
@@ -164,6 +166,7 @@ def cli_fixture(tmp_path):
                    '--flattening-solver','lscm','--scope','sheet','--flattening-config',str(config),'--output',str(out)]
 
 
+@pytest.mark.skipif(sys.platform!='linux',reason='Linux process-tree resource guard')
 def test_interrupted_render_retains_map_and_evidence_then_resumes(tmp_path,monkeypatch):
     from winding_field.cli import main
     from winding_field import patch_pipeline as p
@@ -181,6 +184,7 @@ def test_interrupted_render_retains_map_and_evidence_then_resumes(tmp_path,monke
 
 
 @pytest.mark.parametrize('tamper',['missing-ledger','removed-entry','symlink'])
+@pytest.mark.skipif(sys.platform!='linux',reason='Linux process-tree resource guard')
 def test_incomplete_publication_rejects_lost_ct_provenance_and_symlinks(tmp_path,tamper):
     import sqlite3
     from winding_field.cli import main
@@ -198,6 +202,7 @@ def test_incomplete_publication_rejects_lost_ct_provenance_and_symlinks(tmp_path
     assert not (out/'MATRIX.json').exists()
 
 
+@pytest.mark.skipif(sys.platform!='linux',reason='Linux process-tree resource guard')
 def test_native_checkpoint_interrupt_resumes_without_rewriting_prior_batch(tmp_path,monkeypatch):
     from winding_field import flatboi_checkpoint as r
     from test_flatboi_checkpoint import fake_native

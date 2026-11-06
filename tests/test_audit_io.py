@@ -85,7 +85,8 @@ def test_cache_write_admission_preserves_reserve(tmp_path,monkeypatch):
     import winding_field.io as reader
     local=tmp_path/'source'; make_volume(local)
     monkeypatch.setattr(reader,'fetch',lambda url,**k:((local/url.split('ct.zarr/')[1]).read_bytes(),None))
-    v=reader.Volume('https://test/ct.zarr',cache=tmp_path/'cache',reserve_bytes=100)
+    # Exercise the mocked Python transport even when the native reader is installed.
+    v=reader.Volume('https://test/ct.zarr',cache=tmp_path/'cache',cache_bytes=1<<20,reserve_bytes=100)
     monkeypatch.setattr(reader.shutil,'disk_usage',lambda p:SimpleNamespace(free=105))
     with pytest.raises(OSError,match='cache|space'):
         v.read([0,0,0],[2,2,3])
