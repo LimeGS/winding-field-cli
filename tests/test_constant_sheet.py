@@ -1,6 +1,7 @@
 """Installed constant-W stages preserve exact geometry and receipt bindings."""
 import importlib.util
 import json
+import sys
 
 import numpy as np
 import pytest
@@ -48,6 +49,7 @@ def test_reference_cut_keeps_an_existing_disk_connected():
     assert report['topology']['cut']['euler_characteristic']==1
 
 
+@pytest.mark.skipif(sys.platform!='linux',reason='Linux process-tree resource guard')
 def test_prepare_accounts_disconnected_geometry_and_rejects_tampering(tmp_path):
     p=preparation();mesh=extracted(tmp_path);out=tmp_path/'prepared'
     result=p.prepare(mesh,out,3.5,[[0,0,0],[0,0,6]])
@@ -112,6 +114,7 @@ def native_fixture(prepared,tmp_path):
     return root
 
 
+@pytest.mark.skipif(sys.platform!='linux',reason='Linux process-tree resource guard')
 def test_validate_rebinds_source_geometry_and_centerline(tmp_path):
     p=finishing();mesh=extracted(tmp_path);prepared=tmp_path/'prepared'
     preparation().prepare(mesh,prepared,3.5,[[0,0,0],[0,0,6]])
@@ -129,6 +132,7 @@ def test_validate_rebinds_source_geometry_and_centerline(tmp_path):
     assert not (tmp_path/'wrong-native'/'VALIDATED.json').exists()
 
 
+@pytest.mark.skipif(sys.platform!='linux',reason='Linux process-tree resource guard')
 def test_installed_stage_dispatch_renders_ct_and_feeds_atlas(tmp_path,capsys):
     finishing()
     from winding_field.cli import main
@@ -172,6 +176,7 @@ def test_installed_stage_dispatch_renders_ct_and_feeds_atlas(tmp_path,capsys):
 
 
 @pytest.mark.parametrize('change',['origin','tile-size'])
+@pytest.mark.skipif(sys.platform!='linux',reason='Linux process-tree resource guard')
 def test_render_rejects_shifted_origin_and_unreadable_tiles_before_output(tmp_path,change):
     p=finishing();mesh=extracted(tmp_path);prepared=tmp_path/'prepared'
     preparation().prepare(mesh,prepared,3.5,[[0,0,0],[0,0,6]])
@@ -187,6 +192,7 @@ def test_render_rejects_shifted_origin_and_unreadable_tiles_before_output(tmp_pa
 
 
 @pytest.mark.parametrize('change',['centerline','runner'])
+@pytest.mark.skipif(sys.platform!='linux',reason='Linux process-tree resource guard')
 def test_validation_rejects_replaced_preparation_or_unimported_runner(tmp_path,change):
     p=finishing();mesh=extracted(tmp_path);prepared=tmp_path/'prepared'
     preparation().prepare(mesh,prepared,3.5,[[0,0,0],[0,0,6]])
@@ -203,6 +209,7 @@ def test_validation_rejects_replaced_preparation_or_unimported_runner(tmp_path,c
 
 
 @pytest.mark.parametrize('stage',['prepare','validate'])
+@pytest.mark.skipif(sys.platform!='linux',reason='Linux process-tree resource guard')
 def test_output_symlink_ancestor_rejected_before_writing(tmp_path,stage):
     p=finishing();mesh=extracted(tmp_path);prepared=tmp_path/'prepared'
     target=tmp_path/'target';target.mkdir();alias=tmp_path/'alias';alias.symlink_to(target,target_is_directory=True)

@@ -2,6 +2,7 @@
 from functools import partial
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 import threading
+import sys
 
 import numpy as np
 import pytest
@@ -34,6 +35,7 @@ def test_remote_resume_detects_change_despite_retained_native_cache(tmp_path,was
     finally:server.shutdown();server.server_close();thread.join()
 
 
+@pytest.mark.skipif(sys.platform!='linux',reason='Linux process-tree resource guard')
 def test_field_extraction_honors_export_stop_and_reserve(tmp_path,monkeypatch):
     from winding_field.cli import main
     from winding_field import surface_mesh
@@ -55,6 +57,7 @@ def test_field_extraction_honors_export_stop_and_reserve(tmp_path,monkeypatch):
     assert not (out/'meshes/MESH.json').exists()
 
 
+@pytest.mark.skipif(sys.platform!='linux',reason='Linux process-tree resource guard')
 def test_matrix_guard_interrupts_native_before_next_checkpoint(tmp_path,monkeypatch):
     from winding_field import flatboi_checkpoint as native
     from winding_field.flattening_matrix import build_map, settings
