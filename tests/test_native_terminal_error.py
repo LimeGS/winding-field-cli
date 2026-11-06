@@ -18,7 +18,8 @@ def test_terminal_error_is_binary_bound_and_exact(tmp_path, monkeypatch, pinned,
     monkeypatch.setattr(s, '_sha', lambda p: '2f89bfc96512bebf7ef44b25de01c5afd01c7af058e452515b03bc52cf6afd6a'
         if pinned and p==binary else original(p))
     v=np.array([[0.,0.,0.],[1.,0.,0.],[0.,1.,0.]])
-    uv,receipt=s.flatten_native(v,np.array([[0,1,2]]),app,tmp_path/'native',timeout=.5)
+    # macOS first-execution checks can exceed 0.5s before this new script writes stderr.
+    uv,receipt=s.flatten_native(v,np.array([[0,1,2]]),app,tmp_path/'native',timeout=2.)
     assert uv is None
     assert receipt['timed_out'] is (not early)
     assert bool(receipt.get('terminal_native_error')) is early

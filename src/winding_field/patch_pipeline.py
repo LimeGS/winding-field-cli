@@ -28,6 +28,7 @@ LAUNCHER_SHA='c1e0ca2ea1616967f6da5907c60ea3fe114e840834154ccde758856f85510517'
 BINARY_SHA='d724cf0cc6940d7c959e36c73ed1a9a977d3b90bab60fc97d519fe370cc63f38'
 NATIVE_RECIPES={'historical':BINARY_SHA,
     'installed-2f89bfc9':'2f89bfc96512bebf7ef44b25de01c5afd01c7af058e452515b03bc52cf6afd6a'}
+CHECKPOINT_RECIPES=('installed-2f89bfc9','historical')
 
 
 def settings(request,*,native_required=True):

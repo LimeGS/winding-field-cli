@@ -1,0 +1,17 @@
+*
+!Dockerfile
+!pyproject.toml
+!README.md
+!LICENSE
+!THIRD_PARTY.md
+!licenses/
+!licenses/**
+!src/
+!src/**
+!provenance/
+!provenance/**
+!docker/
+!docker/**
+**/__pycache__
+**/*.pyc
+**/*.egg-info

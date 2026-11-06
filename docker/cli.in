@@ -1,0 +1,4 @@
+# Compile together with pyproject.toml --extra plot --extra tifxyz.
+winding-field-experiments @ https://github.com/LimeGS/winding-field/archive/f750fd11fcf8d3e5bc6a80290e90d125cfd02a36.tar.gz
+vc-reader @ https://github.com/ScrollPrize/villa/archive/baf5e605bb42a3d55a62b7c5c728e0908137225c.tar.gz#subdirectory=vc_reader
+torch==2.10.0

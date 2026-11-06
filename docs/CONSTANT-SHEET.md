@@ -7,6 +7,12 @@ Install the existing `[tifxyz,ct]` extras for libigl and native CT sampling.
 These bounded stages run on Linux; native Flatboi additionally requires its
 pinned AppRun and a cgroup v2 envelope.
 
+`flatten` and `import-native` default to `--native-recipe installed-2f89bfc9`.
+For the official Villa stable release in [native provenance](../provenance/flatboi.json),
+pass `--native-recipe historical` explicitly. The selected launcher and binary
+must match their recorded SHA256 values. Resume and import preserve binary
+identity: they cannot transfer a checkpoint to a different Flatboi release.
+
 ## Stages
 
 ```sh

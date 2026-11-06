@@ -43,7 +43,7 @@ def export_existing(args):
     native=None
     if cfg['flattening_solver']=='slim':
         from .flatboi_checkpoint import require_cgroup
-        native=p.check_flatboi(cfg['app_run'],'installed-2f89bfc9');require_cgroup()
+        native=p.check_flatboi(cfg['app_run'],cfg['native_recipe']);require_cgroup()
     # Validate mesh provenance before creating output or caches.
     mesh_sha=None
     if args.mesh_bundle:

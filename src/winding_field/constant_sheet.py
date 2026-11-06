@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 
 from . import flatboi_checkpoint
+from .patch_pipeline import CHECKPOINT_RECIPES
 from .sheet_atlas import _json
 from .sheet_finish import render, validate
 from .sheet_prepare import load_prepared, prepare
@@ -20,6 +21,7 @@ def main(argv=None):
         cmd=commands.add_parser(name,help='checkpointed Flatboi' if name=='flatten' else 'copy a verified historical checkpoint into a fresh run')
         cmd.add_argument('--prepared',type=Path,required=True);cmd.add_argument('--output',type=Path,required=True)
         cmd.add_argument('--app-run',type=Path,required=True)
+        cmd.add_argument('--native-recipe',choices=CHECKPOINT_RECIPES,default='installed-2f89bfc9')
         if name=='flatten':
             cmd.add_argument('--iterations',type=int,default=200);cmd.add_argument('--batch-iterations',type=int,default=10)
             cmd.add_argument('--hours',type=float,default=12.)
@@ -41,9 +43,8 @@ def main(argv=None):
         elif args.command in ('flatten','import-native'):
             load_prepared(args.prepared)
             args.source_map=args.prepared/'initial-map.npz';args.input=args.prepared/'inputmesh.obj'
-            args.native_recipe='installed-2f89bfc9'
             if args.command=='flatten':result=flatboi_checkpoint.run(args)
-            else:result=flatboi_checkpoint.import_checkpoint(args.native,args.output,args.source_map,args.input,args.app_run,args.runner_sha256)
+            else:result=flatboi_checkpoint.import_checkpoint(args.native,args.output,args.source_map,args.input,args.app_run,args.runner_sha256,args.native_recipe)
         elif args.command=='validate':
             result=validate(args.prepared,args.native,args.output,_json(args.centerline) if args.centerline else None,args.reference_z,mesh_source=args.mesh)
         elif args.command=='render':result=render(args.validated,args.output,_json(args.config))

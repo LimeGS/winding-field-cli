@@ -58,7 +58,7 @@ def validate(prepared,native,output,centerline,reference_z,*,mesh_source=None):
     if identity.get('source_prepared_sha256')!=file_sha(source/'PREPARED.json'):raise ValueError('native preparation receipt differs; import legacy native first')
     if identity.get('runner_sha256')!=file_sha(flatboi_checkpoint.__file__):raise ValueError('native runner differs; use import-native with original runner SHA256')
     if (identity['source_map_sha256']!=file_sha(source/'initial-map.npz') or identity['source_obj_sha256']!=file_sha(source/'inputmesh.obj')
-        or identity['app_sha256']!=p.LAUNCHER_SHA or identity['binary_sha256']!=p.NATIVE_RECIPES['installed-2f89bfc9']
+        or identity['app_sha256']!=p.LAUNCHER_SHA or identity['binary_sha256'] not in [p.NATIVE_RECIPES[r] for r in p.CHECKPOINT_RECIPES]
         or identity['energy']!='symmetric_dirichlet' or identity['tolerance']!=1e-6 or identity['threads']!=2):
         raise ValueError('native source/recipe identity differs')
     latest,checkpoint=load_checkpoint(native,identity)
