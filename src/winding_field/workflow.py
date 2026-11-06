@@ -95,7 +95,7 @@ def plan(config,volume=None,stages=()):
             raise ValueError('ROI needs at least two observation samples per axis')
         validate_observations(config,volume,shape)
         method='external-afv' if config.get('fibres') else config.get('prediction','classical')
-        halo=40*stride
+        halo=0 if method=='external-afv' and config.get('lasagna_input') else 40*stride
         input_lo=np.maximum(0,lo-halo); input_hi=np.minimum(volume.shape,hi+halo)
         if method in ('sd2','qual-v2'):
             core=48 if method=='qual-v2' else 32
@@ -108,8 +108,13 @@ def plan(config,volume=None,stages=()):
         observations=dict(shape_zyx=shape.tolist(),spacing_xyz=(np.asarray(volume.spacing_xyz)*stride).tolist(),
                           origin_xyz=(np.asarray(volume.origin_xyz)+lo[::-1]*volume.spacing_xyz).tolist(),
                           frame=digest(volume.identity))
-        lasagna_staging=lasagna_workspace=0
-        if method!='classical':
+        lasagna_staging=lasagna_workspace=lasagna_import=0; lasagna_input=None
+        if config.get('lasagna_input'):
+            from .lasagna_input import source_identity
+            lasagna_input=source_identity(config['lasagna_input'],config.get('lasagna_geometry'),
+                                          volume.identity,observations,volume.cache)
+            lasagna_import=math.prod(shape.tolist())*(21+volume.dtype.itemsize)
+        elif method!='classical':
             from .lasagna import input_geometry,CHUNK,BORDER
             staged=input_geometry(volume,dict(observations,stride=stride,roi_lo_zyx=lo.tolist()))
             stage_shape=np.asarray(staged['shape_zyx'])
@@ -124,7 +129,7 @@ def plan(config,volume=None,stages=()):
             from .bounded_coarse import endpoint_grid
             field=endpoint_grid(observations,config['field_spacing_um'])
         observation_nodes=math.prod(shape.tolist()); field_nodes=math.prod(field['shape_zyx'])
-        prepare_bytes=observation_nodes*48+lasagna_staging+lasagna_workspace
+        prepare_bytes=observation_nodes*48+lasagna_staging+lasagna_workspace+lasagna_import
         fibre_bytes=observation_nodes*12
         if config.get('fibres'): fibre_bytes+=Path(config['fibres']).stat().st_size*4
         spline_bytes=0
@@ -180,6 +185,8 @@ def plan(config,volume=None,stages=()):
         if mode=='download' and not fits and volume.remote and not stages:
             raise ValueError('requested CT download exceeds cache or available-space budget; increase budget or use stream')
         return dict(source=volume.identity,prediction=method,roi_lo_zyx=lo.tolist(),roi_hi_zyx=hi.tolist(),shape_zyx=shape.tolist(),
+                     surface_method='external-lasagna' if lasagna_input else 'classical' if method=='classical' else 'lasagna',
+                     lasagna_input=lasagna_input,estimated_lasagna_import_bytes=lasagna_import,
                      observations=observations,field=field,
                     input_lo_zyx=input_lo.tolist(),input_hi_zyx=input_hi.tolist(),ct_policy=mode,
                      estimated_ct_bytes=ct_bytes,estimated_products_bytes=output_bytes,
@@ -365,7 +372,7 @@ def run(config,resume=False,until=None,extra_surface_seconds=0,field_sweeps=None
                 from .afv import source_identity
                 source_identity(config['fibres'],config.get('fibres_geometry'),probe.identity)
         finally: probe.close()
-        if config.get('fibres') or config.get('prediction','classical')!='classical':
+        if not config.get('lasagna_input') and (config.get('fibres') or config.get('prediction','classical')!='classical'):
             from . import lasagna
             lasagna.runtime_identity(config.get('lasagna_python'))
             lasagna.checkpoint(config.get('lasagna_model_path'),config.get('offline',False),prediction='lasagna')
@@ -433,6 +440,10 @@ def run(config,resume=False,until=None,extra_surface_seconds=0,field_sweeps=None
                             return unfinished(result)
                         state['tifxyz_result']=result
             estimate=plan(config,volume,state['stages']); state['plan']=estimate
+            if estimate['lasagna_input']:
+                if 'lasagna_input' in state and state['lasagna_input']!=estimate['lasagna_input']:
+                    raise ValueError('external Lasagna input identity changed')
+                state['lasagna_input']=estimate['lasagna_input']
             reserve=max(estimate['reserve_bytes'],estimate.get('tifxyz_reserve_disk_bytes',0))
             if terminal not in state['stages'] and estimate['free_bytes']<estimate['estimated_remaining_bytes']+reserve:
                 if terminal=='tifxyz':
