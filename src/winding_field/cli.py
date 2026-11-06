@@ -11,6 +11,8 @@ from . import __version__
 from .io import Volume,resolve_source
 
 TOOLS = {
+    'constant-sheet': ('constant_sheet', 'prepare, flatten, validate and render exact constant-W sheets'),
+    'sheet-atlas': ('sheet_atlas', 'package and query side-by-side constant-W CT sheets'),
     'surface-export': ('surface_export', 'export a level set, flatten and sample CT'),
     'surface-atlas': ('surface_atlas', 'build bounded surface charts and previews'),
     'surface-probe': ('surface_probe', 'freeze a prior seed and inspect its surface'),
@@ -69,6 +71,8 @@ def main(argv=None):
         p.add_argument('--roi',nargs=6,type=int,metavar=('Z0','Z1','Y0','Y1','X0','X1'),help='half-open CT voxel bounds at the selected pyramid level; default: whole volume')
         p.add_argument('--stride',type=int,default=1,help='CT observation sampling step; keep 1 for fine inference')
         p.add_argument('--field-spacing-um',type=float,help='exact isotropic field pitch in micrometres; default: observation pitch')
+        p.add_argument('--bounded-preparation',action='store_true',help='recompute native Lasagna/Qual windows; retain endpoint-aligned coarse observations and global fibres')
+        p.add_argument('--bounded-gib',type=float,default=12.,help='bounded producer retained/scratch allowance, excluding CT cache and disk reserve (default: 12 GiB)')
         p.add_argument('--chunk',type=int,default=64,help='observation tile edge in sampled voxels (default: 64)')
         p.add_argument('--prediction',choices=['classical','sd2','qual-v2'],default='qual-v2',help='fibre predictor (default: qual-v2); learned predictors use Lasagna surfaces, classical uses CT intensity')
         p.add_argument('--model-path',help='local checkpoint for the selected fibre predictor'); p.add_argument('--device',default='cpu',help='PyTorch prediction/field device, e.g. cpu or cuda (default: cpu)')
@@ -97,22 +101,45 @@ def main(argv=None):
         p=sub.add_parser(command,help='continue or inspect an existing run')
         p.add_argument('run')
         if command=='resume':
+            p.add_argument('--field-sweeps',type=int,help='absolute total sweep budget for an unpublished bounded field; retries do not add sweeps')
             p.add_argument('--extra-surface-seconds',type=float,default=0.,help='explicit extra native budget; original elapsed/target retained')
     p=sub.add_parser('tifxyz',help='experimental direct export of an existing field; Linux runtime')
     p.add_argument('field_run',help='existing run directory containing the field'); p.add_argument('--output',required=True,help='direct-field TIFXYZ export directory')
     p.add_argument('--config',help='direct-field export request JSON; required for a new export'); p.add_argument('--resume',action='store_true',help='continue the saved export request in --output')
     p=sub.add_parser('verify-tifxyz',help='read-only verification in an admitted Linux worker')
     p.add_argument('output')
-    p=sub.add_parser('export-sheets',help='original flattening of an existing field descriptor or immutable mesh bundle')
+    p=sub.add_parser('extract-range',help='extract a calibrated continuous W range')
+    p.add_argument('--config',required=True,help='immutable field/geometry/umbilicus recipe JSON')
+    p.add_argument('--w-range',nargs=2,required=True,metavar=('A','B'),help='exact decimal bounds on the global W lattice')
+    p.add_argument('--output',required=True)
+    p.add_argument('--resume',action='store_true')
+    p=sub.add_parser('join-ranges',help='join compatible contiguous continuous ranges exactly')
+    p.add_argument('inputs',nargs='+')
+    p.add_argument('--output',required=True)
+    p=sub.add_parser('export-sheets',help='LSCM/SLIM on patches or whole sheets; historical recipes also available')
     inputs=p.add_mutually_exclusive_group(required=True)
     inputs.add_argument('--field-config',help='input field JSON: data path/hash and grid geometry; requires --levels')
-    inputs.add_argument('--mesh-bundle',help='existing immutable mesh bundle directory with saved W levels')
+    inputs.add_argument('--mesh-bundle',help='immutable mesh bundle; patches also accepts a RANGE wrapper (join ranges first)')
     p.add_argument('--levels',nargs='+',type=float,help='winding W isovalues, e.g. -31; required with --field-config, forbidden with --mesh-bundle')
     p.add_argument('--source',required=True,help='original CT Zarr')
     p.add_argument('--level',type=int,default=0,help='CT Zarr pyramid level (default: 0); not a winding W value');p.add_argument('--voxel-um',type=float,help='micrometre scale for CT geometry lacking units; not field/output spacing')
-    p.add_argument('--output',required=True,help='sheet export directory');p.add_argument('--flattening-config',required=True,help='JSON: output coordinate frame, optional canvas pitch and memory admission estimate')
-    p.add_argument('--flattening-method',choices=['original'],required=True,help='global LSCM recipe; resolution comes from input geometry')
+    p.add_argument('--output',required=True,help='sheet export directory');p.add_argument('--flattening-config',required=True,help='JSON: output_frame and render settings; explicit slim requires app_run, see docs/FLATTENING.md')
+    p.add_argument('--flattening-method',choices=['original','patches'],help='historical recipe; cannot combine with --flattening-solver/--scope')
+    p.add_argument('--flattening-solver',choices=['lscm','slim'],help='explicit algorithm; requires --scope')
+    p.add_argument('--scope',choices=['patches','sheet'],help='independent patches or whole connected sheets; requires --flattening-solver')
     p.add_argument('--export-tifxyz',action='store_true',help='add XYZ TIFFs and validity mask alongside CT renders');p.add_argument('--resume',action='store_true',help='continue the same export; repeat identical inputs and settings')
+    p=sub.add_parser('export-uvw',help='aligned diagnostic W band from one original global UV map')
+    p.add_argument('--field-config',required=True,help='SHA-bound field descriptor JSON')
+    p.add_argument('--reference-sheet',required=True,help='original/level-NNNN with independent publication ledger')
+    p.add_argument('--levels',nargs='+',type=float,required=True,help='finite W targets; band must contain reference W')
+    p.add_argument('--source',required=True,help='same physical CT source as reference')
+    p.add_argument('--voxel-um',type=float,help='CT units when metadata lacks them')
+    p.add_argument('--level',type=int,default=0,help='CT pyramid level, not winding W')
+    p.add_argument('--canvas-samples',type=int,default=512,help='shared square UV grid edge, 2..1024 (default: 512)')
+    p.add_argument('--workers',type=int,default=1,help='read-only geometry processes, 1..8; CT/publication stay in coordinator')
+    p.add_argument('--cache-mib',type=int,default=256,help='total decoded CT + field-region RAM cache budget, 0..8192 MiB (default: 256)')
+    p.add_argument('--output',required=True)
+    p.add_argument('--resume',action='store_true',help='resume identical source/settings; remove output/STOP to continue')
     p=sub.add_parser('demo',help='offline synthetic original-CT demonstration')
     p.add_argument('--output',required=True,help='synthetic demo run directory')
     p.add_argument('--prediction',choices=['classical','sd2'],default='classical',help='demo observation predictor (default: classical)')
@@ -169,7 +196,7 @@ def main(argv=None):
             if config.get('lasagna_python'):
                 # Resolving the venv executable symlink would select the base interpreter.
                 config['lasagna_python']=str(Path(config['lasagna_python']).expanduser().absolute())
-            for key in ('cache','reserve'):
+            for key in ('cache','reserve','bounded'):
                 value=config.pop(key+'_gib')
                 if not 0<=value<=1e6:
                     raise ValueError('invalid storage budget')
@@ -186,8 +213,33 @@ def main(argv=None):
             if not config['source'].startswith(('http://','https://','s3://')):
                 config['source']=str(Path(config['source']).expanduser().resolve())
             result=plan(config) if command=='plan' else run(config,until=until)
+        elif args.command=='export-uvw':
+            from .uvw_pipeline import export_existing
+            interrupted=False
+            def handle_uvw(signum,frame):
+                nonlocal interrupted
+                interrupted=True
+            previous={sig:signal.signal(sig,handle_uvw) for sig in (signal.SIGINT,signal.SIGTERM)}
+            try:result=export_existing(args,stop=lambda:interrupted)
+            finally:
+                for sig,handler in previous.items():signal.signal(sig,handler)
+        elif args.command=='extract-range':
+            from .range_surface import extract_range
+            result=extract_range(json.loads(Path(args.config).read_bytes()),args.w_range,args.output,resume=args.resume)
+        elif args.command=='join-ranges':
+            from .range_surface import join_ranges
+            result=join_ranges(args.inputs,args.output)
         elif args.command=='export-sheets':
-            from .original_pipeline import export_existing
+            if args.flattening_solver is not None or args.scope is not None:
+                if args.flattening_method or not (args.flattening_solver and args.scope):
+                    raise ValueError('flattening selection requires --flattening-solver and --scope together, without --flattening-method')
+                from .matrix_pipeline import export_existing
+            elif args.flattening_method=='patches':
+                from .patch_pipeline import export_existing
+            elif args.flattening_method=='original':
+                from .original_pipeline import export_existing
+            else:
+                raise ValueError('flattening selection required: --flattening-solver with --scope, or historical --flattening-method')
             result=export_existing(args)
         elif args.command in ('tifxyz','verify-tifxyz'):
             from .tifxyz import _path,export_field,verify_export
@@ -240,7 +292,8 @@ def main(argv=None):
                     result=dict(state,native_progress=json.loads(progress.read_bytes()))
             else:
                 result=run(state['config'],resume=True,until=None if args.command=='resume' else args.command,
-                           extra_surface_seconds=getattr(args,'extra_surface_seconds',0.))
+                           extra_surface_seconds=getattr(args,'extra_surface_seconds',0.),
+                           field_sweeps=getattr(args,'field_sweeps',None))
         print(json.dumps(result,indent=2,allow_nan=False))
         if native:
             native_result=result.get('native_result',result)

@@ -19,9 +19,9 @@ def select_levels(run,config,source,stop=None):
     levels=config.get('levels')
     phase=complex(0); total=0.; low=math.inf; high=-math.inf
     if not levels:
-        maps=Tiles(run/'maps')
+        meta=json.loads((run/'PREPARED.json').read_bytes())
+        maps=Tiles(run/('coarse/maps' if meta.get('bounded_preparation') else 'maps'))
         try:
-            meta=json.loads((run/'PREPARED.json').read_bytes())
             geometry=json.loads((run/'FIELD.json').read_bytes())['geometry']
             tile=config.get('mesh_tile',64)
             for key in itertools.product(*(range((n-1)//tile+1) for n in source.shape)):

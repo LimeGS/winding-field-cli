@@ -1,5 +1,6 @@
 """Physical, ROI-bounded view of the unchanged SHA-bound field reader. No torch."""
 from copy import deepcopy
+from collections import OrderedDict
 import hashlib
 import itertools
 import math
@@ -59,7 +60,9 @@ def selected_frame(binding):
 
 
 class PhysicalField:
-    def __init__(self,source,*,roi=None,binding_check=None,identity=None):
+    def __init__(self,source,*,roi=None,binding_check=None,identity=None,region_cache_bytes=0):
+        if type(region_cache_bytes) is not int or region_cache_bytes<0:raise ValueError('invalid region cache budget')
+        self._region_limit=region_cache_bytes;self._regions=OrderedDict()
         self.source=source;self._binding_check=binding_check
         shape=tuple(source.shape)
         self.lo=(0,0,0) if roi is None else triple(roi['lo_zyx'],'ROI low',integer=True,minimum=0)
@@ -71,13 +74,39 @@ class PhysicalField:
         self._identity=dict(source=deepcopy(source.identity if identity is None else identity),
                             roi=dict(lo_zyx=list(self.lo),hi_zyx=list(hi)))
         self.stats=dict(read_calls=0,crop_bytes=0)
+        if self._region_limit:self.stats.update(region_hits=0,region_evictions=0,region_cache_bytes=0)
 
     @property
     def identity(self):return deepcopy(self._identity)
 
     def validate(self,hashes=False):
-        if self._binding_check:self._binding_check()
-        self.source.validate(hashes=hashes)
+        try:
+            if self._binding_check:self._binding_check()
+            self.source.validate(hashes=hashes)
+        except BaseException:
+            self._regions.clear()
+            if self._region_limit:self.stats['region_cache_bytes']=0
+            raise
+
+    def _region(self,lo,hi):
+        key=tuple(lo)
+        if key in self._regions:
+            try:
+                if self._binding_check:self._binding_check()
+                self.source.validate_region([a+b for a,b in zip(lo,self.lo)],[a+b for a,b in zip(hi,self.lo)])
+            except BaseException:
+                self._regions.clear();self.stats['region_cache_bytes']=0;raise
+            self._regions.move_to_end(key);self.stats['region_hits']+=1
+            return self._regions[key]
+        values,valid=self.read(lo,hi);charge=values.nbytes+valid.nbytes+512
+        if charge<=self._region_limit:
+            while self.stats['region_cache_bytes']+charge>self._region_limit:
+                _,retired=self._regions.popitem(last=False)
+                self.stats['region_cache_bytes']-=sum(a.nbytes for a in retired)+512
+                self.stats['region_evictions']+=1
+            values.flags.writeable=False;valid.flags.writeable=False
+            self._regions[key]=(values,valid);self.stats['region_cache_bytes']+=charge
+        return values,valid
 
     def read(self,lo_zyx,hi_zyx):
         lo=triple(list(lo_zyx),'read low',integer=True,minimum=0);hi=triple(list(hi_zyx),'read high',integer=True,minimum=0)
@@ -96,13 +125,17 @@ class PhysicalField:
         groups,inverse=np.unique(cells//64,axis=0,return_inverse=True)
         for i,key in enumerate(groups):
             selected=np.flatnonzero(inverse==i);lo=key*64;hi=np.minimum(lo+65,self.shape)
-            crop,valid=self.read(lo.tolist(),hi.tolist());local=cells[selected]-lo
+            crop,valid=self._region(lo.tolist(),hi.tolist());local=cells[selected]-lo
             supported=np.ones(len(selected),bool)
             for bits in itertools.product((0,1),repeat=3):
                 index=(local+bits).T
                 values[(selected,*bits)]=crop[tuple(index)]
                 supported&=valid[tuple(index)]
             support[selected]=supported
+            if self._region_limit:
+                try:self.source.validate_region((lo+np.array(self.lo)).tolist(),(hi+np.array(self.lo)).tolist())
+                except BaseException:
+                    self._regions.clear();self.stats['region_cache_bytes']=0;raise
         return values,support
 
     def sample(self,xyz_um):
@@ -122,7 +155,10 @@ class PhysicalField:
             valid[ids]=support&np.isfinite(result[ids])
         return result,valid
 
-    def close(self):self.source.close()
+    def close(self):
+        self._regions.clear()
+        if self._region_limit:self.stats['region_cache_bytes']=0
+        self.source.close()
     def __enter__(self):return self
     def __exit__(self,*unused):self.close()
 

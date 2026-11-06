@@ -88,6 +88,27 @@ def test_real_prepared_run_uses_core_and_exact_physical_geometry(tmp_path):
     assert metadata["grid"] == config["grid"]
 
 
+def test_public_prepared_verify_reads_stored_global_field_and_rejects_changed_inputs(tmp_path):
+    path,config=prepared(tmp_path,constraints=True)
+    root=tmp_path/'field'
+    workflow().run_field(path,root)
+    before=(root/'CHECKPOINT.json').read_bytes()
+    command=[sys.executable,'-m','winding_field','prepared','verify','--config',str(path),'--output',str(root)]
+    result=subprocess.run(command,capture_output=True,text=True)
+    assert result.returncode==0,result.stderr
+    receipt=json.loads(result.stdout)
+    assert receipt['status']=='VERIFIED' and receipt['global_converged'] is True
+    assert receipt['fixed_storage_max_error']==0
+    assert receipt['relative_residual']<config['solver']['rtol']
+    assert receipt['fixed_max_error']>0
+    assert receipt['physical_acceptance'] is False
+    assert receipt['checkpoint_sha256']==sha(root/'CHECKPOINT.json')
+    assert (root/'CHECKPOINT.json').read_bytes()==before
+    np.save(tmp_path/'inputs/weights.npy',np.full((3,4,6),2.,'f4'))
+    result=subprocess.run(command,capture_output=True,text=True)
+    assert result.returncode!=0
+
+
 def test_exact_resume_matches_uninterrupted_and_allows_reader_budget_changes(tmp_path):
     path, config = prepared(tmp_path)
     workflow().run_field(path, tmp_path / "full")

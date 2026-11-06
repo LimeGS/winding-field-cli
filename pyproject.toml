@@ -13,6 +13,7 @@ license-files = ["LICENSE", "licenses/*.txt"]
 dependencies = ["winding-field-experiments==1.3.0.dev1", "numpy>=1.26,<3", "scipy>=1.11", "torch>=2.6", "scikit-image>=0.22", "numcodecs>=0.12", "Pillow>=10", "dynamic-network-architectures==0.4.4", "avf-spline-generator @ https://github.com/Qualzz/AVF_SPLINE_GENERATOR/archive/3c8b73628ca56cb28042b9b2e79439b2e1c693d2.tar.gz"]
 
 [project.optional-dependencies]
+ct = ["vc-reader @ git+https://github.com/ScrollPrize/villa.git@baf5e605bb42a3d55a62b7c5c728e0908137225c#subdirectory=vc_reader"]
 plot = ["matplotlib>=3.8,<4"]
 test = ["pytest>=8", "build>=1", "matplotlib>=3.8,<4"]
 tifxyz = ["libigl==2.6.3", "tifffile>=2023.7"]

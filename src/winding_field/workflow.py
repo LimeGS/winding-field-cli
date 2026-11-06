@@ -52,7 +52,8 @@ def implementation_sha():
 
 def snapshot_exports(root,stage):
     patterns={'prepare':['lasagna/**/*','LASAGNA.json','lasagna-source/IDENTITY.json','lasagna-source/WORK.json',
-                         'lasagna-source/input.sqlite'],'fibres':['fibres/*.afv'],
+                         'lasagna-source/input.sqlite','coarse/IDENTITY.json','coarse/COARSE.json',
+                         'coarse/CALIBRATION.json'],'fibres':['fibres/*.afv'],
               'field':[],'mesh':['meshes/*.obj'],
               'flatten':['flat/*.obj','flat/*.png','flat/atlas.sqlite'],
               'surfaces':['surfaces/NATIVE.json','surfaces/LEVELS.json','surfaces/level-*/LEVEL.json',
@@ -119,6 +120,9 @@ def plan(config,volume=None,stages=()):
             chunk_count=np.prod((input_hi-1)//volume.chunks-input_lo//volume.chunks+1,dtype=np.int64)
             ct_bytes=int(chunk_count)*math.prod(volume.chunks)*volume.dtype.itemsize
         field=field_geometry(observations,config.get('field_spacing_um'))
+        if config.get('bounded_preparation'):
+            from .bounded_coarse import endpoint_grid
+            field=endpoint_grid(observations,config['field_spacing_um'])
         observation_nodes=math.prod(shape.tolist()); field_nodes=math.prod(field['shape_zyx'])
         prepare_bytes=observation_nodes*48+lasagna_staging+lasagna_workspace
         fibre_bytes=observation_nodes*12
@@ -129,7 +133,16 @@ def plan(config,volume=None,stages=()):
             fibre_bytes+=observation_nodes*8+spline_bytes
         output_bytes=prepare_bytes+fibre_bytes+field_nodes*40
         path=stage_path(config); terminal=path[-1][0]; extra={}
+        if config.get('bounded_preparation'):
+            output_bytes=config.get('bounded_bytes',12<<30)
+            prepare_bytes=output_bytes//4;fibre_bytes=output_bytes//2
+            spline_bytes=lasagna_staging=lasagna_workspace=0
+            extra.update(bounded_preparation=True,solver_device=config.get('device','cpu'),
+                         field_chunk=config.get('field_chunk',64),field_halo=2,solver_dtype='float64',
+                         canonical_windows=dict(qual=128,qual_core=48,lasagna=64,lasagna_core=32),
+                         output_budget_is_cap=True,geometry_bytes_are_data_dependent=True)
         folders=('maps','lasagna','lasagna-source','fibres','field','meshes','flat','surfaces','original')
+        if config.get('bounded_preparation'):folders=(*folders,'coarse','pairs')
         product_reserve=config.get('reserve_bytes',1<<30)
         if terminal=='tifxyz':
             request=config['tifxyz_request']; scratch=int(request['scratch_gib']*(1<<30))
@@ -138,15 +151,18 @@ def plan(config,volume=None,stages=()):
             direct_bytes=min(scratch,36_000_000+(256<<20)+256*request['max_pixels']*len(request['levels']))
             products=dict(prepare=prepare_bytes,fibres=fibre_bytes,
                           field=field_nodes*40,tifxyz=direct_bytes)
+            if config.get('bounded_preparation'):
+                products['field']=output_bytes-prepare_bytes-fibre_bytes
             output_bytes=sum(products.values()); folders=('maps','lasagna','lasagna-source','fibres','field','tifxyz')
             product_reserve=max(product_reserve,reserve)
-            extra=dict(stages=[name for name,_ in path],estimated_products_by_stage=products,
+            extra.update(stages=[name for name,_ in path],estimated_products_by_stage=products,
                        tifxyz_scratch_bytes=scratch,tifxyz_reserve_disk_bytes=reserve,reserve_ram_bytes=2<<30,
                        experimental=True,comparison_status='UNMEASURED',comparison_reason='reference OOM')
         elif terminal=='surfaces':
-            extra=dict(stages=[name for name,_ in path],surface_time_limit_s=config.get('surface_time_limit_s',1800.),
+            extra.update(stages=[name for name,_ in path],surface_time_limit_s=config.get('surface_time_limit_s',1800.),
                        coverage_target=config.get('coverage_target',1.),performance_target='UNMEASURED',
-                       optional_mesh_derived_tifxyz=config.get('export_tifxyz',False))
+                        optional_mesh_derived_tifxyz=config.get('export_tifxyz',False))
+        if config.get('bounded_preparation') and terminal=='tifxyz':folders=(*folders,'coarse','pairs')
         output=Path(config['output']); parent=output if output.exists() else output.parent
         written=sum(p.stat().st_size for name in folders
                     for p in (output/name).rglob('*') if p.is_file())
@@ -182,6 +198,13 @@ def _validate_products(root,state,stop=None,volume=None):
     from .lasagna import validate_retained as validate_lasagna
     from .afv import validate_retained as validate_afv
     validate_lasagna(root,state.get('config',{}))
+    bounded=state.get('config',{}).get('bounded_preparation',False)
+    if bounded and (root/'PREPARED.json').exists():
+        from .bounded_pipeline import runtime_identity,checkpoint
+        meta=json.loads((root/'PREPARED.json').read_bytes())
+        if meta['producer_identity']['runtime']!=runtime_identity(state['config'].get('lasagna_python')):
+            raise ValueError('bounded Lasagna runtime changed')
+        checkpoint(state['config'].get('lasagna_model_path'),state['config'].get('offline',False),prediction='lasagna')
     if state.get('config',{}).get('fibres'): validate_afv(root,state['config'])
     if state['stages']:
         with sqlite3.connect((root/'products.sqlite').resolve().as_uri()+'?mode=ro',uri=True) as db:
@@ -193,7 +216,7 @@ def _validate_products(root,state,stop=None,volume=None):
         if file_sha(root/record['receipt'])!=record['sha256']:
             raise ValueError('stage receipt changed: '+stage)
     if 'prepare' in state['stages']:
-        maps=Tiles(root/'maps')
+        maps=Tiles(root/('coarse/maps' if bounded else 'maps'))
         expected=json.loads((root/'PREPARED.json').read_bytes())['tiles_sha256']
         actual=maps.identity(); maps.close()
         if expected!=actual:
@@ -202,6 +225,10 @@ def _validate_products(root,state,stop=None,volume=None):
         expected=json.loads((root/'FIBRES.json').read_bytes())
         if file_sha(root/'fibres/fibres.sqlite')!=expected['sha256']:
             raise ValueError('fibres changed')
+        if bounded:
+            for name in ('raw','candidates'):
+                if file_sha(root/'fibres'/f'{name}.sqlite')!=expected[f'{name}_sha256']:
+                    raise ValueError('bounded fibre inventory changed: '+name)
         if ('probabilities_sha256' in expected
                 and file_sha(root/'fibres/probabilities.npy')!=expected['probabilities_sha256']):
             raise ValueError('spline probabilities changed')
@@ -299,8 +326,11 @@ def _tifxyz_ready(out,result,request_sha,coverage_policy='strict'):
     return marker_record['sha256']
 
 
-def run(config,resume=False,until=None,extra_surface_seconds=0):
+def run(config,resume=False,until=None,extra_surface_seconds=0,field_sweeps=None):
     validate_config(config)
+    if field_sweeps is not None and (type(field_sweeps) is not int or field_sweeps<1
+                                    or not resume or not config.get('bounded_preparation')):
+        raise ValueError('field sweep target requires a bounded resume and positive integer')
     if config.get('flattening_method')=='original':
         from .original_pipeline import settings
         settings(config.get('original_request'))
@@ -348,6 +378,14 @@ def run(config,resume=False,until=None,extra_surface_seconds=0):
                 raise ValueError('run configuration changed; use a new output')
             if state.get('implementation_sha256')!=implementation_sha():
                 raise ValueError('implementation changed; resume with the original package or use a new output')
+            if field_sweeps is not None:
+                from .field_budget import effective_budget
+                if 'field' in state['stages'] or (root/'FIELD.json').exists():
+                    raise ValueError('cannot extend a published field')
+                if not (root/'field/CHECKPOINT.json').is_file():
+                    raise ValueError('field sweep extension requires an existing checkpoint')
+                if field_sweeps<effective_budget(root/'field',config.get('sweeps',4)):
+                    raise ValueError('field sweep target cannot decrease')
             (root/'STOP').unlink(missing_ok=True)
         else:
             state=dict(schema='winding-field-run-v1',version=__version__,config=config,stages={},
@@ -414,12 +452,18 @@ def run(config,resume=False,until=None,extra_surface_seconds=0):
                     print(f'[{stage}] started',file=sys.stderr,flush=True)
                     started=time.monotonic()
                     if stage=='prepare':
-                        result=prepare(volume,root,config,stop)
-                        if result['status']=='PREPARED':
+                        if config.get('bounded_preparation'):
+                            from .bounded_pipeline import prepare as bounded_prepare
+                            result=bounded_prepare(volume,root,config,stop)
+                        else:result=prepare(volume,root,config,stop)
+                        if result['status']=='PREPARED' and not config.get('bounded_preparation'):
                             if export_lasagna(root,stop) is None:
                                 result=dict(status='PAUSED')
                     elif stage=='fibres':
-                        result=trace(root,config,stop)
+                        if config.get('bounded_preparation'):
+                            from .bounded_pipeline import fibres as bounded_fibres
+                            result=bounded_fibres(volume,root,config,stop)
+                        else:result=trace(root,config,stop)
                         if result['status']=='FIBRES_READY':
                             sha=export_afv(root,stop)
                             if sha is None:
@@ -427,7 +471,7 @@ def run(config,resume=False,until=None,extra_surface_seconds=0):
                             else:
                                 result['afv_sha256']=sha; atomic_json(root/receipt,result)
                     elif stage=='field':
-                        result=solve(root,config,stop)
+                        result=solve(root,config,stop,**({'sweep_target':field_sweeps} if field_sweeps is not None else {}))
                     elif stage=='mesh':
                         result=mesh(root,config,stop)
                     elif stage=='original':
