@@ -1,4 +1,7 @@
 # winding-field-cli
+
+Source-preserving constant-W preparation, checkpointed Flatboi, validation and CT:
+[constant-sheet CLI](docs/CONSTANT-SHEET.md).
 ![Illustrated workflow: original CT → Lasagna surfaces + Qual V2 fibres/splines → winding field → 3D meshes → flattened charts](docs/assets/workflow-banner.png)
 
 Build a winding field from scroll CT, then extract meshes and CT-textured surfaces.
@@ -219,6 +222,19 @@ exports/W-31/original/level-0000/
 `level-0000` means the first requested W (here −31), not W=0.
 See [flattening setup and advanced reference](docs/FLATTENING.md) for details.
 
+To choose the algorithm and domain independently, use the
+[explicit flattening matrix](docs/FLATTENING.md#explicit-solver--scope-matrix):
+`export-sheets --flattening-solver lscm|slim --scope patches|sheet` with a
+matrix configuration. All four combinations preserve source IDs and offer
+resumable tiled CT/XYZ export. SLIM uses the pinned native Flatboi runner;
+LSCM needs no Flatboi executable. Historical `--flattening-method` recipes remain
+available and cannot be mixed with the new flags.
+
+Patch exports (`--flattening-method patches`) require `pip install '.[ct]'` and
+default to verified native float64 CT sampling. Set `"ct_sampler": "scalar"`
+in their flattening configuration to use the original sampler. Continuations
+retain their saved backend; see [measured performance and cache behavior](docs/RASTER-PERFORMANCE.md).
+
 For aligned neighbouring W levels, use [`export-uvw`](docs/UVW.md) with an
 existing original map as reference. It exports CT and TIFXYZ on one shared UV
 grid, with validity masks and resumable processing. Outputs are diagnostic;
@@ -312,7 +328,7 @@ winding-field tifxyz --help
 winding-field verify-tifxyz --help
 ```
 
-[Flattening](docs/FLATTENING.md) · [Lasagna and AFV](docs/LASAGNA.md) ·
+[Flattening](docs/FLATTENING.md) · [Constant-W visual atlas](docs/SHEET-ATLAS.md) · [Lasagna and AFV](docs/LASAGNA.md) ·
 [Streaming](docs/STREAMING.md) · [Prepared workflows](docs/PREPARED.md) ·
 [Surface tools](docs/SURFACE_TOOLS.md) · [Attribution](THIRD_PARTY.md)
 

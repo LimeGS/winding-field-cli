@@ -33,21 +33,37 @@ def iter_overlap_pairs(uv,faces,check=None,*,max_candidates=None,max_tests=None,
     triangles=uv[faces]; lows=triangles.min(1); highs=triangles.max(1)
     centres=(lows+highs)*.5
     radii=np.linalg.norm(highs-lows,axis=1)*.5+64*np.finfo(float).eps*np.maximum(1,np.abs(triangles).max(axis=(1,2)))
-    tree=cKDTree(centres); largest=float(radii.max(initial=0.))
+    # A distant large face must not inflate every small face's search radius.
+    exponents=np.frexp(radii)[1]; groups=[]
+    for exponent in np.unique(exponents):
+        if check:check()
+        ids=np.flatnonzero(exponents==exponent)
+        groups.append((ids,cKDTree(centres[ids]),float(radii[ids].max())))
     first=0
     while first<len(triangles):
         if check:check()
-        radius=np.nextafter(radii[first:first+64]+largest,np.inf)
-        counts=tree.query_ball_point(centres[first:first+64],radius,return_length=True)
+        counts=np.zeros(min(64,len(triangles)-first),dtype=np.int64)
+        for ids,tree,largest in groups:
+            radius=np.nextafter(radii[first:first+64]+largest,np.inf)
+            counts+=tree.query_ball_point(centres[first:first+64],radius,return_length=True)
         count=int(np.searchsorted(np.cumsum(counts),limit,side='right'))
         if not count:raise RuntimeError('overlap candidate materialization bound exceeded')
-        neighbours=tree.query_ball_point(centres[first:first+count],radius[:count])
-        left=np.repeat(np.arange(first,first+len(neighbours)),[len(n) for n in neighbours])
-        right=np.concatenate(neighbours).astype(np.int64)
+        # Preflight the sum across groups before materializing any neighbours.
+        total=int(counts[:count].sum())
+        left=np.empty(total,dtype=np.int64); right=np.empty(total,dtype=np.int64); cursor=0
+        for ids,tree,largest in groups:
+            radius=np.nextafter(radii[first:first+count]+largest,np.inf)
+            neighbours=tree.query_ball_point(centres[first:first+count],radius)
+            for offset,near in enumerate(neighbours):
+                end=cursor+len(near)
+                left[cursor:end]=first+offset; right[cursor:end]=ids[near]
+                cursor=end
+            del neighbours
         first+=count
         keep=right>left; left,right=left[keep],right[keep]
         keep=np.all(np.minimum(highs[left],highs[right])-np.maximum(lows[left],lows[right])>1e-9,axis=1)
         left,right=left[keep],right[keep]
+        order=np.lexsort((right,left)); left,right=left[order],right[order]
         for start in range(0,len(left),4096):
             if check:check()
             ii,jj=left[start:start+4096],right[start:start+4096]

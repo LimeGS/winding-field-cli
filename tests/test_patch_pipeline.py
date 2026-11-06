@@ -176,12 +176,10 @@ def test_native_ct_positive_weight_missing_and_hash_change(tmp_path):
     ct.volume=SimpleNamespace(origin_xyz=np.array([20.,30.,40.]),spacing_xyz=np.array([2.,3.,4.]),
         shape=(4,4,4),chunks=(2,2,2),dtype=np.dtype('uint8'),metadata={'order':'C'})
     changed=False
-    class Array:
-        def load_chunk(self,index):
-            z,y,x=np.indices((2,2,2));z+=index[0]*2;y+=index[1]*2;x+=index[2]*2
-            raw=None if index==[1,1,1] else (x+2*y+3*z+int(changed)).astype('uint8').tobytes()
-            return SimpleNamespace(to_bytes=lambda:raw)
-    ct.native=SimpleNamespace(_array=Array())
+    def load(index):
+        z,y,x=np.indices((2,2,2));z+=index[0]*2;y+=index[1]*2;x+=index[2]*2
+        return None if tuple(index)==(1,1,1) else (x+2*y+3*z+int(changed)).astype('uint8').tobytes()
+    ct._load_chunk=load
     frame=dict(voxel_um=1.,origin_xyz_um=[0,0,0])
     xyz=np.array([[20,30,40],[21,31.5,42],[22,33,44],[23,34.5,46]])
     values,valid=ct.sample(xyz,frame)
@@ -204,8 +202,8 @@ def test_native_ct_verified_cache_reuses_and_detects_change_after_eviction(tmp_p
     loads=[];value=[1]
     def load(index):
         loads.append(index)
-        return SimpleNamespace(to_bytes=lambda:bytes([value[0]])*8)
-    ct.native=SimpleNamespace(_array=SimpleNamespace(load_chunk=load))
+        return bytes([value[0]])*8
+    ct._load_chunk=load
     a=ct._chunk((0,0,0));b=ct._chunk((0,0,0))
     assert a is b and len(loads)==1 and not a.flags.writeable
     ct._chunk((0,0,1));assert ct._cache_bytes<=ct._cache_limit

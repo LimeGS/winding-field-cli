@@ -29,9 +29,8 @@ def test_native_prefetch_four_concurrent_loads_and_publication(tmp_path):
     ct._cache_path=tmp_path;ct._disk_reserve=0
     ct.volume=SimpleNamespace(chunks=(2,2,2),dtype=np.dtype('u1'))
     barrier=threading.Barrier(4);published=[]
-    def load(index):barrier.wait(timeout=5)
-    def publish(index):published.append(tuple(index));return True
-    ct.native=SimpleNamespace(_array=SimpleNamespace(load_chunk=load,publish_chunk=publish))
+    def load(index):barrier.wait(timeout=5);published.append(tuple(index));return bytes(8)
+    ct._load_chunk=load
     with ThreadPoolExecutor(max_workers=4) as pool:
         ct._ct_pool=pool
         ct._prefetch([(0,0,i) for i in range(4)])
@@ -51,7 +50,8 @@ def test_prefetch_propagates_publication_failure(tmp_path):
     ct=object.__new__(PatchCT);ct._lock=threading.RLock();ct._chunks={}
     ct._cache_path=tmp_path;ct._disk_reserve=0
     ct.volume=SimpleNamespace(chunks=(2,2,2),dtype=np.dtype('u1'))
-    ct.native=SimpleNamespace(_array=SimpleNamespace(load_chunk=lambda _:None,publish_chunk=lambda _:False))
+    def fail(index):raise RuntimeError('CT prefetch publication failed')
+    ct._load_chunk=fail
     with ThreadPoolExecutor(max_workers=4) as pool:
         ct._ct_pool=pool
         with pytest.raises(RuntimeError,match='publication failed'):ct._prefetch([(0,0,i) for i in range(4)])

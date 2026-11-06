@@ -11,6 +11,8 @@ from . import __version__
 from .io import Volume,resolve_source
 
 TOOLS = {
+    'constant-sheet': ('constant_sheet', 'prepare, flatten, validate and render exact constant-W sheets'),
+    'sheet-atlas': ('sheet_atlas', 'package and query side-by-side constant-W CT sheets'),
     'surface-export': ('surface_export', 'export a level set, flatten and sample CT'),
     'surface-atlas': ('surface_atlas', 'build bounded surface charts and previews'),
     'surface-probe': ('surface_probe', 'freeze a prior seed and inspect its surface'),
@@ -114,15 +116,17 @@ def main(argv=None):
     p=sub.add_parser('join-ranges',help='join compatible contiguous continuous ranges exactly')
     p.add_argument('inputs',nargs='+')
     p.add_argument('--output',required=True)
-    p=sub.add_parser('export-sheets',help='original or patch flattening of immutable surface geometry')
+    p=sub.add_parser('export-sheets',help='LSCM/SLIM on patches or whole sheets; historical recipes also available')
     inputs=p.add_mutually_exclusive_group(required=True)
     inputs.add_argument('--field-config',help='input field JSON: data path/hash and grid geometry; requires --levels')
     inputs.add_argument('--mesh-bundle',help='immutable mesh bundle; patches also accepts a RANGE wrapper (join ranges first)')
     p.add_argument('--levels',nargs='+',type=float,help='winding W isovalues, e.g. -31; required with --field-config, forbidden with --mesh-bundle')
     p.add_argument('--source',required=True,help='original CT Zarr')
     p.add_argument('--level',type=int,default=0,help='CT Zarr pyramid level (default: 0); not a winding W value');p.add_argument('--voxel-um',type=float,help='micrometre scale for CT geometry lacking units; not field/output spacing')
-    p.add_argument('--output',required=True,help='sheet export directory');p.add_argument('--flattening-config',required=True,help='JSON: output frame; patches requires app_run and accepts physical pitch_um (default 19.2), see docs/PATCHES.md')
-    p.add_argument('--flattening-method',choices=['original','patches'],required=True,help='original global LSCM or historical Flatboi patches; patches accepts RANGE wrappers')
+    p.add_argument('--output',required=True,help='sheet export directory');p.add_argument('--flattening-config',required=True,help='JSON: output_frame and render settings; explicit slim requires app_run, see docs/FLATTENING.md')
+    p.add_argument('--flattening-method',choices=['original','patches'],help='historical recipe; cannot combine with --flattening-solver/--scope')
+    p.add_argument('--flattening-solver',choices=['lscm','slim'],help='explicit algorithm; requires --scope')
+    p.add_argument('--scope',choices=['patches','sheet'],help='independent patches or whole connected sheets; requires --flattening-solver')
     p.add_argument('--export-tifxyz',action='store_true',help='add XYZ TIFFs and validity mask alongside CT renders');p.add_argument('--resume',action='store_true',help='continue the same export; repeat identical inputs and settings')
     p=sub.add_parser('export-uvw',help='aligned diagnostic W band from one original global UV map')
     p.add_argument('--field-config',required=True,help='SHA-bound field descriptor JSON')
@@ -226,10 +230,16 @@ def main(argv=None):
             from .range_surface import join_ranges
             result=join_ranges(args.inputs,args.output)
         elif args.command=='export-sheets':
-            if args.flattening_method=='patches':
+            if args.flattening_solver is not None or args.scope is not None:
+                if args.flattening_method or not (args.flattening_solver and args.scope):
+                    raise ValueError('flattening selection requires --flattening-solver and --scope together, without --flattening-method')
+                from .matrix_pipeline import export_existing
+            elif args.flattening_method=='patches':
                 from .patch_pipeline import export_existing
-            else:
+            elif args.flattening_method=='original':
                 from .original_pipeline import export_existing
+            else:
+                raise ValueError('flattening selection required: --flattening-solver with --scope, or historical --flattening-method')
             result=export_existing(args)
         elif args.command in ('tifxyz','verify-tifxyz'):
             from .tifxyz import _path,export_field,verify_export
