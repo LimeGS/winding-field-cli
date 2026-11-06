@@ -72,3 +72,30 @@ def test_official_constant_sheet_checkpoint_resume_import_and_validate(tmp_path)
     assert main(['constant-sheet','validate','--prepared',str(prepared),'--native',str(imported),
                  '--reference-z','3','--output',str(tmp_path/'validated')])==0
     assert file_sha(saved)==saved_sha
+
+
+@pytest.mark.skipif(sys.platform!='linux',reason='Linux native qualification')
+def test_official_historical_patch_cli_retains_source_faces_and_rejects_resume(tmp_path,capsys):
+    app=os.environ.get('MATRIX_NATIVE_APP')
+    if not app or os.environ.get('MATRIX_NATIVE_RECIPE')!='historical':
+        pytest.skip('requires official historical MATRIX_NATIVE_APP')
+    import numpy as np
+    from winding_field.cli import main
+    from test_flattening_matrix import request,source_bundle
+    mesh,ct=source_bundle(tmp_path)
+    config=tmp_path/'patch.json'
+    # Resolve the small synthetic domains after conservative TIFXYZ boundary erosion.
+    atomic_json(config,dict(request(tmp_path),app_run=app,max_patch_faces=32,pitch_um=2.4,tile_size=64))
+    output=tmp_path/'output'
+    args=['export-sheets','--mesh-bundle',str(mesh),'--source',str(ct),'--voxel-um','9.6',
+          '--flattening-method','patches','--flattening-config',str(config),'--output',str(output),'--export-tifxyz']
+    assert main(args)==0
+    level=output/'patches/level-0000'
+    with np.load(level/'map.npz') as mapped:
+        assert len(set(mapped['source_face_ids']))==121
+        np.testing.assert_array_equal(mapped['field_xyz'][:,1],3.)
+    assert list((level/'render').glob('*/tifxyz/VERIFIED.json'))
+    before={str(path):file_sha(path) for path in output.rglob('*') if path.is_file() and path.suffix in ('.json','.npz')}
+    assert main(args+['--resume'])==1
+    assert 'patch export does not resume' in capsys.readouterr().err
+    assert before=={name:file_sha(name) for name in before}

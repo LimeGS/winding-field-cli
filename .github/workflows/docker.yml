@@ -1,0 +1,73 @@
+name: containers
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      cuda:
+        description: Build CUDA on a self-hosted nvidia runner (60 GiB free disk)
+        type: boolean
+        default: false
+      gpu:
+        description: Also run real CUDA operations and model inference (requires cuda)
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  cpu:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+      - run: docker buildx bake cpu --load
+      - name: Installed non-root runtime and offline workflows
+        run: |
+          mkdir -p "$RUNNER_TEMP/wf"/{outputs,models,cache,scratch}
+          docker run --rm --init --network=none --user "$(id -u):$(id -g)" --memory=6g --memory-swap=6g \
+            --mount "type=bind,src=$RUNNER_TEMP/wf/outputs,dst=/outputs" \
+            --mount "type=bind,src=$RUNNER_TEMP/wf/models,dst=/home/worker/.cache/winding-field/models" \
+            --mount "type=bind,src=$RUNNER_TEMP/wf/cache,dst=/cache" \
+            --mount "type=bind,src=$RUNNER_TEMP/wf/scratch,dst=/scratch" \
+            --entrypoint sh winding-field:cpu -ec \
+            'python /opt/runtime-provenance/docker/verify-runtime.py --variant cpu && python /opt/runtime-provenance/docker/smoke.py --output /outputs/smoke'
+      - name: Installed suite with official native checkpoint qualification
+        run: |
+          docker build -f docker/testing.Dockerfile -t winding-field:cpu-tests .
+          docker run --rm --init --user "$(id -u):$(id -g)" --memory=6g --memory-swap=6g \
+            -e MATRIX_NATIVE_APP=/opt/vc3d/AppRun -e MATRIX_NATIVE_RECIPE=historical \
+            -e WINDING_LASAGNA_PYTHON=/opt/lasagna/bin/python \
+            --mount "type=bind,src=$PWD/tests,dst=/tests,readonly" \
+            --mount "type=bind,src=$PWD/examples,dst=/examples,readonly" \
+            --mount "type=bind,src=$PWD/tools,dst=/tools,readonly" \
+            --mount "type=bind,src=$PWD/pyproject.toml,dst=/pyproject.toml,readonly" \
+            --mount "type=bind,src=$RUNNER_TEMP/wf/scratch,dst=/scratch" \
+            --mount "type=bind,src=$RUNNER_TEMP/wf/outputs,dst=/outputs" \
+            --mount "type=bind,src=$RUNNER_TEMP/wf/cache,dst=/cache" \
+            winding-field:cpu-tests -q -o pythonpath= -o cache_dir=/scratch/pytest-cache /tests
+
+  cuda:
+    if: github.event_name == 'workflow_dispatch' && inputs.cuda
+    runs-on: [self-hosted, linux, x64, nvidia]
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+      - run: docker buildx bake cuda --load
+      - name: CUDA imports without GPU execution
+        run: docker run --rm --entrypoint python winding-field:cuda /opt/runtime-provenance/docker/verify-runtime.py --variant cu128
+      - name: Real GPU operations and pinned model inference
+        if: inputs.gpu
+        run: |
+          mkdir -p "$RUNNER_TEMP/wf-gpu"/{outputs,models,cache,scratch}
+          docker run --rm --init --gpus 'device=0' --user "$(id -u):$(id -g)" --memory=16g --memory-swap=16g \
+            --mount "type=bind,src=$RUNNER_TEMP/wf-gpu/outputs,dst=/outputs" \
+            --mount "type=bind,src=$RUNNER_TEMP/wf-gpu/models,dst=/home/worker/.cache/winding-field/models" \
+            --mount "type=bind,src=$RUNNER_TEMP/wf-gpu/cache,dst=/cache" \
+            --mount "type=bind,src=$RUNNER_TEMP/wf-gpu/scratch,dst=/scratch" \
+            --entrypoint sh winding-field:cuda -ec \
+            'python /opt/runtime-provenance/docker/verify-runtime.py --variant cu128 --gpu && python /opt/runtime-provenance/docker/smoke.py --output /outputs/smoke --models --device cuda:0'

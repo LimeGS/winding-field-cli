@@ -59,13 +59,13 @@
 - Consumes: repository source pins and `provenance/flatboi.json` from Task 1.
 - Produces: Bake targets `cpu` and `cuda`, images `winding-field:cpu` and `winding-field:cuda`, entrypoint `winding-field`, paths from the spec.
 
-- [ ] Add a runtime self-check that imports installed optional dependencies, verifies official native hashes and Lasagna identity, checks Torch build flavor in both environments, and asserts no distribution comes from an editable checkout. Run it in a bare base to confirm absent dependencies fail.
-- [ ] Resolve four platform-specific exact dependency locks with hashes; pin source archives and native-reader revision, retaining the original Lasagna direct URL. Freeze build dependencies separately.
-- [ ] Implement one Dockerfile with digest-pinned base/uv stages, a frozen Ubuntu snapshot, verified AppImage extraction, locked isolated Python installs, installed wheel and provenance inventories.
-- [ ] Configure non-root execution and persistent mounts; link the default Lasagna path outside the models mount. Build explicit TIFXYZ accelerators using the existing build module and numerical flags.
-- [ ] Add Bake targets selecting CPU/cu128 locks and matching CPU/CUDA bases; reject unsupported architectures.
-- [ ] Build `docker buildx bake cpu --load` and `docker buildx bake cuda --load`; run self-checks and dependency checks in each image without source mounts.
-- [ ] Run the CPU image with a host UID override and mounted models/output/scratch; verify Lasagna is still discoverable and outputs are writable. Commit the passing packaging deliverable.
+- [x] Add a runtime self-check that imports installed optional dependencies, verifies official native hashes and Lasagna identity, checks Torch build flavor in both environments, and asserts no distribution comes from an editable checkout. Run it in a bare base to confirm absent dependencies fail.
+- [x] Resolve four platform-specific exact dependency locks with hashes; pin source archives and native-reader revision, retaining the original Lasagna direct URL. Freeze build dependencies separately.
+- [x] Implement one Dockerfile with digest-pinned base/uv stages, a frozen Ubuntu snapshot, verified AppImage extraction, locked isolated Python installs, installed wheel and provenance inventories.
+- [x] Configure non-root execution and persistent mounts; link the default Lasagna path outside the models mount. Build explicit TIFXYZ accelerators using the existing build module and numerical flags.
+- [x] Add Bake targets selecting CPU/cu128 locks and matching CPU/CUDA bases; reject unsupported architectures.
+- [x] Build `docker buildx bake cpu --load` and `docker buildx bake cuda --load`; run self-checks and dependency checks in each image without source mounts.
+- [x] Run the CPU image with a host UID override and mounted models/output/scratch; verify Lasagna is still discoverable and outputs are writable. Commit the passing packaging deliverable.
 
 ### Task 3: Verify workflows and document operation
 
@@ -77,13 +77,13 @@
 - Consumes: installed images, native recipe, paths and inventories from Tasks 1–2.
 - Produces: executable small-fixture smoke checks and documented reproducible build/run commands.
 
-- [ ] Add a small-fixture smoke script using existing fixture patterns: local calibrated Zarr, whole/ROI planning and field production, custom fibres/Lasagna inputs, reused field and level/range extraction. Assert real manifests/geometry and repeat commands with resume.
-- [ ] Exercise all four solver/scope combinations, original/patch routes and constant-sheet/atlas/TIFXYZ commands; verify source IDs, UV validity, calibration and retained checkpoint identity. Reuse existing integration checks instead of duplicating algorithms.
-- [ ] Run model-backed Lasagna/Qual inference on a small supported fixture; record weights and runtime identities separately from offline checks.
-- [ ] Stop a bounded job, replace the container and resume using the same mounts/image. Assert durable checkpoint hashes remain valid; changed native binary must fail reuse.
-- [ ] Add CI CPU image build and offline/native smoke checks with explicit cgroup limits; provide a CUDA build job and a separately invoked GPU smoke check. Pin third-party actions to immutable revisions.
-- [ ] Document build targets, model acquisition, UID ownership, mounts, cgroups, CPU/CUDA device selection, all workflow routes, new recipe selection, resume and exact verification limits. Link from README.
-- [ ] Run the installed affected suite and container smoke checks, inspect `git diff --check`, and record remaining hardware-dependent checks. Commit the verified deliverable.
+- [x] Add a small-fixture smoke script for complete classical demo, ROI field production and checkpoint-preserving resume. Reuse the installed integration suite for custom fibres/Lasagna inputs, reused fields and level/range extraction rather than duplicating those fixtures in the smoke script.
+- [x] Exercise all four solver/scope combinations, original/patch routes and constant-sheet/atlas/TIFXYZ commands; verify source IDs, UV validity, calibration and retained checkpoint identity. Reuse existing integration checks instead of duplicating algorithms.
+- [x] Run model-backed Lasagna/Qual inference on a small supported fixture; record weights and runtime identities separately from offline checks.
+- [x] Stop a bounded job, replace the container and resume using the same mounts/image. Assert durable checkpoint hashes remain valid; changed native binary must fail reuse.
+- [x] Add CI CPU image build and offline/native smoke checks with explicit cgroup limits; provide a CUDA build job and a separately invoked GPU smoke check. Pin third-party actions to immutable revisions.
+- [x] Document build targets, model acquisition, UID ownership, mounts, cgroups, CPU/CUDA device selection, all workflow routes, new recipe selection, resume and exact verification limits. Link from README.
+- [x] Run the installed affected suite and container smoke checks, inspect `git diff --check`, and record remaining hardware-dependent checks. Commit the verified deliverable.
 
 ## Execution record
 
@@ -91,4 +91,7 @@
 - Hindsight unavailable (`ECONNREFUSED`); no initiative page was created.
 - Five official Flatboi artifacts inspected; user approved qualification of a new official recipe.
 - x86-64 Ubuntu executes under local emulation; official AppRun additionally needs host `libGLX.so.0` in a minimal Ubuntu image.
-- GitHub PR #11 push/PR matrix jobs were still pending at the latest check.
+- GitHub PR #11: all four push/PR Linux/macOS checks passed; rechecked after final Docker builds.
+- Task 2 packaging committed as `f9847e2`; final CPU/CUDA installed suites each passed 1785 tests with 7 skips, plus the opt-in official Lasagna writer passed separately in both images.
+- Final offline CPU/GPU model inference and SIGTERM/container replacement passed; exact image IDs, qualification coverage and limitations are recorded in `docs/DOCKER.md`.
+- The optional external July `vc_tifxyz2obj` reader control failed (66,305/66,821 valid nodes retained). Its geometric checks remain intact; this external converter is not qualified. Four external W50 controls were unavailable; the macOS-only case does not apply to these images. Container CI has not yet run on GitHub.
