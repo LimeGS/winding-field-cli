@@ -45,6 +45,13 @@ Cache index/metadata, in-flight reads and decode RAM are separate from the paylo
 cap. `--chunk`, `--field-chunk` and `--chart-faces` bound different operations;
 there is no universal hard RSS/VRAM cap.
 
+`--lasagna-input` reads existing local prediction channels through the same bounded
+Zarr v2 reader, with per-channel consumed-chunk ledgers. Prediction files must be
+present locally; CT streaming remains independent. The plan adds normalized
+imported-tile storage and removes native Lasagna staging/inference workspace.
+With external AFV too, preparation reads only the CT observation ROI, without an
+inference halo. See [custom inputs](LASAGNA.md#external-lasagna-predictions).
+
 `RUN.json.io` reports downloaded bytes, payload downloads, cache hits, local hits
 and cached payload bytes. Include cache state when comparing timings.
 

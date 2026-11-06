@@ -80,6 +80,8 @@ def main(argv=None):
         p.add_argument('--fibres-geometry',help='explicit AFV XYZ-to-world geometry JSON')
         p.add_argument('--lasagna-python',help='isolated official Python 3.14 runtime')
         p.add_argument('--lasagna-model-path',help='local pinned Lasagna surface checkpoint')
+        p.add_argument('--lasagna-input',help='existing local Lasagna v2 surface manifest; skips Lasagna inference')
+        p.add_argument('--lasagna-geometry',help='explicit Lasagna base-grid XYZ-to-world geometry JSON')
         p.add_argument('--threshold',type=float,help='classical predictor CT intensity threshold; default: calibrated Otsu; unused by learned predictors')
         p.add_argument('--invalid-value',type=float,help='acquisition fill value to exclude; zero remains valid unless declared')
         p.add_argument('--field-chunk',type=int,default=64,help='field solver block edge in field-grid samples (default: 64)'); p.add_argument('--sweeps',type=int,default=4,help='field solver block sweeps (default: 4)')
@@ -190,7 +192,7 @@ def main(argv=None):
             if until not in dict(stages) and not (config['surface_output']=='native' and until in ('mesh','flatten','assemble','render')):
                 raise ValueError('--until '+until+' is incompatible with the selected surface output')
             config['output']=str(Path(config['output']).expanduser().resolve())
-            for key in ('local','cache','model_path','fibres','fibres_geometry','lasagna_model_path'):
+            for key in ('local','cache','model_path','fibres','fibres_geometry','lasagna_model_path','lasagna_input','lasagna_geometry'):
                 if config.get(key):
                     config[key]=str(Path(config[key]).expanduser().resolve())
             if config.get('lasagna_python'):

@@ -27,7 +27,8 @@ products and preserving coordinate, mask and resume contracts.
   `RUN.json.plan.input_lo_zyx/input_hi_zyx` records this extra input-only context.
   Persistent maps and extracted meshes remain within the output grid/ROI.
   Lasagna separately stages 16 observations of context per side. External-AFV
-  preparation needs only this surface context; all retained maps remain ROI-local.
+  preparation needs only this surface context. With `--lasagna-input` plus external
+  AFV, preparation needs no halo; all retained maps remain ROI-local.
 
 ## Run and integrity
 
@@ -92,10 +93,13 @@ excluded node/cell counts, not physical acceptance or actual VC3D opening.
 `PREPARED.json` describes its physical grid, source, ROI, model provenance and halo.
 Maps contain sheet density (cycles per micrometre), unsigned physical surface
 normals (XYZ), CT and surface support. Default/SD2 routes obtain these from official
-Lasagna and additionally retain `surface_phase` (cos / 255). Fibre presence,
+Lasagna; `--lasagna-input` supplies them from existing predictions instead.
+Both retain `surface_phase` (cos / 255). Fibre presence,
 tangents, V/H probabilities and `fibre_support` are separate observations. External
 AFV maps have no fabricated fibre probabilities/tangents/presence.
-`PREPARED.json.surface_method` and `fibre_method` identify these sources.
+`PREPARED.json.surface_method` remains `lasagna` for either Lasagna route;
+`LASAGNA.json.method: external-lasagna` identifies imported predictions.
+`PREPARED.json.fibre_method` independently identifies the fibre source.
 See [Lasagna setup and decoding](LASAGNA.md) for pins and raw products.
 
 SD2 inference owns fixed 32³ cores on the selected-source sampling lattice. Its
@@ -141,6 +145,23 @@ AFV runs omit them. Direction XY is encoded around
 128 with scale 127 after folding the sign into the positive-Z hemisphere. The
 manifests address an **ROI-local output grid** and include world origin, spacing
 and original-source metadata; align this frame before combining with other data.
+
+External `--lasagna-input` uses a local v2 manifest with scalar ZYX Zarr v2
+`cos`, `grad_mag`, `nx`, `ny` and optional `presence`. Each channel's `scaledown`
+is an exponent (`2**scaledown` base voxels); `nx` and `ny` share a grid. A `--lasagna-geometry` descriptor
+calibrates the base grid unless the manifest embeds the CLI's world frame.
+Import samples scalar channels and decoded, sign-aligned normal vectors onto the
+observation grid without extrapolation or bridging unsupported interpolation corners,
+then converts normalized directions and density
+to world units exactly once. Floating `grad_mag` preserves values above 255.
+See [input contract](LASAGNA.md#external-lasagna-predictions) for details.
+
+`lasagna-source/IDENTITY.json` and `RUN.json.lasagna_input` bind imported headers,
+geometry and channel metadata. `lasagna-source/<channel>.sqlite` binds consumed
+source bytes; `lasagna-source/maps/` contains normalized surface/CT tiles.
+`WORK.json` seals partial source/tile inventories; `LASAGNA.json` binds completed
+hashes. Both paths reject missing or altered records before reusing retained work.
+The external source files remain required even after preparation completes.
 
 `fibres/fibres.sqlite` stores curves in physical XYZ units.
 `FIBRES.json` includes their count and database SHA. `fibres/fibres.afv` is an AFV
