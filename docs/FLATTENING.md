@@ -110,7 +110,7 @@ original binary identity and cannot migrate checkpoints between these releases.
 
 Sampling stays isotropic at `pitch_um` (default19.2), window0–255, with bounded
 native CT caching. Common rendering settings are `tile_size`, `raster_workers`,
-`ct_workers`, `cache_dir`, `cache_mib`, `cache_gib`, and `ct_sampler`; they retain
+`ct_workers`, `cache_dir`, `cache_mib`, and `cache_gib`; they retain
 the patch export validation. At least8GiB disk reserve is required. Geometry/
 raster memory remains capped at6GiB, and existing topology/map bounds still
 apply. Selecting the matrix does **not** establish feasibility for full fine

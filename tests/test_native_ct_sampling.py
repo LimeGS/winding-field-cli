@@ -66,6 +66,43 @@ def test_native_support_does_not_load_zero_weight_chunk():
     finally:native.close()
 
 
+def test_native_sampler_rejects_nonfinite_positive_support_and_float32_overflow():
+    sampler=sampler_class();data=np.ones((2,2,2),'f8')
+    data[1,1,1]=np.nan;data[0,0,0]=1e100
+    native=sampler(data.shape,data.shape,data.dtype,lambda _:data)
+    try:
+        values,valid=native.sample(np.array([[1.,0.,0.],[.5,.5,.5],[0.,0.,0.]]))
+        assert valid.tolist()==[True,False,False]
+        assert values[0]==1 and np.isnan(values[1:]).all()
+    finally:native.close()
+
+
+def test_original_sampling_uses_checked_native_path(tmp_path,monkeypatch):
+    from contextlib import closing
+    from test_io import make_volume
+    from winding_field.io import Volume
+    from winding_field import original_pipeline as original
+    def refused(*args,**kwargs):raise AssertionError('scalar production sampler called')
+    monkeypatch.setattr(original,'sample_points',refused,raising=False)
+    make_volume(tmp_path/'ct')
+    with closing(Volume(tmp_path/'ct',cache=tmp_path/'cache')) as volume:
+        values,valid=original.sample_ct(volume,np.array([[11.,21.5,32.]]))
+        assert valid.tolist()==[True] and values.tolist()==[15.5]
+
+
+def test_preview_preserves_calibration_and_authoritative_sparse_fill(served):
+    from contextlib import closing
+    from winding_field.io import Volume
+    from winding_field.preview import sample_ct
+    root,url,_=served
+    (root/'ct.zarr/0/1.1.1').unlink()
+    with closing(Volume(url,cache=root/'cache',cache_bytes=0)) as volume:
+        values,valid=sample_ct(volume,np.array([[11.,21.5,32.],[20.,29.,42.],
+                                               [10.,20.,30.],[9.,20.,30.]]))
+        assert valid.tolist()==[True,True,True,False]
+        assert values.tolist()==[15.5,0.,0.,0.]
+
+
 def test_patch_native_hashes_detect_change_after_eviction(tmp_path):
     sampler_class();pytest.importorskip('vc_reader._reader')
     from winding_field.patch_pipeline import PatchCT,settings
@@ -106,10 +143,24 @@ def test_patch_remote_cache_preserves_missing_and_real_zero(served):
             assert valid.tolist()==[True,False]
             assert values[0]==0 and np.isnan(values[1])
         assert ct.db.execute('SELECT COUNT(*) FROM chunks WHERE sha IS NULL').fetchone()[0]==1
-        path=next(Path(ct._chunk_layers[0].root).rglob('0.0.0'))
+        path=ct.volume._native.path(url+'/0/0.0.0')
         path.write_bytes(bytes([1])*12)
-        with pytest.raises(ValueError,match='CT chunk changed'):
+        with pytest.raises(ValueError,match='corrupt|CT chunk changed'):
             ct.sample(points[:1],cfg['output_frame'])
+    finally:ct.close()
+
+
+def test_patch_remote_zero_disk_cache_uses_shared_checked_reader(served):
+    from winding_field.patch_pipeline import PatchCT,settings
+    root,url,_=served;output=root/'patch';output.mkdir()
+    cfg=settings(dict(output_frame=dict(id='test',voxel_um=1.,origin_xyz_um=[0,0,0]),
+        app_run='/unused',cache_dir=str(root/'cache'),cache_gib=0,cache_mib=0,tile_size=8))
+    ct=PatchCT(url,output,cfg)
+    try:
+        values,valid=ct.sample(np.array([[11.,21.5,32.]]),cfg['output_frame'])
+        assert valid.tolist()==[True] and values.tolist()==[15.5]
+        assert ct.volume.stats()['cache_bytes']==0
+        assert not (root/'cache/native').exists()
     finally:ct.close()
 
 
@@ -157,32 +208,23 @@ def test_patch_failed_ledger_initialization_closes_connections(tmp_path,monkeypa
         with pytest.raises(sqlite3.ProgrammingError,match='closed'):connection.execute('SELECT 1')
 
 
-@pytest.mark.parametrize('cached',['stale-missing','lossless-delta','lossy-delta'])
+@pytest.mark.parametrize('cached',['stale-missing','changed-payload'])
 def test_native_cache_validates_payload_before_missing_marker(served,cached):
     pytest.importorskip('vc_reader._reader')
-    from vc_reader.reader.writer import compress_bytes
     from winding_field.patch_pipeline import PatchCT,settings
     root,url,expected=served
     cfg=settings(dict(output_frame=dict(id='test',voxel_um=1.,origin_xyz_um=[0,0,0]),app_run='/unused',
         cache_dir=str(root/'cache'),cache_mib=0,tile_size=8))
     output=root/'first';output.mkdir();ct=PatchCT(url,output,cfg)
     try:
-        ct._chunk((0,0,0));cache=Path(ct._chunk_layers[0].root)
+        ct._chunk((0,0,0));path=ct.volume._native.path(url+'/0/0.0.0')
     finally:ct.close()
-    if cached=='stale-missing':(cache/'0.0.0.missing').write_bytes(b'')
-    else:
-        metadata=json.loads((cache/'.zarray').read_text());metadata['compressor']={'id':'vc-delta3d','quant':1}
-        (cache/'.zarray').write_text(json.dumps(metadata))
-        data=expected[:2,:2,:3].copy()
-        if cached=='lossy-delta':data=data//3*3
-        encoded=bytearray(compress_bytes(data,{'id':'vc-delta3d'},shape=(2,2,3)))
-        assert encoded[:5]==b'D3D1\x01'
-        if cached=='lossy-delta':encoded[6]=3
-        (cache/'0.0.0').write_bytes(encoded)
+    if cached=='stale-missing':Path(str(path)+'.missing').write_bytes(b'')
+    else:path.write_bytes(bytes([255])*12)
     output=root/'second';output.mkdir();ct=PatchCT(url,output,cfg)
     try:
-        if cached=='lossy-delta':
-            with pytest.raises(ValueError,match='lossless'):ct._chunk((0,0,0))
+        if cached=='changed-payload':
+            with pytest.raises(ValueError,match='corrupt'):ct._chunk((0,0,0))
             assert ct.db.execute('SELECT COUNT(*) FROM chunks').fetchone()[0]==0
         else:np.testing.assert_array_equal(ct._chunk((0,0,0)),expected[:2,:2,:3])
     finally:ct.close()

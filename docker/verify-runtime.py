@@ -7,6 +7,7 @@ from pathlib import Path
 import platform
 import subprocess
 import sys
+import tempfile
 
 parser=argparse.ArgumentParser(description=__doc__)
 parser.add_argument('--variant',choices=('cpu','cu128'),required=True)
@@ -19,12 +20,40 @@ import igl
 import matplotlib
 import torch
 from vc_reader import _reader
-from vc_reader.reader import open_zarr
+from vc_reader.reader import ObjectStore, decode_chunk
 from winding_field.lasagna import runtime_identity
 from winding_field.patch_pipeline import check_flatboi
 
 assert torch.__version__=='2.10.0+'+args.variant, 'unexpected CLI Torch build'
 assert torch.version.cuda==('12.8' if args.variant=='cu128' else None)
+reader_source=json.loads(metadata.distribution('vc-reader').read_text('direct_url.json'))
+assert reader_source['url']=='https://github.com/LimeGS/villa/archive/84207424c3a988e6cafe6b50fe7d4d7e5f839929.tar.gz'
+import numpy as np
+from numcodecs import Delta, Shuffle, Zlib
+from winding_field.io import Volume
+from winding_field.original_pipeline import sample_ct
+from vc_reader.reader.disk_cache import disk_budget
+with tempfile.TemporaryDirectory() as directory:
+    root=Path(directory);source=root/'ct';source.mkdir()
+    data=np.arange(24,dtype='>u2').reshape(2,3,4)
+    filters=[Delta(dtype='>u2'),Shuffle(elementsize=2)];compressor=Zlib()
+    meta=dict(zarr_format=2,shape=data.shape,chunks=data.shape,dtype=data.dtype.str,order='F',
+              fill_value=0,compressor=compressor.get_config(),filters=[f.get_config() for f in filters])
+    raw=data.tobytes(order='F')
+    for codec in filters:raw=codec.encode(raw)
+    raw=compressor.encode(raw)
+    (source/'.zarray').write_text(json.dumps(meta));(source/'0.0.0').write_bytes(raw)
+    assert ObjectStore(source,auth=None,max_read_bytes=len(raw)).read('0.0.0')==raw
+    assert decode_chunk(raw,meta)==data.tobytes()
+    cache=root/'publication';cache.mkdir();payload=cache/'chunk'
+    disk_budget(str(cache),1024).write(str(payload),np.frombuffer(raw,np.uint8))
+    assert payload.read_bytes()==raw
+    volume=Volume(source,voxel_um=1,cache=root/'cache',cache_bytes=0)
+    try:
+        np.testing.assert_array_equal(volume.read([0,1,1],[2,3,4]),data[:,1:,1:])
+        values,valid=sample_ct(volume,np.array([[1.5,1.5,.5]]))
+        assert valid.tolist()==[True] and values.tolist()==[13.5]
+    finally:volume.close()
 for dist in metadata.distributions():
     direct=json.loads(dist.read_text('direct_url.json') or '{}')
     assert not direct.get('dir_info',{}).get('editable'), dist.metadata['Name']+' is editable'

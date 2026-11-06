@@ -20,10 +20,13 @@ original source, configuration and run path.
 
 ## Shipped backend
 
-The installed CLI uses `portable-zarr-v2`: numeric 3D Zarr v2, local files or
-public HTTP/S3, with numcodecs decompression. It reads intersecting chunks,
-respects NGFF geometry and records hashes of consumed content. It does not load
-the entire CT into memory. Zarr v3/sharded layouts are not currently supported.
+The installed CLI uses `vc_reader-zarr-v2-checked-v1`: numeric 3D Zarr v2,
+local files or public HTTP/S3. Native code decodes verified chunk snapshots,
+assembles crops and interpolates CT; CLI checks retain NGFF geometry, consumed-byte
+hashes and resource bounds. It does not load the entire CT into memory.
+Supported inputs use native compressors and numeric Delta/Shuffle filters with
+C/F storage order. Other codecs and Zarr v3/sharded layouts fail explicitly;
+use the original v1.5.0 runtime for unsupported inputs and older checkpoints.
 
 Lookup order is matching local CT, bounded compressed-payload cache, then the
 original remote source. Missing local chunks are fetched remotely. Only an
@@ -81,35 +84,32 @@ transport, and does not establish whole-volume feasibility. Existing runs retain
 their implementation fingerprint: use their frozen package to resume, or a new
 output directory for the new implementation.
 
-Install the pinned native transport with `pip install '.[ct]'` (requires a
-compatible C++ build environment). For remote volumes with a cache budget of
-at least 256 MiB, an available native extension enables
-`vc_reader.reader.encoded_files.EncodedFiles`. `RUN.json.io.transport` identifies
-the selected transport; `backend` still identifies the NumPy/numcodecs Zarr-v2
-decoder. Native decoded-array assembly is not enabled by this integration.
-Without the optional extension, or with smaller streaming budgets, the portable
-transport remains available. A broken installed native runtime fails explicitly.
+The pinned native reader is required by normal installation (a compatible C++
+build environment is needed). The `ct` extra remains an empty installation alias.
+Bounded native object reads also support zero/tiny disk caches; an object larger
+than the cache budget is consumed without retaining its payload. Missing native
+APIs fail explicitly. `RUN.json.io` identifies the reader and transport.
 If the native reader was built with CUDA, its shared CUDA runtime must match
 PyTorch's: place the matching runtime library directory first in
 `LD_LIBRARY_PATH` before starting the CLI. Verify importing both the native
 extension and PyTorch in that environment before starting a run.
 
-Native payloads live in the CLI-owned `vc-reader/` cache subdirectory. Existing
-legacy payloads are reused and revalidated in place; their bytes reduce the native
-budget, so these are not two independent cache allowances. The parent cache lock
-coordinates CLI writers. Do not point unrelated native writers at this private
-subdirectory. The adapter relies on the pinned reader's SQLite cache schema.
+Native payloads live in the CLI-owned `vc-reader/` cache subdirectory. Legacy
+payloads count against the same disk budget and are reclaimed as needed.
+Portable-cache payloads are not imported: populate the new native cache online
+before working offline, or use v1.5.0 to read the old portable cache.
+Per-object locks coordinate payloads and receipts; native publication owns payload
+eviction. Do not point unrelated writers at this private subdirectory. The adapter
+relies on the pinned reader's SQLite cache schema.
 
 Encoded-byte SHA256 receipts and the run's source ledger remain authoritative.
 Fresh validation starts a new remote epoch; only strong ETags can avoid payload
 downloads. Last-Modified and weak ETags are insufficient for byte identity.
 Only authoritative HTTP 404 establishes sparse fill; its marker persists offline,
 where an unknown or evicted block remains an error. Native cache corruption is
-rejected. The disk reserve accounts for the old inode pinned during replacement.
-The native admission index refuses any single transfer reservation above 256 MiB
-before payload streaming. Unsized or HTTP-content-compressed responses reserve
-the entire native allowance and are therefore refused when that allowance exceeds
-256 MiB; ordinary S3 chunk responses have a declared encoded length. These errors
+rejected. Object reads and chunk decoding are bounded at 256 MiB, including
+unsized and HTTP-content-compressed responses; assembled crops are capped at
+512 MiB. Disk publication retains the configured free-space reserve. Read errors
 remain explicit errors, never sparse fill. The adapter accesses the native index
 through the reader's SQLite library, avoiding conflicting WAL locks when Python
 bundles another SQLite version.

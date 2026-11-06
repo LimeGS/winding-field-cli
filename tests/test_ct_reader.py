@@ -153,12 +153,27 @@ def test_shared_volume_uses_native_and_preserves_coordinates(served):
         volume.close()
 
 
-def test_verified_legacy_payload_is_reused_offline(served):
+def test_decoded_cache_snapshot_recheck_uses_bounded_transport(served,monkeypatch):
+    from contextlib import closing
+    from pathlib import Path
+    import numpy as np
+    from winding_field.io import Volume
+    root,url,expected=served
+    read=Path.read_bytes
+    def metadata_only(path):
+        assert path.suffix!='.blob','payload recheck bypassed bounded native transport'
+        return read(path)
+    with closing(Volume(url,cache=root/'cache',decoded_cache_bytes=4096)) as volume:
+        monkeypatch.setattr(Path,'read_bytes',metadata_only)
+        np.testing.assert_array_equal(volume.decoded_chunk('0/0.0.0'),expected[:2,:2,:3])
+
+
+def test_verified_small_native_cache_is_reused_offline(served):
     import numpy as np
     from winding_field.io import Volume
 
     root, url, expected = served
-    # Small budgets exercise the existing streaming/cache format.
+    # A small native cache remains reusable by a subsequent offline session.
     old = Volume(url, cache=root / 'cache', cache_bytes=128)
     old.read([0, 0, 0], [2, 2, 3])
     old.close()
@@ -261,7 +276,7 @@ def test_revalidation_of_object_larger_than_half_budget(endpoint):
         transport.close()
 
 
-def test_portable_eviction_does_not_require_native_import(served, monkeypatch):
+def test_volume_requires_native_runtime_before_source_access(served, monkeypatch):
     import builtins
     from winding_field.io import Volume
 
@@ -277,11 +292,35 @@ def test_portable_eviction_does_not_require_native_import(served, monkeypatch):
         return original(name, *args, **kwargs)
 
     monkeypatch.setattr(builtins, '__import__', without_native)
-    local = Volume(root / 'ct.zarr', cache=root / 'cache', cache_bytes=4)
+    with pytest.raises(RuntimeError, match='vc_reader|required'):
+        Volume(root / 'ct.zarr', cache=root / 'cache', cache_bytes=4)
+
+
+@pytest.mark.parametrize('budget', [0, 4, 128])
+def test_all_cache_budgets_use_native_volume_reads(served, budget):
+    import numpy as np
+    from winding_field.io import Volume
+
+    root, url, expected = served
+    volume = Volume(url, cache=root / 'cache', cache_bytes=budget)
     try:
-        assert local.stats()['cache_bytes'] <= 4
+        assert volume.stats()['backend'] == 'vc_reader-zarr-v2-checked-v1'
+        np.testing.assert_array_equal(volume.read([1, 1, 2], [4, 4, 6]), expected[1:4, 1:4, 2:6])
+        assert volume.stats()['cache_bytes'] <= budget
     finally:
-        local.close()
+        volume.close()
+
+
+def test_volume_identity_binds_loaded_native_implementation(served):
+    from vc_reader import _reader
+    from winding_field.io import Volume
+    from winding_field.util import file_sha
+    root,url,_=served
+    volume=Volume(url,cache=root/'cache')
+    try:
+        assert volume.identity['native_runtime']['extension_sha256']==file_sha(_reader.__file__)
+        assert volume.identity['native_runtime']['libraries_sha256']
+    finally:volume.close()
 
 
 def test_native_refuses_oversized_reservation_before_payload(endpoint):
@@ -290,7 +329,7 @@ def test_native_refuses_oversized_reservation_before_payload(endpoint):
     root, url = endpoint
     transport = EncodedTransport(root / 'cache', 1 << 30)
     try:
-        with pytest.raises(RuntimeError, match='encoded CT transfer'):
+        with pytest.raises(RuntimeError, match='read byte limit'):
             transport.read(url + '/oversized')
         assert transport.size == 0
         assert transport.bytes_read == 0
@@ -310,9 +349,9 @@ def test_native_unsized_response_respects_budget(endpoint):
         transport.close()
     limited=EncodedTransport(root/'limited',4)
     try:
-        with pytest.raises(RuntimeError):limited.read(url+'/unsized')
+        assert limited.read(url+'/unsized')==b'12345678'
         assert limited.size==0
-        assert limited.db.execute('SELECT COUNT(*) FROM receipts').fetchone()[0]==0
+        assert limited.db.execute('SELECT COUNT(*) FROM receipts').fetchone()[0]==1
     finally:limited.close()
 
 

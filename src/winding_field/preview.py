@@ -3,26 +3,25 @@
 import io
 import numpy as np
 from PIL import Image
-from scipy.ndimage import map_coordinates
+from contextlib import closing
 
 from .util import atomic_bytes
 
 
 def sample_ct(volume,xyz):
+    from .native_ct_sampling import NativeCTSampler
     grid=(xyz-volume.origin_xyz)/volume.spacing_xyz
-    zyx=grid[:,::-1]
-    valid=((zyx>=0)&(zyx<=np.array(volume.shape)-1)).all(1)
     values=np.zeros(len(xyz),np.float32)
-    keys=np.floor(zyx/volume.chunks).astype(np.int64)
-    unique,groups=np.unique(keys,axis=0,return_inverse=True)
-    for group in range(len(unique)):
-        selected=np.flatnonzero((groups==group)&valid)
-        if not len(selected):
-            continue
-        points=zyx[selected]
-        lo=np.floor(points.min(0)).astype(int); hi=np.minimum(np.ceil(points.max(0)).astype(int)+1,volume.shape)
-        array=volume.read(lo,hi)
-        values[selected]=map_coordinates(array.astype(np.float32),(points-lo).T,order=1,mode='nearest')
+    valid=np.zeros(len(xyz),bool)
+    def chunk(index):
+        data=volume._chunk(index)
+        # Previews retain Volume.read's authoritative sparse-fill semantics.
+        return np.full(volume.chunks,volume.metadata.get('fill_value',0),volume.dtype) if data is None else data
+    with closing(NativeCTSampler(volume.shape,volume.chunks,volume.dtype,chunk)) as sampler:
+        for start in range(0,len(grid),100000):
+            sampled,observed=sampler.sample(grid[start:start+100000])
+            values[start:start+100000]=np.where(observed,sampled,0)
+            valid[start:start+100000]=observed
     return values,valid
 
 

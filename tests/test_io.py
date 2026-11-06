@@ -202,3 +202,97 @@ def test_sampled_reads_preserve_duplicates_and_cross_chunk_coordinates(served):
     with pytest.raises(ValueError):
         volume.sample([[0],[-1],[0]])
     volume.close()
+
+
+def test_unsupported_codec_fails_at_open_with_compatibility_guidance(tmp_path):
+    from winding_field.io import Volume
+    make_volume(tmp_path/'ct')
+    path=tmp_path/'ct/0/.zarray';metadata=json.loads(path.read_text())
+    metadata['filters']=[{'id':'quantize','digits':1,'dtype':'<f4','astype':'<f4'}]
+    path.write_text(json.dumps(metadata))
+    with pytest.raises(ValueError,match='v1.5.0'):
+        Volume(tmp_path/'ct',cache=tmp_path/'cache')
+
+
+@pytest.mark.parametrize('order',['C','F'])
+def test_checked_native_snapshot_preserves_filtered_layout(tmp_path,order):
+    from contextlib import closing
+    from numcodecs import Delta,Shuffle,Zlib
+    from winding_field.io import Volume
+    source=tmp_path/'ct';source.mkdir()
+    data=np.arange(24,dtype='>u2').reshape(2,3,4)
+    filters=[Delta(dtype='>u2'),Shuffle(elementsize=2)];compressor=Zlib()
+    metadata=dict(zarr_format=2,shape=data.shape,chunks=data.shape,dtype=data.dtype.str,
+                  order=order,fill_value=0,compressor=compressor.get_config(),
+                  filters=[f.get_config() for f in filters])
+    (source/'.zarray').write_text(json.dumps(metadata))
+    raw=data.tobytes(order=order)
+    for codec in filters:raw=codec.encode(raw)
+    (source/'0.0.0').write_bytes(compressor.encode(raw))
+    with closing(Volume(source,voxel_um=1,cache=tmp_path/'cache')) as volume:
+        np.testing.assert_array_equal(volume.read([0,1,1],[2,3,4]),data[:,1:,1:])
+
+
+def test_decoder_consumes_verified_snapshot_after_source_replacement(tmp_path,monkeypatch):
+    from contextlib import closing
+    from winding_field.io import Volume
+    data=make_volume(tmp_path/'ct')
+    with closing(Volume(tmp_path/'ct',cache=tmp_path/'cache')) as volume:
+        volume.bind_ledger(tmp_path/'source.sqlite');read=volume._chunk_bytes
+        def replace_after_verification(key):
+            raw=read(key)
+            (tmp_path/'ct'/key).write_bytes(bytes([255])*len(raw))
+            return raw
+        monkeypatch.setattr(volume,'_chunk_bytes',replace_after_verification)
+        np.testing.assert_array_equal(volume.read([0,0,0],[2,2,3]),data[:2,:2,:3])
+        with pytest.raises(ValueError,match='changed'):volume.validate_used()
+
+
+def test_concurrent_decoded_cache_charges_each_retained_chunk_once(tmp_path,monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
+    from contextlib import closing
+    import time
+    from winding_field.io import Volume
+    expected=make_volume(tmp_path/'ct')
+    with closing(Volume(tmp_path/'ct',cache=tmp_path/'cache',decoded_cache_bytes=4096)) as volume:
+        read=volume._chunk_bytes
+        def delayed(key):
+            raw=read(key);time.sleep(.05)
+            return raw
+        monkeypatch.setattr(volume,'_chunk_bytes',delayed)
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            results=list(pool.map(volume.decoded_chunk,[volume.array_path+'/0.0.0']*2))
+        for result in results:np.testing.assert_array_equal(result,expected[:2,:2,:3])
+        assert volume.stats()['decoded_cache_bytes']==results[0].nbytes+512
+
+
+def test_volume_closes_indexes_when_native_reader_initialization_fails(tmp_path,monkeypatch):
+    import sqlite3
+    from vc_reader.reader import ZarrReader
+    from winding_field.io import Volume
+    make_volume(tmp_path/'ct');connections=[];connect=sqlite3.connect
+    def tracked(*args,**kwargs):
+        db=connect(*args,**kwargs);connections.append(db);return db
+    def failed(*args,**kwargs):raise RuntimeError('computed reader initialization failed')
+    monkeypatch.setattr(sqlite3,'connect',tracked)
+    monkeypatch.setattr(ZarrReader,'computed',failed)
+    with pytest.raises(RuntimeError,match='initialization failed'):
+        Volume(tmp_path/'ct',cache=tmp_path/'cache')
+    assert connections
+    for db in connections:
+        with pytest.raises(sqlite3.ProgrammingError,match='closed'):
+            db.execute('SELECT 1')
+
+
+def test_local_volumes_do_not_accumulate_native_disk_cache_descriptors(tmp_path):
+    from contextlib import closing
+    import os
+    from winding_field.io import Volume
+    make_volume(tmp_path/'ct')
+    with closing(Volume(tmp_path/'ct',cache=tmp_path/'warmup')) as volume:
+        volume.read([0,0,0],[2,2,3])
+    before=len(os.listdir('/dev/fd'))
+    for n in range(8):
+        with closing(Volume(tmp_path/'ct',cache=tmp_path/f'cache-{n}')) as volume:
+            volume.read([0,0,0],[2,2,3])
+    assert len(os.listdir('/dev/fd'))<=before+2

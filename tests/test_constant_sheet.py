@@ -15,6 +15,22 @@ def preparation():
     return sheet_prepare
 
 
+def test_render_rejects_old_ct_identity_before_creating_output(tmp_path):
+    from winding_field.sheet_finish import render
+    source=tmp_path/'validated';source.mkdir()
+    for name in ('map.npz','QUALITY.json','PREPARED.json','disconnected-source.npz'):
+        (source/name).write_bytes(b'not-needed-before-identity-check')
+    atomic_json(source/'MESH.json',dict(metadata=dict(frame='test',voxel_um=1.)))
+    files={p.name:file_sha(p) for p in source.iterdir()}
+    atomic_json(source/'VALIDATED.json',dict(status='MAP_VALIDATED_DIAGNOSTIC',overlap={'complete':True},files=files))
+    prior=tmp_path/'old.json';atomic_json(prior,dict(ct={'backend':'vc_reader'}))
+    config=dict(ct=dict(source='/must-not-open'),prior_identity=str(prior),settings=dict(
+        output_frame=dict(id='test',voxel_um=1.,origin_xyz_um=[0,0,0]),app_run='/unused'))
+    with pytest.raises(ValueError,match='v1.5.0'):
+        render(source,tmp_path/'output',config)
+    assert not (tmp_path/'output').exists()
+
+
 def extracted(tmp_path):
     from test_surface_mesh import source
     from winding_field.surface_mesh import extract_mesh

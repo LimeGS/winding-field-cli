@@ -242,10 +242,10 @@ export. SLIM needs pinned Flatboi; LSCM does not. Do not mix these flags with
 historical `--flattening-method` recipes. UVW outputs are diagnostic: inspect
 coverage and deformation before using side cuts through the stack.
 
-Patch exports (`--flattening-method patches`) require `pip install '.[ct]'` and
-default to verified native float64 CT sampling. Set `"ct_sampler": "scalar"`
-in their flattening configuration to use the original sampler. Continuations
-retain their saved backend; see [measured performance and cache behavior](docs/RASTER-PERFORMANCE.md).
+All CT reads and sampling require the pinned `vc_reader`, installed with the CLI.
+Sampling uses verified native float64 interpolation; there is no backend setting.
+Resume older reader-bound runs with their original v1.5.0 runtime. See
+[supported inputs](docs/STREAMING.md) and [measured performance](docs/RASTER-PERFORMANCE.md).
 
 </details>
 

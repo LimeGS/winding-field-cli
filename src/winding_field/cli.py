@@ -162,7 +162,7 @@ def main(argv=None):
         elif args.command=='doctor':
             import platform,torch
             result=dict(version=__version__,python=platform.python_version(),platform=platform.platform(),
-                        torch=torch.__version__,cuda=torch.cuda.is_available(),reader='portable-zarr-v2')
+                        torch=torch.__version__,cuda=torch.cuda.is_available(),reader='vc_reader-zarr-v2-checked-v1')
         elif args.command=='models':
             from .models import checkpoint,model_sha
             result=dict(path=str(checkpoint(args.path,prediction=args.prediction)),

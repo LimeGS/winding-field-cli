@@ -1,10 +1,10 @@
 """Strict ZYX CT access; XYZ coordinates are micrometres, voxel centres.
 
-Portable Zarr-v2 decoding never treats absent local chunks as known air.
+Checked native Zarr-v2 decoding never treats absent local chunks as known air.
 The compressed disk payload budget is shared across sources and processes.
 """
 
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 import fcntl
 import gzip
 import hashlib
@@ -12,23 +12,20 @@ import io
 import itertools
 import json
 import math
-import os
 from pathlib import Path
-import shutil
 import sqlite3
 import time
+import threading
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlparse, quote
 from urllib.request import Request, urlopen
 
 import numpy as np
-from numcodecs import get_codec
 
-from .util import atomic_bytes, atomic_json, digest, file_sha
-from .ct_reader import cache_size,trim_cache
+from .util import atomic_bytes, digest
+from .ct_reader import cache_size,trim_cache,runtime_identity
 
 CATALOG = 'https://vesuvius-challenge-open-data.s3.amazonaws.com/metadata.json'
-MISSING_ETAG = 'winding-field:authoritative-404'
 
 
 def http_url(source):
@@ -123,6 +120,10 @@ def bounds(lo, hi, shape):
 class Volume:
     def __init__(self, source, *, local=None, cache=None, cache_bytes=2 << 30,
                  offline=False, voxel_um=None, level=0, reserve_bytes=0, decoded_cache_bytes=0):
+        try:
+            from vc_reader.reader import ObjectStore, ZarrReader, ArrayMeta, decode_chunk
+        except ImportError as exc:
+            raise RuntimeError('vc_reader with bounded object reads and decode_chunk is required; install the pinned runtime') from exc
         if type(cache_bytes) is not int or cache_bytes < 0 or type(level) is not int or level < 0:
             raise ValueError('invalid cache budget or pyramid level')
         if type(reserve_bytes) is not int or reserve_bytes<0:
@@ -130,7 +131,7 @@ class Volume:
         if type(decoded_cache_bytes) is not int or decoded_cache_bytes<0:raise ValueError('invalid decoded cache budget')
         from collections import OrderedDict
         self._decoded=OrderedDict();self._decoded_bytes=0;self._decoded_limit=decoded_cache_bytes
-        self._accesses={};self._access_count=0
+        self._decoded_lock=threading.RLock()
         self.reserve=reserve_bytes
         self.source = http_url(source)
         self.remote = self.source.startswith(('https://', 'http://'))
@@ -141,17 +142,16 @@ class Volume:
         self.cache.mkdir(parents=True, exist_ok=True)
         self.limit, self.offline = cache_bytes, offline
         self._stats = dict(local_hits=0, cache_hits=0, downloads=0, downloaded_bytes=0)
-        self._stats.update(decoded_hits=0,decodes=0,decoded_evictions=0,advisory_commits=0)
-        self._validated = set()
+        self._stats.update(decoded_hits=0,decodes=0,decoded_evictions=0)
         self._verified_local = {}
         self._ledger = None
+        self.db = None
         self._native = None
-        self._transport = 'portable'
-        self.db = sqlite3.connect(self.cache/'index.sqlite', timeout=120)
-        self.db.execute('CREATE TABLE IF NOT EXISTS cache (key TEXT PRIMARY KEY, size INTEGER, at REAL, etag TEXT, sha TEXT)')
-        self.db.commit()
-        with self._lock():
-            self._evict(0)
+        self._reader = None
+        self._transports = {}
+        self._transport_lock = threading.RLock()
+        self._transport = 'vc_reader.DiskCache' if self.remote else 'vc_reader.ObjectStore'
+        self._objects = ObjectStore(self.local or self.source, auth=None, max_read_bytes=256 << 20) if self.local or not self.remote else None
         self.array_path = str(level)
         attrs = self._metadata('.zattrs', optional=True)
         self.metadata = self._metadata(self.array_path+'/.zarray', optional=True)
@@ -162,7 +162,7 @@ class Volume:
                 raise ValueError('a direct Zarr array has no pyramid levels')
         m = self.metadata
         if m.get('zarr_format') != 2:
-            raise ValueError('portable reader requires Zarr v2; unsupported layout is not substituted')
+            raise ValueError('checked reader requires Zarr v2; unsupported layout is not substituted')
         self.shape, self.chunks = tuple(m['shape']), tuple(m['chunks'])
         if (len(self.shape) != 3 or len(self.chunks) != 3
                 or any(type(n) is not int or n < 1 for n in self.shape+self.chunks)):
@@ -174,25 +174,36 @@ class Volume:
             raise ValueError('source chunk exceeds 256 MiB decode budget')
         if m.get('dimension_separator', '.') not in ('.', '/') or m['order'] not in ('C','F'):
             raise ValueError('invalid chunk layout')
+        try:
+            ArrayMeta.from_zarray(m).codec_id
+        except (ValueError,RuntimeError) as exc:
+            raise ValueError(f'unsupported native CT layout/codec: {exc}; use the original v1.5.0 runtime for this input') from exc
         self.spacing_xyz, self.origin_xyz = self._geometry(attrs or {}, voxel_um)
         self.identity = dict(source=self.source, level=level, shape=list(self.shape),
                              spacing_xyz=self.spacing_xyz, origin_xyz=self.origin_xyz,
-                             metadata_sha256=digest([attrs,m]))
-        self._namespace = digest(self.identity)
-        # Tiny/zero budgets retain streaming reads of objects larger than the cache.
-        if self.remote and self.limit >= 256 << 20:
-            try:
-                from vc_reader import _reader
-            except ModuleNotFoundError as exc:
-                if exc.name not in ('vc_reader', 'vc_reader._reader'):
-                    raise
-            else:
-                from .ct_reader import EncodedTransport
-                with self._lock():
-                    legacy = self.db.execute('SELECT coalesce(sum(size),0) FROM cache').fetchone()[0]
-                    self._native = EncodedTransport(self.cache/'vc-reader', max(0,self.limit-legacy),
+                             metadata_sha256=digest([attrs,m]),backend='vc_reader-zarr-v2-checked-v1',
+                             native_runtime=runtime_identity())
+        from .ct_reader import EncodedTransport
+        try:
+            self.db = sqlite3.connect(self.cache/'index.sqlite', timeout=120, check_same_thread=False)
+            self.db.execute('CREATE TABLE IF NOT EXISTS cache (key TEXT PRIMARY KEY, size INTEGER, at REAL, etag TEXT, sha TEXT)')
+            self.db.commit()
+            with self._lock():
+                self._evict(0)
+                legacy = self.db.execute('SELECT coalesce(sum(size),0) FROM cache').fetchone()[0]
+                self._native_limit = max(0,self.limit-legacy)
+                if self.remote:
+                    self._native = EncodedTransport(self.cache/'vc-reader', self._native_limit,
                                                     offline=self.offline,reserve=self.reserve)
-                self._transport = 'vc_reader.DiskCache'
+                    self._transports[threading.get_ident()] = self._native
+            self._reader = ZarrReader.computed(self._chunk, shape=self.shape, chunks=self.chunks,
+                dtype=self.dtype.str, fill_value=m.get('fill_value',0), memory_cache=0, threads=1)
+        except BaseException:
+            self.close();raise
+
+    def _chunk(self,index):
+        name=self.metadata.get('dimension_separator','.').join(map(str,index))
+        return self.decoded_chunk(self.array_path+'/'+name if self.array_path else name)
 
     @contextmanager
     def _lock(self):
@@ -201,7 +212,6 @@ class Volume:
             yield
 
     def _evict(self, incoming):
-        self._flush_accesses()
         size = self.db.execute('SELECT coalesce(sum(size),0) FROM cache').fetchone()[0] + cache_size(self.cache/'vc-reader')
         for key, n in self.db.execute('SELECT key,size FROM cache ORDER BY at').fetchall():
             if size + incoming <= self.limit:
@@ -212,17 +222,6 @@ class Volume:
         self.db.commit()
         if size+incoming>self.limit:
             trim_cache(self.cache/'vc-reader',max(0,self.limit-incoming))
-
-    def _flush_accesses(self):
-        # Access times only guide eviction; source-ledger writes remain immediate.
-        if self._accesses:
-            self.db.executemany('UPDATE cache SET at=? WHERE key=?',[(at,key) for key,at in self._accesses.items()])
-            self.db.commit();self._stats['advisory_commits']+=1
-            self._accesses.clear();self._access_count=0
-
-    def _touch(self,token):
-        self._accesses[token]=time.time();self._access_count+=1
-        if self._access_count>=128:self._flush_accesses()
 
     def _metadata(self, key, optional=False):
         cached = self.cache/('meta-'+digest([self.source,key])+'.json')
@@ -281,19 +280,20 @@ class Volume:
     def bind_ledger(self, path):
         """Pin every consumed encoded chunk; changed bytes cannot enter a resumed run."""
         self._decoded.clear();self._decoded_bytes=0
-        self._ledger = sqlite3.connect(path)
+        self._ledger = sqlite3.connect(path, check_same_thread=False)
         self._ledger.execute('CREATE TABLE IF NOT EXISTS chunks (key TEXT PRIMARY KEY, sha TEXT NOT NULL)')
         self._ledger.commit()
 
     def _record(self, key, data):
         if self._ledger is not None:
             sha = digest('authoritative-zarr-fill') if data is None else hashlib.sha256(data).hexdigest()
-            old = self._ledger.execute('SELECT sha FROM chunks WHERE key=?', (key,)).fetchone()
-            if old and old[0] != sha:
-                raise ValueError('source chunk changed: '+key)
-            if old is None:
-                self._ledger.execute('INSERT INTO chunks VALUES (?,?)', (key,sha))
-                self._ledger.commit()
+            with self._transport_lock:
+                old = self._ledger.execute('SELECT sha FROM chunks WHERE key=?', (key,)).fetchone()
+                if old and old[0] != sha:
+                    raise ValueError('source chunk changed: '+key)
+                if old is None:
+                    self._ledger.execute('INSERT INTO chunks VALUES (?,?)', (key,sha))
+                    self._ledger.commit()
         return data
 
     def validate_used(self,*,fresh=True):
@@ -306,8 +306,8 @@ class Volume:
         """
         if fresh:
             self._decoded.clear();self._decoded_bytes=0
-            self._validated.clear();self._verified_local.clear()
-            if self._native is not None:self._native.new_epoch()
+            self._verified_local.clear()
+            for transport in self._transports.values():transport.new_epoch()
         if self._ledger is not None:
             for (key,) in self._ledger.execute('SELECT key FROM chunks'):
                 self._chunk_bytes(key)
@@ -315,94 +315,48 @@ class Volume:
     def _chunk_bytes(self, key):
         local = (self.local/key) if self.local else (Path(self.source)/key if not self.remote else None)
         if local and local.is_file():
-            raw = local.read_bytes()
+            raw = self._objects.read(key)
+            if raw is None:raise FileNotFoundError('local CT chunk disappeared: '+key)
             sha = hashlib.sha256(raw).hexdigest()
             if self.remote and not self.offline and self._verified_local.get(key) != sha:
-                if self._native is not None:
-                    if self._native_bytes(key) != raw:
-                        raise ValueError('local CT chunk differs from original source: '+key)
-                    self._verified_local[key] = sha
-                    self._stats['local_hits'] += 1
-                    return self._record(key,raw)
-                # S3 single-part ETags are MD5s; a 304 verifies the mirror without a payload download.
-                s3 = (urlparse(self.source).hostname or '').endswith('.s3.amazonaws.com')
-                headers = {'If-None-Match':'"'+hashlib.md5(raw,usedforsecurity=False).hexdigest()+'"'} if s3 else {}
-                data, _ = fetch(self.source+'/'+key,headers=headers)
-                if data is not None:
-                    self._stats['downloads'] += 1
-                    self._stats['downloaded_bytes'] += len(data)
-                    if data != raw:
-                        raise ValueError('local CT chunk differs from original source: '+key)
-                elif not headers:
-                    raise ValueError('unexpected remote 304 without a validator')
+                if self._native_bytes(key) != raw:
+                    raise ValueError('local CT chunk differs from original source: '+key)
                 self._verified_local[key] = sha
             self._stats['local_hits'] += 1
             return self._record(key, raw)
         if not self.remote:
             raise FileNotFoundError(f'missing local CT chunk (not known air): {key}')
-        token = digest([self._namespace,key])
-        path = self.cache/token
-        # Reuse verified legacy objects in place; native owns new cache misses.
-        if self._native is not None and not path.exists():
-            return self._record(key,self._native_bytes(key))
-        with self._lock():
-            record = self.db.execute('SELECT etag,sha FROM cache WHERE key=?', (token,)).fetchone()
-            raw = path.read_bytes() if record and path.exists() else None
-            if raw is not None and hashlib.sha256(raw).hexdigest() != record[1]:
-                raw = None
-            if raw is not None and (self.offline or token in self._validated):
-                self._stats['cache_hits'] += 1
-                self._touch(token)
-                return self._record(key,None if record[0]==MISSING_ETAG else raw)
-            if self.offline:
-                raise FileNotFoundError(f'offline cache miss: {key}')
-            headers = {'If-None-Match':record[0]} if raw is not None and record[0] and record[0]!=MISSING_ETAG and not record[0].startswith('W/') else {}
-            try:
-                data, etag = fetch(self.source+'/'+key, headers=headers)
-            except FileNotFoundError:
-                # Only the authoritative server's 404 establishes sparse Zarr fill.
-                data,etag=b'',MISSING_ETAG
-            if data is None:
-                self._stats['cache_hits'] += 1
-                data = raw
-            else:
-                self._stats['downloads'] += 1
-                self._stats['downloaded_bytes'] += len(data)
-                self.db.execute('DELETE FROM cache WHERE key=?', (token,))
-                path.unlink(missing_ok=True)
-                if len(data) <= self.limit:
-                    self._evict(len(data))
-                    if shutil.disk_usage(self.cache).free<len(data)+self.reserve:
-                        self.db.commit()
-                        raise OSError('insufficient cache filesystem space for payload and reserve')
-                    atomic_bytes(path,data)
-                    self.db.execute('INSERT INTO cache VALUES (?,?,?,?,?)',
-                                    (token,len(data),time.time(),etag,hashlib.sha256(data).hexdigest()))
-                self.db.commit()
-            self._validated.add(token)
-            return self._record(key,None if etag==MISSING_ETAG else data)
+        return self._record(key,self._native_bytes(key))
 
     def _native_bytes(self,key):
-        with self._lock():
-            if not self._native.path(self.source+'/'+key).exists():
-                self._evict(min(self.limit,256<<20))
-            legacy = self.db.execute('SELECT coalesce(sum(size),0) FROM cache').fetchone()[0]
-            self._native.limit = max(0,self.limit-legacy)
-            before = self._native.bytes_read
-            hits = self._native.cache_hits
-            try:
-                return self._native.read(self.source+'/'+key)
-            finally:
-                received = self._native.bytes_read-before
+        with self._transport_lock:
+            with self._lock():
+                if self.db.execute('SELECT COUNT(*) FROM cache').fetchone()[0]:
+                    self._evict(min(self.limit,256<<20))
+                legacy = self.db.execute('SELECT coalesce(sum(size),0) FROM cache').fetchone()[0]
+                self._native_limit = max(0,self.limit-legacy)
+            worker = threading.get_ident()
+            if worker not in self._transports:
+                from .ct_reader import EncodedTransport
+                transport = EncodedTransport(self.cache/'vc-reader',self._native_limit,
+                                             offline=self.offline,reserve=self.reserve)
+                transport._checked = self._native._checked
+                self._transports[worker] = transport
+            transport = self._transports[worker]
+            transport.limit = self._native_limit
+        before,hits = transport.bytes_read,transport.cache_hits
+        try:
+            return transport.read(self.source+'/'+key)
+        finally:
+            with self._transport_lock:
+                received = transport.bytes_read-before
                 self._stats['downloaded_bytes'] += received
                 self._stats['downloads'] += int(received>0)
-                self._stats['cache_hits'] += self._native.cache_hits-hits
+                self._stats['cache_hits'] += transport.cache_hits-hits
 
     def _encoded_signature(self,key):
         local=self.local/key if self.local else Path(self.source)/key if not self.remote else None
-        path=local if local and local.is_file() else self.cache/digest([self._namespace,key]) if self.remote else local
-        if self._native is not None and not path.exists():
-            path=self._native.path(self.source+'/'+key)
+        path=local if local and local.is_file() else self._native.path(self.source+'/'+key) if self.remote else local
         try:info=path.stat()
         except FileNotFoundError:return path,None
         return path,(info.st_dev,info.st_ino,info.st_size,info.st_mtime_ns,info.st_ctime_ns)
@@ -413,6 +367,10 @@ class Volume:
         General read/_chunk_bytes behavior is unchanged. validate_used discards this
         cache and revalidates authoritative sources, even within the same Volume.
         """
+        with self._decoded_lock if self._decoded_limit else nullcontext():
+            return self._decode_chunk(key)
+
+    def _decode_chunk(self,key):
         before=self._encoded_signature(key) if self._decoded_limit else None
         cached=self._decoded.get(key)
         if cached is not None:
@@ -431,14 +389,14 @@ class Volume:
             after=self._encoded_signature(key)
             if after[1] is not None:
                 if before!=after:
-                    if after[0].read_bytes()!=raw or self._encoded_signature(key)!=after:
+                    if self._chunk_bytes(key)!=raw or self._encoded_signature(key)!=after:
                         raise ValueError('CT source/cache changed during decode')
                 retained_signature=after
-        if self.metadata.get('compressor'):raw=get_codec(self.metadata['compressor']).decode(raw)
-        for spec in reversed(self.metadata.get('filters') or []):raw=get_codec(spec).decode(raw)
+        from vc_reader.reader import decode_chunk
+        raw=decode_chunk(raw,self.metadata,max_decode_bytes=256<<20)
         array=np.frombuffer(raw,dtype=self.dtype)
         if array.size!=math.prod(self.chunks):raise ValueError('corrupt CT chunk: '+key)
-        array=array.reshape(self.chunks,order=self.metadata['order']);array.flags.writeable=False
+        array=array.reshape(self.chunks);array.flags.writeable=False
         self._stats['decodes']+=1;charge=array.nbytes+512
         if retained_signature is not None and charge<=self._decoded_limit:
             while self._decoded_bytes+charge>self._decoded_limit:
@@ -451,30 +409,7 @@ class Volume:
         lo, hi = bounds(lo_zyx,hi_zyx,self.shape)
         if math.prod((hi-lo).tolist())*self.dtype.itemsize > 512 << 20:
             raise ValueError('read exceeds 512 MiB; use tiled reads')
-        result = np.empty(tuple(hi-lo),dtype=self.dtype)
-        chunks = np.array(self.chunks)
-        for index in itertools.product(*(range(a//c,(b-1)//c+1) for a,b,c in zip(lo,hi,chunks))):
-            name = self.metadata.get('dimension_separator','.').join(map(str,index))
-            key = self.array_path+'/'+name if self.array_path else name
-            raw = self._chunk_bytes(key)
-            if raw is None:
-                raw=np.full(self.chunks,self.metadata.get('fill_value',0),dtype=self.dtype).tobytes(order=self.metadata['order'])
-                encoded=False
-            else:
-                encoded=True
-            if encoded and self.metadata.get('compressor'):
-                raw = get_codec(self.metadata['compressor']).decode(raw)
-            for spec in reversed((self.metadata.get('filters') or []) if encoded else []):
-                raw = get_codec(spec).decode(raw)
-            array = np.frombuffer(raw,dtype=self.dtype)
-            if array.size != math.prod(self.chunks):
-                raise ValueError('corrupt or truncated CT chunk: '+key)
-            array = array.reshape(self.chunks,order=self.metadata['order'])
-            start = np.array(index)*chunks
-            a,b = np.maximum(start,lo),np.minimum(start+chunks,hi)
-            result[tuple(slice(int(x),int(y)) for x,y in zip(a-lo,b-lo))] = array[
-                tuple(slice(int(x),int(y)) for x,y in zip(a-start,b-start))]
-        return result
+        return self._reader[tuple(slice(int(a),int(b)) for a,b in zip(lo,hi))]
 
     def sample(self, indices_zyx):
         """Sample a Cartesian grid without materializing its dense native envelope."""
@@ -497,14 +432,13 @@ class Volume:
 
     def stats(self):
         return dict(self._stats, transport=self._transport, cache_bytes=self.db.execute('SELECT coalesce(sum(size),0) FROM cache').fetchone()[0]+cache_size(self.cache/'vc-reader'),
-                    decoded_cache_bytes=self._decoded_bytes,pending_accesses=len(self._accesses),
-                    backend='portable-zarr-v2')
+                    decoded_cache_bytes=self._decoded_bytes,
+                    backend='vc_reader-zarr-v2-checked-v1')
 
     def close(self):
+        if self._reader is not None:self._reader.close();self._reader=None
         self._decoded.clear();self._decoded_bytes=0
-        try:
-            with self._lock():self._flush_accesses()
-        finally:
-            self.db.close()
-            if self._ledger is not None:self._ledger.close()
-            if self._native is not None:self._native.close()
+        if self.db is not None:self.db.close();self.db=None
+        if self._ledger is not None:self._ledger.close();self._ledger=None
+        for transport in self._transports.values():transport.close()
+        self._transports.clear()

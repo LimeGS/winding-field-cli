@@ -1,4 +1,5 @@
 """Only the proven binary's irreversible PaStiX exit may bypass its timeout."""
+import subprocess
 import numpy as np
 import pytest
 
@@ -11,14 +12,15 @@ import pytest
 def test_terminal_error_is_binary_bound_and_exact(tmp_path, monkeypatch, pinned, message, early):
     from winding_field import surface_export as s
     app=tmp_path/'AppRun'
-    app.write_text(f'#!/bin/sh\nprintf "%s\\n" "{message}" >&2\nsleep 60\n')
+    app.write_text(f'#!/bin/sh\n[ "$1" = --ready ] && exit 0\nprintf "%s\\n" "{message}" >&2\nsleep 60\n')
     app.chmod(0o700)
+    # Complete macOS first-execution checks before measuring terminal-error handling.
+    subprocess.run([str(app),'--ready'],check=True,timeout=30)
     binary=tmp_path/'usr/bin/flatboi';binary.parent.mkdir(parents=True);binary.write_bytes(b'fixture')
     original=s._sha
     monkeypatch.setattr(s, '_sha', lambda p: '2f89bfc96512bebf7ef44b25de01c5afd01c7af058e452515b03bc52cf6afd6a'
         if pinned and p==binary else original(p))
     v=np.array([[0.,0.,0.],[1.,0.,0.],[0.,1.,0.]])
-    # macOS first-execution checks can exceed 0.5s before this new script writes stderr.
     uv,receipt=s.flatten_native(v,np.array([[0,1,2]]),app,tmp_path/'native',timeout=2.)
     assert uv is None
     assert receipt['timed_out'] is (not early)
