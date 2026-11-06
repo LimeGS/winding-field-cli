@@ -160,6 +160,17 @@ def test_curved_inverse_uses_physical_units_at_large_origin(tmp_path):
         assert valid.all();np.testing.assert_allclose(back[:,:2],uv,atol=1e-5)
 
 
+def test_curved_worker_preserves_geometry_at_large_origin(tmp_path):
+    from winding_field.uvw_workers import compute_geometry
+    origin=np.array([1e6,-2e6,3e6]);spacing=np.array([2.,3.,4.]);ref=curved_patch()
+    ref=Reference(ref.world*spacing+origin,ref.faces,ref.uv*spacing[:2],6.,band=(5.8,6.2))
+    with field_array(tmp_path,lambda p:((p-origin)/spacing)[...,0]*((p-origin)/spacing)[...,2],
+        origin=origin,spacing=spacing) as field:
+        data,_=compute_geometry(ref,field,dict(origin_xyz_um=origin,voxel_um=1.),[[6.06,12.12]],6.2)
+        assert data['geometry'].all(),data['cause']
+        assert (data['reference_face']>=0).all()
+
+
 def test_source_change_during_curved_search_is_detected(tmp_path,monkeypatch):
     from winding_field import uvw_intersections
     integrate=uvw_intersections.solve_ivp
@@ -200,3 +211,19 @@ def test_encoded_coordinate_must_recover_requested_uv(tmp_path):
         data,_=compute_geometry(ref,field,dict(origin_xyz_um=[0.,0.,0.],voxel_um=1.),np.array([[3.00000003,4.]]),6.)
         assert not data['geometry'][0]
         assert data['cause'][0]==CAUSES['coordinate_precision']
+
+
+@pytest.mark.parametrize('w',[5.8,6.2])
+def test_encoded_band_endpoints_preserve_curved_correspondence(tmp_path,w):
+    from winding_field.uvw_workers import compute_geometry
+    ref=curved_patch();ref.band=(5.8,6.2)
+    uv=np.array([[3.03,4.04],[3.,4.],[3.05,4.0625]])
+    with field_array(tmp_path,lambda p:p[...,0]*p[...,2]) as field:
+        data,_=compute_geometry(ref,field,dict(origin_xyz_um=[0.,0.,0.],voxel_um=1.),uv,w)
+        assert data['geometry'].all(),data['cause']
+        assert (data['reference_face']>=0).all()
+        outside,_=compute_geometry(ref,field,dict(origin_xyz_um=[0.,0.,0.],voxel_um=1.),uv,w+(-.01 if w==5.8 else .01))
+        assert not outside['geometry'].any()
+        # The public inverse still rejects arbitrary XYZ outside the requested band.
+        _,valid=xyz_to_uvw(ref,field,[[3.,4.,5.79/3]])
+        assert not valid.any()

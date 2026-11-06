@@ -3,6 +3,7 @@ on: [push, pull_request]
 jobs:
   installed-package:
     strategy:
+      fail-fast: false
       matrix:
         include:
           - os: ubuntu-latest
@@ -12,6 +13,8 @@ jobs:
     runs-on: ${{ matrix.os }}
     env:
       OMP_NUM_THREADS: '4'
+      CMAKE_BUILD_PARALLEL_LEVEL: '2'
+      CMAKE_ARGS: '-DVC_READER_ENABLE_CUDA=OFF'
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -19,6 +22,14 @@ jobs:
           python-version: ${{ matrix.python }}
           cache: pip
       - run: python -m pip install build pytest
+      - name: Native CT build dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build pkg-config libcurl4-openssl-dev libblosc-dev libzstd-dev liblz4-dev libsqlite3-dev nlohmann-json3-dev zlib1g-dev libtiff-dev libpng-dev libjpeg-dev
+      - name: Native CT build dependencies (macOS)
+        if: runner.os == 'macOS'
+        run: brew install cmake ninja pkgconf curl c-blosc zstd lz4 sqlite nlohmann-json libtiff libpng jpeg-turbo
       - if: runner.os == 'Linux'
         run: python -m pip install torch --index-url https://download.pytorch.org/whl/cpu
       - name: Install original numerical library
@@ -26,7 +37,8 @@ jobs:
           CORE_REV=$(python -c "import json; print(json.load(open('provenance/core.json'))['revision'])")
           python -m pip install "winding-field-experiments @ https://github.com/LimeGS/winding-field/archive/$CORE_REV.tar.gz"
       - run: python -m build
-      - run: python -m pip install dist/*.whl "matplotlib>=3.8,<4" "libigl==2.6.3" "tifffile>=2023.7"
+      - run: python -m pip install dist/*.whl "winding-field-cli[ct]" "matplotlib>=3.8,<4" "libigl==2.6.3" "tifffile>=2023.7"
+      - run: python -I -c "from vc_reader.reader import open_zarr, ZarrReader; from vc_reader import _reader"
       - run: python -m pip check
       - run: python -m pytest -q -o pythonpath=
       - name: Installed CLI outside checkout
