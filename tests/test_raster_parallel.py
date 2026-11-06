@@ -79,8 +79,8 @@ def test_shared_ct_samples_use_one_verified_load(tmp_path):
     calls=[];barrier=threading.Barrier(2)
     def load(index):
         calls.append(index)
-        return SimpleNamespace(to_bytes=lambda:bytes(range(8)))
-    ct.native=SimpleNamespace(_array=SimpleNamespace(load_chunk=load))
+        return bytes(range(8))
+    ct._load_chunk=load
     def run():
         barrier.wait(5)
         return ct.sample(np.array([[.5,.5,.5]]),dict(voxel_um=1.,origin_xyz_um=[0,0,0]))

@@ -22,6 +22,12 @@ def endpoint(tmp_path):
             pass
 
         def do_GET(self):
+            if self.path=='/etag':
+                raw=(tmp_path/'etag').read_bytes();etag='"'+hashlib.sha256(raw).hexdigest()+'"'
+                if self.headers.get('If-None-Match')==etag:
+                    self.send_response(304);self.end_headers();return
+                self.send_response(200);self.send_header('Content-Length',str(len(raw)))
+                self.send_header('ETag',etag);self.end_headers();self.wfile.write(raw);return
             if self.path in ('/oversized', '/unsized'):
                 self.send_response(200)
                 if self.path == '/oversized':
@@ -118,7 +124,7 @@ def test_native_warm_hits_do_not_commit_receipts_again(endpoint):
         for _ in range(3):
             assert transport.read(url + '/chunk') == b'original'
         assert 'COMMIT' not in statements
-        assert transport.files.bytes_read == 8
+        assert transport.bytes_read == 8
     finally:
         transport.close()
 
@@ -130,7 +136,7 @@ def test_shared_volume_uses_native_and_preserves_coordinates(served):
     root, url, expected = served
     volume = Volume(url, cache=root / 'cache', decoded_cache_bytes=4096)
     try:
-        assert volume.stats()['transport'] == 'vc_reader.EncodedFiles'
+        assert volume.stats()['transport'] == 'vc_reader.DiskCache'
         volume.bind_ledger(root / 'source.sqlite')
         indices = [np.array([0, 0, 3]), np.array([1, 3]), np.array([0, 2, 5, 5])]
         np.testing.assert_array_equal(volume.sample(indices), expected[np.ix_(*indices)])
@@ -158,7 +164,7 @@ def test_verified_legacy_payload_is_reused_offline(served):
     old.close()
     current = Volume(url, cache=root / 'cache', offline=True)
     try:
-        assert current.stats()['transport'] == 'vc_reader.EncodedFiles'
+        assert current.stats()['transport'] == 'vc_reader.DiskCache'
         np.testing.assert_array_equal(current.read([0, 0, 0], [2, 2, 3]), expected[:2, :2, :3])
         assert current.stats()['downloaded_bytes'] == 0
         assert current.stats()['cache_bytes'] <= current.limit
@@ -178,7 +184,7 @@ def test_native_reserve_refuses_download_without_recording_air(endpoint, monkeyp
     try:
         with pytest.raises(OSError, match='reserve'):
             transport.read(url + '/chunk')
-        assert transport.files.bytes_read == 0
+        assert transport.bytes_read == 0
         assert transport.db.execute('SELECT count(*) FROM receipts').fetchone()[0] == 0
     finally:
         transport.close()
@@ -278,20 +284,115 @@ def test_portable_eviction_does_not_require_native_import(served, monkeypatch):
         local.close()
 
 
-@pytest.mark.parametrize('key', ['oversized', 'unsized'])
-def test_native_refuses_unbounded_reservation_before_payload(endpoint, key):
+def test_native_refuses_oversized_reservation_before_payload(endpoint):
     from winding_field.ct_reader import EncodedTransport
 
     root, url = endpoint
     transport = EncodedTransport(root / 'cache', 1 << 30)
     try:
         with pytest.raises(RuntimeError, match='encoded CT transfer'):
-            transport.read(url + '/' + key)
+            transport.read(url + '/oversized')
         assert transport.size == 0
-        assert transport.files.bytes_read == 0
+        assert transport.bytes_read == 0
         assert transport.db.execute('SELECT count(*) FROM receipts').fetchone()[0] == 0
     finally:
         transport.close()
+
+
+def test_native_unsized_response_respects_budget(endpoint):
+    from winding_field.ct_reader import EncodedTransport
+    root, url = endpoint
+    transport = EncodedTransport(root / 'cache', 8)
+    try:
+        assert transport.read(url + '/unsized') == b'12345678'
+        assert transport.size <= 8
+    finally:
+        transport.close()
+    limited=EncodedTransport(root/'limited',4)
+    try:
+        with pytest.raises(RuntimeError):limited.read(url+'/unsized')
+        assert limited.size==0
+        assert limited.db.execute('SELECT COUNT(*) FROM receipts').fetchone()[0]==0
+    finally:limited.close()
+
+
+def test_native_cached_source_uses_owned_strong_validator(endpoint):
+    from winding_field.ct_reader import EncodedTransport
+    root,url=endpoint;(root/'etag').write_bytes(b'original')
+    transport=EncodedTransport(root/'cache',1<<20)
+    try:
+        assert transport.read(url+'/etag')==b'original'
+        transport.new_epoch()
+        assert transport.read(url+'/etag')==b'original'
+        received=transport.bytes_read
+        transport.new_epoch()
+        assert transport.read(url+'/etag')==b'original'
+        assert transport.bytes_read==received
+        (root/'etag').write_bytes(b'mutated!');transport.new_epoch()
+        assert transport.read(url+'/etag')==b'mutated!'
+    finally:transport.close()
+
+
+def test_native_eviction_cannot_reuse_validator_for_different_bytes(endpoint):
+    from winding_field.ct_reader import EncodedTransport
+    root,url=endpoint;(root/'etag').write_bytes(b'original');(root/'other').write_bytes(b'eviction')
+    transport=EncodedTransport(root/'cache',8)
+    try:
+        assert transport.read(url+'/etag')==b'original'
+        transport.new_epoch();assert transport.read(url+'/etag')==b'original'
+        assert transport.read(url+'/other')==b'eviction'
+        assert not transport.path(url+'/etag').exists()
+        (root/'etag').write_bytes(b'mutated!')
+        assert transport.read(url+'/etag')==b'mutated!'
+        (root/'etag').write_bytes(b'original');transport.new_epoch()
+        assert transport.read(url+'/etag')==b'original'
+    finally:transport.close()
+
+
+def test_repeated_missing_releases_receipt_write_lock(endpoint):
+    import sqlite3
+    from winding_field.ct_reader import EncodedTransport
+    root,url=endpoint;transport=EncodedTransport(root/'cache',32)
+    try:
+        assert transport.read(url+'/absent') is None
+        transport.new_epoch();assert transport.read(url+'/absent') is None
+        with sqlite3.connect(root/'cache/receipts.sqlite',timeout=.1) as other:
+            other.execute('BEGIN IMMEDIATE')
+    finally:transport.close()
+
+
+def test_old_encoded_cache_remains_accounted_and_evictable(endpoint):
+    import sqlite3
+    from winding_field.ct_reader import EncodedTransport
+    root,url=endpoint;cache=root/'cache';encoded=cache/'encoded';encoded.mkdir(parents=True)
+    old=encoded/(hashlib.sha256((url+'/old').encode()).hexdigest()+'.blob');old.write_bytes(b'original')
+    with sqlite3.connect(cache/'.vc_reader_cache.sqlite3') as db:
+        db.executescript('CREATE TABLE budget(id INTEGER PRIMARY KEY,max_bytes INTEGER,total INTEGER,clock INTEGER);'
+            'INSERT INTO budget VALUES(1,8,8,1);CREATE TABLE chunks(path TEXT PRIMARY KEY,size INTEGER,age INTEGER);'
+            'CREATE TABLE file_headers(path TEXT PRIMARY KEY,etag TEXT,modified TEXT);PRAGMA user_version=1;')
+        db.execute('INSERT INTO chunks VALUES(?,8,1)',(str(old),))
+        db.execute('INSERT INTO file_headers VALUES(?,?,?)',(str(old),'"old"',''))
+    (root/'new').write_bytes(b'newbytes')
+    transport=EncodedTransport(cache,8)
+    try:
+        assert transport.size==8
+        assert transport.read(url+'/new')==b'newbytes'
+        assert not old.exists()
+        assert sum(p.stat().st_size for p in encoded.glob('*.blob'))<=8
+    finally:transport.close()
+
+
+def test_empty_download_after_eviction_invalidates_old_identity(endpoint):
+    from winding_field.ct_reader import EncodedTransport
+    root,url=endpoint;(root/'etag').write_bytes(b'original');(root/'other').write_bytes(b'eviction')
+    transport=EncodedTransport(root/'cache',8)
+    try:
+        assert transport.read(url+'/etag')==b'original'
+        transport.new_epoch();assert transport.read(url+'/etag')==b'original'
+        transport.read(url+'/other');(root/'etag').write_bytes(b'')
+        assert transport.read(url+'/etag')==b''
+        assert transport.db.execute('SELECT etag FROM validators WHERE url=?',(url+'/etag',)).fetchone() is None
+    finally:transport.close()
 
 
 def test_native_index_binding_and_rollback(endpoint):

@@ -1,9 +1,77 @@
 # Bounded raster and CT verification — 2026-11-05
 
-The changes retain scalar raster/interpolation mathematics, original face order
-and ownership, ambiguity blockers, missing CT, and two-node tile halos. Native
-PointPlan sampling was evaluated but not adopted: 57 of 200,000 rounded pixels
+The initial changes retained scalar interpolation, original face order
+and ownership, ambiguity blockers, missing CT, and two-node tile halos. The earlier
+native PointPlan sampler was evaluated but not adopted: 57 of 200,000 rounded pixels
 changed (maximum float difference 0.0059814453125), despite exact validity.
+
+## Verified float64 native sampler
+
+New patch exports default to `"ct_sampler": "native-float64"`; `"scalar"`
+selects the original NumPy accumulation. Both return float32 samples and retain
+exact positive-weight support: missing chunks remain invalid, including at chunk
+boundaries, while observed zero-valued voxels remain valid. The native computed
+reader consumes only PatchCT's hash-verified chunks, with native persistent RAM
+caching disabled. The existing shared Python LRU owns retained decoded memory.
+
+The CT extra pins vc_reader `baf5e605bb42a3d55a62b7c5c728e0908137225c`.
+That release removed raw chunk/publication bindings. PatchCT reads its declared
+lossless decoded cache, including explicit `.missing` markers; uncached remote
+chunks are loaded through native indexing and flushed before use. Publication
+failure is an error, never evidence of absent CT. Local whole chunks are read and
+decoded directly. Every demand load retains the decoded-byte SHA ledger check.
+
+Continuation inherits its saved sampler; receipts predating this setting use
+scalar. Native continuation requires matching sampler source, extension and
+native-library hashes, preventing a mixture of implementations in saved tiles.
+New exports record these identities; existing completed exports stay immutable.
+
+### Integrated benchmark (gpu-1, 2026-11-05)
+
+Actual PatchCT on both paths, including per-load hashing, SQLite receipts,
+four-worker prefetch and a 512 MiB verified LRU. Three alternating repetitions,
+200,000 fixed points and two complete 1024×1024 tiles; one native thread, CPUs 6–7.
+
+| Workload | Scalar median | Native float64 median | Speedup |
+| --- | ---: | ---: | ---: |
+| Points, RAM cold | 0.9041 s | 0.6917 s | 1.31× |
+| Points, RAM warm | 0.2816 s | 0.1039 s | 2.71× |
+| Two tiles, RAM cold | 5.2423 s | 5.1427 s | 1.019× |
+| Two tiles, RAM warm | 4.5831 s | 4.5026 s | 1.018× |
+
+All compared public sample values, masks, rounded pixels, XYZ and source-face IDs
+matched exactly. Tile timings include geometry, halos, PNG/NPZ compression,
+hashes and fsync. Peak process RSS was 677,380 KiB. These are local raw fixtures,
+with the OS cache warmed by input verification; neither network-cold, CUDA nor
+whole-map performance was measured. The smaller end-to-end gain supersedes any
+interpretation of the isolated sampler's speedup as a complete-render speedup.
+
+Evidence: `/mnt/fast2/paris4-vcreader2440-20261105/cli-benchmark-01/benchmark02/RESULTS.json`.
+
+### Shared encoded transport migration
+
+Shared Volume reads now use `DiskCache.open_file`. Its new API trusts existing
+disk bytes, so the CLI owns source revalidation using its existing bounded HTTP
+fetch and a separate strong-ETag table. Weak validators and Last-Modified cannot
+establish identity. A receipt without a validator needs one full payload fetch
+on its next validation epoch; later epochs can use conditional requests. Native
+replacement downloads invalidate old validators. Offline verified hits and
+authoritative 404 receipts remain distinct from cache misses and corruption.
+Sized and streaming unsized transfers retain the 256 MiB reservation cap and
+the disk reserve; a small unsized response may now succeed within those bounds.
+The native streaming allocator reserves ahead in increments, so a near-cap
+unsized response can be refused before reaching 256 MiB of payload.
+Old encoded-cache ownership is migrated before native reconciliation, preserving
+disk accounting and eviction. For Delta3D decoded caches, D3D1 v1/v2 payload
+quantization is checked independently of metadata; unrecognized wire formats fail
+closed. Existing payloads take precedence over stale missing markers.
+
+Final integration regression run on gpu-1: **145 passed, 2 skipped** across
+native sampling, shared transport, prefetch, pipeline/mapping/parallelism,
+continuation, CT sources, IO, visual geometry and the original recipe. The run
+reported 50 dependency deprecation warnings from scikit-image with NumPy 2.5.
+This is an isolated Python 3.13 source-test runtime, not an installed-package
+qualification for the advertised Python 3.11/3.12 environments.
 
 ## Verification
 
@@ -56,3 +124,20 @@ Remote evidence directories:
 - `/ssd/draft/paris4-raster-threads-20261105`
 - `/ssd/draft/paris4-raster-threads-cached-20261105`
 - `/ssd/draft/paris4-full-tile-benchmark-20261105-02`
+
+## Saved full-map overlap audit
+
+The Paris4 Flatboi 88-iteration checkpoint was audited without repeating extraction
+or flattening. Radius-bucket trees replace one global-radius tree; the candidate
+cap covers all buckets together, with the same exact intersection predicate and
+ordered face pairs. Tests: 21 passed, 9 optional-runtime skips; exact original/new
+pair and count parity on 16,041 real faces.
+
+The full Flatboi audit completed in 143.57 s at 685 MiB peak RSS under a 6 GiB,
+no-swap limit: 22,774,809 narrow tests, 6,634 overlap pairs and 2,141 affected faces.
+The retained LSCM audit has 7,705 pairs and 2,732 affected faces. Both maps have
+zero inverted faces; these are diagnostic results, with overlap ambiguity masked
+during rasterization, not physical acceptance or global injectivity.
+
+Evidence: `gpu-1:/mnt/fast2/paris4-vcreader2440-20261105/final-map-validation-02/`.
+The original one-hour timeout remains recorded in `final-map-validation-01/`.

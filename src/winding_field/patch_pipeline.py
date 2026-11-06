@@ -30,21 +30,23 @@ NATIVE_RECIPES={'historical':BINARY_SHA,
     'installed-2f89bfc9':'2f89bfc96512bebf7ef44b25de01c5afd01c7af058e452515b03bc52cf6afd6a'}
 
 
-def settings(request):
+def settings(request,*,native_required=True):
     from .original_pipeline import settings as frame_settings
     if not isinstance(request,dict):raise ValueError('patch settings must be an object')
     allowed={'output_frame','pitch_um','app_run','max_patch_faces','max_depth','max_charts','tile_size',
-             'memory_gib','timeout_seconds','cache_dir','cache_mib','cache_gib','native_recipe',
+             'memory_gib','timeout_seconds','cache_dir','cache_mib','cache_gib','native_recipe','ct_sampler',
              'workers','raster_workers','ct_workers','native_cpus','reuse_export','reuse_identity_sha256','process_tree_gib','disk_reserve_gib'}
     if set(request)-allowed:raise ValueError('unknown patch settings: '+str(sorted(set(request)-allowed)))
     frame_settings({'output_frame':request.get('output_frame')})
     cfg=dict(pitch_um=19.2,max_patch_faces=4096,max_depth=3,max_charts=4096,tile_size=1024,
              memory_gib=2.,timeout_seconds=120.,cache_mib=64,cache_gib=2.,
-              cache_dir='~/.cache/winding-field/patch-ct',native_recipe='historical',workers=1,raster_workers=1,ct_workers=1,
+               cache_dir='~/.cache/winding-field/patch-ct',native_recipe='historical',ct_sampler='native-float64',workers=1,raster_workers=1,ct_workers=1,
              native_cpus=None,reuse_export=None,reuse_identity_sha256=None,process_tree_gib=11.,disk_reserve_gib=8.)
     cfg.update(request)
+    if cfg['ct_sampler'] not in ('scalar','native-float64'):raise ValueError('invalid ct_sampler')
     if not isinstance(cfg['native_recipe'],str) or cfg['native_recipe'] not in NATIVE_RECIPES:raise ValueError('unknown native_recipe')
-    if not isinstance(cfg.get('app_run'),str) or not cfg['app_run']:raise ValueError('patch app_run required')
+    if native_required or cfg.get('app_run') is not None:
+        if not isinstance(cfg.get('app_run'),str) or not cfg['app_run']:raise ValueError('patch app_run required')
     for key in ('pitch_um','memory_gib','timeout_seconds','cache_gib','process_tree_gib','disk_reserve_gib'):
         if type(cfg[key]) not in (int,float) or not math.isfinite(cfg[key]) or cfg[key]<=0:raise ValueError('invalid patch '+key)
     for key,lo,hi in (('workers',1,4),('raster_workers',1,4),('ct_workers',1,4),('max_patch_faces',1,100000),('max_depth',0,16),('max_charts',1,100000),('tile_size',2,2048),('cache_mib',0,8192)):
@@ -442,8 +444,9 @@ def render_map(mapped,output,sample,frame,*,pitch_um=19.2,tile_size=1024,export_
             window=(0,255),guard=check,capture=capture,xyz_tolerance=.048/frame['voxel_um'])
         image,mask=image[crop],mask[crop];report['canvas']=canvas
         for value,key in enumerate(('black_unmapped_pixels','CT_missing_pixels','CT_observed_pixels','ambiguous_pixels')):report[key]=int((mask==value).sum())
-        report['disconnected_components_translated']=len(mapped.get('report',{}).get('registrations',[]))>1
-        report['patch_repacking']=report['disconnected_components_translated']
+        placement=mapped.get('report',{})
+        report['disconnected_components_translated']=placement.get('disconnected_components_translated',len(placement.get('registrations',[]))>1)
+        report['patch_repacking']=placement.get('patch_repacking',report['disconnected_components_translated'])
         Image.fromarray(image).save(root/'image.png');Image.fromarray(mask).save(root/'mask.png')
         return dict(directory=directory,canvas=canvas,rendering=report,tifxyz=xyz_report,
                     files={str(p.relative_to(root)):file_sha(p) for p in sorted(root.rglob('*')) if p.is_file()})
@@ -533,7 +536,7 @@ def export_mesh(mesh_path,out,volume,request,*,export_tifxyz=False,stop=lambda:F
                       native=native,implementation_sha256=file_sha(__file__),export_tifxyz=export_tifxyz)
         from importlib.metadata import version
         identity['kernel_sha256']={name:file_sha(Path(__file__).with_name(name+'.py')) for name in
-            ('patch_pipeline','native_patches','patch_mapping','surface_export','surface_atlas','original_recipe','original_pipeline','original_tifxyz','surface_mesh','range_surface','io')}
+            ('patch_pipeline','native_ct_sampling','native_patches','patch_mapping','surface_export','surface_atlas','original_recipe','original_pipeline','original_tifxyz','surface_mesh','range_surface','io')}
         identity['runtime']={name:version(name) for name in ('numpy','scipy','Pillow')}
         identity['memory_admission']=dict(raster_cache_runtime_bytes=raster_memory(cfg),ct_chunk_workspace_bytes=ct_reserve,
             geometry_budget_bytes=cfg['memory_gib']*2**30-raster_memory(cfg)-ct_reserve)
@@ -605,16 +608,17 @@ def export_mesh(mesh_path,out,volume,request,*,export_tifxyz=False,stop=lambda:F
 
 
 class PatchCT:
-    """Installed vc_reader transport; portable geometry and positive-weight sampler.
+    """Installed vc_reader transport and verified native or scalar interpolation.
 
     Native shared disk cache is lossless and bounded; chunk provenance lives on disk.
     """
-    def __init__(self,source,output,cfg,*,voxel_um=None,level=0):
+    def __init__(self,source,output,cfg,*,voxel_um=None,level=0,resume=False):
         from .io import Volume
         from vc_reader.reader import open_zarr
         from vc_reader import _reader
         import sqlite3
-        self.volume=Volume(source,voxel_um=voxel_um,level=level,cache=cfg['cache_dir'],cache_bytes=int(cfg['cache_gib']*2**30))
+        self.volume=Volume(source,voxel_um=voxel_um,level=level,cache=cfg['cache_dir'],cache_bytes=int(cfg['cache_gib']*2**30),
+                           reserve_bytes=int(cfg['disk_reserve_gib']*2**30))
         self.chunks,self.dtype=self.volume.chunks,self.volume.dtype
         self._lock=threading.RLock();self._chunks=OrderedDict();self._cache_bytes=0
         self._cache_limit=cfg['cache_mib']*2**20
@@ -623,20 +627,75 @@ class PatchCT:
         try:self.chunk_workspace_bytes=ct_memory(self.chunks,self.dtype,cfg)
         except Exception:
             self.volume.close();raise
-        self.db=sqlite3.connect(Path(output)/'ct-chunks.sqlite',check_same_thread=False)
-        self.db.execute('CREATE TABLE chunks (key TEXT PRIMARY KEY,sha TEXT)')
+        self.db=None;self.native=None;self._ct_pool=None;self._sampler=None
         try:
+            self.db=sqlite3.connect(Path(output)/'ct-chunks.sqlite',check_same_thread=False)
+            self.db.execute('CREATE TABLE '+('IF NOT EXISTS ' if resume else '')+'chunks (key TEXT PRIMARY KEY,sha TEXT)')
             url=self.volume.source.rstrip('/')+('/'+self.volume.array_path if self.volume.array_path else '')
-            self.native=open_zarr(url,threads=1,connections=cfg['ct_workers'],auth=None,memory_cache=0,
-                cache_dir=str(Path(cfg['cache_dir']).expanduser()/'native'),cache_max_bytes=int(cfg['cache_gib']*2**30),
-                compress_cache=False,allow_lossy_cache=False)
-            if self.native.meta.raw!=self.volume.metadata:raise ValueError('vc_reader metadata differs')
+            self._local_source=None if self.volume.remote else Path(url)
+            self._chunk_layers=[]
+            if self.volume.remote:
+                self.native=open_zarr(url,threads=1,connections=cfg['ct_workers'],auth=None,memory_cache=0,
+                    cache_dir=str(Path(cfg['cache_dir']).expanduser()/'native'),cache_max_bytes=int(cfg['cache_gib']*2**30),
+                    compress_cache=False,allow_lossy_cache=False)
+                if self.native.meta.raw!=self.volume.metadata:raise ValueError('vc_reader metadata differs')
+                self._chunk_layers=[layer for layer in self.native.cache_layers if layer.kind=='decoded' and not layer.allow_lossy]
+                if not self._chunk_layers:raise ValueError('verified CT requires a lossless decoded cache')
             self._ct_pool=ThreadPoolExecutor(max_workers=cfg['ct_workers']) if cfg['ct_workers']>1 else None
+            if cfg.get('ct_sampler','native-float64')=='native-float64':
+                from .native_ct_sampling import NativeCTSampler
+                self._sampler=NativeCTSampler(self.volume.shape,self.chunks,self.dtype,self._chunk)
             self.identity=dict(self.volume.identity,backend='vc_reader',extension_sha256=file_sha(_reader.__file__),
                                threads=1,memory_cache_bytes=self._cache_limit,memory_cache_owner='verified-python-chunks',
-                               disk_cache_bytes=int(cfg['cache_gib']*2**30),chunk_workspace_bytes=self.chunk_workspace_bytes)
+                                disk_cache_bytes=int(cfg['cache_gib']*2**30),chunk_workspace_bytes=self.chunk_workspace_bytes)
+            self.identity['sampler']='vc_reader-float64-support-v1' if self._sampler else 'scalar'
+            if self._sampler:
+                self.identity['sampler_sha256']=file_sha(Path(__file__).with_name('native_ct_sampling.py'))
+            libraries=Path(_reader.__file__).parent.parent/'lib'
+            self.identity['reader_libraries_sha256']={p.name:file_sha(p) for p in sorted(libraries.glob('libvc_reader_native.*')) if p.is_file()}
         except Exception:
-            self.db.close();self.volume.close();raise
+            self.close();raise
+
+    def _load_chunk(self,index):
+        """Read whole stored chunks; a fill-valued sample cannot prove presence."""
+        name=self.volume.metadata.get('dimension_separator','.').join(map(str,index))
+        def cached():
+            for layer in self._chunk_layers:
+                path=Path(layer.root)/name
+                if path.is_file():return path,layer.stored.raw
+                if Path(str(path)+'.missing').is_file():return None,layer.stored.raw
+            return False,None
+        if self._local_source is not None:
+            path,metadata=self._local_source/name,self.volume.metadata
+            if not path.exists():return None
+        else:
+            path,metadata=cached()
+            if path is False:
+                # A one-voxel read loads the complete chunk; flush makes its missing marker durable too.
+                start=np.asarray(index)*self.volume.chunks
+                self.native[tuple(slice(int(n),int(n)+1) for n in start)]
+                self.native._array.flush()
+                path,metadata=cached()
+                if path is False:raise RuntimeError('CT prefetch publication failed')
+            if path is None:return None
+        with path.open('rb') as handle:raw=handle.read((256<<20)+1)
+        if len(raw)>256<<20:raise ValueError('encoded CT chunk exceeds 256 MiB read budget')
+        return self._decode_chunk(raw,metadata,cache=self._local_source is None)
+
+    def _decode_chunk(self,raw,metadata,*,cache=False):
+        if metadata.get('compressor'):
+            from vc_reader.reader.writer import decompress_bytes
+            if cache and metadata['compressor'].get('id')=='vc-delta3d':
+                # shortcut: validate D3D1 v1/v2 headers; require native validation for newer wire formats.
+                if not (len(raw)>=20 and raw[:4]==b'D3D1' and raw[4] in (1,2) and raw[6]<=1):
+                    raise ValueError('CT cache payload is not verified lossless Delta3D')
+            raw=decompress_bytes(raw,metadata['compressor'],math.prod(self.volume.chunks)*self.volume.dtype.itemsize)
+        if metadata.get('filters'):
+            from numcodecs import get_codec
+            for spec in reversed(metadata['filters']):raw=get_codec(spec).decode(raw)
+        if metadata['order']!=self.volume.metadata['order']:
+            raw=np.frombuffer(raw,dtype=self.volume.dtype).reshape(self.volume.chunks,order=metadata['order']).tobytes(order=self.volume.metadata['order'])
+        return raw
 
     def _chunk(self,index):
         import hashlib
@@ -650,7 +709,7 @@ class PatchCT:
                 raise RuntimeError('insufficient CT cache disk reserve')
             while self._chunks and self._cache_bytes+needed+512>self._cache_limit:
                 _,old=self._chunks.popitem(last=False);self._cache_bytes-=512+(0 if old is None else old.nbytes)
-            raw=self.native._array.load_chunk(list(index)).to_bytes()
+            raw=self._load_chunk(index)
             if raw is not None and len(raw)!=needed:raise ValueError('invalid native CT chunk size')
             sha=None if raw is None else hashlib.sha256(raw).hexdigest()
             saved=self.db.execute('SELECT sha FROM chunks WHERE key=?',(key,)).fetchone()
@@ -670,10 +729,7 @@ class PatchCT:
             needed=math.prod(self.volume.chunks)*self.volume.dtype.itemsize
             if missing and shutil.disk_usage(self._cache_path).free<self._disk_reserve+2*needed*len(missing):
                 raise RuntimeError('insufficient CT cache disk reserve')
-            def fetch(index):
-                self.native._array.load_chunk(list(index))
-                if not self.native._array.publish_chunk(list(index)):raise RuntimeError('CT prefetch publication failed')
-            futures=[self._ct_pool.submit(fetch,index) for index in missing]
+            futures=[self._ct_pool.submit(self._load_chunk,index) for index in missing]
             try:
                 for future in futures:future.result()
             finally:
@@ -685,14 +741,39 @@ class PatchCT:
         from .original_recipe import sample_points
         v=self.volume
         grid=(xyz*frame['voxel_um']+np.asarray(frame['origin_xyz_um'])-v.origin_xyz)/v.spacing_xyz
-        result=sample_points(grid,v.shape,v.chunks,self._chunk,prefetch=self._prefetch if getattr(self,'_ct_pool',None) else None)
+        prefetch=self._prefetch if getattr(self,'_ct_pool',None) else None
+        sampler=getattr(self,'_sampler',None)
+        result=(sampler.sample(grid,prefetch=prefetch) if sampler else
+                sample_points(grid,v.shape,v.chunks,self._chunk,prefetch=prefetch))
         with self._lock:self.db.commit()
         return result
 
+    def validate_used(self,guard=lambda:None):
+        """Revalidate authoritative support before accepting cached decoded chunks."""
+        import hashlib
+        self.volume.validate_used()
+        self._chunks.clear();self._cache_bytes=0
+        cursor=self.db.execute('SELECT key,sha FROM chunks ORDER BY key')
+        while rows:=cursor.fetchmany(256):
+            for key,expected in rows:
+                guard();index=tuple(map(int,key.split(',')))
+                if self.volume.remote:
+                    name=self.volume.metadata.get('dimension_separator','.').join(map(str,index))
+                    if self.volume.array_path:name=self.volume.array_path+'/'+name
+                    raw=self.volume._chunk_bytes(name)
+                    if raw is not None:raw=self._decode_chunk(raw,self.volume.metadata)
+                    actual=None if raw is None else hashlib.sha256(raw).hexdigest()
+                    if actual!=expected:raise ValueError('CT chunk changed on resume: '+key)
+                self._chunk(index)
+        self.db.commit()
+
     def close(self):
+        if getattr(self,'_sampler',None):self._sampler.close();self._sampler=None
         if getattr(self,'_ct_pool',None):self._ct_pool.shutdown(wait=True,cancel_futures=True)
         self._chunks.clear();self._cache_bytes=0
-        self.db.close();self.volume.close();self.native.close();self.native=None
+        if self.db:self.db.close();self.db=None
+        self.volume.close()
+        if self.native:self.native.close();self.native=None
 
 
 def export_existing(args):

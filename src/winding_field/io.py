@@ -192,7 +192,7 @@ class Volume:
                     legacy = self.db.execute('SELECT coalesce(sum(size),0) FROM cache').fetchone()[0]
                     self._native = EncodedTransport(self.cache/'vc-reader', max(0,self.limit-legacy),
                                                     offline=self.offline,reserve=self.reserve)
-                self._transport = 'vc_reader.EncodedFiles'
+                self._transport = 'vc_reader.DiskCache'
 
     @contextmanager
     def _lock(self):
@@ -388,15 +388,15 @@ class Volume:
                 self._evict(min(self.limit,256<<20))
             legacy = self.db.execute('SELECT coalesce(sum(size),0) FROM cache').fetchone()[0]
             self._native.limit = max(0,self.limit-legacy)
-            before = self._native.files.bytes_read
-            hits = self._native.files.cache_hits
+            before = self._native.bytes_read
+            hits = self._native.cache_hits
             try:
                 return self._native.read(self.source+'/'+key)
             finally:
-                received = self._native.files.bytes_read-before
+                received = self._native.bytes_read-before
                 self._stats['downloaded_bytes'] += received
                 self._stats['downloads'] += int(received>0)
-                self._stats['cache_hits'] += self._native.files.cache_hits-hits
+                self._stats['cache_hits'] += self._native.cache_hits-hits
 
     def _encoded_signature(self,key):
         local=self.local/key if self.local else Path(self.source)/key if not self.remote else None
