@@ -69,7 +69,7 @@ def prepare(volume,run,config,stop=None):
     if type(stride) is not int or not 1<=stride<=8 or type(chunk) is not int or not 4<=chunk<=128:
         raise ValueError('stride must be 1..8 and chunk 4..128')
     method='external-afv' if config.get('fibres') else config.get('prediction','classical')
-    surface=method!='classical'
+    surface=method!='classical' or bool(config.get('lasagna_input'))
     halo=40
     core_size=48 if method=='qual-v2' else 32
     shape=tuple(((hi-lo-1)//stride+1).tolist())
@@ -87,6 +87,7 @@ def prepare(volume,run,config,stop=None):
         from . import lasagna
         geometry['validity']['filter_radius']=0
         geometry['input_halo_voxels']=(lasagna.BORDER if method=='external-afv' else halo)*stride
+        if method=='external-afv' and config.get('lasagna_input'): geometry['input_halo_voxels']=0
         ready=lasagna.prepare(volume,run,config,geometry,stop)
         if ready['status']=='PAUSED': return ready
     threshold=config.get('threshold')
@@ -128,7 +129,7 @@ def prepare(volume,run,config,stop=None):
     model=model_type(config.get('model_path'),config.get('device','cpu'),config.get('offline',False)) if model_type else None
     def infer(ct):
         result=model.predict(ct) if model else (None,None)
-        if surface:
+        if surface and model:
             valid=np.ones(ct.shape,bool) if invalid is None else ct!=invalid
             tangent=np.asarray(result[1],np.float32)*spacing
             tangent/=np.maximum(np.linalg.norm(tangent,axis=-1,keepdims=True),1e-12)
@@ -138,7 +139,8 @@ def prepare(volume,run,config,stop=None):
             if method=='qual-v2': arrays['probabilities']=result[2]
             return arrays
         arrays=observations(ct,spacing,threshold=threshold,presence=result[0],tangents=result[1],
-                             validity=ct!=invalid if invalid is not None else None,device=config.get('device','cpu'))
+                              validity=ct!=invalid if invalid is not None else None,device=config.get('device','cpu'))
+        if surface: arrays['fibre_support']=arrays['support'].copy()
         if method=='qual-v2':
             arrays['probabilities']=result[2]
         return arrays
@@ -205,7 +207,8 @@ def prepare(volume,run,config,stop=None):
               surface_method='lasagna' if surface else 'classical',fibre_method=method,
               source=volume.identity,model_sha256=identity['model_sha256'],
               status='PREPARED',physical_accuracy='UNVALIDATED',
-              method_note=('official Lasagna surfaces with '+method+' fibres') if surface else 'classical CT threshold/structure-tensor baseline')
+              method_note=(('imported' if config.get('lasagna_input') else 'official')+' Lasagna surfaces with '+method+' fibres')
+                          if surface else 'classical CT threshold/structure-tensor baseline')
     atomic_json(run/'PREPARED.json',meta)
     maps.close()
     return meta

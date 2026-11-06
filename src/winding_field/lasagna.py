@@ -69,17 +69,27 @@ def decode_observations(grad_mag,nx,ny,cos,*,input_spacing_xyz,encode_scale,grad
     shape=arrays[0].shape
     if len(shape)!=3 or any(a.shape!=shape for a in arrays) or validity.shape!=shape or validity.dtype!=np.bool_:
         raise ValueError('Lasagna products require matching ZYX arrays and boolean validity')
-    if any(not np.isfinite(a).all() for a in arrays):
+    if any(a.dtype.kind not in 'uif' or not np.isfinite(a).all() for a in arrays):
         raise ValueError('Lasagna products must be finite')
-    if any(np.any((a<0)|(a>255)) for a in arrays):
+    if np.any(arrays[0]<0):
+        raise ValueError('Lasagna gradient magnitude must be nonnegative')
+    if any(np.any((a<0)|(a>255)) for a in arrays[1:]):
         raise ValueError('Lasagna encoded products must be in 0..255')
+    return physical_observations(grad_mag,decode_lasagna_normals(nx,ny),cos,
+        input_spacing_xyz=input_spacing_xyz,encode_scale=encode_scale,
+        grad_mag_factor=grad_mag_factor,validity=validity)
+
+
+def physical_observations(grad_mag,normals,cos,*,input_spacing_xyz,encode_scale,grad_mag_factor,validity):
     spacing=np.asarray(input_spacing_xyz,float)
     if (spacing.shape!=(3,) or not np.isfinite(spacing).all() or (spacing<=0).any()
             or not np.isfinite([encode_scale,grad_mag_factor]).all() or min(encode_scale,grad_mag_factor)<=0):
         raise ValueError('Lasagna input spacing and density scales must be positive finite values')
-    normals=decode_lasagna_normals(nx,ny)/spacing
+    normals=normals/spacing
     magnitude=np.linalg.norm(normals,axis=-1)
-    density=np.asarray(grad_mag,dtype=np.float32)/encode_scale*grad_mag_factor*magnitude
+    density=np.asarray(grad_mag,dtype=np.float64)/encode_scale*grad_mag_factor*magnitude
+    if not np.isfinite(density).all() or (density>np.finfo(np.float32).max).any():
+        raise ValueError('Lasagna physical density exceeds finite float32 range')
     support=validity & (density>0) & (magnitude>0)
     normals/=np.maximum(magnitude[...,None],1e-12)
     normals[~support]=0; density[~support]=0
@@ -120,6 +130,9 @@ def _validate_work(root):
 
 
 def validate_retained(run,config):
+    if config.get('lasagna_input'):
+        from .lasagna_input import validate_retained as validate_input
+        return validate_input(run,config)
     root=Path(run)/'lasagna-source'
     if not root.exists(): return
     identity=json.loads((root/'IDENTITY.json').read_bytes())
@@ -159,6 +172,9 @@ def _products(root,shape):
 
 
 def prepare(volume,run,config,geometry,stop=None):
+    if config.get('lasagna_input'):
+        from .lasagna_input import prepare as import_input
+        return import_input(volume,run,config,geometry,stop)
     runtime=runtime_identity(config.get('lasagna_python'))
     weights=checkpoint(config.get('lasagna_model_path'),config.get('offline',False),prediction='lasagna')
     staged=input_geometry(volume,geometry)
@@ -228,6 +244,9 @@ def prepare(volume,run,config,geometry,stop=None):
 
 def read_observations(run,geometry,lo,hi):
     root=Path(run)/'lasagna-source'; receipt=json.loads((Path(run)/'LASAGNA.json').read_bytes())
+    if receipt.get('method')=='external-lasagna':
+        from .lasagna_input import read_observations as read_input
+        return read_input(run,geometry,lo,hi)
     identity=receipt['identity']
     if geometry!=identity['geometry']: raise ValueError('Lasagna observation geometry changed')
     lo,hi=bounds(lo,hi,geometry['shape_zyx']); staged=identity['input']

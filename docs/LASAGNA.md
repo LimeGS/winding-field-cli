@@ -1,13 +1,16 @@
-# Lasagna surfaces and external AFV fibres
+# Lasagna surfaces and custom inputs
 
 The default CT pipeline uses official Lasagna for unsigned surface normals and
 target winding density, with Qual V2 supplying fibres/splines. `--fibres` replaces
-fibre inference/tracing with an external AFV. Explicit `--prediction sd2` also uses
-Lasagna; `--prediction classical` without an AFV uses the offline local baseline.
+fibre inference/tracing with an external AFV. `--lasagna-input` independently
+replaces surface inference with existing predictions. Explicit `--prediction sd2`
+also uses Lasagna; `--prediction classical` without either imported input uses the
+offline local baseline.
 
 ## One-time runtime setup
 
-The CLI/core retain Python 3.11/3.12. Pinned Villa Lasagna requires Python 3.14,
+Skip this setup when using `--lasagna-input`. The CLI/core retain Python 3.11/3.12.
+Pinned Villa Lasagna inference requires Python 3.14,
 so install it separately with [uv](https://docs.astral.sh/uv/):
 
 ```bash
@@ -73,13 +76,82 @@ winding-field field /path/to/run    # build the field; also finishes fibres if n
 winding-field resume /path/to/run   # finish the saved output branch
 ```
 
-Standalone `.lasagna.json` / OME-Zarr predictions cannot currently be imported
-directly into `run`; `--lasagna-model-path` selects weights, not predictions.
-There is no automatic converter to a prepared field recipe. If preparing inputs
-yourself, resolve unsigned normal orientation and physical/sheet calibration,
-then supply hashed NPY `target` (ZYX3 gradients), `weights` and `observed` arrays
-with explicit geometry, plus optional saved constraints. See
-[prepared fields](PREPARED.md#build-and-resume-a-prepared-field).
+## External Lasagna predictions
+
+Import a local `.lasagna.json` into a new CT run:
+
+```bash
+winding-field run --source "$CT" --voxel-um 8.64 \
+  --roi 1488 1536 4032 4080 6048 6096 --field-spacing-um 17 \
+  --lasagna-input /path/surface.lasagna.json \
+  --lasagna-geometry /path/lasagna-geometry.json \
+  --until field --output runs/imported-lasagna
+```
+
+Use `plan` instead of `run` to check geometry and storage before creating a run.
+The manifest and channels are read-only. Import requires:
+
+- Lasagna manifest **version 2**, positive integer `base_shape_zyx`, and one scalar
+  **3D ZYX Zarr v2 array** per required channel: `cos`, `grad_mag`, `nx`, `ny`.
+  Optional `presence` adds a support mask. Legacy packed CZYX groups, Zarr v3
+  and remote prediction URLs are unsupported.
+- Each group's `zarr` points directly to its array directory (for example
+  `surface_cos.ome.zarr/0`), relative to the manifest or absolute. `channels` is
+  the single channel name in a list. `scaledown` is a nonnegative exponent:
+  its grid step is **`2**scaledown` base voxels**. Channel shape must be
+  `ceil(base_shape_zyx / 2**scaledown)`. The paired normal components `nx`/`ny`
+  must share their grid; cos, magnitude and presence may use other resolutions.
+- `cos`, `nx`, `ny` and optional `presence` are finite values in 0..255.
+  `grad_mag` is finite and nonnegative; float32 values above 255 are supported.
+  All consumed local chunks must exist, including all-zero chunks. Missing files
+  fail explicitly rather than becoming implicit fill.
+- If `crops` is declared, the observation ROI must fit inside one XYZ/size crop.
+  A referenced `provenance` JSON is retained and a reported unfinished producer
+  is rejected.
+
+**Geometry:** `--lasagna-geometry` describes the manifest's **base grid**, not
+the chosen CT level, individual channel grid or requested ROI. For a full-volume
+base grid with zero origin, save this as `lasagna-geometry.json`:
+
+```json
+{
+  "source": "s3://vesuvius-challenge-open-data/PHerc0175A/volumes/20250521115057-8.640um-1.2m-116keV-masked.zarr",
+  "origin_xyz_um": [0, 0, 0],
+  "spacing_xyz_um": [8.64, 8.64, 8.64]
+}
+```
+
+The mapping is `world = origin_xyz_um + base_XYZ * spacing_xyz_um`; origins are
+voxel centres. For ROI-local predictions, supply that crop's physical origin.
+For a local CT, use its absolute acquisition path in `source`. CLI exports at
+`RUN/lasagna/surfaces.lasagna.json` already contain `original_ct`,
+`world_origin_xyz_um` and `world_spacing_xyz_um`: omit `--lasagna-geometry` for
+these. Conflicting embedded/explicit frames and mismatched CT sources fail.
+
+Scalar channels are trilinearly sampled onto the CT observation grid. Normals are
+decoded, sign-aligned and interpolated as vectors, then normalized; opposite
+directions describe the same unsigned surface. Every contributing corner must be
+covered, with positive `grad_mag` and, when present,
+positive `presence`. Import does not bridge support gaps or extrapolate beyond
+stored channel centres. Coarser channels can therefore leave unsupported edge
+planes. CT acquisition fill declared with `--invalid-value` also excludes samples.
+
+Density uses `grad_mag / grad_mag_encode_scale * grad_mag_factor` (defaults
+1000 and 1), then converts base-index normals/density to physical units using the
+base XYZ pitch. `source_to_base` is producer metadata; `grad_mag_factor` already
+accounts for producer input-to-base density conversion. Neither channel scaledown
+nor observation/field pitch is applied again to density.
+
+`--lasagna-input` skips the Lasagna interpreter and checkpoint entirely, and
+conflicts with `--lasagna-python` / `--lasagna-model-path`. Fibre selection remains
+independent: default Qual, explicit SD2/classical, or `--fibres` with an external
+AFV. Qual's CT dtype/pitch requirements still apply when it supplies fibres.
+Combining both imported inputs skips all model inference and downloads; local
+inputs can run with `--offline`. A geometry option alone is rejected.
+
+Omit `--bounded-preparation` when importing predictions: that backend recomputes
+native Lasagna/Qual windows and cannot consume external surfaces. The combination
+is rejected before source I/O. The standard importer still reads bounded tiles.
 
 ## External AFV
 
@@ -91,7 +163,8 @@ winding-field run --source "$CT" --voxel-um 8.64 \
 ```
 
 An AFV replaces fibre prediction and tracing, including their downloads and dense
-scratch. It still uses Lasagna, even when a fibre `--prediction` was specified.
+scratch. Surface observations come from Lasagna inference or `--lasagna-input`,
+even when a fibre `--prediction` was specified.
 Do not combine it with `--model-path`; surface weights use `--lasagna-model-path`.
 
 AFV v1 SQLite input must be complete, closed/checkpointed and contain contiguous
@@ -123,7 +196,7 @@ curves have `automatically_traced=false` and their source AFV hash.
 
 ## Products, units and recovery
 
-`lasagna-source/input.zarr` stages only the sampled ROI plus 16 observations of
+For native inference, `lasagna-source/input.zarr` stages only the sampled ROI plus 16 observations of
 context per side, clipped at source bounds. The official subprocess uses fixed
 64³ tiles, overlap 32, border 16 and full-input-lattice outputs. The official
 runtime loads the pinned checkpoint strictly. CPU uses FP32
@@ -147,7 +220,19 @@ Declared acquisition fill is excluded at its samples; zero is otherwise valid.
 Automatic mesh phase uses surface cos. Lasagna predictions and nominal sheet
 calibration are research observations, not established physical truth.
 
+For imported predictions, `lasagna-source/maps/` instead retains checksummed 32³
+tiles of physical surfaces and CT. `IDENTITY.json` binds the manifest, descriptor,
+metadata and observation grid; per-channel SQLite ledgers bind every consumed
+source chunk. `WORK.json` seals the source/tile inventories on STOP and handled
+errors; resume rejects missing or altered records before reopening writable stores.
+`LASAGNA.json` records `method: external-lasagna`, tile, ledger and seal hashes.
+The planner reports `estimated_lasagna_import_bytes` and zero native
+Lasagna staging/workspace. Imported surfaces plus AFV need no preparation halo.
+
 STOP/Ctrl-C reaps children and seals retained work. Resume rechecks source chunks,
 AFV/descriptor bytes, runtime identity and products, including completed stages.
+Imported runs recheck prediction manifests, geometry, metadata, consumed chunks
+and normalized tiles too; keep those original local files in place. A paused
+import reuses committed tiles and continues without replacing valid work.
 An unsealed hard-killed parent requires a new output directory. Old implementation-
 bound receipts require their original environment and are never rewritten.
