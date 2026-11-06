@@ -188,6 +188,8 @@ documented reuse configuration with a fresh output instead.
 Checkpoints bind source, settings, code and native binary identity. Selecting
 another Flatboi recipe or another image is not an implicit migration.
 `import-native` requires the original runner hash and the same native binary.
+Reader-bound checkpoints from before the native-only cutover require their
+original v1.5.0 runtime; the new reader does not migrate them.
 
 ## Smoke checks
 
@@ -214,9 +216,35 @@ Manual dispatch can also build CUDA on a self-hosted runner labelled `linux`,
 separate `gpu` option to run GPU kernels and real model inference. Test tooling
 is installed only in the derivative `docker/testing.Dockerfile` image.
 
-### Qualification on gpu-1 (2026-11-06)
+### Native-only reader qualification (2026-11-06)
 
-Both final images passed the installed suite: **1785 passed, 7 skipped** each.
+Qualification used derivative images of the retained v1.5.0 runtimes, replacing
+the hash-pinned reader and CLI wheel. Regenerated locks change only `vc-reader`;
+this is not a clean rebuild of the complete Dockerfile.
+
+- Installed macOS suite: **1777 passed, 36 skipped**.
+- Installed Linux CPU suite: **1806 passed, 6 skipped**. After the final bounded
+  snapshot-recheck fix, the reviewed CPU image passed **68 affected tests**.
+- Reviewed CUDA image: **285 integration tests passed**, plus runtime GPU checks.
+- Both reviewed images passed offline real Lasagna/Qual inference and workflow
+  STOP/resume checks. CUDA used host GPU 1, exposed as `cuda:0`; its first model
+  attempt exhausted VRAM occupied by another workload, then passed after it exited.
+- SIGTERM/container replacement preserved the native solver checkpoint and source
+  hashes while resuming from iteration 1 to 200; a different binary was rejected.
+
+Reviewed local image IDs:
+
+```text
+cpu  sha256:f4dbec2cc8a6df86fc953845daccc3a9dc034d50e5789cfd3cde067813c0e0d0
+cuda sha256:95d83dd8c4aa9268470a40d49145ce48115e97e8cc6986676759edc277c14903
+```
+
+See [crop, sampling and render measurements](RASTER-PERFORMANCE.md) for the
+numerical comparison and its limits.
+
+### Retained v1.5.0 qualification on gpu-1 (2026-11-06)
+
+These pre-cutover images passed the installed suite: **1785 passed, 7 skipped** each.
 The official Lasagna zero-chunk writer control was then enabled separately and
 passed in both images; CI enables it through `WINDING_LASAGNA_PYTHON`.
 Both images also passed offline Lasagna/Qual inference as host UID 1000, default

@@ -38,7 +38,7 @@ jobs:
           python -m pip install "winding-field-experiments @ https://github.com/LimeGS/winding-field/archive/$CORE_REV.tar.gz"
       - run: python -m build
       - run: python -m pip install dist/*.whl "winding-field-cli[ct]" "matplotlib>=3.8,<4" "libigl==2.6.3" "tifffile>=2023.7"
-      - run: python -I -c "from vc_reader.reader import open_zarr, ZarrReader; from vc_reader import _reader"
+      - run: python -I -c "from vc_reader.reader import ObjectStore, ZarrReader, decode_chunk; from vc_reader import _reader; assert hasattr(_reader.DiskCache, 'write')"
       - run: python -m pip check
       - run: python -m pytest -q -o pythonpath=
       - name: Installed CLI outside checkout

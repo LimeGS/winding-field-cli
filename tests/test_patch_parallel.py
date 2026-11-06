@@ -40,8 +40,11 @@ def test_worker_settings_and_affinity_contract():
 
 
 def test_cancel_native_kills_owned_group(tmp_path):
+    import subprocess
     from winding_field.surface_export import flatten_native
-    app=tmp_path/'AppRun';app.write_text('#!/bin/sh\nsleep 60 &\necho $! > child.pid\nwait\n');app.chmod(0o700)
+    app=tmp_path/'AppRun';app.write_text('#!/bin/sh\n[ "$1" = --ready ] && exit 0\nsleep 60 &\necho $! > child.pid\nwait\n');app.chmod(0o700)
+    # Complete macOS first-execution checks before measuring cancellation latency.
+    subprocess.run([str(app),'--ready'],check=True,timeout=30)
     started=time.monotonic()
     def guard():
         if (tmp_path/'native/child.pid').exists():raise InterruptedError('cancel test')
@@ -51,7 +54,6 @@ def test_cancel_native_kills_owned_group(tmp_path):
     assert time.monotonic()-started<3
     receipt=json.loads((tmp_path/'native/receipt.json').read_text())
     assert receipt['returncode'] is not None and receipt['returncode']!=0
-    import subprocess
     pid=int((tmp_path/'native/child.pid').read_text())
     status=subprocess.run(['ps','-o','stat=','-p',str(pid)],capture_output=True,text=True).stdout.strip()
     assert not status or status.startswith('Z')

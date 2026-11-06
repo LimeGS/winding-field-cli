@@ -48,7 +48,8 @@ def export_existing(args):
     mesh_sha=None
     if args.mesh_bundle:
         with p.open_mesh(mesh) as (reader,_):mesh_sha=reader.manifest_sha
-    identity=dict(schema='flattening-matrix-v1',settings=cfg,mesh=str(mesh),mesh_sha256=mesh_sha,field=descriptor,
+    from .ct_reader import runtime_identity
+    identity=dict(schema='flattening-matrix-v1',native_runtime=runtime_identity(),settings=cfg,mesh=str(mesh),mesh_sha256=mesh_sha,field=descriptor,
                   levels=args.levels,ct_source=args.source,ct_level=args.level,ct_voxel_um=args.voxel_um,
                   export_tifxyz=args.export_tifxyz,native=native,implementation_sha256=implementation_sha(),
                   runtime={name:version(name) for name in ('numpy','scipy','libigl','Pillow')})

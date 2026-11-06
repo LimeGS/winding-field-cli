@@ -81,6 +81,8 @@ def test_shared_ct_samples_use_one_verified_load(tmp_path):
         calls.append(index)
         return bytes(range(8))
     ct._load_chunk=load
+    from winding_field.native_ct_sampling import NativeCTSampler
+    ct._sampler=NativeCTSampler(ct.volume.shape,ct.volume.chunks,ct.volume.dtype,ct._chunk)
     def run():
         barrier.wait(5)
         return ct.sample(np.array([[.5,.5,.5]]),dict(voxel_um=1.,origin_xyz_um=[0,0,0]))
@@ -91,4 +93,4 @@ def test_shared_ct_samples_use_one_verified_load(tmp_path):
                 values,valid=future.result()
                 np.testing.assert_array_equal(values,[3.5]);assert valid.all()
         assert len(calls)==1 and ct.db.execute('SELECT COUNT(*) FROM chunks').fetchone()==(1,)
-    finally:ct.db.close()
+    finally:ct._sampler.close();ct.db.close()

@@ -384,7 +384,10 @@ def run(config,resume=False,until=None,extra_surface_seconds=0,field_sweeps=None
             if state['config']!=config:
                 raise ValueError('run configuration changed; use a new output')
             if state.get('implementation_sha256')!=implementation_sha():
-                raise ValueError('implementation changed; resume with the original package or use a new output')
+                raise ValueError('implementation changed; resume with the original package (v1.5.0 for pre-cutover runs) or use a new output')
+            from .ct_reader import runtime_identity
+            if 'source' in state and state['source'].get('native_runtime')!=runtime_identity():
+                raise ValueError('CT native runtime changed; resume with the original runtime')
             if field_sweeps is not None:
                 from .field_budget import effective_budget
                 if 'field' in state['stages'] or (root/'FIELD.json').exists():

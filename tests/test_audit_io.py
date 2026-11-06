@@ -10,7 +10,7 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
-from test_io import make_volume
+from test_io import make_volume,served
 
 
 def test_http_gzip_decodes_and_limits_decoded_bytes(monkeypatch):
@@ -81,18 +81,20 @@ def test_plan_checks_cache_filesystem_separately(tmp_path,monkeypatch):
         workflow.plan(dict(config,ct_mode='download'),volume)
 
 
-def test_cache_write_admission_preserves_reserve(tmp_path,monkeypatch):
+@pytest.mark.parametrize('free',[99,105])
+def test_cache_write_admission_preserves_reserve(served,monkeypatch,free):
+    from contextlib import closing
     import winding_field.io as reader
-    local=tmp_path/'source'; make_volume(local)
-    monkeypatch.setattr(reader,'fetch',lambda url,**k:((local/url.split('ct.zarr/')[1]).read_bytes(),None))
-    # Exercise the mocked Python transport even when the native reader is installed.
-    v=reader.Volume('https://test/ct.zarr',cache=tmp_path/'cache',cache_bytes=1<<20,reserve_bytes=100)
-    monkeypatch.setattr(reader.shutil,'disk_usage',lambda p:SimpleNamespace(free=105))
-    with pytest.raises(OSError,match='cache|space'):
-        v.read([0,0,0],[2,2,3])
-    assert v.stats()['cache_bytes']==0
-    assert not list((tmp_path/'cache').glob('[0-9a-f]'*64))
-    v.close()
+    from winding_field import ct_reader
+    root,url,data=served
+    with closing(reader.Volume(url,cache=root/'cache',cache_bytes=1<<20,reserve_bytes=100)) as volume:
+        monkeypatch.setattr(ct_reader.shutil,'disk_usage',lambda p:SimpleNamespace(free=free))
+        if free<100:
+            with pytest.raises(OSError,match='cache|space'):volume.read([0,0,0],[2,2,3])
+        else:
+            np.testing.assert_array_equal(volume.read([0,0,0],[2,2,3]),data[:2,:2,:3])
+        assert volume.stats()['cache_bytes']==0
+        assert not list((root/'cache/vc-reader').rglob('*.blob'))
 
 
 @pytest.mark.parametrize('prediction',['sd2','qual-v2'])
