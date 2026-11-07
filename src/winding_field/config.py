@@ -95,7 +95,8 @@ def validate_config(config):
     integers={'stride':(1,8),'chunk':(4,128),'field_chunk':(4,256),'level':(0,None),
               'sweeps':(1,None),'maxiter':(1,None),'seed_stride':(1,None),
               'mesh_tile':(1,256),'chart_faces':(1,8192),'threads':(1,None),
-              'cache_bytes':(0,None),'reserve_bytes':(0,None),'bounded_bytes':(16<<20,None)}
+              'cache_bytes':(0,None),'reserve_bytes':(0,None),'bounded_bytes':(16<<20,None),
+              'prepared_cache_bytes':(0,None),'constraint_cache_bytes':(0,None)}
     for name,(low,high) in integers.items():
         if name in config:
             value=config[name]

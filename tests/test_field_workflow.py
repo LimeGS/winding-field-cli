@@ -24,6 +24,17 @@ def sha(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def test_prepared_cache_budget_reaches_engine(tmp_path):
+    path, config = prepared(tmp_path, constraints=True)
+    config['execution']['prepared_cache_bytes'] = 1 << 20
+    config['execution']['sweeps'] = 2
+    path.write_text(json.dumps(config))
+    result = workflow().run_field(path, tmp_path/'run', prefetch=True)
+    assert result['prepared_cache_stats']['hits'] > 0
+    assert result['prepared_cache_stats']['peak_bytes'] <= 1 << 20
+    assert result['prefetched_blocks'] > 0 and result['prefetch_parity']
+
+
 def prepared(tmp_path, *, fixed=False, constraints=False):
     inputs = tmp_path / "inputs"
     inputs.mkdir()
@@ -119,7 +130,8 @@ def test_exact_resume_matches_uninterrupted_and_allows_reader_budget_changes(tmp
         return cp.exists() and json.loads(cp.read_text())["progress"].get("next_block") == 1
 
     assert workflow().run_field(path, root, stop=stop)["status"] == "CHECKPOINTED_STOP"
-    config["execution"].update(cache_bytes=1024**2, read_workers=2)
+    config["execution"].update(cache_bytes=1024**2, read_workers=2,
+                               prepared_cache_bytes=1024**2,constraint_cache_bytes=1024**2)
     path.write_text(json.dumps(config))
     result = workflow().run_field(path, root, resume=True, prefetch=True)
     full, expected, support = stored(tmp_path / "full")

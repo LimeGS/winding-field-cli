@@ -149,6 +149,7 @@ def load_run_config(path: str | Path) -> dict[str, Any]:
                 "cache_bytes",
                 "read_workers",
                 "constraint_cache_bytes",
+                "prepared_cache_bytes",
                 "max_bytes",
                 "reserve_bytes",
             },
@@ -160,6 +161,7 @@ def load_run_config(path: str | Path) -> dict[str, Any]:
             ("cache_bytes", 0, 0),
             ("read_workers", 1, 1),
             ("constraint_cache_bytes", 0, 0),
+            ("prepared_cache_bytes", 0, 0),
             ("reserve_bytes", 0, 0),
         ):
             execution[name] = _integer(execution.get(name, default), name, minimum)
@@ -305,6 +307,7 @@ def _prepare_run(config: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]
         sweeps=execution["sweeps"],
         **solver,
         cache_bytes=execution["cache_bytes"],
+        prepared_cache_bytes=execution["prepared_cache_bytes"],
         read_workers=execution["read_workers"],
         max_bytes=execution.get("max_bytes"),
         reserve_bytes=execution["reserve_bytes"],
