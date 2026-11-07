@@ -87,17 +87,46 @@ also matched, as did all 96 compared stored chunk payload hashes (field and supp
 The synthetic three-sweep block workload is not globally converged.
 Its verification result is compared, not promoted to physical acceptance.
 
-## CUDA measurement: numerical parity, timing inconclusive
+## CUDA measurement with llama services stopped
+
+At the user's request, the three `llama-embed-*` system services were stopped
+(not disabled) before repeating the same alternating campaign on GPU 1, GTX 1660,
+PyTorch 2.10.0+cu128. They remain stopped. Solver CPU affinity was 6, residency
+monitor affinity 7, sampling interval 200 ms; each cache budget was 64 MiB.
+
+| Workload | Base cold → cached cold | Base warm → cached warm | Warm time reduction |
+|---|---:|---:|---:|
+| Local solve, 24³ | 276.938 → 273.442 ms | 117.594 → 99.639 ms | 15.3% |
+| Local solve, 48³ | 490.612 → 446.788 ms | 304.982 → 292.224 ms | 4.2% |
+| Block run, 16³, three sweeps | 1663.656 → 1579.520 ms | 1492.868 → 1385.172 ms | 7.2% |
+
+Without caches, candidate warm medians were 102.003, 278.112 and 1483.145 ms,
+respectively. In particular, caching was slower than buffers alone for the 48³
+local solve. These are descriptive medians from two reversed-order rounds, not
+confidence intervals or a universal CUDA speedup; the 48³ cached samples ranged
+from 255.976 to 316.084 ms. Profile runs are excluded from these timings.
+
+All 36 candidate arrays, local residuals/iterations/reasons, global verification
+results and 96 checkpoint payload hashes matched baseline exactly. Residency
+telemetry contained 544 records across 22 benchmark Python PIDs, with no observed
+foreign or unresolved PID. The strict name-only runner returned an assertion for
+13 terminal `[No data]` records. Post-run verification identified every one as
+the final record of a PID previously sampled as benchmark Python, not a new client.
+The original failed assertion and raw telemetry are retained; the classification
+is recorded separately in `.runtime/cuda-llama-stopped-validation.json`. Sampling
+cannot exclude clients whose entire lifetime falls between samples.
+
+### Earlier, excluded CUDA campaigns
 
 On GPU 1 of `gpu-1-remoto` (GTX 1660, PyTorch 2.10.0+cu128), all 36 candidate
 arrays, solver residuals/iterations/reasons and 96 stored payload hashes matched
-baseline exactly in the final campaign. The solver ran on CPU 6; a separate
+baseline exactly in the earlier monitored campaign. The solver ran on CPU 6; a separate
 monitor on CPU 7 sampled GPU process residency every 200 ms.
 
 That campaign recorded 761 GPU process records, including 98 explicitly named
 `llama-server` records and 51 other unrecognized/vanished-process records. It
 correctly failed the contention check after numerical comparisons passed.
-**No CUDA speedup is established.** The earlier campaign shared GPU 1 with
+**These timings are excluded.** The first campaign shared GPU 1 with
 `lasagna-rust`; another checked availability only at launch. None provides a
 reliable uncontended timing comparison. A reserved GPU window is needed; merely
 waiting for one process to exit is insufficient when new clients keep starting.
