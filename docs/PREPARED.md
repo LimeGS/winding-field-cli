@@ -45,7 +45,7 @@ These commands accept prepared observations, not raw CT or prediction manifests.
   be finite and weights positive even where observed is false. Unsupported is
   not a measured zero or a physical boundary anchor.
 - `execution.chunk`, `halo`, `sweeps`; multiple cores require positive halo.
-  Optional `cache_bytes=0`, `read_workers=1`, `constraint_cache_bytes=0`,
+  Optional `cache_bytes=0`, `read_workers=1`, `constraint_cache_bytes=0`, `prepared_cache_bytes=0`,
   `reserve_bytes=0`, `max_bytes=null` retain the library's resource controls.
 - Optional `solver`: `device="cpu"`, `dtype="float64"`, `rtol=1e-5`,
   `maxiter=4000`; float32 also supported.
@@ -69,6 +69,16 @@ callers can provide `admit=` for their own policy.
 identity at first admission; `STATUS.json` records progress. Resume rejects
 changed inputs, geometry, calibration, numerical settings or implementation.
 Reader/cache budgets may change for direct resume.
+
+`prepared_cache_bytes` retains a first-fit subset of per-block CPU/device operators
+and work buffers across sweeps. `constraint_cache_bytes` retains static restriction
+templates. Both default to zero: measure before allocating memory. Neither bounds
+peak RAM, CUDA allocator reservation or resident input archives. Exterior targets,
+fixed values and observation validation remain live on every visit; caches are
+discarded on exit/resume. `STATUS.json.prepared_cache_stats` reports hits, builds
+and peak retained bytes. `--prefetch` still uses the existing bounded CPU observation
+worker and can be combined with these budgets; it does not prefetch live boundaries.
+See [solver performance](SOLVER-PERFORMANCE.md) for measurement commands.
 
 With `--supervised`, `OUTPUT.service/` holds source-bound state and worker logs.
 Automatic retry needs exit 75 and that child's resource receipt. Keep service

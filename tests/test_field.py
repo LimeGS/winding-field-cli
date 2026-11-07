@@ -51,6 +51,26 @@ def test_nonconstant_layer_separation_is_not_replaced_by_mean(tmp_path):
     assert np.mean(delta[16:28])==pytest.approx(.125,abs=.002)
 
 
+def test_static_constraint_cache_avoids_rebuilds_with_identical_field(tmp_path,monkeypatch):
+    from winding_field import field
+    original=field.pair_constraints
+    builds=[]
+    def counted(*args,**kwargs):
+        builds.append(1)
+        return original(*args,**kwargs)
+    monkeypatch.setattr(field,'pair_constraints',counted)
+    results=[];counts=[];rows=[]
+    for budget in (0,1<<20):
+        builds.clear();run=prepared_run(tmp_path/str(budget))
+        receipt=field.solve(run,dict(sweeps=3,field_chunk=8,constraint_cache_bytes=budget,
+                                    prepared_cache_bytes=budget))
+        with field.open_field(run) as source:results.append(source.read([0]*3,[6,6,24])[0])
+        counts.append(len(builds));rows.append(receipt['fibre_constraint_rows'])
+    assert counts[0]>0 and counts[1]*3==counts[0]
+    assert rows[0]==rows[1]
+    np.testing.assert_array_equal(*results)
+
+
 def test_interrupted_solver_resumes_exact_problem(tmp_path):
     from winding_field.field import solve,open_field
     run=prepared_run(tmp_path/'run')
