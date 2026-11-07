@@ -64,7 +64,7 @@ production CT scale, physical reconstruction accuracy or general hardware speedu
 
 ## CPU measurement (2026-11-07)
 
-macOS arm64, PyTorch 2.10.0, one Torch/BLAS thread. Baseline core `f750fd11` /
+Apple M2 Pro, macOS arm64, PyTorch 2.10.0, one Torch/BLAS thread. Baseline core `f750fd11` /
 CLI `2cee51a`; candidate core `f6387ec8` with the CLI integration described above.
 Two fresh processes per variant, reversed order in round two, three executions
 per process. Cold medians use the first execution; warm medians use the other four.
@@ -83,9 +83,52 @@ Cold setup can regress, which is why cache budgets remain opt-in.
 
 All 36 candidate field arrays matched their corresponding baseline arrays exactly;
 iteration counts, reasons, true local residuals and stored-field global verification
-also matched. The synthetic three-sweep block workload is not globally converged.
+also matched, as did all 96 compared stored chunk payload hashes (field and support).
+The synthetic three-sweep block workload is not globally converged.
 Its verification result is compared, not promoted to physical acceptance.
 
-The first CUDA campaign also had exact numerical parity, but another `lasagna-rust`
-process occupied GPU 1 and timings varied more than 10×. Those timings are excluded
-from speedup claims; a clean GPU measurement is pending.
+## CUDA measurement: numerical parity, timing inconclusive
+
+On GPU 1 of `gpu-1-remoto` (GTX 1660, PyTorch 2.10.0+cu128), all 36 candidate
+arrays, solver residuals/iterations/reasons and 96 stored payload hashes matched
+baseline exactly in the final campaign. The solver ran on CPU 6; a separate
+monitor on CPU 7 sampled GPU process residency every 200 ms.
+
+That campaign recorded 761 GPU process records, including 98 explicitly named
+`llama-server` records and 51 other unrecognized/vanished-process records. It
+correctly failed the contention check after numerical comparisons passed.
+**No CUDA speedup is established.** The earlier campaign shared GPU 1 with
+`lasagna-rust`; another checked availability only at launch. None provides a
+reliable uncontended timing comparison. A reserved GPU window is needed; merely
+waiting for one process to exit is insufficient when new clients keep starting.
+
+## Profiling and qualification
+
+The separate 24³ CPU profile reduced norm/dot calls from 828 to 623, with unchanged
+210 gradient and constraint operator calls. Timings from these synchronized,
+instrumented runs are diagnostic only.
+
+Nsight Systems captured the CUDA candidate: `cusparse::csrmv_v3_kernel` was the
+largest individual kernel category (29.2% of kernel time in that trace). This
+diagnostic capture had foreign GPU clients at launch and is not speedup evidence.
+Nsight Compute could attach but returned `ERR_NVGPUCTRPERM`; hardware-counter
+metrics were unavailable under the existing host permissions.
+
+Validation of the published core: **987 tests**, **93.30% coverage**, Ruff and
+mypy clean. The installed CLI macOS suite passed **1786 tests**, with 36 skips;
+four targeted benchmark/prefetch/cache/resume checks passed after test expansion.
+The published core archive passed hash-checked installation and all nine recorded
+source hashes matched. The CLI wheel matched all 99 Python sources and provenance;
+the source distribution includes the benchmark.
+
+Installed Linux qualification passed **83 CLI tests** and **214 core tests**,
+using the published archive and CLI wheel in an ephemeral container. A test-only
+follow-up (`dd36513` on the core feature branch) permits CPython's shared-key
+dictionary accounting to shrink by 8 bytes when another operator is constructed;
+buffer addresses and numerical outputs remain checked exactly. The CLI stays
+pinned to `f6387ec8`: the follow-up changes no runtime code. The adjusted ten-test
+work-reuse suite also passed on macOS.
+
+Raw reports, arrays, checkpoints and traces are retained under ignored
+`.runtime/solver-measurements-*`; the remote Nsight report and SQLite export are
+under `/mnt/fast2/winding-field-docker-20261106/solver-perf/.runtime/`.
