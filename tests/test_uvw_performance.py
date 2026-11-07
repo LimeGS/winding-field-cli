@@ -32,6 +32,23 @@ def test_decoded_cache_local_mutation_preserves_ledger(tmp_path):
         with pytest.raises(ValueError,match='changed'):volume.decoded_chunk('0/0.0.0')
 
 
+def test_ledger_bound_crops_avoid_redundant_file_stats(tmp_path,monkeypatch):
+    data=make_volume(tmp_path/'ct');chunk=tmp_path/'ct/0/0.0.0'
+    with closing(Volume(tmp_path/'ct',cache=tmp_path/'cache',decoded_cache_bytes=1024)) as volume:
+        volume.bind_ledger(tmp_path/'source.sqlite');stat=Path.stat;calls=[]
+        def counted(path,*args,**kwargs):
+            if path==chunk:calls.append(path)
+            return stat(path,*args,**kwargs)
+        monkeypatch.setattr(Path,'stat',counted)
+        for _ in range(2):
+            np.testing.assert_array_equal(volume.read([0,0,0],[2,2,3]),data[:2,:2,:3])
+        assert len(calls)<=2
+        assert volume.stats()['decodes']==1 and volume.stats()['decoded_hits']==1
+        chunk.write_bytes(bytes([255])*12)
+        with pytest.raises(ValueError,match='source chunk changed'):
+            volume.read([0,0,0],[2,2,3])
+
+
 def test_validate_used_revalidates_warm_remote_decoded_cache(served):
     root,url,_=served
     with closing(Volume(url,cache=root/'cache',decoded_cache_bytes=1024)) as volume:
@@ -40,6 +57,30 @@ def test_validate_used_revalidates_warm_remote_decoded_cache(served):
         (root/'ct.zarr/0/0.0.0').write_bytes(bytes([255])*12)
         with pytest.raises(ValueError,match='changed'):volume.validate_used()
         assert volume.stats()['decoded_cache_bytes']==0
+
+
+def test_binding_ledger_discards_previously_decoded_bytes(tmp_path):
+    make_volume(tmp_path/'ct')
+    with closing(Volume(tmp_path/'ct',cache=tmp_path/'cache',decoded_cache_bytes=1024)) as volume:
+        volume.decoded_chunk('0/0.0.0')
+        (tmp_path/'ct/0/0.0.0').write_bytes(bytes([255])*12)
+        volume.bind_ledger(tmp_path/'source.sqlite')
+        assert volume.stats()['decoded_cache_bytes']==0
+        np.testing.assert_array_equal(volume.decoded_chunk('0/0.0.0'),np.full((2,2,3),255,dtype='u1'))
+
+
+def test_ledger_bound_cache_remains_bounded_and_rejects_missing_chunk(tmp_path):
+    data=make_volume(tmp_path/'ct')
+    with closing(Volume(tmp_path/'ct',cache=tmp_path/'cache',decoded_cache_bytes=524)) as volume:
+        volume.bind_ledger(tmp_path/'source.sqlite')
+        for key,expected in [('0/0.0.0',data[:2,:2,:3]),('0/0.0.1',data[:2,:2,3:]),
+                             ('0/0.0.0',data[:2,:2,:3])]:
+            np.testing.assert_array_equal(volume.decoded_chunk(key),expected)
+            assert volume.stats()['decoded_cache_bytes']<=524
+        assert volume.stats()['decoded_evictions']==2
+        (tmp_path/'ct/0/0.0.0').unlink()
+        with pytest.raises(FileNotFoundError,match='missing local CT chunk'):
+            volume.decoded_chunk('0/0.0.0')
 
 
 def test_publication_snapshot_does_not_refetch_but_fresh_validation_detects_change(served,monkeypatch):

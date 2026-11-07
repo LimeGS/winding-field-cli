@@ -50,6 +50,70 @@ warm sampling improved; these small fixtures do not establish a universal speedu
 Evidence: `.runtime/benchmark-vc-reader.py` and
 `.runtime/vc-reader-benchmark-{baseline,candidate}/RESULTS.json`.
 
+#### Local-crop diagnosis
+
+The regression is reproducible for this fixture with a **4 MiB decoded cache
+and a bound integrity ledger**. Four alternating baseline/candidate blocks of
+30 repetitions (120 per configuration), using the same installed runtimes,
+thread settings and exact voxel assertions, gave these medians:
+
+| Configuration | v1.5.0 cold / warm ms | Native-only cold / warm ms |
+| --- | ---: | ---: |
+| Decoded cache 4 MiB, ledger | 7.791 / 1.267 | 9.083 / 1.804 |
+| Decoded cache disabled, ledger | 7.786 / 1.242 | 7.788 / 1.091 |
+| Decoded cache 4 MiB, no ledger (diagnostic) | 0.992 / 0.979 | 1.860 / 0.740 |
+
+The earlier crop path bypassed the optional decoded cache. The native computed
+reader uses it: a warm hit checks the file signature twice while still rereading
+and hashing the encoded bytes against the ledger. Across 27 chunks, Python-level
+file-stat calls increase from 27 to 135. The cache lock also serializes callbacks
+from the caller and one native worker; `threads=1` includes that helper worker.
+
+In a separate randomized diagnostic (500 warm reads per variant), fixed file
+signatures reduced the native median from 1.662 to 1.209 ms. This deliberately
+omits mutation detection and is **not a production fix**. Resident-block callback
+and native assembly cost 0.130 ms; isolated decoding of 27 small chunks cost
+0.198 ms native versus 0.081 ms with numcodecs. Warm decoded hits perform no
+decoding. The main warm regression is therefore the extra cache-verification
+path, not crop assembly; small-chunk decode overhead also affects cache misses.
+
+`Volume` defaults to a zero decoded-cache budget, so the original benchmark
+does not establish a general local-read regression. These measurements concern
+OS-warm, 4 KiB decoded chunks on macOS arm64, not production-scale CT or Linux.
+That diagnostic run did not change production behavior. Evidence and reproduction commands:
+`.runtime/local-crop-investigation.md`, `.runtime/investigate-local-crops.py`,
+`.runtime/crop-investigation-r3-{0,1,2,3}-{baseline,candidate}/RESULTS.json`,
+and `.runtime/crop-isolation-1/RESULTS.json`.
+
+#### Ledger-bound cache correction
+
+Ledger-bound decoded entries now use the encoded-byte SHA check already performed
+on every hit, without redundant file signatures. Binding a ledger clears existing
+decoded entries, so retained arrays come from that ledger's verified snapshots.
+Bounded reads, SHA checks, cache locking/eviction and fresh source validation remain
+in place; entries without a ledger retain their file-signature checks.
+
+Four alternating before/after blocks, 20 fresh Volume instances each (80 cold and
+80 warm crops per size/runtime), checked every voxel against an independent formula.
+Each crop spans 27 Blosc/LZ4 chunks, with enough decoded RAM to retain them all.
+These are OS-warm synthetic uint8 arrays on macOS arm64; comparison uses the retained
+installed candidate and the corrected source with that same native Release runtime.
+
+| Decoded chunk size | Warm before / after, median ms | Reduction | Cold before / after, median ms |
+| --- | ---: | ---: | ---: |
+| 4 KiB (16³) | 1.853 / 1.361 | 26.6% | 9.212 / 8.884 |
+| 256 KiB (64³) | 2.493 / 2.022 | 18.9% | 10.680 / 10.043 |
+| 2 MiB (128³) | 7.945 / 7.467 | 6.0% | 21.425 / 20.573 |
+
+Python-level file-stat calls return to 27 per crop. Regression coverage includes
+mutation with unchanged signatures, corrupt remote cached bytes, missing local
+chunks, ledger binding, verified snapshots, eviction and concurrent cache charging:
+**142 passed, 1 skipped** across the affected reader/sampling/patch suites and two
+additional cache-boundary tests. This correction has not been packaged or qualified
+on Linux/CUDA. Evidence: `.runtime/local-crop-fix.md`,
+`.runtime/benchmark-local-crop-fix.py`, and
+`.runtime/crop-fix-{0,1,2,3}-{before,after}/RESULTS.json` (raw samples and mean/p50/p95).
+
 ### Integrated benchmark (gpu-1, 2026-11-05)
 
 Historical pre-cutover results, not measurements of the current migration:
