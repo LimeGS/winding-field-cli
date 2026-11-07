@@ -1049,9 +1049,9 @@ tzdata==2026.6 \
     --hash=sha256:0a10eec6e13ef16b627fabed9a5f2ba61a62b1c67f327305f4e7e412a70b4aec \
     --hash=sha256:85d2cd9c09f81f0bb29db27759fc83af4f1e620efb814f8c5bf8b4cc4feece6d
     # via python-dateutil
-vc-reader @ https://github.com/ScrollPrize/villa/archive/baf5e605bb42a3d55a62b7c5c728e0908137225c.tar.gz#subdirectory=vc_reader \
-    --hash=sha256:bad344f14bbf797bf1356790f6d8a54f8a282966fdf28a0255b7a5db7a98c239
-    # via -r docker/cli.in
+vc-reader @ https://github.com/LimeGS/villa/archive/84207424c3a988e6cafe6b50fe7d4d7e5f839929.tar.gz#subdirectory=vc_reader \
+    --hash=sha256:430b9643f8bf2e54aeaf487830c9c3a420f5f2b3f700f902cae03c6221c9c00a
+    # via winding-field-cli (pyproject.toml)
 winding-field-experiments @ https://github.com/LimeGS/winding-field/archive/f750fd11fcf8d3e5bc6a80290e90d125cfd02a36.tar.gz \
     --hash=sha256:d5b8698c54bb4ed09096641523ea6a64bdf886411636c4e16c6ecfcb16bf391c
     # via

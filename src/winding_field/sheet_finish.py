@@ -148,7 +148,7 @@ def render(validated,output,config):
     request=dict(memory_gib=6.,process_tree_gib=6.,raster_workers=2,ct_workers=4)
     request.update(config['settings']);cfg=p.settings(request)
     if cfg['tile_size']**2*33>128<<20:raise ValueError('tile mapping exceeds128MiB verification bound')
-    if cfg['pitch_um']!=19.2 or cfg['ct_sampler']!='native-float64' or cfg['disk_reserve_gib']<8 or cfg['process_tree_gib']>6 or cfg['memory_gib']>6:
+    if cfg['pitch_um']!=19.2 or cfg['disk_reserve_gib']<8 or cfg['process_tree_gib']>6 or cfg['memory_gib']>6:
         raise ValueError('constant-sheet requires19.2um/native-float64, <=6GiB memory and >=8GiB disk reserve')
     if cfg['reuse_export'] is not None:raise ValueError('patch reuse is not a constant-sheet input')
     frame=cfg['output_frame'];mesh=_json(source/'MESH.json')
@@ -157,6 +157,13 @@ def render(validated,output,config):
     prior=config.get('prior_identity');ledger=config.get('prior_ledger')
     if (ledger is None)!=(config.get('prior_ledger_sha256') is None) or (ledger and not prior):raise ValueError('prior CT ledger requires bound identity and SHA256')
     frozen=_json(Path(prior)) if prior else None
+    if frozen:
+        from .ct_reader import runtime_identity
+        if frozen.get('ct',{}).get('backend')!='vc_reader-zarr-v2-checked-v1':
+            raise ValueError('incompatible CT identity; use the original v1.5.0 runtime')
+        if (frozen['ct'].get('native_runtime')!=runtime_identity() or
+                frozen['ct'].get('sampler_sha256')!=file_sha(Path(p.__file__).with_name('native_ct_sampling.py'))):
+            raise ValueError('prior CT sampler implementation differs')
     if ledger and file_sha(ledger)!=config['prior_ledger_sha256']:raise ValueError('prior CT ledger hash differs')
     mapped=_arrays(source/'map.npz');uv=mapped['uv']
     wh=np.ceil(np.ptp(uv,axis=0)/(19.2/frame['voxel_um'])).astype(np.int64)+1;pixels=math.prod(map(int,wh))

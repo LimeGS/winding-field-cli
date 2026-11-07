@@ -41,7 +41,12 @@ class NativeCTSampler:
             active=np.flatnonzero((crossing&corner).any(1)&(np.prod(np.where(corner,fraction,1-fraction),axis=1)>0))
             if len(active):check(ids[active],(lower[active]+corner)//self.chunks)
         values=np.full(len(points),np.nan,np.float32)
-        if valid.any():values[valid]=self.reader.sample(points[valid],dtype=np.float64)
+        if valid.any():
+            selected=np.flatnonzero(valid)
+            sampled=self.reader.sample(points[selected],dtype=np.float64)
+            observed=np.isfinite(sampled)&(np.abs(sampled)<=np.finfo(np.float32).max)
+            valid[selected[~observed]]=False
+            values[selected[observed]]=sampled[observed]
         return values,valid
 
     def close(self):

@@ -188,6 +188,8 @@ documented reuse configuration with a fresh output instead.
 Checkpoints bind source, settings, code and native binary identity. Selecting
 another Flatboi recipe or another image is not an implicit migration.
 `import-native` requires the original runner hash and the same native binary.
+Reader-bound checkpoints from before the native-only cutover require their
+original v1.5.0 runtime; the new reader does not migrate them.
 
 ## Smoke checks
 
@@ -214,9 +216,65 @@ Manual dispatch can also build CUDA on a self-hosted runner labelled `linux`,
 separate `gpu` option to run GPU kernels and real model inference. Test tooling
 is installed only in the derivative `docker/testing.Dockerfile` image.
 
-### Qualification on gpu-1 (2026-11-06)
+### CT cache fix end-to-end qualification
 
-Both final images passed the installed suite: **1785 passed, 7 skipped** each.
+Commit `1ec8c1d` was built as a wheel and checked against all 85 installed CLI
+source modules. Qualification used an isolated macOS environment and derivative
+images of the retained reviewed Linux CPU/CUDA runtimes, not clean Docker builds.
+
+- Full installed macOS suite: **1781 passed, 36 skipped**.
+- Selected Linux CPU suites: **399 passed, 2 skipped**, plus **1 passed** after
+  correcting a missing `/pyproject.toml` test mount. The initial packaging-test
+  failure required no production change. The two skips require optional frozen
+  native geometry witnesses.
+- Selected CUDA-image suites: **288 passed**; real pinned Lasagna/Qual inference
+  passed on GPU 1, exposed as `cuda:0`.
+- Actual CLI processes completed prepare, fibres, field, mesh and flatten for
+  the atlas branch; mesh, flatten, assemble and render for native surfaces; and
+  the original global recipe. Stage receipts, export hashes and checkpoint-stable
+  completed resume were checked. These used the small synthetic CT fixture.
+- Prepared field/surface examples passed supervised build, pause/resume and
+  rendering, including CT visualizations.
+- Direct-field TIFXYZ passed export, independent verification and resume on a
+  planar field. **The curved demo field was blocked by `COVERAGE_DEPTH_LIMIT`**
+  at W=2 with 8 µm pitch/tolerance. The same request also blocked on the pre-fix
+  runtime: this is an existing coverage-certification limitation, not a successful
+  curved-field export. No audit threshold or acceptance policy was relaxed.
+
+The results establish execution of these stages and supported fixtures, not
+scientific accuracy, every input combination or production-scale CT feasibility.
+Detailed commands/results are retained in `.runtime/crop-fix-e2e-plan.md`,
+`.runtime/crop-fix-e2e-suite.log` and `.runtime/crop-fix-{linux,cuda}-results/`.
+
+### Native-only reader qualification (2026-11-06)
+
+Qualification used derivative images of the retained v1.5.0 runtimes, replacing
+the hash-pinned reader and CLI wheel. Regenerated locks change only `vc-reader`;
+this is not a clean rebuild of the complete Dockerfile.
+
+- Installed macOS suite: **1777 passed, 36 skipped**.
+- Installed Linux CPU suite: **1806 passed, 6 skipped**. After the final bounded
+  snapshot-recheck fix, the reviewed CPU image passed **68 affected tests**.
+- Reviewed CUDA image: **285 integration tests passed**, plus runtime GPU checks.
+- Both reviewed images passed offline real Lasagna/Qual inference and workflow
+  STOP/resume checks. CUDA used host GPU 1, exposed as `cuda:0`; its first model
+  attempt exhausted VRAM occupied by another workload, then passed after it exited.
+- SIGTERM/container replacement preserved the native solver checkpoint and source
+  hashes while resuming from iteration 1 to 200; a different binary was rejected.
+
+Reviewed local image IDs:
+
+```text
+cpu  sha256:f4dbec2cc8a6df86fc953845daccc3a9dc034d50e5789cfd3cde067813c0e0d0
+cuda sha256:95d83dd8c4aa9268470a40d49145ce48115e97e8cc6986676759edc277c14903
+```
+
+See [crop, sampling and render measurements](RASTER-PERFORMANCE.md) for the
+numerical comparison and its limits.
+
+### Retained v1.5.0 qualification on gpu-1 (2026-11-06)
+
+These pre-cutover images passed the installed suite: **1785 passed, 7 skipped** each.
 The official Lasagna zero-chunk writer control was then enabled separately and
 passed in both images; CI enables it through `WINDING_LASAGNA_PYTHON`.
 Both images also passed offline Lasagna/Qual inference as host UID 1000, default

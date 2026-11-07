@@ -229,6 +229,11 @@ def test_native_ct_conversion_is_explicit_and_support_is_not_air():
     values, valid, receipt = sample_ct_stack(ct, meta, points, normals, [0, 0.25], frame="synthetic:L2", voxel_um=9.6)
     np.testing.assert_allclose(values[:, 0, 0], [55.5, 155.5])
     np.testing.assert_allclose(receipt["depth_offsets_um"], [0, 2.4])
+    from vc_reader import _reader
+    from winding_field import native_ct_sampling
+    from winding_field.util import file_sha
+    assert receipt['native_runtime']['extension_sha256']==file_sha(_reader.__file__)
+    assert receipt['sampler_sha256']==file_sha(native_ct_sampling.__file__)
     assert valid.all()
     support = np.ones(ct.shape, bool)
     support[0, 0, 0] = False
