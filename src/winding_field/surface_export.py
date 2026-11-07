@@ -730,34 +730,30 @@ def sample_ct_stack(ct, metadata, points_xyz, normals_xyz, depth_offsets, *, fra
             raise ValueError("CT support must be a boolean array with the same ZYX shape")
     stack = np.full((len(offsets),) + points.shape[:2], np.nan, dtype=np.float32)
     mask = np.zeros(stack.shape, bool)
-    for layer, offset in enumerate(offsets):
-        grid = (points + offset * normals - origin) / spacing
-        inside = valid_surface & (grid >= 0).all(-1) & (grid <= np.array(ct.shape[::-1]) - 1).all(-1)
-        rows, cols = np.where(inside)
-        g = grid[inside]
-        lower, upper = np.floor(g).astype(int), np.ceil(g).astype(int)
-        fraction = g - lower
-        good = np.ones(len(g), bool)
-        sampled = np.zeros(len(g), float)
-        # Eight gathers avoid a full float64 copy of a potentially mmap-backed CT.
-        for dx in (0, 1):
-            for dy in (0, 1):
-                for dz in (0, 1):
-                    bits = np.array([dx, dy, dz], bool)
-                    xyz = np.where(bits, upper, lower)
-                    weight = np.prod(np.where(bits, fraction, 1 - fraction), axis=1)
-                    corner = ct[tuple(xyz[:, ::-1].T)].astype(float)
-                    observed = np.isfinite(corner)
-                    if support is not None:
-                        observed &= support[tuple(xyz[:, ::-1].T)]
-                    good &= observed | (weight == 0)
-                    sampled += np.where(observed, corner, 0) * weight
-        good &= np.isfinite(sampled) & (np.abs(sampled) <= np.finfo(np.float32).max)
-        rr, cc = rows[good], cols[good]
-        stack[layer, rr, cc] = sampled[good]
-        mask[layer, rr, cc] = True
+    from .native_ct_sampling import NativeCTSampler
+    chunks=tuple(min(32,n) for n in ct.shape)
+    def chunk(index):
+        start=np.asarray(index)*chunks
+        region=tuple(slice(int(a),int(min(a+c,n))) for a,c,n in zip(start,chunks,ct.shape))
+        # Float64 preserves source precision; only one bounded mmap crop is converted.
+        data=np.full(chunks,np.nan,np.float64);crop=ct[region]
+        data[tuple(slice(0,n) for n in crop.shape)]=crop if support is None else np.where(support[region],crop,np.nan)
+        return data
+    sampler=NativeCTSampler(ct.shape,chunks,np.float64,chunk)
+    try:
+        for layer, offset in enumerate(offsets):
+            grid=((points+offset*normals-origin)/spacing).reshape(-1,3)
+            for start in range(0,len(grid),100000):
+                sampled,good=sampler.sample(grid[start:start+100000])
+                good &= valid_surface.ravel()[start:start+100000]
+                stack[layer].ravel()[start:start+100000]=np.where(good,sampled,np.nan)
+                mask[layer].ravel()[start:start+100000]=good
+    finally:sampler.close()
+    from .ct_reader import runtime_identity
     receipt = dict(
         status="SAMPLED" if mask.any() else "NO_COVERAGE",
+        native_runtime=runtime_identity(),
+        sampler_sha256=_sha(Path(__file__).with_name('native_ct_sampling.py')),
         frame=frame,
         voxel_um=um,
         ct_origin_xyz=origin.tolist(),

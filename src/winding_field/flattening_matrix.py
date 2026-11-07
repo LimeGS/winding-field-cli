@@ -19,7 +19,7 @@ def settings(request,solver,scope):
         raise ValueError('invalid flattening selection')
     if not isinstance(request,dict):raise ValueError('matrix settings must be an object')
     allowed={'output_frame','pitch_um','tile_size','memory_gib','process_tree_gib','disk_reserve_gib',
-             'cache_dir','cache_mib','cache_gib','ct_sampler','ct_workers','raster_workers'}
+             'cache_dir','cache_mib','cache_gib','ct_workers','raster_workers'}
     if scope=='patches':allowed|={'max_patch_faces','max_charts'}
     else:allowed|={'centerline','reference_z'}
     if solver=='slim':allowed|={'app_run','native_recipe'}

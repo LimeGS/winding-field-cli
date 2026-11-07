@@ -66,9 +66,8 @@ def test_reuse_rejects_corrupt_or_incompatible_source(tmp_path,change):
         p.render_map(mapped,tmp_path/'new',sample,dict(voxel_um=1.),pitch_um=1.,tile_size=4,reuse=inventory)
 
 
-@pytest.mark.parametrize('sampler',[None,'scalar','native-float64'])
 @pytest.mark.skipif(sys.platform!='linux',reason='Linux process-tree resource guard')
-def test_continue_export_reuses_map_and_inherits_ct_ledger(tmp_path,monkeypatch,sampler):
+def test_continue_export_reuses_map_and_inherits_ct_ledger(tmp_path,monkeypatch):
     import sqlite3
     from test_patch_pipeline import grid,planar
     from winding_field.surface_mesh import import_mesh
@@ -79,22 +78,16 @@ def test_continue_export_reuses_map_and_inherits_ct_ledger(tmp_path,monkeypatch,
         dict(frame='test',voxel_um=9.6,origin_xyz=[0,0,0],spacing_xyz=[32]*3,shape_zyx=[10]*3,sheet_step=1.))
     cfg=p.settings(dict(output_frame=dict(id='test',voxel_um=9.6,origin_xyz_um=[0,0,0]),app_run='/unused',
         pitch_um=9.6,tile_size=4,disk_reserve_gib=.001))
-    if sampler is None:cfg.pop('ct_sampler')
-    else:cfg['ct_sampler']=sampler
     monkeypatch.setattr(p,'check_flatboi',lambda *args:dict(test=True))
     monkeypatch.setattr(p,'flatten_native',lambda v,f,app,path,**kw:planar(v,f,path))
     class CT:
         identity=dict(source='synthetic',metadata_sha256='a'*64,origin_xyz=[0,0,0],spacing_xyz=[9.6]*3,shape=[10]*3,level=0)
         chunks=(2,2,2);dtype=np.dtype('u1')
         def sample(self,xyz,frame):return xyz[:,0]+2*xyz[:,1],np.ones(len(xyz),bool)
-    if sampler=='native-float64':
-        CT.identity=dict(CT.identity,sampler='vc_reader-float64-support-v1',sampler_sha256='s'*64,
-            extension_sha256='e'*64,reader_libraries_sha256={'native':'n'*64})
+    from winding_field.ct_reader import runtime_identity
+    CT.identity=dict(CT.identity,sampler='vc_reader-float64-support-v1',sampler_sha256=file_sha(Path(p.__file__).with_name('native_ct_sampling.py')),
+        backend='vc_reader-zarr-v2-checked-v1',native_runtime=runtime_identity())
     old=tmp_path/'old';old.mkdir();receipt=p.export_mesh(mesh,old/'patches',CT(),cfg)
-    if sampler is None:
-        identity=json.loads((old/'patches/IDENTITY.json').read_text())
-        identity['settings'].pop('ct_sampler')
-        atomic_json(old/'patches/IDENTITY.json',identity)
     # The active Paris4 gate persists this before rasterization; LEVEL is absent until completion.
     (old/'patches/level-0000/MAP-REPORT.json').write_text(json.dumps(receipt['levels'][0]['mapping'],separators=(',',':')))
     (old/'patches/level-0000/LEVEL.json').unlink();(old/'patches/PATCHES.json').unlink()
@@ -105,7 +98,7 @@ def test_continue_export_reuses_map_and_inherits_ct_ledger(tmp_path,monkeypatch,
     shutil.rmtree(old/'patches/level-0000/render'/remove)
     class NewCT(CT):
         def __init__(self,source,output,cfg,**kwargs):
-            assert cfg['ct_sampler']==(sampler or 'scalar')
+            assert 'ct_sampler' not in cfg
             self.db=sqlite3.connect(output/'ct-chunks.sqlite');self.db.execute('CREATE TABLE chunks(key TEXT PRIMARY KEY,sha TEXT)')
         def sample(self,xyz,frame):
             assert self.db.execute('SELECT sha FROM chunks WHERE key=?',('0,0,0',)).fetchone()==('b'*64,)
@@ -114,12 +107,11 @@ def test_continue_export_reuses_map_and_inherits_ct_ledger(tmp_path,monkeypatch,
     monkeypatch.setattr(p,'PatchCT',NewCT)
     def no_flatten(*a,**kw):pytest.fail('continuation repeated flattening')
     monkeypatch.setattr(p,'flatten_native',no_flatten)
-    if sampler=='native-float64':
-        NewCT.identity=dict(CT.identity,extension_sha256='changed')
-        with pytest.raises(ValueError,match='sampler implementation'):
-            c.continue_export(old/'patches',mesh,tmp_path/'changed-reader',
-                identity_sha256=file_sha(old/'patches/IDENTITY.json'),overrides={})
-        NewCT.identity=CT.identity
+    NewCT.identity=dict(CT.identity,native_runtime={'changed':True})
+    with pytest.raises(ValueError,match='sampler implementation'):
+        c.continue_export(old/'patches',mesh,tmp_path/'changed-reader',
+            identity_sha256=file_sha(old/'patches/IDENTITY.json'),overrides={})
+    NewCT.identity=CT.identity
     out=tmp_path/'continued'
     result=c.continue_export(old/'patches',mesh,out,identity_sha256=file_sha(old/'patches/IDENTITY.json'),overrides={})
     assert result['status']=='PATCHES_READY_DIAGNOSTIC'
@@ -146,6 +138,28 @@ def test_continue_export_reuses_map_and_inherits_ct_ledger(tmp_path,monkeypatch,
         c.continue_export(old/'patches',mesh,cancel_out,identity_sha256=file_sha(old/'patches/IDENTITY.json'),
             overrides={},stop=lambda:cancelled[0])
     assert not (cancel_out/'PATCHES.json').exists()
+
+
+@pytest.mark.parametrize('backend',[None,'portable-zarr-v2','vc_reader'])
+def test_old_continuation_rejected_before_any_output_write(tmp_path,backend):
+    from winding_field.patch_continue import continue_export
+    source=tmp_path/'old';source.mkdir();path=source/'IDENTITY.json'
+    atomic_json(path,{'ct':{'backend':backend}})
+    before=path.read_bytes();output=tmp_path/'new'
+    with pytest.raises(ValueError,match='v1.5.0'):
+        continue_export(source,tmp_path/'mesh',output,identity_sha256=file_sha(path),overrides={})
+    assert not output.exists() and path.read_bytes()==before
+
+
+def test_changed_sampler_rejected_before_any_output_write(tmp_path):
+    from winding_field.patch_continue import continue_export
+    from winding_field.ct_reader import runtime_identity
+    source=tmp_path/'saved';source.mkdir();path=source/'IDENTITY.json'
+    atomic_json(path,{'ct':{'backend':'vc_reader-zarr-v2-checked-v1','native_runtime':runtime_identity(),
+                          'sampler':'vc_reader-float64-support-v1','sampler_sha256':'changed'}})
+    with pytest.raises(ValueError,match='sampler implementation'):
+        continue_export(source,tmp_path/'mesh',tmp_path/'new',identity_sha256=file_sha(path),overrides={})
+    assert not (tmp_path/'new').exists()
 
 
 def test_copy_admission_preserves_disk_reserve(tmp_path,monkeypatch):

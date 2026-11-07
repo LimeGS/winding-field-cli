@@ -7,28 +7,119 @@ changed (maximum float difference 0.0059814453125), despite exact validity.
 
 ## Verified float64 native sampler
 
-New patch exports default to `"ct_sampler": "native-float64"`; `"scalar"`
-selects the original NumPy accumulation. Both return float32 samples and retain
+All CLI CT samplers use native float64 interpolation and return float32 samples, retaining
 exact positive-weight support: missing chunks remain invalid, including at chunk
 boundaries, while observed zero-valued voxels remain valid. The native computed
 reader consumes only PatchCT's hash-verified chunks, with native persistent RAM
 caching disabled. The existing shared Python LRU owns retained decoded memory.
 
-The CT extra pins vc_reader `baf5e605bb42a3d55a62b7c5c728e0908137225c`.
-That release removed raw chunk/publication bindings. PatchCT reads its declared
-lossless decoded cache, including explicit `.missing` markers; uncached remote
-chunks are loaded through native indexing and flushed before use. Publication
-failure is an error, never evidence of absent CT. Local whole chunks are read and
-decoded directly. Every demand load retains the decoded-byte SHA ledger check.
+The required reader pins LimeGS/villa `84207424c3a988e6cafe6b50fe7d4d7e5f839929`.
+PatchCT shares Volume's checked encoded transport and native snapshot decoder,
+retaining its separate decoded-byte SHA ledger and bounded RAM cache. It no longer
+creates a second native decoded disk cache. Publication failure is an error, never
+evidence of absent CT. Zero disk-cache budgets support streaming.
 
-Continuation inherits its saved sampler; receipts predating this setting use
-scalar. Native continuation requires matching sampler source, extension and
-native-library hashes, preventing a mixture of implementations in saved tiles.
-New exports record these identities; existing completed exports stay immutable.
+Continuation requires matching sampler source, extension and native-library
+hashes. Older reader-bound checkpoints reject before modifying retained products;
+use their original v1.5.0 runtime. There is no selectable scalar production path.
+
+### Native-only cutover (macOS arm64, 2026-11-06)
+
+Installed v1.5.0 baseline versus the candidate, run sequentially with
+`OMP_NUM_THREADS=2 OPENBLAS_NUM_THREADS=1`. Fixture: deterministic 64³ uint8 CT,
+16³ Blosc/LZ4 chunks, 25,000 seeded points and a complete 125×125 planar render.
+Three repetitions; medians below. Each repetition starts a new disk/RAM cache,
+then repeats the read in the same Volume. OS pages are warm; HTTP is loopback,
+not a storage/network throughput measurement. Both readers retain their ledgers.
+
+| Workload | v1.5.0 ms | Native-only ms |
+| --- | ---: | ---: |
+| Local crop, cold application cache | 7.54 | 8.61 |
+| Local crop, warm | 1.30 | 1.73 |
+| Local points after crop | 39.24 | 21.95 |
+| Local points, warm | 30.84 | 13.67 |
+| Complete render, warm | 34.80 | 31.59 |
+| HTTP crop, cold application cache | 44.13 | 48.17 |
+| HTTP crop, warm | 8.28 | 5.43 |
+| HTTP points after crop | 97.69 | 83.81 |
+| HTTP points, warm | 45.15 | 27.12 |
+
+Crop/sample/mask arrays and PNG hashes match exactly, including all repetitions.
+Peak process RSS was 132.7 MiB versus 106.8 MiB. Local crops regressed while
+warm sampling improved; these small fixtures do not establish a universal speedup.
+Evidence: `.runtime/benchmark-vc-reader.py` and
+`.runtime/vc-reader-benchmark-{baseline,candidate}/RESULTS.json`.
+
+#### Local-crop diagnosis
+
+The regression is reproducible for this fixture with a **4 MiB decoded cache
+and a bound integrity ledger**. Four alternating baseline/candidate blocks of
+30 repetitions (120 per configuration), using the same installed runtimes,
+thread settings and exact voxel assertions, gave these medians:
+
+| Configuration | v1.5.0 cold / warm ms | Native-only cold / warm ms |
+| --- | ---: | ---: |
+| Decoded cache 4 MiB, ledger | 7.791 / 1.267 | 9.083 / 1.804 |
+| Decoded cache disabled, ledger | 7.786 / 1.242 | 7.788 / 1.091 |
+| Decoded cache 4 MiB, no ledger (diagnostic) | 0.992 / 0.979 | 1.860 / 0.740 |
+
+The earlier crop path bypassed the optional decoded cache. The native computed
+reader uses it: a warm hit checks the file signature twice while still rereading
+and hashing the encoded bytes against the ledger. Across 27 chunks, Python-level
+file-stat calls increase from 27 to 135. The cache lock also serializes callbacks
+from the caller and one native worker; `threads=1` includes that helper worker.
+
+In a separate randomized diagnostic (500 warm reads per variant), fixed file
+signatures reduced the native median from 1.662 to 1.209 ms. This deliberately
+omits mutation detection and is **not a production fix**. Resident-block callback
+and native assembly cost 0.130 ms; isolated decoding of 27 small chunks cost
+0.198 ms native versus 0.081 ms with numcodecs. Warm decoded hits perform no
+decoding. The main warm regression is therefore the extra cache-verification
+path, not crop assembly; small-chunk decode overhead also affects cache misses.
+
+`Volume` defaults to a zero decoded-cache budget, so the original benchmark
+does not establish a general local-read regression. These measurements concern
+OS-warm, 4 KiB decoded chunks on macOS arm64, not production-scale CT or Linux.
+That diagnostic run did not change production behavior. Evidence and reproduction commands:
+`.runtime/local-crop-investigation.md`, `.runtime/investigate-local-crops.py`,
+`.runtime/crop-investigation-r3-{0,1,2,3}-{baseline,candidate}/RESULTS.json`,
+and `.runtime/crop-isolation-1/RESULTS.json`.
+
+#### Ledger-bound cache correction
+
+Ledger-bound decoded entries now use the encoded-byte SHA check already performed
+on every hit, without redundant file signatures. Binding a ledger clears existing
+decoded entries, so retained arrays come from that ledger's verified snapshots.
+Bounded reads, SHA checks, cache locking/eviction and fresh source validation remain
+in place; entries without a ledger retain their file-signature checks.
+
+Four alternating before/after blocks, 20 fresh Volume instances each (80 cold and
+80 warm crops per size/runtime), checked every voxel against an independent formula.
+Each crop spans 27 Blosc/LZ4 chunks, with enough decoded RAM to retain them all.
+These are OS-warm synthetic uint8 arrays on macOS arm64; comparison uses the retained
+installed candidate and the corrected source with that same native Release runtime.
+
+| Decoded chunk size | Warm before / after, median ms | Reduction | Cold before / after, median ms |
+| --- | ---: | ---: | ---: |
+| 4 KiB (16³) | 1.853 / 1.361 | 26.6% | 9.212 / 8.884 |
+| 256 KiB (64³) | 2.493 / 2.022 | 18.9% | 10.680 / 10.043 |
+| 2 MiB (128³) | 7.945 / 7.467 | 6.0% | 21.425 / 20.573 |
+
+Python-level file-stat calls return to 27 per crop. Regression coverage includes
+mutation with unchanged signatures, corrupt remote cached bytes, missing local
+chunks, ledger binding, verified snapshots, eviction and concurrent cache charging:
+**142 passed, 1 skipped** across the affected reader/sampling/patch suites and two
+additional cache-boundary tests. The committed correction subsequently passed
+installed macOS and Linux/CUDA qualification; see [end-to-end coverage and its
+TIFXYZ limitation](DOCKER.md#ct-cache-fix-end-to-end-qualification).
+Performance evidence: `.runtime/local-crop-fix.md`,
+`.runtime/benchmark-local-crop-fix.py`, and
+`.runtime/crop-fix-{0,1,2,3}-{before,after}/RESULTS.json` (raw samples and mean/p50/p95).
 
 ### Integrated benchmark (gpu-1, 2026-11-05)
 
-Actual PatchCT on both paths, including per-load hashing, SQLite receipts,
+Historical pre-cutover results, not measurements of the current migration:
+actual PatchCT on both paths, including per-load hashing, SQLite receipts,
 four-worker prefetch and a 512 MiB verified LRU. Three alternating repetitions,
 200,000 fixed points and two complete 1024×1024 tiles; one native thread, CPUs 6–7.
 
@@ -50,23 +141,15 @@ Evidence: `/mnt/fast2/paris4-vcreader2440-20261105/cli-benchmark-01/benchmark02/
 
 ### Shared encoded transport migration
 
-Shared Volume reads now use `DiskCache.open_file`. Its new API trusts existing
-disk bytes, so the CLI owns source revalidation using its existing bounded HTTP
-fetch and a separate strong-ETag table. Weak validators and Last-Modified cannot
-establish identity. A receipt without a validator needs one full payload fetch
-on its next validation epoch; later epochs can use conditional requests. Native
-replacement downloads invalidate old validators. Offline verified hits and
-authoritative 404 receipts remain distinct from cache misses and corruption.
-Sized and streaming unsized transfers retain the 256 MiB reservation cap and
-the disk reserve; a small unsized response may now succeed within those bounds.
-The native streaming allocator reserves ahead in increments, so a near-cap
-unsized response can be refused before reaching 256 MiB of payload.
-Old encoded-cache ownership is migrated before native reconciliation, preserving
-disk accounting and eviction. For Delta3D decoded caches, D3D1 v1/v2 payload
-quantization is checked independently of metadata; unrecognized wire formats fail
-closed. Existing payloads take precedence over stale missing markers.
+Volume uses bounded `ObjectStore.read`, `DiskCache.write` and `decode_chunk`.
+Native decoding consumes the exact verified snapshot without reopening its source.
+CLI source revalidation uses bounded HTTP and strong ETags; weak validators and
+Last-Modified cannot establish identity. Receipts without validators need a full
+verification download. Offline verified payloads and authoritative 404 receipts
+remain distinct from cache misses and corruption. Encoded reads and decoding are
+capped at 256 MiB; disk publication preserves the configured reserve.
 
-Final integration regression run on gpu-1: **145 passed, 2 skipped** across
+The earlier pre-cutover integration run on gpu-1 had **145 passed, 2 skipped** across
 native sampling, shared transport, prefetch, pipeline/mapping/parallelism,
 continuation, CT sources, IO, visual geometry and the original recipe. The run
 reported 50 dependency deprecation warnings from scikit-image with NumPy 2.5.

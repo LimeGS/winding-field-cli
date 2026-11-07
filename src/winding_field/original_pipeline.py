@@ -13,7 +13,7 @@ import numpy as np
 from PIL import Image
 
 from .surface_mesh import MeshReader
-from .original_recipe import make_map,raster_sheet,sample_points
+from .original_recipe import make_map,raster_sheet
 from .util import atomic_json,digest,file_sha
 
 
@@ -44,29 +44,19 @@ def frame_coordinates(xyz,frame,world_unit_um=1.):
 
 
 def sample_ct(volume,xyz,frame=None,missing=None,*,stop=None):
-    from numcodecs import get_codec
+    from .native_ct_sampling import NativeCTSampler
     def chunk(index):
         if stop and stop():raise InterruptedError('CT sampling paused')
         name=volume.metadata.get('dimension_separator','.').join(map(str,index))
         key=volume.array_path+'/'+name if volume.array_path else name
-        if hasattr(volume,'decoded_chunk'):
-            try:return volume.decoded_chunk(key)
-            except FileNotFoundError:
-                if missing is None:raise
-                missing.add(key);return None
-        try:raw=volume._chunk_bytes(key)
+        try:return volume.decoded_chunk(key)
         except FileNotFoundError:
             if missing is None:raise
             missing.add(key);return None
-        if raw is None:return None
-        if volume.metadata.get('compressor'):raw=get_codec(volume.metadata['compressor']).decode(raw)
-        for spec in reversed(volume.metadata.get('filters') or []):raw=get_codec(spec).decode(raw)
-        array=np.frombuffer(raw,dtype=volume.dtype)
-        if array.size!=math.prod(volume.chunks):raise ValueError('corrupt CT chunk: '+key)
-        return array.reshape(volume.chunks,order=volume.metadata['order'])
     grid=(xyz-volume.origin_xyz)/volume.spacing_xyz if frame is None else (
         xyz*(frame['voxel_um']/np.asarray(volume.spacing_xyz))+(np.asarray(frame['origin_xyz_um'])-volume.origin_xyz)/volume.spacing_xyz)
-    return sample_points(grid,volume.shape,volume.chunks,chunk)
+    with closing(NativeCTSampler(volume.shape,volume.chunks,volume.dtype,chunk)) as sampler:
+        return sampler.sample(grid)
 
 
 def admit(vertices,faces,memory_gib):
@@ -147,6 +137,9 @@ def export_mesh(mesh_path,out,volume,request,*,export_tifxyz=False,stop=lambda:F
     from .original_tifxyz import export_xyz
     from .workflow import implementation_sha
     cfg=settings(request);frame=cfg['output_frame'];out=Path(out)
+    identity_path=out/'IDENTITY.json'
+    if identity_path.exists() and json.loads(identity_path.read_bytes()).get('ct')!=volume.identity:
+        raise ValueError('original CT resume identity changed; use the original v1.5.0 runtime for pre-cutover runs')
     try:
         import igl
     except ImportError as error:
@@ -162,7 +155,6 @@ def export_mesh(mesh_path,out,volume,request,*,export_tifxyz=False,stop=lambda:F
         identity=dict(mesh_sha256=reader.manifest_sha,settings=cfg,ct=volume.identity,
                       export_tifxyz=export_tifxyz,implementation_sha256=implementation_sha(),
                       runtime={name:version(name) for name in ('numpy','scipy','libigl','Pillow')})
-        identity_path=out/'IDENTITY.json'
         if identity_path.exists() and json.loads(identity_path.read_bytes())!=identity:
             raise ValueError('original resume identity changed')
         atomic_json(identity_path,identity)
@@ -261,7 +253,8 @@ def export_existing(args):
     mesh=Path(args.mesh_bundle).expanduser().resolve() if args.mesh_bundle else out/'meshes'
     if args.mesh_bundle and (out==mesh or mesh in out.parents or out in mesh.parents):
         raise ValueError('output must be separate from source mesh bundle')
-    identity=dict(settings=request,field=descriptor,mesh=str(mesh),levels=args.levels,
+    from .ct_reader import runtime_identity
+    identity=dict(native_runtime=runtime_identity(),settings=request,field=descriptor,mesh=str(mesh),levels=args.levels,
                   source=args.source,level=args.level,voxel_um=args.voxel_um,export_tifxyz=args.export_tifxyz,
                   implementation_sha256=implementation_sha())
     out.mkdir(exist_ok=args.resume)

@@ -100,3 +100,20 @@ def test_legacy_saved_config_is_not_backfilled_and_code_identity_stays_strict(tm
     with pytest.raises(ValueError,match='implementation changed'):
         run(config,resume=True)
     assert (root/'RUN.json').read_bytes()==before
+
+
+def test_resume_native_runtime_mismatch_preserves_run_and_stop(tmp_path):
+    import pytest
+    from winding_field.demo import synthetic
+    from winding_field.workflow import run
+    from winding_field.util import atomic_json,file_sha
+    root=tmp_path/'run'
+    config=dict(source=synthetic(tmp_path/'ct.zarr'),output=str(root),prediction='classical',
+                reserve_bytes=0,cache=str(tmp_path/'cache'))
+    state=run(config,until='prepare')
+    state['source']['native_runtime']={'extension_sha256':'changed'}
+    atomic_json(root/'RUN.json',state);(root/'STOP').touch()
+    before={p.relative_to(root):file_sha(p) for p in root.rglob('*') if p.is_file()}
+    with pytest.raises(ValueError,match='native runtime'):
+        run(config,resume=True)
+    assert {p.relative_to(root):file_sha(p) for p in root.rglob('*') if p.is_file()}==before
