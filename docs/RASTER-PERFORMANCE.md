@@ -109,8 +109,10 @@ Python-level file-stat calls return to 27 per crop. Regression coverage includes
 mutation with unchanged signatures, corrupt remote cached bytes, missing local
 chunks, ledger binding, verified snapshots, eviction and concurrent cache charging:
 **142 passed, 1 skipped** across the affected reader/sampling/patch suites and two
-additional cache-boundary tests. This correction has not been packaged or qualified
-on Linux/CUDA. Evidence: `.runtime/local-crop-fix.md`,
+additional cache-boundary tests. The committed correction subsequently passed
+installed macOS and Linux/CUDA qualification; see [end-to-end coverage and its
+TIFXYZ limitation](DOCKER.md#ct-cache-fix-end-to-end-qualification).
+Performance evidence: `.runtime/local-crop-fix.md`,
 `.runtime/benchmark-local-crop-fix.py`, and
 `.runtime/crop-fix-{0,1,2,3}-{before,after}/RESULTS.json` (raw samples and mean/p50/p95).
 

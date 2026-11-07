@@ -216,6 +216,36 @@ Manual dispatch can also build CUDA on a self-hosted runner labelled `linux`,
 separate `gpu` option to run GPU kernels and real model inference. Test tooling
 is installed only in the derivative `docker/testing.Dockerfile` image.
 
+### CT cache fix end-to-end qualification
+
+Commit `1ec8c1d` was built as a wheel and checked against all 85 installed CLI
+source modules. Qualification used an isolated macOS environment and derivative
+images of the retained reviewed Linux CPU/CUDA runtimes, not clean Docker builds.
+
+- Full installed macOS suite: **1781 passed, 36 skipped**.
+- Selected Linux CPU suites: **399 passed, 2 skipped**, plus **1 passed** after
+  correcting a missing `/pyproject.toml` test mount. The initial packaging-test
+  failure required no production change. The two skips require optional frozen
+  native geometry witnesses.
+- Selected CUDA-image suites: **288 passed**; real pinned Lasagna/Qual inference
+  passed on GPU 1, exposed as `cuda:0`.
+- Actual CLI processes completed prepare, fibres, field, mesh and flatten for
+  the atlas branch; mesh, flatten, assemble and render for native surfaces; and
+  the original global recipe. Stage receipts, export hashes and checkpoint-stable
+  completed resume were checked. These used the small synthetic CT fixture.
+- Prepared field/surface examples passed supervised build, pause/resume and
+  rendering, including CT visualizations.
+- Direct-field TIFXYZ passed export, independent verification and resume on a
+  planar field. **The curved demo field was blocked by `COVERAGE_DEPTH_LIMIT`**
+  at W=2 with 8 µm pitch/tolerance. The same request also blocked on the pre-fix
+  runtime: this is an existing coverage-certification limitation, not a successful
+  curved-field export. No audit threshold or acceptance policy was relaxed.
+
+The results establish execution of these stages and supported fixtures, not
+scientific accuracy, every input combination or production-scale CT feasibility.
+Detailed commands/results are retained in `.runtime/crop-fix-e2e-plan.md`,
+`.runtime/crop-fix-e2e-suite.log` and `.runtime/crop-fix-{linux,cuda}-results/`.
+
 ### Native-only reader qualification (2026-11-06)
 
 Qualification used derivative images of the retained v1.5.0 runtimes, replacing
