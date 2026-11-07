@@ -362,30 +362,30 @@ class Volume:
         return path,(info.st_dev,info.st_ino,info.st_size,info.st_mtime_ns,info.st_ctime_ns)
 
     def decoded_chunk(self,key):
-        """Opt-in bounded immutable decoded chunks; stat-checked hits, cold SHA/ledger validation.
+        """Bounded immutable chunks; ledger-checked snapshots or stat-checked hits.
 
-        General read/_chunk_bytes behavior is unchanged. validate_used discards this
-        cache and revalidates authoritative sources, even within the same Volume.
+        validate_used discards this cache and revalidates authoritative sources.
         """
         with self._decoded_lock if self._decoded_limit else nullcontext():
             return self._decode_chunk(key)
 
     def _decode_chunk(self,key):
-        before=self._encoded_signature(key) if self._decoded_limit else None
+        ledger_bound=self._ledger is not None
+        before=self._encoded_signature(key) if self._decoded_limit and not ledger_bound else None
         cached=self._decoded.get(key)
         if cached is not None:
             array,signature=cached
-            if before==signature:
-                # Filesystems can report identical timestamps for same-tick writes.
-                if self._ledger is not None:self._chunk_bytes(key)
-                if self._encoded_signature(key)==signature:
+            if ledger_bound or before==signature:
+                # bind_ledger clears RAM; its SHA pins the bytes used to decode every retained array.
+                if ledger_bound:self._chunk_bytes(key)
+                if ledger_bound or self._encoded_signature(key)==signature:
                     self._decoded.move_to_end(key);self._stats['decoded_hits']+=1
                     return array
             self._decoded_bytes-=array.nbytes+512;del self._decoded[key]
         raw=self._chunk_bytes(key)
         if raw is None:return None
         retained_signature=None
-        if self._decoded_limit:
+        if self._decoded_limit and not ledger_bound:
             after=self._encoded_signature(key)
             if after[1] is not None:
                 if before!=after:
@@ -398,7 +398,7 @@ class Volume:
         if array.size!=math.prod(self.chunks):raise ValueError('corrupt CT chunk: '+key)
         array=array.reshape(self.chunks);array.flags.writeable=False
         self._stats['decodes']+=1;charge=array.nbytes+512
-        if retained_signature is not None and charge<=self._decoded_limit:
+        if (ledger_bound or retained_signature is not None) and charge<=self._decoded_limit:
             while self._decoded_bytes+charge>self._decoded_limit:
                 _,(retired,_)=self._decoded.popitem(last=False)
                 self._decoded_bytes-=retired.nbytes+512;self._stats['decoded_evictions']+=1

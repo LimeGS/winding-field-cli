@@ -233,11 +233,12 @@ def test_checked_native_snapshot_preserves_filtered_layout(tmp_path,order):
         np.testing.assert_array_equal(volume.read([0,1,1],[2,3,4]),data[:,1:,1:])
 
 
-def test_decoder_consumes_verified_snapshot_after_source_replacement(tmp_path,monkeypatch):
+@pytest.mark.parametrize('decoded_cache_bytes',[0,1024])
+def test_decoder_consumes_verified_snapshot_after_source_replacement(tmp_path,monkeypatch,decoded_cache_bytes):
     from contextlib import closing
     from winding_field.io import Volume
     data=make_volume(tmp_path/'ct')
-    with closing(Volume(tmp_path/'ct',cache=tmp_path/'cache')) as volume:
+    with closing(Volume(tmp_path/'ct',cache=tmp_path/'cache',decoded_cache_bytes=decoded_cache_bytes)) as volume:
         volume.bind_ledger(tmp_path/'source.sqlite');read=volume._chunk_bytes
         def replace_after_verification(key):
             raw=read(key)
