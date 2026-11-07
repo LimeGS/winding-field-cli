@@ -133,7 +133,7 @@ def solve(run,config,stop=None,*,sweep_target=None):
                      weight=identity['fibre_weight'],quota_bytes=config.get('bounded_bytes',12<<30)//8,
                      reserve_bytes=config.get('reserve_bytes',0),stop=stop)
         if status=='PAUSED':maps.close();return dict(status='PAUSED')
-        pair_provider=PairCatalog(run/'pairs',geometry)
+        pair_provider=PairCatalog(run/'pairs',geometry,cache_bytes=config.get('constraint_cache_bytes',0))
         identity.update(algorithm='global-arclength-pairs-coarse-prior-v1',pairs=file_sha(run/'pairs/PAIRS.json'))
     root=run/'field'
     from .field_budget import effective_budget,extend
@@ -144,10 +144,12 @@ def solve(run,config,stop=None,*,sweep_target=None):
                  order=list(itertools.product(*(range((n-1)//chunk+1) for n in shape))),
                  halo=2,sweeps=sweeps,rtol=config.get('rtol',1e-6),
                  maxiter=config.get('maxiter',2000),dtype='float64',device=config.get('device','cpu'),
-                  cache_bytes=64<<20,reserve_bytes=config.get('reserve_bytes',0))
+                   cache_bytes=64<<20,reserve_bytes=config.get('reserve_bytes',0),
+                   prepared_cache_bytes=config.get('prepared_cache_bytes',0))
     if bounded:options['max_bytes']=config.get('bounded_bytes',12<<30)//8
     db=sqlite3.connect((run/'fibres/fibres.sqlite').resolve().as_uri()+'?mode=ro',uri=True)
     row_count=0
+    static_rows={};static_bytes=0
 
     def load(lo,hi):
         if bounded:
@@ -157,7 +159,12 @@ def solve(run,config,stop=None,*,sweep_target=None):
         return target,weights,valid,{'maps':meta['tiles_sha256']}
 
     def constraints(lo,hi,read_nodes):
-        nonlocal row_count
+        nonlocal row_count,static_bytes
+        key=tuple(map(int,(*lo,*hi)))
+        if key in static_rows:
+            rows=static_rows[key]
+            row_count+=0 if rows is None else rows.matrix.shape[0]
+            return rows
         a=[]; b=[]
         if meta['prediction']=='qual-v2' or fibres.get('spatial_index'):
             low=np.asarray(geometry['origin_xyz'])+lo[::-1]*geometry['spacing_xyz']
@@ -183,12 +190,19 @@ def solve(run,config,stop=None,*,sweep_target=None):
             valid=inside[:-1]&inside[1:]
             a.extend(points[:-1][valid]); b.extend(points[1:][valid])
         if not a:
+            if static_bytes+4096<=config.get('constraint_cache_bytes',0):
+                static_rows[key]=None;static_bytes+=4096
             return None
         row_count+=len(a)
-        return pair_constraints(np.array(a),np.array(b),
+        result=pair_constraints(np.array(a),np.array(b),
                 np.array(geometry['origin_xyz'])+lo[::-1]*geometry['spacing_xyz'],geometry['spacing_xyz'],tuple(hi-lo),
                 weight=identity['fibre_weight'])
+        charge=4096+result.targets.nbytes+sum(a.nbytes for a in result._structural_arrays())
+        if charge<=config.get('constraint_cache_bytes',0)-static_bytes:
+            static_rows[key]=result.with_targets(result.targets);static_bytes+=charge
+        return result
 
+    constraints.prepared_key=lambda lo,hi:fibres['sha256']
     options['constraints']=pair_provider if bounded else constraints
     try:
         checkpoint=root/'CHECKPOINT.json'
