@@ -62,22 +62,49 @@ def build(root,source,source_sha,grid,*,weight,quota_bytes,reserve_bytes=0,stop=
 
 
 class PairCatalog:
-    def __init__(self,root,grid,*,max_bytes=256<<20):
+    """Immutable catalog snapshot; bounded static templates, live exterior targets.
+
+    Reopen after changing the catalog/geometry. Cached templates never own a
+    returned constraint diagonal or a snapshot of exterior field values.
+    """
+    def __init__(self,root,grid,*,max_bytes=256<<20,cache_bytes=0):
+        if type(cache_bytes) is not int or cache_bytes<0:raise ValueError('invalid constraint cache budget')
         root=Path(root);receipt=json.loads((root/'PAIRS.json').read_bytes())
         if receipt['identity']['grid']!=grid or file_sha(root/'pairs.sqlite')!=receipt['sha256']:
             raise ValueError('global pair catalog changed')
-        self.grid=grid;self.weight=receipt['identity']['weight'];self.max_bytes=max_bytes
+        self.grid=json.loads(json.dumps(grid));self.weight=receipt['identity']['weight'];self.max_bytes=max_bytes
+        self.digest=receipt['sha256'];self.cache_bytes=cache_bytes;self._templates={}
+        self.stats=dict(bytes=0,hits=0,misses=0)
         self.db=sqlite3.connect((root/'pairs.sqlite').resolve().as_uri()+'?mode=ro',uri=True)
         self.db.execute('PRAGMA cache_size=-2048')
+        self.db.execute('BEGIN')  # Pin one read snapshot for cached and uncached blocks.
+        self.db.execute('SELECT count(*) FROM pairs').fetchone()
 
     def __enter__(self):return self
 
-    def __exit__(self,*args):self.db.close()
+    def __exit__(self,*args):
+        self._templates.clear();self.stats['bytes']=0;self.db.close()
+
+    def prepared_key(self,lo,hi):return self.digest
 
     def __call__(self,lo,hi,read_nodes):
         lo=np.asarray(lo);hi=np.asarray(hi)
-        if lo.shape!=(3,) or hi.shape!=(3,) or np.any(lo<0) or np.any(hi>self.grid['shape_zyx']) or np.any(hi<=lo):
+        if (lo.dtype.kind not in 'iu' or hi.dtype.kind not in 'iu' or lo.shape!=(3,) or hi.shape!=(3,)
+                or np.any(lo<0) or np.any(hi>self.grid['shape_zyx']) or np.any(hi<=lo)):
             raise ValueError('pair restriction outside global grid')
+        key=tuple(map(int,(*lo,*hi)))
+        if key in self._templates:
+            self.stats['hits']+=1
+            template=self._templates[key]
+        else:
+            self.stats['misses']+=1
+            template=self._prepare(lo,hi)
+            charge=4096+(0 if template is None else template.nbytes)
+            if charge<=self.cache_bytes-self.stats['bytes']:
+                self._templates[key]=template;self.stats['bytes']+=charge
+        return None if template is None else template.restrict(read_nodes)
+
+    def _prepare(self,lo,hi):
         query='''SELECT p.points FROM bounds b JOIN pairs p ON p.id=b.id
             WHERE b.x1>=? AND b.x0<? AND b.y1>=? AND b.y0<? AND b.z1>=? AND b.z0<? ORDER BY p.id'''
         values=[]
@@ -97,4 +124,4 @@ class PairCatalog:
         grid_pairs=np.clip((pairs-origin)/spacing,0,last)
         rows=StencilConstraints.pairs(grid_pairs[:,0],grid_pairs[:,1],[0.]*3,
                                      [1.]*3,self.grid['shape_zyx'],weight=self.weight)
-        return rows.restrict(lo,hi,read_nodes)
+        return rows.prepare(lo,hi)
