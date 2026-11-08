@@ -1,6 +1,7 @@
 import json
 import os
 from pathlib import Path
+import shlex
 import subprocess
 import sys
 
@@ -30,7 +31,7 @@ def installer(tmp_path):
     bin=tmp_path/'bin';bin.mkdir()
     driver=bin/'driver'
     driver.write_text(f'#!{sys.executable}\n'+'''
-import json,os,sys
+import json,os,shlex,sys
 from pathlib import Path
 name=Path(sys.argv[0]).name;args=sys.argv[1:]
 with open(os.environ['INSTALL_LOG'],'a') as f:f.write(json.dumps([name,*args])+'\\n')
@@ -39,11 +40,15 @@ if name=='uv' and args[:2]==['pip','install']:
     stage='cli' if args[-1]=='.' else 'lasagna'
     if os.environ.get('INSTALL_FAIL_STAGE')==stage:sys.exit(43)
 if name=='uname':print(os.environ.get('INSTALL_OS','Linux'))
+elif name=='curl':
+    sys.stdout.write(Path(os.environ['INSTALL_SCRIPT']).read_text())
+    sys.exit(int(os.environ.get('INSTALL_CURL_EXIT','0')))
 elif name=='sudo':
     if args!=['-v']:os.execvp(args[0],args)
 elif name=='python3.12':
     assert args[:2]==['-m','venv'];dest=Path(args[2]);(dest/'bin').mkdir(parents=True)
     (dest/'bin/python').symlink_to(Path(__file__).resolve())
+    (dest/'bin/activate').write_text('export VIRTUAL_ENV='+shlex.quote(str(dest.absolute()))+'\\nexport PATH="$VIRTUAL_ENV/bin:$PATH"\\n')
 elif name=='python':
     assert args[:3]==['-m','pip','install']
     tool=Path(sys.argv[0]).with_name('uv');tool.unlink(missing_ok=True)
@@ -59,9 +64,10 @@ elif name=='winding-field':assert args==['doctor']
 elif name!='apt-get':raise AssertionError((name,args))
 ''')
     driver.chmod(0o755)
-    for name in ('uname','sudo','apt-get','python3.12'):(bin/name).symlink_to(driver)
+    for name in ('uname','sudo','apt-get','python3.12','curl'):(bin/name).symlink_to(driver)
     env=dict(os.environ,HOME=str(home),PATH=str(bin)+os.pathsep+os.environ['PATH'],
-             GIT_CONFIG_GLOBAL=str(config),GIT_CONFIG_NOSYSTEM='1',INSTALL_LOG=str(log))
+             GIT_CONFIG_GLOBAL=str(config),GIT_CONFIG_NOSYSTEM='1',INSTALL_LOG=str(log),
+             INSTALL_SCRIPT=str(SCRIPT))
     def run(*,content=None,**overrides):
         return subprocess.run(['bash',str(SCRIPT)] if content is None else ['bash'],
                               input=content,cwd=work,env=dict(env,**overrides),
@@ -164,9 +170,116 @@ def test_install_script_stops_on_dependency_failure(installer):
     assert not (work/'winding-field-cli').exists()
 
 
+def test_stdin_execution_prints_activation_instructions(installer):
+    run,_,_,_=installer
+    result=run(content=SCRIPT.read_text())
+    assert result.returncode==0,result.stderr
+    assert 'source ' in result.stdout and '.venv/bin/activate' in result.stdout
+    assert 'activated in this shell' not in result.stdout
+
+
+def test_stdin_execution_preserves_dependency_failure_status(installer):
+    run,work,_,_=installer
+    result=run(content=SCRIPT.read_text(),INSTALL_FAIL='apt-get')
+    assert result.returncode==42,result.stderr
+    assert not (work/'winding-field-cli').exists()
+
+
 def test_truncated_download_cannot_start_setup(installer):
     run,work,_,log=installer
     lines=SCRIPT.read_text().splitlines()
     result=run(content='\n'.join(lines[:len(lines)//2]))
     assert result.returncode!=0
     assert not log.exists() and not (work/'winding-field-cli').exists()
+
+
+def test_sourced_install_activates_caller_without_changing_shell_settings(installer):
+    run,work,_,_=installer
+    command=next(line for line in (ROOT/'README.md').read_text().splitlines()
+                 if line.startswith('source <('))
+    result=run(content=f'''
+set -eu
+set -o pipefail
+flags=$-
+original_directory=$PWD
+main() {{ printf 'caller function'; }}
+{command}
+[[ "$PWD" == "$original_directory" ]]
+[[ "$VIRTUAL_ENV" == "$PWD/winding-field-cli/.venv" ]]
+[[ "$(command -v winding-field)" == "$VIRTUAL_ENV/bin/winding-field" ]]
+[[ "$-" == "$flags" ]]
+[[ "$(set -o | grep '^pipefail')" == *on ]]
+[[ "$(main)" == 'caller function' ]]
+winding-field doctor
+{command}
+[[ "$VIRTUAL_ENV" == "$PWD/winding-field-cli/.venv" ]]
+printf 'CALLER_ACTIVATED\\n'
+''')
+    assert result.returncode==0,result.stderr
+    assert 'CALLER_ACTIVATED' in result.stdout
+    assert (work/'winding-field-cli/.venv/bin/activate').is_file()
+
+
+def test_sourced_install_does_not_enable_strict_options_in_caller(installer):
+    run,_,_,_=installer
+    result=run(content=f'''
+set +e +u
+set +o pipefail
+flags=$-
+source <(cat {shlex.quote(str(SCRIPT))})
+status=$?
+[[ "$status" == 0 && "$-" == "$flags" ]] || exit 90
+[[ "$(set -o | grep '^pipefail')" == *off ]] || exit 91
+[[ "$VIRTUAL_ENV" == "$PWD/winding-field-cli/.venv" ]] || exit 92
+''')
+    assert result.returncode==0,result.stderr
+
+
+@pytest.mark.parametrize('failure',[dict(INSTALL_FAIL='curl'),dict(INSTALL_CURL_EXIT='18')])
+def test_readme_quick_install_returns_download_failure_without_setup(installer,failure):
+    run,work,_,log=installer
+    command=next(line for line in (ROOT/'README.md').read_text().splitlines()
+                 if line.startswith('source <('))
+    result=run(content=f'''
+export VIRTUAL_ENV=existing-caller-environment
+original_path=$PATH
+if {command}; then
+    exit 99
+fi
+[[ "$VIRTUAL_ENV" == existing-caller-environment ]]
+[[ "$PATH" == "$original_path" ]]
+''',**failure)
+    assert result.returncode==0,result.stderr
+    assert not (work/'winding-field-cli').exists()
+    assert not any(json.loads(line)[0]=='apt-get' for line in log.read_text().splitlines())
+
+
+@pytest.mark.parametrize('failure,status',[
+    (dict(INSTALL_FAIL='apt-get'),42),
+    (dict(INSTALL_FAIL_STAGE='lasagna'),43),
+    (dict(INSTALL_OS='Darwin'),1),
+])
+def test_sourced_install_returns_failures_without_exiting_or_changing_caller(installer,failure,status):
+    run,_,_,_=installer
+    result=run(content=f'''
+set -eu
+set -o pipefail
+flags=$-
+original_directory=$PWD
+original_path=$PATH
+export VIRTUAL_ENV=existing-caller-environment
+if source <(cat {shlex.quote(str(SCRIPT))}); then
+    exit 99
+else
+    status=$?
+fi
+[[ "$status" == {status} ]]
+[[ "$PWD" == "$original_directory" ]]
+[[ "$PATH" == "$original_path" ]]
+[[ "$VIRTUAL_ENV" == existing-caller-environment ]]
+[[ "$-" == "$flags" ]]
+[[ "$(set -o | grep '^pipefail')" == *on ]]
+printf 'CALLER_ALIVE\\n'
+''',**failure)
+    assert result.returncode==0,result.stderr
+    assert 'CALLER_ALIVE' in result.stdout
