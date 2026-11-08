@@ -1,5 +1,17 @@
 # Lasagna surfaces and custom inputs
 
+Use this guide to choose where surface observations and fibres come from:
+
+| Inputs | Options | Model inference |
+| --- | --- | --- |
+| CT only | Default run | Lasagna surfaces + Qual fibres |
+| Existing surface predictions | `--lasagna-input` | Only fibre inference |
+| Existing fibres | `--fibres` | Only Lasagna surface inference |
+| Both imported | `--lasagna-input` and `--fibres` | None |
+
+Start with the [CLI installation](../README.md). Imports use a fresh output
+directory; they do not replace inputs inside an existing run.
+
 The default CT pipeline uses official Lasagna for unsigned surface normals and
 target winding density, with Qual V2 supplying fibres/splines. `--fibres` replaces
 fibre inference/tracing with an external AFV. `--lasagna-input` independently
@@ -9,17 +21,18 @@ offline local baseline.
 
 ## One-time runtime setup
 
-Skip this setup when using `--lasagna-input`. The CLI/core retain Python 3.11/3.12.
+Skip this setup when using `--lasagna-input` or the Docker images, which already
+include Lasagna. The CLI/core use Python 3.11/3.12.
 Pinned Villa Lasagna inference requires Python 3.14,
 so install it separately with [uv](https://docs.astral.sh/uv/):
 
 ```bash
+python -m pip install --upgrade pip uv
 uv python install 3.14
 uv venv --python 3.14 ~/.cache/winding-field/lasagna-venv
 uv pip install --python ~/.cache/winding-field/lasagna-venv/bin/python \
+  --constraint docker/cli.in \
   'vesuvius-lasagna @ https://github.com/ScrollPrize/villa/archive/b29f310957c7b29e7d332f9876e0e487819cfaa3.tar.gz#subdirectory=lasagna'
-~/.cache/winding-field/lasagna-venv/bin/python -I -c \
-  'from lasagna.preprocess_cos_omezarr import cli_main; raise SystemExit(cli_main())' predict3d --help
 winding-field doctor
 winding-field models --prediction lasagna
 winding-field models --prediction qual-v2
@@ -31,8 +44,10 @@ before creating its output directory. `plan` estimates storage without installin
 or running models. Use `--lasagna-python /another/venv/bin/python` to override the
 default interpreter. Keep the venv executable path, including its symlink.
 
-CUDA users must install a driver-compatible PyTorch build in this environment
-and check `torch.cuda.is_available()` there, independently of the CLI environment.
+Run the installation commands from the checkout. Its `uv.toml` selects a
+CPU/CUDA PyTorch build automatically; `docker/cli.in` keeps the supported version.
+Inference uses CPU unless you pass `--device cuda:0` to the CT run. Both the CLI
+and Lasagna environments must support the selected device.
 Runtime sources and installed dependency versions are bound to each run; changing
 them requires a new output directory.
 
@@ -56,7 +71,7 @@ winding-field run --source "$CT" --voxel-um 8.64 \
 
 Results: `lasagna-source/output/` holds official predictions,
 `fibres/fibres.afv` holds calibrated splines, and `FIELD.json` describes the field.
-This example pauses after field construction. `winding-field render
+This example stops after field construction. `winding-field render
 runs/175a-lasagna` continues the saved native surface pipeline.
 
 Qual requires uint8, isotropic 8.64–9.6 µm observations. Lasagna accepts upstream's
@@ -161,6 +176,10 @@ winding-field run --source "$CT" --voxel-um 8.64 \
   --fibres runs/175a-lasagna/fibres/fibres.afv \
   --sweeps 1 --ct-mode stream --output runs/175a-import
 ```
+
+This example requires the AFV from the earlier run. For an AFV from another
+producer, supply its calibrated frame as described below; do not guess the crop
+origin from its array shape.
 
 An AFV replaces fibre prediction and tracing, including their downloads and dense
 scratch. Surface observations come from Lasagna inference or `--lasagna-input`,

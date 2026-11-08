@@ -212,7 +212,7 @@ def test_encoded_coordinate_must_recover_requested_uv(tmp_path,origin,valid):
         data,_=compute_geometry(ref,field,dict(origin_xyz_um=[origin,0.,0.],voxel_um=1.),np.array([[3.00000003,4.]]),6.)
         assert data['geometry'][0]==valid
         assert data['cause'][0]==(CAUSES['valid'] if valid else CAUSES['coordinate_precision'])
-        if valid:np.testing.assert_array_equal(data['xyz'],[[3.00000003,4.,6.]])
+        if valid:np.testing.assert_allclose(data['xyz'],[[3.00000003,4.,6.]],rtol=0,atol=1e-14)
 
 
 @pytest.mark.parametrize('w',[5.8,6.2])

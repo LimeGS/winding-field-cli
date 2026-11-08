@@ -1,7 +1,9 @@
 # Surface and visualization tools
 
-The CLI owns mesh extraction, surface export, flattening, atlases and pictures.
-The numerical library owns field construction and numerical benchmarks.
+Use these tools for prepared fields, custom geometry and inspection. For a
+normal CT run, start with [flattening and CT export](FLATTENING.md).
+The CLI owns surface and visualization tools; it calls the numerical library for
+field construction. The checkout's `tools/bench_solver.py` measures that solver.
 
 For normal CT-run surfaces and mesh-derived TIFXYZ start with
 [the flattening guide](FLATTENING.md). The commands below serve prepared NPY
@@ -9,24 +11,22 @@ fields, frozen inspection cases and custom geometry integrations.
 
 ## Command map
 
-| Former core path/import | CLI command or import |
+| Task | Command or import |
 | --- | --- |
-| `tools/surface_export.py` | `winding-field surface-export` |
-| `tools/surface_probe.py` | `winding-field surface-probe` |
-| `tools/surface_atlas.py` | `winding-field surface-atlas` |
-| `tools/surface_geometry_check.py` | `winding-field surface-geometry-check` |
-| `tools/run_watch.py` | `winding-field run-watch` |
-| `benchmarks/winding/ct_visuals.py` | `winding-field ct-visuals` / `winding_field.ct_visuals` |
-| `src/patch_check.py` command | `winding-field patch-visuals` |
-| `surface_mesh` | `winding_field.surface_mesh` |
-| `surface_sources` | `winding_field.surface_sources` |
+| Export one local surface and optional CT | `winding-field surface-export` |
+| Freeze and inspect a surface seed | `winding-field surface-probe` |
+| Build bounded charts | `winding-field surface-atlas` |
+| Invoke an external geometry gate | `winding-field surface-geometry-check` |
+| Supervise a job with resource limits | `winding-field run-watch` |
+| Render frozen CT slices and field contours | `winding-field ct-visuals` |
+| Plot human-patch residuals | `winding-field patch-visuals` |
+| Extract/import meshes from Python | `winding_field.surface_mesh` |
+| Read supported fields from Python | `winding_field.surface_sources` |
 
-Each command also works as `python -m winding_field.<module_name>`; use underscores
-instead of hyphens. Existing export/probe/atlas flags and artifact formats are
-preserved. `patch_check.evaluate_patch`, `sample_field` and `load_patch` remain
-numerical-library APIs. The old flat surface imports and core `surface`/`plot`
-extras were removed in core version `1.3.0.dev1` (then named
-`winding-field-experiments`; now `winding-field`).
+Each command also works as `python -m winding_field.<module_name>`; replace
+hyphens with underscores. `patch-visuals`, for example, uses
+`winding_field.patch_visuals`. `patch_check.evaluate_patch`, `sample_field` and
+`load_patch` remain numerical-library APIs.
 
 Implementation-bound resumes made with the old packages require those packages;
 otherwise use a new output directory. This migration does not rewrite old receipts.
@@ -75,7 +75,7 @@ benchmark formats can use translated world frames.
 Install the optional plotting dependency after the numerical library:
 
 ```bash
-python -m pip install '.[plot]'
+uv pip install --constraint docker/cli.in '.[plot]'
 winding-field ct-visuals --case case.json --field field.npy \
   --metadata field.npy.json --output new-views
 ```
@@ -153,5 +153,6 @@ QC pictures, not physical-sheet certificates. Synthetic archives declare
 Offline example, using the installed package:
 
 ```bash
+mkdir -p runs
 python -I examples/ct_visuals.py --output runs/synthetic-views
 ```

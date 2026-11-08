@@ -1,6 +1,10 @@
 # Continuous W ranges
 
-`extract-range` extracts the explicit hypothesis
+Use `extract-range` to build one mesh across a calibrated interval of W, then
+`join-ranges` to combine compatible intervals. Start with an existing field and
+its physical geometry. This is a specific radial model, not a general sheet finder.
+
+The extractor assumes
 `theta = 2*pi*h*(W - (-60))`, with angular origin +X toward +Y and `h` equal
 to +1 or -1. It solves `field(X,Y,Z) = sheet_step * W` along each forward
 radial ray. This is **not** scalar `--levels` extraction, physical sheet
@@ -110,10 +114,12 @@ per-column audit hashes and the tile cursor. Each column's writes share one
 SQLite transaction; `block_ticks` groups at most 256 columns per transaction
 (default 16). Resume verifies committed geometry and audit checksums, and
 rebuilds topology using the existing MeshDB mechanism. Abrupt death rolls the
-unfinished transaction back. No full W-range array is materialized: working
-geometry consists of two Z columns, radial crossing/root lists, a 2x2 source
-crop and SQLite's bounded cache. Chunk sources additionally decode one source
-chunk. Space on disk scales with the full requested domain, including holes.
+unfinished transaction back. No full W-range array is materialized. Working
+memory holds two Z columns, root lists, SQLite's bounded cache and a source-plane
+cache (default 32 MiB). Python callers can set `cache_bytes=0` to disable that
+cache; planes larger than the allowance use bounded cell reads. Chunk sources
+also need decoded-chunk workspace. Disk use grows with the requested domain,
+including holes.
 
 Joining accepts complete, recipe-identical contiguous or overlapping ranges
 in any input order. Duplicates are idempotent. Every shared node record and
@@ -129,16 +135,13 @@ isolated vertices can exist in EMPTY. Successful positive tests require both
 faces and positive area. Compare direct and partitioned outputs by canonical
 keyed node/cell/vertex/face data, **not SQLite bytes or local integer row IDs**.
 
-## Validation and limits
+## Export and limits
 
-`tests/test_range_surface.py` exercises independent analytic geometry,
-calibration and anisotropic/nonzero-origin coordinates, roots and tangencies,
-fractional cuts, duplicate/reversed/overlapping joins, incompatible recipes,
-gaps, masks, EMPTY, checksum-resealed conflicts, scalar guards, CLI execution,
-and abrupt process death inside a real write transaction followed by resume.
+Use the complete range wrapper as `--mesh-bundle` with
+[historical patches](PATCHES.md) or the [solver/scope matrix](FLATTENING.md).
+Do not pass its inner `mesh/` or relabel slot 0 as a winding value. The historical
+original scalar exporter rejects continuous ranges.
 
-This initial extractor is a correctness-first one-root radial domain. It does
-not certify physical continuity, self-intersection freedom, topology between
-sampled nodes, or output flattenability. Real scan/GPU performance and memory
-admission need the planned remote smoke test. Patch flattening, CT and TIFXYZ
-publication are the separate Task 2 deliverable.
+The radial model does not prove physical continuity, freedom from
+self-intersections, topology between samples or successful flattening. An
+analytic test or small ROI does not establish full-scan resource requirements.
