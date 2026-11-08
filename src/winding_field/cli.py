@@ -147,7 +147,7 @@ def main(argv=None):
     p=sub.add_parser('demo',help='offline synthetic original-CT demonstration')
     p.add_argument('--output',required=True,help='synthetic demo run directory')
     p.add_argument('--prediction',choices=['classical','sd2'],default='classical',help='demo observation predictor (default: classical)')
-    p.add_argument('--model-path',help='local SD2 checkpoint path'); p.add_argument('--device',default='cpu',help='PyTorch device (default: cpu)')
+    p.add_argument('--model-path',help='local SD2 checkpoint path'); p.add_argument('--device',help='PyTorch device (default: CUDA when available, otherwise CPU)')
     sub.add_parser('doctor',help='report installed runtime and CUDA availability')
     p=sub.add_parser('models',help='download and verify a pinned checkpoint')
     p.add_argument('--path',help='checkpoint destination; default: model cache')
@@ -278,6 +278,9 @@ def main(argv=None):
             output=Path(args.output).expanduser().resolve()
             if output.exists():
                 raise FileExistsError('demo output already exists; use resume')
+            if args.device is None:
+                import torch
+                args.device='cuda:0' if torch.cuda.is_available() else 'cpu'
             source=synthetic(output.with_name(output.name+'-ct.zarr'))
             config=dict(source=source,output=str(output),prediction=args.prediction,model_path=args.model_path,
                         device=args.device,chunk=64,field_chunk=64,sweeps=1,seed_stride=4,chart_faces=1024,

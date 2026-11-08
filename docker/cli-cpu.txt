@@ -620,7 +620,7 @@ numpy==2.4.6 \
     #   tifffile
     #   torchvision
     #   vc-reader
-    #   winding-field-experiments
+    #   winding-field
 packaging==24.1 \
     --hash=sha256:5b8f2217dbdbd2f7f384c41c628544e6d52f2d0f53c6d0c3ea61aa5d1d7ff124
     # via
@@ -940,7 +940,7 @@ scipy==1.18.1 \
     #   avf-spline-generator
     #   libigl
     #   scikit-image
-    #   winding-field-experiments
+    #   winding-field
 setuptools==78.1.0 \
     --hash=sha256:3e386e96793c8702ae83d17b853fb93d3e09ef82ec62722e61da5cd22376dcd8
     # via torch
@@ -954,7 +954,7 @@ tifffile==2026.10.15 \
     # via
     #   winding-field-cli (pyproject.toml)
     #   scikit-image
-    #   winding-field-experiments
+    #   winding-field
 timm==1.0.22 \
     --hash=sha256:14fd74bcc17db3856b1a47d26fb305576c98579ab9d02b36714a5e6b25cde422 \
     --hash=sha256:888981753e65cbaacfc07494370138b1700a27b1f0af587f4f9b47bc024161d0
@@ -1004,7 +1004,7 @@ torch==2.10.0+cpu \
     #   dynamic-network-architectures
     #   timm
     #   torchvision
-    #   winding-field-experiments
+    #   winding-field
 torchvision==0.25.0+cpu \
     --hash=sha256:0c2d0da9bc011a0fde1d125af396a8fbe94d99becf9d313764f24ca7657a3448 \
     --hash=sha256:2d444009c0956669ada149f61ed78f257c1cc96d259efa6acf3929ca96ceb3f0 \
@@ -1052,8 +1052,8 @@ tzdata==2026.6 \
 vc-reader @ https://github.com/LimeGS/villa/archive/84207424c3a988e6cafe6b50fe7d4d7e5f839929.tar.gz#subdirectory=vc_reader \
     --hash=sha256:430b9643f8bf2e54aeaf487830c9c3a420f5f2b3f700f902cae03c6221c9c00a
     # via winding-field-cli (pyproject.toml)
-winding-field-experiments @ https://github.com/LimeGS/winding-field/archive/f6387ec8a30d61f3dd1936e1b78e6286ba9fc0e0.tar.gz \
-    --hash=sha256:3d95c549c7fb970405b7ca050ebbad33aad9ce8e9004ea8abcf5cd8f1c90b9d8
+winding-field @ https://github.com/LimeGS/winding-field/archive/5427421cfedaa5515ed0c26169dfaf0f66d444ed.tar.gz \
+    --hash=sha256:b85362f23a1b50c4ba5c1f611ed368f67fa97d0dff705cb7a212d47beff2f450
     # via
     #   -r docker/cli.in
     #   winding-field-cli (pyproject.toml)

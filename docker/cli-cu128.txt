@@ -801,7 +801,7 @@ numpy==2.4.6 \
     #   tifffile
     #   torchvision
     #   vc-reader
-    #   winding-field-experiments
+    #   winding-field
 nvidia-cublas-cu12==12.8.4.1 \
     --hash=sha256:47e9b82132fa8d2b4944e708049229601448aaad7e6f296f630f2d1a32de35af \
     --hash=sha256:8ac4e771d5a348c551b2a426eda6193c19aa630236b418086020df5ba9667142 \
@@ -1203,7 +1203,7 @@ scipy==1.18.1 \
     #   avf-spline-generator
     #   libigl
     #   scikit-image
-    #   winding-field-experiments
+    #   winding-field
 setuptools==84.2.1 \
     --hash=sha256:3ff8b3b5492a0aa66960f4419365a86b84e013070d4313e4d4a6894f5d64d6bc \
     --hash=sha256:ca140b45d5325a9478f880e351484f62fef15f336462e449ca0c03c873d589c2
@@ -1218,7 +1218,7 @@ tifffile==2026.10.15 \
     # via
     #   winding-field-cli (pyproject.toml)
     #   scikit-image
-    #   winding-field-experiments
+    #   winding-field
 timm==1.0.22 \
     --hash=sha256:14fd74bcc17db3856b1a47d26fb305576c98579ab9d02b36714a5e6b25cde422 \
     --hash=sha256:888981753e65cbaacfc07494370138b1700a27b1f0af587f4f9b47bc024161d0
@@ -1251,7 +1251,7 @@ torch==2.10.0+cu128 \
     #   dynamic-network-architectures
     #   timm
     #   torchvision
-    #   winding-field-experiments
+    #   winding-field
 torchvision==0.25.0+cu128 \
     --hash=sha256:068e519838b4a8b32a09521244b170edd8c2ac9eeb6538b7bf492cd70e57ebf5 \
     --hash=sha256:1255a0ca2bf987acf9f103b96c5c4cfe3415fc4a1eef17fa08af527a04a4f573 \
@@ -1317,8 +1317,8 @@ tzdata==2026.6 \
 vc-reader @ https://github.com/LimeGS/villa/archive/84207424c3a988e6cafe6b50fe7d4d7e5f839929.tar.gz#subdirectory=vc_reader \
     --hash=sha256:430b9643f8bf2e54aeaf487830c9c3a420f5f2b3f700f902cae03c6221c9c00a
     # via winding-field-cli (pyproject.toml)
-winding-field-experiments @ https://github.com/LimeGS/winding-field/archive/f6387ec8a30d61f3dd1936e1b78e6286ba9fc0e0.tar.gz \
-    --hash=sha256:3d95c549c7fb970405b7ca050ebbad33aad9ce8e9004ea8abcf5cd8f1c90b9d8
+winding-field @ https://github.com/LimeGS/winding-field/archive/5427421cfedaa5515ed0c26169dfaf0f66d444ed.tar.gz \
+    --hash=sha256:b85362f23a1b50c4ba5c1f611ed368f67fa97d0dff705cb7a212d47beff2f450
     # via
     #   -r docker/cli.in
     #   winding-field-cli (pyproject.toml)

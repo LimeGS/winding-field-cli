@@ -1,0 +1,5 @@
+[pip]
+torch-backend = "auto"
+
+[extra-build-variables]
+vc-reader = { CMAKE_ARGS = "-DVC_READER_ENABLE_CUDA=OFF", CMAKE_BUILD_PARALLEL_LEVEL = "2" }

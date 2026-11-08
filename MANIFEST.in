@@ -1,4 +1,5 @@
 include README.md THIRD_PARTY.md
+include uv.toml
 recursive-include licenses *.txt
 recursive-include provenance *.json
 recursive-include docs *.md *.png

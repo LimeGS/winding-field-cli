@@ -1,9 +1,9 @@
 {
   "origin": "https://github.com/LimeGS/winding-field",
-  "distribution": "winding-field-experiments",
+  "distribution": "winding-field",
   "version": "1.3.0.dev2",
-  "revision": "f6387ec8a30d61f3dd1936e1b78e6286ba9fc0e0",
-  "changes": "external dependency; bounded prepared workspaces, explicit provider invalidation, static restriction templates and PCG work buffers; no numerical core bundled in the CLI",
+  "revision": "5427421cfedaa5515ed0c26169dfaf0f66d444ed",
+  "changes": "distribution renamed to winding-field; numerical modules unchanged from f6387ec8, with bounded prepared workspaces, explicit provider invalidation, static restriction templates and PCG work buffers; no numerical core bundled in the CLI",
   "migrated_workflows": {
     "revision": "769ed1b1587fc2a275a66059e15a36b8fa7acc93",
     "changes": "moved to winding_field with tests, examples and wrappers; package imports, prepared command routing and module-based supervised launch",

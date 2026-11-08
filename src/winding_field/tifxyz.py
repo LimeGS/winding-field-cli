@@ -97,7 +97,7 @@ def _code_identity():
               'tifxyz_predicates.py','tifxyz_build.py','native/predicates.h','native/predicates.cpp','native/predicates.cu',
              'util.py', 'surface_sources.py']
     versions = {}
-    for name in ('numpy', 'scipy', 'scikit-image', 'libigl', 'tifffile', 'winding-field-experiments'):
+    for name in ('numpy', 'scipy', 'scikit-image', 'libigl', 'tifffile', 'winding-field'):
         try: versions[name] = importlib.metadata.version(name)
         except importlib.metadata.PackageNotFoundError: versions[name] = 'unavailable'
     import field_store

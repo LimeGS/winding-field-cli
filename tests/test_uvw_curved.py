@@ -203,14 +203,16 @@ def test_transport_error_cannot_hide_skinny_competing_branch(tmp_path):
         assert not valid.any()
 
 
-def test_encoded_coordinate_must_recover_requested_uv(tmp_path):
+@pytest.mark.parametrize('origin,valid',[(0.,True),(1e16,False)])
+def test_encoded_coordinate_must_recover_requested_uv(tmp_path,origin,valid):
     from winding_field.uvw_workers import compute_geometry,CAUSES
     world=np.array([[3.00000003,2.,5.],[9.,2.,5.],[9.,8.,5.],[3.00000003,8.,5.]])
     ref=Reference(world,np.array([[0,1,2],[0,2,3]]),world[:,:2],5.)
     with field_array(tmp_path,lambda p:p[...,2]) as field:
-        data,_=compute_geometry(ref,field,dict(origin_xyz_um=[0.,0.,0.],voxel_um=1.),np.array([[3.00000003,4.]]),6.)
-        assert not data['geometry'][0]
-        assert data['cause'][0]==CAUSES['coordinate_precision']
+        data,_=compute_geometry(ref,field,dict(origin_xyz_um=[origin,0.,0.],voxel_um=1.),np.array([[3.00000003,4.]]),6.)
+        assert data['geometry'][0]==valid
+        assert data['cause'][0]==(CAUSES['valid'] if valid else CAUSES['coordinate_precision'])
+        if valid:np.testing.assert_array_equal(data['xyz'],[[3.00000003,4.,6.]])
 
 
 @pytest.mark.parametrize('w',[5.8,6.2])
@@ -227,3 +229,22 @@ def test_encoded_band_endpoints_preserve_curved_correspondence(tmp_path,w):
         # The public inverse still rejects arbitrary XYZ outside the requested band.
         _,valid=xyz_to_uvw(ref,field,[[3.,4.,5.79/3]])
         assert not valid.any()
+
+
+def test_publish_exact_encoding_without_second_affine_rounding(tmp_path):
+    from winding_field.uvw_workers import compute_geometry
+    x=2286189799.342009;origin=np.array([-1996792493.6633632,0.,0.]);unit=.12345
+    world=np.array([[x-3,2.,5.],[x+3,2.,5.],[x+3,8.,5.],[x-3,8.,5.]])
+    world=((world-origin)/unit)*unit+origin
+    ref=Reference(world,np.array([[0,1,2],[0,2,3]]),np.array([[0.,2.],[6.,2.],[6.,8.],[0.,8.]]),5.)
+    uv=np.array([[3.,4.]])
+    with field_array(tmp_path,lambda p:p[...,2],origin=(x-5,0.,0.)) as field:
+        data,_=compute_geometry(ref,field,dict(origin_xyz_um=origin.tolist(),voxel_um=unit),uv,6.)
+        assert data['geometry'].all()
+        twice=((data['xyz']-origin)/unit)*unit+origin
+        recovered,_=xyz_to_uvw(ref,field,twice)
+        assert np.linalg.norm(recovered[:,:2]-uv)>1e-6
+        stored=data['encoded_xyz']*unit+origin
+        np.testing.assert_array_equal(stored,data['xyz'])
+        recovered,valid=xyz_to_uvw(ref,field,stored)
+        assert valid.all() and np.linalg.norm(recovered[:,:2]-uv)<=1e-6

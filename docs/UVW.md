@@ -90,12 +90,26 @@ level, not W. Up to 16 distinct W targets are admitted.
   elapsed level time and process peak RSS.
 - `level-NNNN/`: `image.png`, `geometry-mask.png`, `ct-mask.png`,
   `cause-mask.png`, `cell-mask.png`, `quality.json`, `LEVEL.json`.
-- `level-NNNN/tifxyz/{x,y,z}.tif`: float32 **output-frame voxel coordinates**;
+- `level-NNNN/tifxyz/{x,y,z}.tif`: float64 **output-frame voxel coordinates**;
   `meta.json` supplies origin and voxel size. Convert to physical XYZ by
   `xyz_um = xyz_tiff * voxel_um + origin_xyz_um`.
 - `tifxyz/valid-mask.png`: geometry validity, including points with unavailable
   CT. Invalid coordinates are NaN. Validity masks use 255 valid / 0 invalid.
   `cell-mask.png` has dimensions `(height-1, width-1)`.
+
+The export identity (`aligned-uvw-v2`) and TIFF metadata
+(`aligned-uvw-tifxyz-v2`) record `coordinate_dtype: float64`. Raw XYZ storage
+is 24 bytes/pixel instead of 12; coordinate buffers and I/O grow, not model
+or CT precision. Use a new output directory after this implementation change:
+old float32 checkpoints cannot be resumed or mixed with float64 products.
+Existing original references remain readable without modification.
+
+The [pinned upstream TIFXYZ specification](https://github.com/ScrollPrize/villa/blob/b29f310957c7b29e7d332f9876e0e487819cfaa3/lasagna/tifxyz_format.md)
+allows 32- or 64-bit floating samples. Its
+[VC3D reader](https://github.com/ScrollPrize/villa/blob/b29f310957c7b29e7d332f9876e0e487819cfaa3/volume-cartographer/core/src/QuadSurface.cpp#L2782-L2819)
+accepts 64-bit samples but converts them to internal float32 coordinates;
+that downstream conversion does not retain our stored precision. Actual external
+VC3D binary readback has not been qualified here.
 
 `cause-mask.png` codes: 0 valid, 1 reference outside/excess projection,
 2 distinct reference UV branches, 3 invalid initial field, 4 zero gradient,
@@ -106,6 +120,11 @@ Unsupported paths include
 out-of-field or unusable intermediate samples. CT missingness is separate.
 The preview uses the original fixed intensity window 0–180. Black pixels
 are **not** evidence of air; inspect both masks.
+
+`UVW_READY_DIAGNOSTIC` means at least one requested level retained geometry, not
+that all levels share usable coverage or that CT is available. When every level
+has zero valid geometry, the receipt is `UVW_EMPTY_DIAGNOSTIC`; masks and rejection
+causes are still published and resumable. Neither status is physical acceptance.
 
 ## Python API
 
@@ -182,10 +201,18 @@ may be projected at most 0.25 spacing; final normal residual is at most 0.05
 spacing and checked roundtrip error at most 0.25 spacing. Integration has a
 4,096-iteration bound.
 
-The exporter checks the actual float32 coordinate representation before CT
+The exporter checks the actual float64 coordinate representation before CT
 sampling: rounding must be at most 0.01 spacing, and the stored points must
 pass the field residual and backward roundtrip checks. TIFFs are read back
-before publication.
+before publication. Checkpoints retain the exact validated voxel encoding;
+publication does not re-encode physical XYZ and introduce a second rounding.
+The unique inverse of the stored coordinates must also recover the requested UV
+within **1e−6 µm**. Float64 avoids the observed float32 rounding failure at global
+scroll coordinates without relaxing that gate. Extreme origins or ill-conditioned
+frames can still lose precision even in float64 and remain rejected. A nearby
+output-frame origin reduces coordinate magnitudes, but does not guarantee coverage.
+Do not edit a retained reference's frame or relax inverse/ambiguity checks to make
+rejected samples pass. Create a fresh reference and export when changing the frame.
 
 Forward mapping, inverse mapping and export share the same ambiguity admission.
 The inverse flows back to reference W and searches the actual curved gradient

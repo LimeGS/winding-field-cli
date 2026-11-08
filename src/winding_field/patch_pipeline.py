@@ -493,7 +493,7 @@ def open_mesh(path):
             if file_sha(path/'RANGE.json')!=reader.receipt_sha:raise ValueError('range wrapper changed during export')
     else:
         with MeshReader(path) as reader:
-            kind=reader.manifest['identity']['kind']
+            kind=reader.manifest['identity'].get('kind','scalar_isosurface')
             if kind=='continuous_range':raise ValueError('patch continuous range requires its RANGE.json wrapper')
             yield reader,dict(kind=kind,storage_slot_semantics='each saved mesh level is exported independently')
 
