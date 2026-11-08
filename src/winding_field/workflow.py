@@ -40,9 +40,9 @@ def implementation_sha():
            if p.suffix in ('.py','.json')}
     dependencies={name:importlib.metadata.version(name) for name in
                   ('torch','numpy','scipy','numba','dynamic-network-architectures','avf-spline-generator',
-                   'winding-field-experiments')}
-    core=importlib.metadata.distribution('winding-field-experiments')
-    files['winding-field-experiments']={name:file_sha(importlib.util.find_spec(name).origin)
+                    'winding-field')}
+    core=importlib.metadata.distribution('winding-field')
+    files['winding-field']={name:file_sha(importlib.util.find_spec(name).origin)
                                       for name in sorted(core.read_text('top_level.txt').splitlines())}
     for name in ('avf_spline_generator','dynamic_network_architectures'):
         root=Path(next(iter(importlib.util.find_spec(name).submodule_search_locations)))

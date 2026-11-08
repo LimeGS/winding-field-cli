@@ -1,4 +1,5 @@
 include README.md THIRD_PARTY.md
+include uv.toml
 recursive-include licenses *.txt
 recursive-include provenance *.json
 recursive-include docs *.md *.png
@@ -13,4 +14,4 @@ include examples/*.json
 include tools/run_field.py
 include tools/run_surfaces.py
 include tools/benchmark_blocks.py
-recursive-include benchmarks/performance *.py
+include tools/bench_solver.py

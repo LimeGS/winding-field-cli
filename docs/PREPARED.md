@@ -1,10 +1,16 @@
 # Prepared fields, surfaces and rendering
 
-These workflows live in **winding-field-cli** and call the installed original
-`winding-field-experiments` library. The library owns numerical operators,
-constraints, block storage and observation sources. The CLI owns recipes,
-command dispatch, prepared execution, field readers for postprocessing,
-geometric extraction, surface exports and PNG rendering.
+Use `prepared` when you already have observation arrays, a field or a mesh.
+For raw CT and model inference, use [the main pipeline](../README.md) instead.
+
+| Input | Command | Result |
+| --- | --- | --- |
+| Target gradients, weights and support arrays | `prepared build` | Block field checkpoint |
+| NPY/chunk field or OBJ/NPZ mesh | `prepared surfaces` | Indexed mesh and geometry previews |
+| Existing indexed mesh | `prepared render` | Geometry PNGs, not CT images |
+
+The CLI owns these workflows and calls the installed `winding-field` numerical
+library. Install them together using [the installation guide](../README.md).
 
 ## Build and resume a prepared field
 
@@ -209,11 +215,10 @@ diagnostics do not establish physical sheet correctness. Disk admission measures
 free space; it cannot reserve it against other jobs. Additional working memory
 and Unix locking/fsync semantics are required.
 
-## Migration
+## Older runs
 
-Replace imports of `field_workflow`, `surface_workflow`, `surface_render` with
-their `winding_field.*` names and prefix former prepared commands with
-`winding-field prepared`. Install both distributions together; only the CLI
-registers the executable. Resume identities include the external library's code.
-Use the original packages to resume runs created before this separation, or start
-a new output. Existing receipts are never rewritten to bypass that check.
+Imports use `winding_field.field_workflow`, `winding_field.surface_workflow` and
+`winding_field.surface_render`; only the CLI provides the `winding-field` command.
+Resume identities include the numerical library's code. Use the original runtime
+for incompatible old runs, or start a fresh output. Do not edit receipts to bypass
+that check.

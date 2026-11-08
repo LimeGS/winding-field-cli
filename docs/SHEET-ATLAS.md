@@ -6,8 +6,13 @@ physical pixel pitch, with a local-file pan/zoom viewer and stored-pixel XYZ loo
 ```bash
 winding-field sheet-atlas build --sheets W-59/SHEET.json W-60/SHEET.json W-61/SHEET.json \
   --output atlas
+winding-field sheet-atlas verify --atlas atlas
 winding-field sheet-atlas query atlas 1200 4500
 ```
+
+Create the inputs with [constant-sheet](CONSTANT-SHEET.md), using the same
+physical frame, CT, pixel pitch and reference Z. This command packages existing
+sheets; it does not extract or flatten them. `atlas` must be a new directory.
 
 Open `atlas/index.html` directly. Drag to pan, scroll or use the buttons to zoom;
 keyboard arrows, `+`, `-`, and `Home` also work. It loads previews at low zoom and

@@ -1,11 +1,13 @@
 # Constant-W sheets, from exact mesh to CT atlas
 
-`winding-field constant-sheet` installs the recipe used for the latest W−60
-diagnostic. It consumes a verified `MESH.json`/`mesh.sqlite` extraction. W is
-normalized (`raw level / sheet_step`), not a filename or CT pyramid level.
-Install the existing `[tifxyz,ct]` extras for libigl and native CT sampling.
-These bounded stages run on Linux; native Flatboi additionally requires its
-pinned AppRun and a cgroup v2 envelope.
+Use `winding-field constant-sheet` to prepare, flatten and render one constant-W
+mesh. Input: a verified `MESH.json`/`mesh.sqlite` bundle and a centerline.
+Output: a CT sheet that can be added to a [sheet atlas](SHEET-ATLAS.md).
+
+W is `raw field level / sheet_step`, not the CT pyramid level. Follow the
+[installation guide](../README.md) and install the `tifxyz` extra.
+These stages require Linux; native Flatboi also needs its pinned AppRun and a
+cgroup v2 memory/swap limit. Docker supplies the [supported runtime](DOCKER.md).
 
 `flatten` and `import-native` default to `--native-recipe installed-2f89bfc9`.
 For the official Villa stable release in [native provenance](../provenance/flatboi.json),
@@ -23,7 +25,7 @@ winding-field constant-sheet prepare --mesh /data/extraction --w -61 \
 
 systemd-run --user --wait --pipe -p MemoryMax=21G -p MemorySwapMax=64G \
   winding-field constant-sheet flatten --prepared /data/W-61-prepared \
-  --app-run /opt/vc3d/AppRun --output /data/W-61-native
+  --app-run /opt/vc3d/AppRun --native-recipe historical --output /data/W-61-native
 
 watch -n 2 winding-field constant-sheet status --native /data/W-61-native
 # --json gives machine-readable status. Calculadas includes the active batch;
@@ -36,11 +38,16 @@ systemd-run --user --wait --pipe -p MemoryMax=6G -p MemorySwapMax=0 \
   winding-field constant-sheet render --validated /data/W-61-validated \
   --config /data/render.json --output /data/W-61-sheet
 
-winding-field sheet-atlas build --sheets /data/W-59-sheet/SHEET.json \
-  /data/W-60-sheet/SHEET.json /data/W-61-sheet/SHEET.json --output /data/atlas
+winding-field sheet-atlas build --sheets /data/W-61-sheet/SHEET.json --output /data/atlas
 winding-field sheet-atlas verify --atlas /data/atlas
 winding-field sheet-atlas query /data/atlas 120 300
 ```
+
+Replace `/data/...`, W and `--reference-z` with your calibrated inputs. The
+examples select the official `historical` binary shipped in Docker. To package
+several sheets, pass all their `SHEET.json` paths after `--sheets`. On systems
+without user systemd, use a host/container that provides the required cgroup
+limits; do not omit them to bypass admission.
 
 Preparation selects the component with greatest physical area, retains every
 other component separately, and cuts existing edges near +X. An input already
@@ -102,7 +109,7 @@ preparations embed it and reject a contradictory replacement.
 ```sh
 winding-field constant-sheet import-native --prepared /data/W-59-prepared \
   --native /data/old-W-59/native --runner-sha256 ORIGINAL_RUNNER_SHA256 \
-  --app-run /opt/vc3d/AppRun --output /data/new-W-59-native
+  --app-run /opt/vc3d/AppRun --native-recipe historical --output /data/new-W-59-native
 ```
 
 The original runner hash is an explicit provenance pin, not a bypass for

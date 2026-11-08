@@ -72,11 +72,10 @@ def test_bounded_fibres_publish_global_curves_and_resume_without_duplicate_ident
     assert file_sha(tmp_path/'fibres/fibres.sqlite')==sha
 
 
-def test_bounded_field_uses_retained_coarse_prior_and_existing_block_backend(tmp_path):
+def coarse_field(tmp_path):
     import json
     import sqlite3
     from winding_field.artifacts import Tiles
-    from winding_field.field import solve
     from winding_field.util import file_sha
     grid=dict(shape_zyx=[5]*3,spacing_xyz=[1.]*3,origin_xyz=[0.]*3,frame='test')
     maps=Tiles(tmp_path/'coarse/maps',[5]*3,4,{'fixture':'coarse'})
@@ -92,6 +91,11 @@ def test_bounded_field_uses_retained_coarse_prior_and_existing_block_backend(tmp
     with sqlite3.connect(tmp_path/'fibres/fibres.sqlite') as db:
         db.execute('CREATE TABLE curves(id INTEGER PRIMARY KEY,points BLOB)')
     (tmp_path/'FIBRES.json').write_text(json.dumps(dict(sha256=file_sha(tmp_path/'fibres/fibres.sqlite'))))
+
+
+def test_bounded_field_uses_retained_coarse_prior_and_existing_block_backend(tmp_path):
+    from winding_field.field import solve
+    coarse_field(tmp_path)
     result=solve(tmp_path,dict(field_chunk=4,sweeps=2,device='cpu',rtol=1e-6,bounded_bytes=16<<20))
     assert result['status']=='FIELD_READY' and result['global_converged'] is True
     assert result['solver_backend']['device']=='cpu'
@@ -103,6 +107,57 @@ def test_bounded_field_uses_retained_coarse_prior_and_existing_block_backend(tmp
     with open_field(tmp_path) as source:
         levels,_=select_levels(tmp_path,{},source)
     np.testing.assert_allclose(levels,[1.,2.,3.],rtol=0,atol=1e-14)
+
+
+def test_bounded_cuda_resume_initializes_allocator_in_fresh_process(tmp_path):
+    import json
+    from pathlib import Path
+    import subprocess
+    import sys
+    import torch
+    from winding_field import field
+    if not torch.cuda.is_available():pytest.skip('requires a real CUDA device')
+    initialized=torch.cuda.is_initialized()
+    coarse_field(tmp_path)
+    config=dict(field_chunk=4,sweeps=2,device='cuda:0',rtol=1e-6,bounded_bytes=16<<20)
+    arguments=[str(Path(field.__file__).parents[1]),str(tmp_path),json.dumps(config)]
+    setup='''
+import json,sys,torch
+sys.path.insert(0,sys.argv[1])
+from winding_field import field
+torch.empty(0,device='cuda:0')
+publish=field.atomic_json
+def interrupt_receipt(path,data):
+    if path.name=='FIELD.json':raise InterruptedError('before field publication')
+    return publish(path,data)
+field.atomic_json=interrupt_receipt
+try:field.solve(sys.argv[2],json.loads(sys.argv[3]))
+except InterruptedError as error:assert str(error)=='before field publication'
+else:raise AssertionError('field publication was not interrupted')
+'''
+    initial=subprocess.run([sys.executable,'-I','-c',setup,*arguments],capture_output=True,text=True,timeout=120)
+    assert initial.returncode==0,initial.stdout+initial.stderr
+    assert not (tmp_path/'FIELD.json').exists()
+    code='''
+import json,sys,torch
+from pathlib import Path
+sys.path.insert(0,sys.argv[1])
+from winding_field.field import solve
+assert not torch.cuda.is_initialized()
+result=solve(sys.argv[2],json.loads(sys.argv[3]),sweep_target=3)
+assert result['status']=='FIELD_READY' and result['global_converged']
+assert result['solver_backend']['device']=='cuda:0'
+checkpoint=json.loads((Path(sys.argv[2])/'field/CHECKPOINT.json').read_text())
+assert len(checkpoint['progress']['completed_sweeps'])==3
+'''
+    command=[sys.executable,'-I','-c',code,*arguments]
+    result=subprocess.run(command,capture_output=True,text=True,timeout=120)
+    assert result.returncode==0,result.stdout+result.stderr
+    before=(tmp_path/'field/CHECKPOINT.json').read_bytes()
+    repeated=subprocess.run(command,capture_output=True,text=True,timeout=120)
+    assert repeated.returncode==0,repeated.stdout+repeated.stderr
+    assert (tmp_path/'field/CHECKPOINT.json').read_bytes()==before
+    assert torch.cuda.is_initialized()==initialized
 
 
 def test_public_bounded_plan_uses_existing_cuda_chunk_and_separates_native_retention(tmp_path):

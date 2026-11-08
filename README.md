@@ -1,57 +1,75 @@
 # winding-field-cli
 
+[![Audit](https://github.com/LimeGS/winding-field-cli/actions/workflows/tests.yml/badge.svg?branch=main&event=push)](https://github.com/LimeGS/winding-field-cli/actions/workflows/tests.yml)
+[![Coverage (local): 84.01%](https://img.shields.io/badge/coverage%20%28local%29-84.01%25-brightgreen)](#checks)
+[![Code license: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
+
 ![Illustrated workflow: original CT → Lasagna surfaces + Qual V2 fibres/splines → winding field → 3D meshes → flattened charts](docs/assets/workflow-banner.png)
 
 Build a winding field from scroll CT, then extract meshes and CT-textured surfaces.
 Defaults: Lasagna surface observations, Qual V2 fibres/splines, native surface
 output. Saved stages let you stop and continue later.
 
-Follow **1–2** for a full scroll or **1 → 3** for a region; **4** resumes work,
-**5** exports surfaces, and **6** reuses existing inputs.
+Start with **1 → 3** for a small region. Use **1–2** for a full scroll only when
+its plan fits your resources; **4** resumes work, **5** exports surfaces,
+**6** reuses existing inputs, **7** summarizes options and results, and **8** links
+to the detailed guides.
 
 <details>
 <summary><strong>1. Install</strong></summary>
 
-For Linux x86-64 CPU or NVIDIA CUDA containers covering the full CLI, see
-[Docker build, mounts and workflows](docs/DOCKER.md).
+Run these steps in order. For a ready-to-build Linux CPU/CUDA environment, use
+[Docker](docs/DOCKER.md) instead.
 
-Use **Python 3.11 or 3.12** on Linux/macOS. Install the numerical core at the
-revision recorded in this checkout, then the CLI, in the same environment:
+**A. Install system dependencies (Linux)**
+
+Ubuntu 24.04 (omit `sudo` when running as root):
+
+```bash
+sudo apt-get update
+sudo apt-get install -y \
+  python3.12-venv python3.12-dev git build-essential cmake ninja-build pkg-config \
+  nlohmann-json3-dev libcurl4-openssl-dev libsqlite3-dev \
+  libblosc-dev libzstd-dev liblz4-dev zlib1g-dev \
+  libtiff-dev libpng-dev libjpeg-dev
+```
+
+**B. Install the CLI** — use Python 3.12 below; Python 3.11 is also supported.
+CPU or CUDA is selected automatically from the available hardware and driver.
 
 ```bash
 git clone https://github.com/LimeGS/winding-field-cli.git
 cd winding-field-cli
-python3.11 -m venv .venv
+python3.12 -m venv .venv
 source .venv/bin/activate
-CORE_REV=$(python -c "import json; print(json.load(open('provenance/core.json'))['revision'])")
-python -m pip install \
-  "winding-field-experiments @ https://github.com/LimeGS/winding-field/archive/$CORE_REV.tar.gz" .
-winding-field doctor
+python -m pip install --upgrade pip uv
+
+uv pip install --constraint docker/cli.in .
 ```
 
-Default CT runs also need official Lasagna under **Python 3.14**, in a separate
-environment. Install it once without activating it:
+**C. Install Lasagna** — required for the default CT pipeline. Skip only if you
+use existing predictions with `--lasagna-input` or the classical predictor.
 
 ```bash
-python -m pip install uv
 uv python install 3.14
 uv venv --python 3.14 ~/.cache/winding-field/lasagna-venv
 uv pip install --python ~/.cache/winding-field/lasagna-venv/bin/python \
+  --constraint docker/cli.in \
   'vesuvius-lasagna @ https://github.com/ScrollPrize/villa/archive/b29f310957c7b29e7d332f9876e0e487819cfaa3.tar.gz#subdirectory=lasagna'
 ```
 
-The CLI finds this runtime automatically. Model weights download on first use.
-CUDA requires compatible PyTorch in both environments; see
-[runtime setup](docs/LASAGNA.md#one-time-runtime-setup).
-Importing existing predictions with `--lasagna-input` skips this Lasagna setup.
+Lasagna needs its own Python 3.14 environment. Do **not** activate it: the CLI
+finds it automatically. Model weights download on first use.
 
-Optional offline installation check (no model downloads):
+**D. Check the installation** — no model downloads:
 
 ```bash
+winding-field doctor
 winding-field demo --output runs/demo
 ```
 
-Open `runs/demo/index.html`. Use a new output directory for each demo.
+The demo uses CUDA when available, otherwise CPU. Open `runs/demo/index.html`.
+Use a new output directory for each demo.
 
 </details>
 
@@ -61,6 +79,10 @@ Open `runs/demo/index.html`. Use a new output directory for each demo.
 Select the original CT, inspect storage/grid estimates, then run. Replace this
 public scan URL with your own URL or local 3D Zarr v2 path as needed.
 **No `--roi` means the entire selected CT level.**
+At native resolution, this scan's default preparation/product estimate is about
+**134 TB**, even with a coarse field. A typical GPU server cannot run this example
+unchanged. Use the ROI in section 3 when the plan exceeds available disk; do not
+bypass the admission check.
 
 ```bash
 CT='s3://vesuvius-challenge-open-data/PHerc0175A/volumes/20250521115057-8.640um-1.2m-116keV-masked.zarr'
@@ -88,6 +110,10 @@ For bounded preparation, add `--bounded-preparation` to both commands: recompute
 model windows, retain coarse observations and global fibre constraints, and gate
 field publication on global numerical verification. Requires `--field-spacing-um`,
 Qual V2, stride 1, no custom inputs, and ROI origins divisible by 4.
+This trades retained arrays for recomputed context windows: even a small ROI can
+be much slower on CPU than the ordinary ROI recipe. Prefer CUDA when available;
+no whole-scroll throughput is established. Its endpoint-aligned field grid may
+have a slightly different pitch from the requested maximum; inspect `plan`.
 
 Qual requires **uint8, isotropic 8.64–9.6 µm observations**. Set `--voxel-um`
 to the actual CT scale and choose `--level`/`--stride` accordingly. Field pitch
@@ -130,10 +156,12 @@ Point `RUN` at the complete run, not its `field/` subdirectory. Press Ctrl-C or
 create `STOP` from another terminal, then wait for the process to exit:
 
 ```bash
-RUN=runs/175a-full
+RUN=runs/175a-roi
 winding-field status "$RUN"
 touch "$RUN/STOP"
 ```
+
+Use `RUN=runs/175a-full` instead if you admitted and started the full-scroll run.
 
 Continue through field construction or through the selected terminal stage:
 
@@ -193,7 +221,7 @@ masks in `level-*/component-*/`. The saved run configuration selects the branch.
 Install the export dependencies once in your active environment:
 
 ```bash
-python -m pip install '.[tifxyz]'
+uv pip install --constraint docker/cli.in '.[tifxyz]'
 ```
 
 Prepare two [configuration files](docs/FLATTENING.md#configuration-files):
@@ -241,6 +269,16 @@ All four solver/scope combinations preserve source IDs and support resumable CT/
 export. SLIM needs pinned Flatboi; LSCM does not. Do not mix these flags with
 historical `--flattening-method` recipes. UVW outputs are diagnostic: inspect
 coverage and deformation before using side cuts through the stack.
+SLIM also requires a cgroup v2 memory/swap envelope; a regular unprivileged
+container without that host setup cannot run it. These requirements do not apply
+to the default native renderer.
+
+Inspect the result, not just the exit code. A completed workflow does not certify
+global convergence or physical sheet correctness. Native `PARTIAL` can mean that
+requested XYZ cells could not be formed; direct TIFXYZ `BLOCKED` publishes no
+READY/PARTIAL delivery. `UVW_EMPTY_DIAGNOSTIC` means no requested level retained
+any valid geometry. Black CT pixels can be real acquisition zeros: inspect masks
+and coverage rather than treating a saved image as a useful reconstruction.
 
 All CT reads and sampling require the pinned `vc_reader`, installed with the CLI.
 Sampling uses verified native float64 interpolation; there is no backend setting.
@@ -314,12 +352,15 @@ model. Keep the original prediction files for hash-verified resume.
 
 </details>
 
-## Options and results at a glance
+<details>
+<summary><strong>7. Custom options</strong></summary>
+
+### Options and results at a glance
 
 | Option | Meaning |
 | --- | --- |
-| `--level` / `--levels` | CT pyramid level / winding W isovalues |
-| `--stride` / `--field-spacing-um` | Observation sampling / independent solve-grid pitch |
+| `--level` / `--levels` | CT pyramid level / raw field isovalues (`W × sheet_step`) |
+| `--stride` / `--field-spacing-um` | Observation sampling / independent solve-grid pitch; bounded preparation uses endpoint-aligned spacing |
 | `--lasagna-input FILE` / `--lasagna-geometry FILE` | Import local surface predictions / explicit base-grid calibration; omit `--bounded-preparation` |
 | `--surface-output native\|atlas\|tifxyz` | Native default / legacy charts and gallery / experimental direct-field export |
 | `--flattening-method original --flattening-config FILE` | Global LSCM with explicit output frame; independent of field resolution |
@@ -341,8 +382,6 @@ model. Keep the original prediction files for hash-verified resume.
 | Atlas-only charts and gallery | `flat/`, `index.html` |
 | Direct-field publication | `tifxyz/TIFXYZ.json` and `READY.json` or `PARTIAL.json` |
 
-Native output does not create the atlas gallery. XYZ units, masks, coverage,
-resume contracts and resource limits are documented in [FORMATS](docs/FORMATS.md).
 For complete flags use command-specific help:
 
 ```bash
@@ -354,9 +393,57 @@ winding-field tifxyz --help
 winding-field verify-tifxyz --help
 ```
 
+</details>
+
+<details>
+<summary><strong>8. Extra docs</strong></summary>
+
 [Flattening](docs/FLATTENING.md) · [Constant-W visual atlas](docs/SHEET-ATLAS.md) · [Lasagna and AFV](docs/LASAGNA.md) ·
 [Streaming](docs/STREAMING.md) · [Prepared workflows](docs/PREPARED.md) ·
 [Surface tools](docs/SURFACE_TOOLS.md) · [Attribution](THIRD_PARTY.md)
 
-Research output: physical sheet correctness and global convergence remain
-unvalidated; whole-scroll native-resolution throughput is not established.
+### Checks
+
+The Audit badge follows installed-package CI pushes on `main`. Coverage is a
+local snapshot of this CLI package, not the numerical core's coverage or a live
+feed. On **2026-11-08**, the installed-package suite on **macOS arm64 / Python
+3.12** passed **1,812 tests**, with **41 skipped** (Linux/CUDA and opt-in external
+controls). Statement coverage was **84.01%**: 14,683 of 17,478 statements across
+99 Python files, measured with coverage.py 7.17.2. This is not GPU/Docker
+qualification. To run the checks from the checkout:
+
+```bash
+uv pip install --constraint docker/cli.in '.[test,tifxyz]' pytest-cov
+python -m pytest -q --cov=winding_field --cov-report=term-missing
+```
+
+</details>
+
+## Credits
+
+Built on tools and open work from the **Vesuvius Challenge community**:
+
+- [Lasagna](https://github.com/ScrollPrize/villa/tree/main/lasagna): surface
+  observations and released model checkpoints.
+- [Qual AFV fibre V2](https://huggingface.co/Qualzz20/afv_fiber_9um_v2) and
+  [AVF Spline Generator](https://github.com/Qualzz/AVF_SPLINE_GENERATOR): fibre
+  predictions, tracing and splines.
+- [vc_reader](https://github.com/LimeGS/villa/tree/84207424c3a988e6cafe6b50fe7d4d7e5f839929/vc_reader):
+  native CT/Zarr access, caching and sampling.
+- [Flatboi / VC3D](https://github.com/ScrollPrize/villa/tree/main/volume-cartographer):
+  native SLIM flattening and the surrounding surface tools.
+- [Villa](https://github.com/ScrollPrize/villa): SD2 model code, AFV/Lasagna/TIFXYZ
+  formats and shared community tooling.
+- [winding-field](https://github.com/LimeGS/winding-field): numerical field solver;
+  [libigl](https://libigl.github.io/) and
+  [tifffile](https://github.com/cgohlke/tifffile): geometry and TIFF support.
+
+Thanks to their authors, maintainers and the community publishing scroll data
+and models. Exact source pins, adaptations and notices are in
+[THIRD_PARTY.md](THIRD_PARTY.md) and [provenance/](provenance/).
+
+## License
+
+[MIT](LICENSE) applies to repository-authored code. External tools, bundled
+upstream code, model weights and datasets retain their own licenses and terms;
+see [attribution and notices](THIRD_PARTY.md).

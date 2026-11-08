@@ -3,7 +3,7 @@
 ## Winding-field numerical core
 
 The original [winding-field](https://github.com/LimeGS/winding-field) library is
-installed as `winding-field-experiments==1.3.0.dev2`. Numerical modules are imported
+installed as `winding-field==1.3.0.dev2`. Numerical modules are imported
 directly from that distribution; no numerical core is bundled here. The original
 revision and numerical source hashes are recorded in `provenance/core.json`.
 
@@ -83,6 +83,29 @@ The model is downloaded separately from `scrollprize/lasagna/model_current.pt`.
 Exact runtime/checkpoint pins and the adapter settings are in
 `provenance/lasagna.json`; weights are not bundled. The upstream model card lists
 MIT, without documenting coverage for every scroll.
+
+## vc_reader
+
+Native CT/Zarr transport, decoding and sampling use the separately installed
+[`vc-reader`](https://github.com/LimeGS/villa/tree/84207424c3a988e6cafe6b50fe7d4d7e5f839929/vc_reader)
+package from the LimeGS Villa fork, revision
+`84207424c3a988e6cafe6b50fe7d4d7e5f839929`. Its package metadata declares MIT.
+The CLI retains source hashes, geometry, missing-data and resource checks around
+that dependency; it does not bundle a copy of the native reader.
+
+## Flatboi and VC3D
+
+SLIM flattening invokes the external Flatboi executable from
+[VC3D / Volume Cartographer](https://github.com/ScrollPrize/villa/tree/main/volume-cartographer).
+The official archive URL, source revision and executable hashes are recorded in
+[`provenance/flatboi.json`](provenance/flatboi.json). Docker downloads and extracts
+that archive; the Python wheel does not bundle the executable.
+
+Volume Cartographer derives from EduceLab's project and the Vesuvius community
+forks, including the work of Hendrik Schilling and Sean Johnson. Its
+[upstream license](https://github.com/ScrollPrize/villa/blob/fc25b4d1f160b494eee5e5f69726df2c1008bf26/volume-cartographer/LICENSE)
+is GPL-3.0; the archive and its third-party components retain their upstream
+notices and terms. This repository's MIT license does not relicense those tools.
 
 ## SD2 weights
 

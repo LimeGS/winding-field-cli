@@ -230,7 +230,10 @@ def solve(run,config,stop=None,*,sweep_target=None):
         if bounded:
             import torch
             device=torch.device(config.get('device','cpu'))
-            if device.type=='cuda':torch.cuda.reset_peak_memory_stats(device)
+            if device.type=='cuda':
+                # A fresh resume has not initialized the CUDA allocator through inference.
+                torch.empty(0,device=device)
+                torch.cuda.reset_peak_memory_stats(device)
         result=solve_blocks(root,shape,chunk,identity,load,resume=True,stop=stop,**options)
         if result['status']=='SWEEP_BUDGET_REACHED' and sweep_target is not None and sweep_target>sweeps:
             options['sweeps']=extend(root,sweep_target,config.get('sweeps',4),

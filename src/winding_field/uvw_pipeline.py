@@ -147,7 +147,7 @@ def _render_level(out,db,index,w,ref,metadata,field,volume,identity,guard,worker
         return record
     if target.exists():raise ValueError('unbound UVW publication')
     canvas=metadata['canvas'];n=canvas['width'];total=n*n;start_time=time.monotonic()
-    arrays=dict(xyz=np.full((total,3),np.nan),base=np.full((total,3),np.nan),reference_valid=np.zeros(total,bool),
+    arrays=dict(xyz=np.full((total,3),np.nan),encoded_xyz=np.full((total,3),np.nan),base=np.full((total,3),np.nan),reference_valid=np.zeros(total,bool),
         geometry=np.zeros(total,bool),ct=np.zeros(total,bool),value=np.full(total,np.nan),cause=np.ones(total,np.uint8),
         residual=np.full(total,np.nan),roundtrip=np.full(total,np.nan),coordinate_rounding=np.full(total,np.nan))
     missing=set();metrics=[]
@@ -188,7 +188,7 @@ def _render_level(out,db,index,w,ref,metadata,field,volume,identity,guard,worker
             end=min(start+BATCH,total)
             for key in arrays:arrays[key][start:end]=data[key]
             metrics.append(json.loads(str(data['_metrics'])))
-    for key in arrays:arrays[key]=arrays[key].reshape((n,n,3) if key in ('xyz','base') else (n,n))
+    for key in arrays:arrays[key]=arrays[key].reshape((n,n,3) if key in ('xyz','encoded_xyz','base') else (n,n))
     tick=time.perf_counter()
     geometry,cells,bad,jacobian=_sampled_cells(arrays['xyz'],arrays['base'],arrays['geometry'],field,pitch_um=canvas['pitch_um'])
     timings['jacobian_seconds']=time.perf_counter()-tick
@@ -219,12 +219,14 @@ def _render_level(out,db,index,w,ref,metadata,field,volume,identity,guard,worker
         ('ct-mask.png',ct.astype(np.uint8)*255),('cause-mask.png',arrays['cause']),('cell-mask.png',cells.astype(np.uint8)*255),
         ('tifxyz/valid-mask.png',geometry.astype(np.uint8)*255)]:Image.fromarray(data).save(pending/filename)
     import tifffile
-    frame=metadata['output_frame'];coordinates=(xyz-np.asarray(frame['origin_xyz_um']))/frame['voxel_um']
+    # Publish the exact encoding validated by workers; another affine conversion can add rounding.
+    frame=metadata['output_frame'];coordinates=arrays['encoded_xyz'];coordinates[~geometry]=np.nan
     for axis,label in enumerate('xyz'):
-        path=pending/'tifxyz'/f'{label}.tif';encoded=coordinates[:,:,axis].astype(np.float32)
+        path=pending/'tifxyz'/f'{label}.tif';encoded=coordinates[:,:,axis].astype(np.float64)
         tifffile.imwrite(path,encoded,metadata=None)
-        if not np.array_equal(tifffile.imread(path),encoded,equal_nan=True):raise ValueError('TIFXYZ readback differs')
-    atomic_json(pending/'tifxyz/meta.json',dict(schema='aligned-uvw-tifxyz-v1',w=w,coordinate_units='output-frame voxels',
+        readback=tifffile.imread(path)
+        if readback.dtype!=np.float64 or not np.array_equal(readback,encoded,equal_nan=True):raise ValueError('TIFXYZ readback differs')
+    atomic_json(pending/'tifxyz/meta.json',dict(schema='aligned-uvw-tifxyz-v2',coordinate_dtype='float64',w=w,coordinate_units='output-frame voxels',
         output_frame=frame,canvas=canvas,row_direction='decreasing V',invalid_coordinates='NaN',
         validity_mask='valid-mask.png',mask_values={'invalid':0,'valid':255},ct_validity='../ct-mask.png',
         cell_validity='../cell-mask.png',causes=CAUSES,reference=metadata['map_sha256'],identity_sha256=digest(identity),
@@ -274,7 +276,7 @@ def export_existing(args,*,stop=None):
         reference,metadata=load_reference(args.reference_sheet,levels,args.canvas_samples)
         with closing(Volume(args.source,voxel_um=args.voxel_um,level=args.level,decoded_cache_bytes=ct_budget)) as volume:
             if metadata['identity']['ct']!=volume.identity:raise ValueError('CT identity differs from reference physical frame/source')
-            identity=dict(schema='aligned-uvw-v1',field=field.identity,descriptor_sha256=descriptor_record['sha256'],
+            identity=dict(schema='aligned-uvw-v2',coordinate_dtype='float64',field=field.identity,descriptor_sha256=descriptor_record['sha256'],
                 reference=metadata,levels=list(levels),ct=volume.identity,transport=asdict(reference.settings),
                 implementation_sha256=implementation_sha(),batch_size=BATCH,performance=performance,
                 runtime={name:version(name) for name in ('numpy','scipy','Pillow','tifffile')})
@@ -337,7 +339,8 @@ def export_existing(args,*,stop=None):
                         canvas_pixels=common_geometry.size,reference_excluded_pixels=records[0]['quality']['reference_excluded_pixels'],
                         process_peak_rss_bytes=rss,levels=[r['quality'] for r in records],performance=performance,
                         invocation_elapsed_seconds=time.perf_counter()-started,ct_cumulative=volume.stats(),coordinator_field=dict(field.stats))
-                    result=dict(status='UVW_READY_DIAGNOSTIC',identity=identity,level_receipt_sha256=hashes,quality=quality,
+                    status='UVW_READY_DIAGNOSTIC' if any(r['quality']['geometry_pixels'] for r in records) else 'UVW_EMPTY_DIAGNOSTIC'
+                    result=dict(status=status,identity=identity,level_receipt_sha256=hashes,quality=quality,
                         physical_acceptance=False,global_invertibility_proven=False)
                     pending=Path(tempfile.mkdtemp(prefix='.aggregate-',dir=out))
                     atomic_json(pending/'quality.json',quality);result['quality_sha256']=file_sha(pending/'quality.json')
