@@ -13,9 +13,10 @@ import numpy as np
 
 from .bounded_coarse import NativeMaps,endpoint_grid,produce
 from .bounded_lasagna import LasagnaModel
-from .bounded_predictions import LasagnaWindows
+from .bounded_predictions import LasagnaWindows,LasagnaProducts
 from .io import bounds
-from .lasagna import runtime_identity,decode_observations
+from .lasagna import runtime_identity,physical_observations
+from .config import lasagna_downsamples
 from .models import checkpoint,LASAGNA_MODEL_SHA,QUAL_MODEL_SHA,QualV2
 from .splines import bind,supported_pieces
 from .util import atomic_json,digest,file_sha
@@ -28,16 +29,30 @@ def surface_maps(volume,root,config,lo,hi):
     with LasagnaModel(runtime['executable'],model_path,config.get('device','cpu'),Path(root)/'lasagna-bounded.log',
                       threads=config.get('threads',1)) as model:
         windows=LasagnaWindows(volume,model,cache_bytes=64<<20)
-        def read(start,end):
-            a=start+lo;b=end+lo
-            raw=windows.read_raw(a,b)
-            grad,nx,ny,cos=model.finalize(raw)
+        factors=lasagna_downsamples(config)
+        products=LasagnaProducts(windows,factors)
+        channels={n:products.channel(n) for n in factors}
+        def read_axes(axes):
+            from .lasagna_input import _sample
+            values={}
             invalid=config.get('invalid_value')
-            valid=np.ones(tuple(end-start),bool)
-            if invalid is not None:valid=volume.sample([np.arange(x,y) for x,y in zip(a,b)])!=invalid
-            return decode_observations(grad,nx,ny,cos,input_spacing_xyz=volume.spacing_xyz,
-                                       encode_scale=1000.,grad_mag_factor=1.,validity=valid)
-        yield NativeMaps(tuple(map(int,hi-lo)),read),runtime
+            valid=np.ones(tuple(map(len,axes)),bool)
+            if invalid is not None:valid=volume.sample(axes)!=invalid
+            for names in (('grad_mag',),('nx','ny'),('cos',)):
+                name='normals' if len(names)==2 else names[0]
+                values[name],support=_sample(channels,axes,factors[names[0]].bit_length()-1,names,[])
+                valid &= support
+            return physical_observations(values['grad_mag'],values['normals'],values['cos'],
+                input_spacing_xyz=volume.spacing_xyz,encode_scale=1000.,grad_mag_factor=1.,validity=valid)
+        def read(start,end):return read_axes([np.arange(a,b)+l for a,b,l in zip(start,end,lo)])
+        maps=NativeMaps(tuple(map(int,hi-lo)),read)
+        factor=min(factors['grad_mag'],factors['nx'])
+        first=(lo+factor-1)//factor*factor
+        shape=(hi-1-first)//factor+1
+        def reduced(start,end):return read_axes([np.arange(a,b)*factor+l for a,b,l in zip(start,end,first)])
+        maps.calibration=NativeMaps(tuple(map(int,shape)),reduced,chunk=16)
+        maps.calibration_factor=factor;maps.calibration_first=first
+        yield maps,runtime
 
 
 def prepare(volume,run,config,stop=None):
@@ -49,8 +64,14 @@ def prepare(volume,run,config,stop=None):
     with surface_maps(volume,run,config,lo,hi) as (maps,runtime):
         identity=dict(source=volume.identity,roi_lo=lo.tolist(),roi_hi=hi.tolist(),runtime=runtime,
                       lasagna_sha256=LASAGNA_MODEL_SHA,qual_sha256=QUAL_MODEL_SHA,
+                      lasagna_downsamples=lasagna_downsamples(config),
                       precision='float32-cpu-preampere/bfloat16-ampere',invalid_value=config.get('invalid_value'))
-        status=produce(run/'coarse',maps,native,grid,identity,chunk=config.get('field_chunk',64),stop=stop,
+        factor=maps.calibration_factor
+        calibration_meta=dict(native,shape_zyx=list(maps.calibration.shape),
+            spacing_xyz=(np.asarray(volume.spacing_xyz)*factor).tolist(),
+            origin_xyz=(np.asarray(volume.origin_xyz)+maps.calibration_first[::-1]*volume.spacing_xyz).tolist())
+        status=produce(run/'coarse',maps,native,grid,identity,calibration=(maps.calibration,calibration_meta),
+                       chunk=config.get('field_chunk',64),stop=stop,
                        reserve_bytes=config.get('reserve_bytes',0),quota_bytes=config.get('bounded_bytes',12<<30)//4)
     if status=='PAUSED':return dict(status='PAUSED')
     coarse=json.loads((run/'coarse/COARSE.json').read_bytes())
@@ -128,19 +149,20 @@ def _trace_and_fit(volume,root,meta,config,stop):
     from .bounded_seeds import seeds
     model=QualV2(config.get('model_path'),config.get('device','cpu'),config.get('offline',False))
     reader=QualWindows(volume,model,invalid_value=config.get('invalid_value'))
-    fields=QualFields(tuple(map(int,volume.shape)),reader.read)
-    lo=np.asarray(meta['roi_lo_zyx'])//2;hi=np.asarray(meta['roi_hi_zyx'])//2
+    factor=config.get('fibre_downsample',2)
+    fields=QualFields(tuple(map(int,volume.shape)),reader.read,downsample=factor)
+    lo=np.asarray(meta['roi_lo_zyx'])//factor;hi=np.asarray(meta['roi_hi_zyx'])//factor
     class Domain:
         shape=tuple(map(int,hi-lo))
         def centrality(self,a,b,family):return fields.centrality(a+lo,b+lo,family)
     identity=dict(producer=meta['producer_identity'],seed_order='region1024-priority-centrality-zyx-v1',
-                  roi_lo=meta['roi_lo_zyx'],roi_hi=meta['roi_hi_zyx'])
+                   roi_lo=meta['roi_lo_zyx'],roi_hi=meta['roi_hi_zyx'],fibre_downsample=factor)
     quota=config.get('bounded_bytes',12<<30);reserve=config.get('reserve_bytes',0)
     with CurveJournal(root/'raw.sqlite',identity,quota_bytes=quota//4) as journal:
         families={family:fields.family(family) for family in (1,2)}
         if not (root/'TRACED.json').exists():
             for family in (1,2):
-                source=seeds(Domain(),family,root,quota_bytes=quota//8,stop=stop)
+                source=seeds(Domain(),family,root,quota_bytes=quota//8,chunk=fields.chunk,stop=stop)
                 def global_seeds():
                     try:
                         for sequence,q,priority in source:
@@ -164,8 +186,8 @@ def _trace_and_fit(volume,root,meta,config,stop):
                 if stop and stop():return False
                 if db.execute('SELECT 1 FROM done WHERE id=?',(fid,)).fetchone():continue
                 points=np.frombuffer(blob,dtype='<f4').reshape(-1,3)
-                fitted,offsets=finish_curves([points],pooled,families[family]['presence'],family,Native())
-                pieces=(fitted[a:b].astype('f8')*2+.5 for a,b in zip(offsets[:-1],offsets[1:]))
+                fitted,offsets=finish_curves([points],pooled,families[family]['presence'],family,Native(),downsample=factor)
+                pieces=(fitted[a:b].astype('f8')*factor+(factor-1)/2 for a,b in zip(offsets[:-1],offsets[1:]))
                 _store_curves(db,root,fid,pieces,'VH'[family-1],fid,quota//8,reserve)
         finally:db.close()
     return True
@@ -174,9 +196,10 @@ def _trace_and_fit(volume,root,meta,config,stop):
 def fibres(volume,run,config,stop=None):
     run=Path(run);root=run/'fibres';root.mkdir(exist_ok=True)
     meta=json.loads((run/'PREPARED.json').read_bytes())
-    if np.any(np.asarray(meta['roi_lo_zyx'])%4):
-        raise ValueError('bounded Qual ROI origin must preserve the global half-grid checkerboard (multiple of4)')
-    bind(root/'INPUT.json',dict(producer=meta['producer_identity'],algorithm='paged-global-qual-v1'))
+    factor=config.get('fibre_downsample',2)
+    if np.any(np.asarray(meta['roi_lo_zyx'])%(2*factor)):
+        raise ValueError(f'bounded Qual ROI origin must be a multiple of{2*factor} to preserve seed parity')
+    bind(root/'INPUT.json',dict(producer=meta['producer_identity'],algorithm='paged-global-qual-v1',fibre_downsample=factor))
     marker=run/'FIBRES.json'
     if marker.exists():
         receipt=json.loads(marker.read_bytes())
@@ -206,6 +229,6 @@ def fibres(volume,run,config,stop=None):
     finally:source.close();db.close()
     receipt=dict(status='FIBRES_READY',method='qual-v2-bounded-global',spatial_index=True,curves=count,
                  sha256=file_sha(root/'fibres.sqlite'),raw_sha256=file_sha(root/'raw.sqlite'),
-                 candidates_sha256=file_sha(root/'candidates.sqlite'),physical_acceptance=False)
+                  candidates_sha256=file_sha(root/'candidates.sqlite'),physical_acceptance=False,fibre_downsample=factor)
     atomic_json(marker,receipt)
     return receipt

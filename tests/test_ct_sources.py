@@ -98,7 +98,7 @@ def test_completed_prepare_rejects_changed_retained_inputs(tmp_path,monkeypatch,
     if mutation=='source':
         with sqlite3.connect(config['fibres']) as db: db.execute("UPDATE fibers SET family='H'")
     else:
-        (tmp_path/'run/lasagna-source/output/surface_grad_mag.ome.zarr/0/0.0.0').write_bytes(b'changed')
+        (tmp_path/'run/lasagna-source/output/surface_grad_mag.ome.zarr/2/0.0.0').write_bytes(b'changed')
     with pytest.raises(ValueError,match='changed|identity'):
         run(state['config'],resume=True,until='prepare')
 

@@ -70,7 +70,27 @@ def field_geometry(meta,spacing_um=None):
     return geometry
 
 
+LASAGNA_DOWNSAMPLE={'cos':2,'grad_mag':4,'nx':4,'ny':4}
+
+
+def lasagna_downsamples(config):
+    factors={name:config.get('lasagna_'+name+'_downsample',default)
+             for name,default in LASAGNA_DOWNSAMPLE.items()}
+    if any(type(v) is not int or v not in (1,2,4,8) for v in factors.values()):
+        raise ValueError('Lasagna downsample factors must be1,2,4 or8')
+    if factors['nx']!=factors['ny']:
+        raise ValueError('Lasagna nx and ny must share the same downsample factor')
+    return factors
+
+
 def validate_config(config):
+    lasagna_downsamples(config)
+    if config.get('lasagna_input') and any('lasagna_'+n+'_downsample' in config for n in LASAGNA_DOWNSAMPLE):
+        raise ValueError('--lasagna-input conflicts with Lasagna generation downsample flags')
+    factor=config.get('fibre_downsample',2)
+    if type(factor) is not int or factor not in (2,4):raise ValueError('fibre_downsample must be2 or4')
+    if factor!=2 and not config.get('bounded_preparation'):
+        raise ValueError('4x fibre downsampling requires --bounded-preparation')
     if type(config.get('bounded_preparation',False)) is not bool:
         raise ValueError('bounded_preparation must be boolean')
     if config.get('bounded_preparation'):
@@ -80,8 +100,8 @@ def validate_config(config):
             raise ValueError('bounded preparation requires native Qual V2 with stride1 and no external fibres')
         if config.get('field_spacing_um') is None:
             raise ValueError('bounded preparation requires --field-spacing-um')
-        if any(v%4 for v in config.get('roi_lo',[0,0,0])):
-            raise ValueError('bounded ROI origin must be a multiple of4 to preserve global seed parity')
+        if any(v%(2*factor) for v in config.get('roi_lo',[0,0,0])):
+            raise ValueError(f'bounded ROI origin must be a multiple of{2*factor} to preserve global seed parity')
         budget=config.get('bounded_bytes',12<<30)
         if type(budget) is not int or budget<16<<20:raise ValueError('bounded allowance must be at least16MiB')
     if config.get('lasagna_geometry') and not config.get('lasagna_input'):

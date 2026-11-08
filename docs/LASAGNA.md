@@ -217,9 +217,34 @@ curves have `automatically_traced=false` and their source AFV hash.
 
 For native inference, `lasagna-source/input.zarr` stages only the sampled ROI plus 16 observations of
 context per side, clipped at source bounds. The official subprocess uses fixed
-64³ tiles, overlap 32, border 16 and full-input-lattice outputs. The official
+64³ tiles, overlap 32 and border 16. Output reductions default to Chase's
+**cos 2×, grad_mag 4×, nx 4×, ny 4× per axis**. Override them with:
+
+```bash
+--lasagna-cos-downsample 2 --lasagna-grad-mag-downsample 4 \
+--lasagna-nx-downsample 4 --lasagna-ny-downsample 4
+```
+
+Each accepts **1, 2, 4 or 8**; `nx` and `ny` must match because they form one
+vector. These reduce predictions, **not model input or CT texture**. Grids keep
+index zero and use ceil-shaped axes. The ordinary route uses official scalar
+and paired-normal pyramids and retains only selected levels. Bounded preparation
+Gaussian-reduces globally anchored raw predictions before encoding, then
+calibrates on the finer density/normal lattice. Interpolation decodes and aligns
+unsigned normals before averaging; samples beyond a channel's last grid point
+remain unsupported, rather than extrapolated. Fill-value CT samples remain invalid.
+
+`plan` reports `lasagna_output_grids` with shapes, pitches and estimated array
+bytes. Native staging, inference workspace and dense observation maps are **not**
+eliminated by these flags; bounded output remains a quota, not a full-volume
+storage estimate. Existing inputs retain their declared grids: generation flags
+conflict with `--lasagna-input`. Factors are bound into generated identities;
+use a **new run** to change them. Old runs require their original package.
+
+The official
 runtime loads the pinned checkpoint strictly. CPU uses FP32
-to avoid emulated BF16; CUDA retains upstream BF16. The private worker disables
+to avoid emulated BF16; pre-Ampere CUDA also uses FP32, while Ampere/newer uses
+upstream BF16. The private worker disables
 upstream's unrelated global training-pause service. Concurrent GPU jobs need
 their own scheduling.
 
