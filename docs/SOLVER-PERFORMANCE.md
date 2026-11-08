@@ -1,5 +1,10 @@
 # Solver work reuse
 
+Use this guide to decide whether optional solver caches help your workload.
+They are off by default and do not change field precision or convergence gates.
+The timing tables are dated **2026-11-07**; they are measurements of the pinned
+versions below, not benchmarks rerun for the current checkout.
+
 The numerical core reuses PCG residual norms and scratch buffers without changing
 the configured precision, tolerances, recurrence order or final true-residual check.
 Output fields own their storage independently of prepared workspaces.
@@ -27,16 +32,16 @@ not double-buffered.
 
 ## Reproducible measurements
 
-`benchmarks/performance/solver.py` takes explicit core/CLI checkouts, writes hashes
+`tools/bench_solver.py` takes explicit core/CLI checkouts, writes hashes
 of loaded sources, environment details, timings, solver receipts and complete field
 arrays, and rejects existing output directories. Use the **same Python environment**
 for baseline and candidate. For example:
 
 ```sh
-python benchmarks/performance/solver.py --core /path/to/baseline-core \
+python tools/bench_solver.py --core /path/to/baseline-core \
   --cli /path/to/baseline-cli --case blocks --size 16 --repeats 3 \
   --output /path/to/new-baseline
-python benchmarks/performance/solver.py --core /path/to/candidate-core \
+python tools/bench_solver.py --core /path/to/candidate-core \
   --cli /path/to/candidate-cli --case blocks --size 16 --repeats 3 \
   --cache-bytes 67108864 --output /path/to/new-candidate
 ```
@@ -87,12 +92,12 @@ also matched, as did all 96 compared stored chunk payload hashes (field and supp
 The synthetic three-sweep block workload is not globally converged.
 Its verification result is compared, not promoted to physical acceptance.
 
-## CUDA measurement with llama services stopped
+## CUDA measurement (2026-11-07, no observed competing GPU clients)
 
-At the user's request, the three `llama-embed-*` system services were stopped
-(not disabled) before repeating the same alternating campaign on GPU 1, GTX 1660,
-PyTorch 2.10.0+cu128. They remain stopped. Solver CPU affinity was 6, residency
-monitor affinity 7, sampling interval 200 ms; each cache budget was 64 MiB.
+The alternating campaign ran on GPU 1, GTX 1660, PyTorch 2.10.0+cu128, after
+stopping competing services for that experiment. This is not a claim about the
+server's current state. Solver CPU affinity was 6, monitor affinity 7, sampling
+interval 200 ms; each cache budget was 64 MiB.
 
 | Workload | Base cold → cached cold | Base warm → cached warm | Warm time reduction |
 |---|---:|---:|---:|
@@ -107,29 +112,17 @@ confidence intervals or a universal CUDA speedup; the 48³ cached samples ranged
 from 255.976 to 316.084 ms. Profile runs are excluded from these timings.
 
 All 36 candidate arrays, local residuals/iterations/reasons, global verification
-results and 96 checkpoint payload hashes matched baseline exactly. Residency
-telemetry contained 544 records across 22 benchmark Python PIDs, with no observed
-foreign or unresolved PID. The strict name-only runner returned an assertion for
-13 terminal `[No data]` records. Post-run verification identified every one as
-the final record of a PID previously sampled as benchmark Python, not a new client.
-The original failed assertion and raw telemetry are retained; the classification
-is recorded separately in `.runtime/cuda-llama-stopped-validation.json`. Sampling
-cannot exclude clients whose entire lifetime falls between samples.
+results and 96 checkpoint payload hashes matched baseline exactly. No competing
+GPU clients were observed. Terminal `[No data]` records initially failed the
+name-only check, then were separately matched to already-sampled benchmark PIDs;
+raw evidence was retained. Sampling cannot exclude clients whose whole lifetime
+falls between samples.
 
 ### Earlier, excluded CUDA campaigns
 
-On GPU 1 of `gpu-1-remoto` (GTX 1660, PyTorch 2.10.0+cu128), all 36 candidate
-arrays, solver residuals/iterations/reasons and 96 stored payload hashes matched
-baseline exactly in the earlier monitored campaign. The solver ran on CPU 6; a separate
-monitor on CPU 7 sampled GPU process residency every 200 ms.
-
-That campaign recorded 761 GPU process records, including 98 explicitly named
-`llama-server` records and 51 other unrecognized/vanished-process records. It
-correctly failed the contention check after numerical comparisons passed.
-**These timings are excluded.** The first campaign shared GPU 1 with
-`lasagna-rust`; another checked availability only at launch. None provides a
-reliable uncontended timing comparison. A reserved GPU window is needed; merely
-waiting for one process to exit is insufficient when new clients keep starting.
+Earlier campaigns passed numerical comparisons but shared the GPU with other
+clients or did not establish exclusive use. **Their timings are excluded.** Use
+a reserved GPU window; checking availability only at launch is insufficient.
 
 ## Profiling and qualification
 
@@ -143,25 +136,12 @@ diagnostic capture had foreign GPU clients at launch and is not speedup evidence
 Nsight Compute could attach but returned `ERR_NVGPUCTRPERM`; hardware-counter
 metrics were unavailable under the existing host permissions.
 
-Validation of the published core: **987 tests**, **93.30% coverage**, Ruff and
-mypy clean. The installed CLI macOS suite passed **1786 tests**, with 36 skips;
-four targeted benchmark/prefetch/cache/resume checks passed after test expansion.
-The published core archive passed hash-checked installation and all nine recorded
-source hashes matched. The CLI wheel matched all 99 Python sources and provenance;
-the source distribution includes the benchmark.
+The current core pin is recorded in [provenance/core.json](../provenance/core.json).
+The rename from `winding-field-experiments` to `winding-field` did not change the
+measured numerical modules. It is not a new performance measurement. Current
+tests cover benchmark output, cache/prefetch behavior and resume independently
+of the timing tables; historical suite counts are not a current CI result.
 
-Installed Linux qualification passed **83 CLI tests** and **214 core tests**,
-using the published archive and CLI wheel in an ephemeral container. A test-only
-follow-up (`dd36513` on the core feature branch) permits CPython's shared-key
-dictionary accounting to shrink by 8 bytes when another operator is constructed;
-buffer addresses and numerical outputs remain checked exactly. The measured CLI was
-pinned to `f6387ec8`: the follow-up changes no runtime code. The adjusted ten-test
-work-reuse suite also passed on macOS.
-
-The subsequent distribution rename to `winding-field` pins `5427421`; its numerical
-module contents and recorded source hashes are unchanged. This packaging-only
-rename does not represent a new performance measurement.
-
-Raw reports, arrays, checkpoints and traces are retained under ignored
-`.runtime/solver-measurements-*`; the remote Nsight report and SQLite export are
-under `/mnt/fast2/winding-field-docker-20261106/solver-perf/.runtime/`.
+Historical raw reports are development artifacts, not installed inputs. To
+measure your current version, run `tools/bench_solver.py` into a fresh directory
+and retain its `report.json`, `fields.npz` and optional `trace.json`.

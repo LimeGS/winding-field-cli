@@ -4,7 +4,9 @@
 winding gradient. Every W uses the same UV origin, pitch, dimensions and row
 direction. It does not flatten each neighbouring sheet again.
 
-Requires the existing `tifxyz` extra (`pip install 'winding-field-cli[tifxyz]'`).
+Start with an original reference exported using
+[the flattening guide](FLATTENING.md), plus its field descriptor. Install the
+CLI and its `tifxyz` extra using [the installation guide](../README.md).
 
 ```sh
 winding-field export-uvw \
@@ -14,6 +16,15 @@ winding-field export-uvw \
   --source /data/scroll.zarr --voxel-um 8.64 \
   --canvas-samples 512 --output exports/uvw
 ```
+
+Replace paths and W values with your inputs. The requested W band must contain
+the reference W. Keep the full reference export, not just `map.npz`.
+
+**Read the result:** inspect `quality.json`, `geometry-mask.png` and `ct-mask.png`.
+Geometry can exist where CT is unavailable. Black pixels can be valid zero-valued
+CT; an exported image alone is not evidence of a useful reconstruction.
+
+## Workers and memory
 
 For read-only process geometry parallelism, add `--workers 2` (1–8, default 1).
 `--cache-mib 256` is the total retained decoded-CT plus field-region RAM cache
@@ -33,8 +44,9 @@ sampler, preserving output order and positive-weight missingness. CT grouping
 is reused, not duplicated. SIGINT/STOP cancels pending geometry and signals
 running workers; shutdown waits for their bounded work to exit.
 
-Decoded CT hits check encoded-file identity (inode/size/mtime/ctime); cold reads
-retain SHA and source-ledger validation. Field-region hits validate metadata
+Decoded CT hits are checked against the encoded-byte SHA ledger. Reads without
+a bound ledger also use file signatures; cold reads retain source validation.
+Field-region hits validate metadata
 and every touched payload before and after copying cells. `validate_used()`
 clears decoded RAM entries and forces fresh authoritative CT checks, even in
 the same reader. UVW publication uses `validate_used(fresh=False)` within that
@@ -74,7 +86,8 @@ same SHA-bound `field` and explicit `geometry` objects as `export-sheets`:
 Chunked descriptors and optional SHA-bound NPY support masks are also supported.
 Geometry origins and spacings in that descriptor are in `voxel_um` units.
 The numerical API uses physical XYZ **micrometres**, UV **micrometres** and W
-in field units. Original map XYZ are converted using both output-frame scale
+in raw field units, matching the original reference's level. It does not divide
+levels by `sheet_step` as `constant-sheet` and `extract-range` do. Original map XYZ are converted using both output-frame scale
 and origin; UV lengths and canvas pitch use the scale only.
 
 `--canvas-samples` selects a shared square grid, default 512, maximum 1024.

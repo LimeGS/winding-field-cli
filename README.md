@@ -1,5 +1,9 @@
 # winding-field-cli
 
+[![Audit](https://github.com/LimeGS/winding-field-cli/actions/workflows/tests.yml/badge.svg?branch=main&event=push)](https://github.com/LimeGS/winding-field-cli/actions/workflows/tests.yml)
+[![Coverage (local): 84.01%](https://img.shields.io/badge/coverage%20%28local%29-84.01%25-brightgreen)](#checks)
+[![Code license: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
+
 ![Illustrated workflow: original CT → Lasagna surfaces + Qual V2 fibres/splines → winding field → 3D meshes → flattened charts](docs/assets/workflow-banner.png)
 
 Build a winding field from scroll CT, then extract meshes and CT-textured surfaces.
@@ -7,8 +11,9 @@ Defaults: Lasagna surface observations, Qual V2 fibres/splines, native surface
 output. Saved stages let you stop and continue later.
 
 Start with **1 → 3** for a small region. Use **1–2** for a full scroll only when
-its plan fits your resources; **4** resumes work, **5** exports surfaces, and
-**6** reuses existing inputs.
+its plan fits your resources; **4** resumes work, **5** exports surfaces,
+**6** reuses existing inputs, **7** summarizes options and results, and **8** links
+to the detailed guides.
 
 <details>
 <summary><strong>1. Install</strong></summary>
@@ -347,12 +352,15 @@ model. Keep the original prediction files for hash-verified resume.
 
 </details>
 
-## Options and results at a glance
+<details>
+<summary><strong>7. Custom options</strong></summary>
+
+### Options and results at a glance
 
 | Option | Meaning |
 | --- | --- |
-| `--level` / `--levels` | CT pyramid level / winding W isovalues |
-| `--stride` / `--field-spacing-um` | Observation sampling / independent solve-grid pitch |
+| `--level` / `--levels` | CT pyramid level / raw field isovalues (`W × sheet_step`) |
+| `--stride` / `--field-spacing-um` | Observation sampling / independent solve-grid pitch; bounded preparation uses endpoint-aligned spacing |
 | `--lasagna-input FILE` / `--lasagna-geometry FILE` | Import local surface predictions / explicit base-grid calibration; omit `--bounded-preparation` |
 | `--surface-output native\|atlas\|tifxyz` | Native default / legacy charts and gallery / experimental direct-field export |
 | `--flattening-method original --flattening-config FILE` | Global LSCM with explicit output frame; independent of field resolution |
@@ -374,8 +382,6 @@ model. Keep the original prediction files for hash-verified resume.
 | Atlas-only charts and gallery | `flat/`, `index.html` |
 | Direct-field publication | `tifxyz/TIFXYZ.json` and `READY.json` or `PARTIAL.json` |
 
-Native output does not create the atlas gallery. XYZ units, masks, coverage,
-resume contracts and resource limits are documented in [FORMATS](docs/FORMATS.md).
 For complete flags use command-specific help:
 
 ```bash
@@ -387,9 +393,57 @@ winding-field tifxyz --help
 winding-field verify-tifxyz --help
 ```
 
+</details>
+
+<details>
+<summary><strong>8. Extra docs</strong></summary>
+
 [Flattening](docs/FLATTENING.md) · [Constant-W visual atlas](docs/SHEET-ATLAS.md) · [Lasagna and AFV](docs/LASAGNA.md) ·
 [Streaming](docs/STREAMING.md) · [Prepared workflows](docs/PREPARED.md) ·
 [Surface tools](docs/SURFACE_TOOLS.md) · [Attribution](THIRD_PARTY.md)
 
-Research output: physical sheet correctness and global convergence remain
-unvalidated; whole-scroll native-resolution throughput is not established.
+### Checks
+
+The Audit badge follows installed-package CI pushes on `main`. Coverage is a
+local snapshot of this CLI package, not the numerical core's coverage or a live
+feed. On **2026-11-08**, the installed-package suite on **macOS arm64 / Python
+3.12** passed **1,812 tests**, with **41 skipped** (Linux/CUDA and opt-in external
+controls). Statement coverage was **84.01%**: 14,683 of 17,478 statements across
+99 Python files, measured with coverage.py 7.17.2. This is not GPU/Docker
+qualification. To run the checks from the checkout:
+
+```bash
+uv pip install --constraint docker/cli.in '.[test,tifxyz]' pytest-cov
+python -m pytest -q --cov=winding_field --cov-report=term-missing
+```
+
+</details>
+
+## Credits
+
+Built on tools and open work from the **Vesuvius Challenge community**:
+
+- [Lasagna](https://github.com/ScrollPrize/villa/tree/main/lasagna): surface
+  observations and released model checkpoints.
+- [Qual AFV fibre V2](https://huggingface.co/Qualzz20/afv_fiber_9um_v2) and
+  [AVF Spline Generator](https://github.com/Qualzz/AVF_SPLINE_GENERATOR): fibre
+  predictions, tracing and splines.
+- [vc_reader](https://github.com/LimeGS/villa/tree/84207424c3a988e6cafe6b50fe7d4d7e5f839929/vc_reader):
+  native CT/Zarr access, caching and sampling.
+- [Flatboi / VC3D](https://github.com/ScrollPrize/villa/tree/main/volume-cartographer):
+  native SLIM flattening and the surrounding surface tools.
+- [Villa](https://github.com/ScrollPrize/villa): SD2 model code, AFV/Lasagna/TIFXYZ
+  formats and shared community tooling.
+- [winding-field](https://github.com/LimeGS/winding-field): numerical field solver;
+  [libigl](https://libigl.github.io/) and
+  [tifffile](https://github.com/cgohlke/tifffile): geometry and TIFF support.
+
+Thanks to their authors, maintainers and the community publishing scroll data
+and models. Exact source pins, adaptations and notices are in
+[THIRD_PARTY.md](THIRD_PARTY.md) and [provenance/](provenance/).
+
+## License
+
+[MIT](LICENSE) applies to repository-authored code. External tools, bundled
+upstream code, model weights and datasets retain their own licenses and terms;
+see [attribution and notices](THIRD_PARTY.md).

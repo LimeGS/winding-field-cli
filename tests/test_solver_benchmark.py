@@ -9,7 +9,7 @@ import pytest
 
 @pytest.mark.parametrize('case',['solve','blocks'])
 def test_solver_benchmark_records_cold_warm_phases_and_fields(tmp_path,case):
-    script=Path(__file__).resolve().parents[1]/'benchmarks/performance/solver.py'
+    script=Path(__file__).resolve().parents[1]/'tools/bench_solver.py'
     output=tmp_path/'evidence'
     command=[sys.executable,str(script),'--output',str(output),'--size','4',
              '--repeats','2','--profile','--case',case]

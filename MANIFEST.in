@@ -14,4 +14,4 @@ include examples/*.json
 include tools/run_field.py
 include tools/run_surfaces.py
 include tools/benchmark_blocks.py
-recursive-include benchmarks/performance *.py
+include tools/bench_solver.py

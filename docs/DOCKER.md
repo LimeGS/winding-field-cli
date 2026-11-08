@@ -4,6 +4,11 @@ Both images expose the complete installed `winding-field` CLI on **Linux x86-64*
 CPU and CUDA select different PyTorch builds, not different workflow stages.
 The CLI uses Python 3.12.12; official Lasagna has its own Python 3.14.0 environment.
 
+Use this page if you want an isolated runtime with the native tools already
+installed. Start with CPU for an offline smoke test; choose CUDA for NVIDIA model
+inference. Build from the checkout, keep outputs outside the container, and start
+with a small ROI. ARM hosts are not qualified for these x86-64 images.
+
 ## Build
 
 From this checkout, with Docker Buildx/Bake:
@@ -121,30 +126,31 @@ tested Linux host); concurrent source writers are unsupported.
 wf models --prediction lasagna
 wf models --prediction qual-v2
 
-# No ROI means the whole selected CT level. Substitute the actual voxel scale.
-wf plan --source /data/scan.zarr --voxel-um 8.64 --device cpu \
-  --field-spacing-um 300 --cache /cache/full --until field --output /outputs/full
-wf run --source /data/scan.zarr --voxel-um 8.64 --device cpu \
-  --field-spacing-um 300 --cache /cache/full --until field --output /outputs/full
-
 # ROI bounds are selected-level voxels, ZYX, upper bounds exclusive.
+wf plan --source /data/scan.zarr --voxel-um 8.64 --device cpu \
+  --roi 1488 1536 4032 4080 6048 6096 --field-spacing-um 17 \
+  --cache /cache/roi --until field --output /outputs/roi
 wf run --source /data/scan.zarr --voxel-um 8.64 --device cpu \
   --roi 1488 1536 4032 4080 6048 6096 --field-spacing-um 17 \
   --cache /cache/roi --until field --output /outputs/roi
 
-wf status /outputs/full
-wf field /outputs/full
-wf resume /outputs/full
+wf status /outputs/roi
+wf field /outputs/roi
+wf resume /outputs/roi
 ```
 
 Qual V2 requires uint8, isotropic 8.64–9.6 µm observations. Choose ROI, scan level,
 stride and field pitch using the existing [planning instructions](../README.md).
+Replace the scan path and ROI with your data. Omit `--roi` only after the
+whole-volume plan fits your resources. The README's public full-resolution scan
+needs about 134 TB for the default preparation/products; a coarse field alone
+does not remove that cost.
 
 | Workflow | Container usage / reference |
 | --- | --- |
 | Custom fibres | Add `--fibres /data/fibres.afv` and its `--fibres-geometry` descriptor |
 | Custom Lasagna | Independently add `--lasagna-input /data/surface.lasagna.json` and, when needed, `--lasagna-geometry`; see [Lasagna imports](LASAGNA.md) |
-| Reused fields / prepared workflows | Existing `prepared`, `extract`, and `extract-range` commands; see [README](../README.md) |
+| Reused fields / prepared workflows | `prepared surfaces`, `export-sheets --field-config`, or `extract-range`; see [README](../README.md) |
 | Level/range extraction | Preserve the existing field config and supported holes; use the [mesh/range recipes](../README.md) |
 | LSCM or SLIM, patches or sheet | `export-sheets --flattening-solver lscm\|slim --scope patches\|sheet`; see [matrix settings](FLATTENING.md) |
 | Original mapping / historical patches | Existing `--flattening-method original\|patches` routes; do not combine with solver/scope selection |
@@ -218,86 +224,26 @@ is installed only in the derivative `docker/testing.Dockerfile` image.
 
 ### CT cache fix end-to-end qualification
 
-Commit `1ec8c1d` was built as a wheel and checked against all 85 installed CLI
-source modules. Qualification used an isolated macOS environment and derivative
-images of the retained reviewed Linux CPU/CUDA runtimes, not clean Docker builds.
+Historical checks on 2026-11-06 exercised retained CPU/CUDA images, native CT
+reads, model inference and STOP/resume. They used small fixtures and derivative
+images, not a clean build of the current checkout. Old test counts and image IDs
+are not a current CI result; retain the exact image used by each old checkpoint.
+See [dated raster measurements](RASTER-PERFORMANCE.md) for timings and scope.
 
-- Full installed macOS suite: **1781 passed, 36 skipped**.
-- Selected Linux CPU suites: **399 passed, 2 skipped**, plus **1 passed** after
-  correcting a missing `/pyproject.toml` test mount. The initial packaging-test
-  failure required no production change. The two skips require optional frozen
-  native geometry witnesses.
-- Selected CUDA-image suites: **288 passed**; real pinned Lasagna/Qual inference
-  passed on GPU 1, exposed as `cuda:0`.
-- Actual CLI processes completed prepare, fibres, field, mesh and flatten for
-  the atlas branch; mesh, flatten, assemble and render for native surfaces; and
-  the original global recipe. Stage receipts, export hashes and checkpoint-stable
-  completed resume were checked. These used the small synthetic CT fixture.
-- Prepared field/surface examples passed supervised build, pause/resume and
-  rendering, including CT visualizations.
-- Direct-field TIFXYZ passed export, independent verification and resume on a
-  planar field. **The curved demo field was blocked by `COVERAGE_DEPTH_LIMIT`**
-  at W=2 with 8 µm pitch/tolerance. The same request also blocked on the pre-fix
-  runtime: this is an existing coverage-certification limitation, not a successful
-  curved-field export. No audit threshold or acceptance policy was relaxed.
+Two limitations matter when choosing an export:
 
-The results establish execution of these stages and supported fixtures, not
-scientific accuracy, every input combination or production-scale CT feasibility.
-Detailed commands/results are retained in `.runtime/crop-fix-e2e-plan.md`,
-`.runtime/crop-fix-e2e-suite.log` and `.runtime/crop-fix-{linux,cuda}-results/`.
+- The curved direct-field fixture was blocked by `COVERAGE_DEPTH_LIMIT`; planar
+  success does not establish support for arbitrary curved fields. Inspect the
+  current export's result and use [its verification protocol](FORMATS.md#direct-tifxyz-experimental).
+- The bundled July `vc_tifxyz2obj` converter retained only 66,305 of 66,821 valid
+  fixture nodes in its external readback test. The archive is used for Flatboi,
+  not as proof of a lossless TIFXYZ round trip. UVW's float64 TIFFs also face
+  [downstream float32 conversion](UVW.md#products).
 
-### Native-only reader qualification (2026-11-06)
-
-Qualification used derivative images of the retained v1.5.0 runtimes, replacing
-the hash-pinned reader and CLI wheel. Regenerated locks change only `vc-reader`;
-this is not a clean rebuild of the complete Dockerfile.
-
-- Installed macOS suite: **1777 passed, 36 skipped**.
-- Installed Linux CPU suite: **1806 passed, 6 skipped**. After the final bounded
-  snapshot-recheck fix, the reviewed CPU image passed **68 affected tests**.
-- Reviewed CUDA image: **285 integration tests passed**, plus runtime GPU checks.
-- Both reviewed images passed offline real Lasagna/Qual inference and workflow
-  STOP/resume checks. CUDA used host GPU 1, exposed as `cuda:0`; its first model
-  attempt exhausted VRAM occupied by another workload, then passed after it exited.
-- SIGTERM/container replacement preserved the native solver checkpoint and source
-  hashes while resuming from iteration 1 to 200; a different binary was rejected.
-
-Reviewed local image IDs:
-
-```text
-cpu  sha256:f4dbec2cc8a6df86fc953845daccc3a9dc034d50e5789cfd3cde067813c0e0d0
-cuda sha256:95d83dd8c4aa9268470a40d49145ce48115e97e8cc6986676759edc277c14903
-```
-
-See [crop, sampling and render measurements](RASTER-PERFORMANCE.md) for the
-numerical comparison and its limits.
-
-### Retained v1.5.0 qualification on gpu-1 (2026-11-06)
-
-These pre-cutover images passed the installed suite: **1785 passed, 7 skipped** each.
-The official Lasagna zero-chunk writer control was then enabled separately and
-passed in both images; CI enables it through `WINDING_LASAGNA_PYTHON`.
-Both images also passed offline Lasagna/Qual inference as host UID 1000, default
-UID 10001 path checks, and runtime/dependency checks. CUDA additionally passed
-actual GPU operations in both Python environments and the TIFXYZ GPU kernel.
-SIGTERM/container replacement resumed native checkpoints from iteration 1 to 200
-while retaining source and prior output hashes; the wrong recipe was rejected.
-
-Validated local image IDs (retain these images for their checkpoints):
-
-```text
-cpu  sha256:4edc826f6622b53fbf11d5bb7954f53fb998447978503c1515cb1e2b2e8e8696
-cuda sha256:718ad442657fd4013ff30da033b6d48bd5f363d2bb030f911f73d30e77b47b93
-```
-
-The full suites omit the macOS-only case and four external frozen W50 controls.
-The optional external VC3D reader control was also initially skipped; enabling
-it separately on CPU **failed**: the bundled July `vc_tifxyz2obj` retained 66,305
-of 66,821 valid fixture nodes. The archive is qualified for Flatboi workflows,
-not that converter's TIFXYZ round trip. Do not use it as proof of lossless TIFXYZ
-consumption. The CLI's own exporter and verification tests passed. Both suites
-also report the existing multithreaded `fork()` deprecation warning in a test.
-The new container CI workflow has been validated locally but has not run on GitHub.
+The current container job mounts tests, examples, tools and the configuration/
+provenance files used by tests. This is test-only setup; it does not mount a
+source package over the installed CLI. A source-tree test pass does not replace
+a fresh container CI run.
 
 ## Updating locks
 

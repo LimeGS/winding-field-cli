@@ -45,6 +45,9 @@ jobs:
             --mount "type=bind,src=$PWD/examples,dst=/examples,readonly" \
             --mount "type=bind,src=$PWD/tools,dst=/tools,readonly" \
             --mount "type=bind,src=$PWD/pyproject.toml,dst=/pyproject.toml,readonly" \
+            --mount "type=bind,src=$PWD/README.md,dst=/README.md,readonly" \
+            --mount "type=bind,src=$PWD/uv.toml,dst=/uv.toml,readonly" \
+            --mount "type=bind,src=$PWD/provenance,dst=/provenance,readonly" \
             --mount "type=bind,src=$RUNNER_TEMP/wf/scratch,dst=/scratch" \
             --mount "type=bind,src=$RUNNER_TEMP/wf/outputs,dst=/outputs" \
             --mount "type=bind,src=$RUNNER_TEMP/wf/cache,dst=/cache" \

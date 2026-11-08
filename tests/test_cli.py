@@ -15,6 +15,22 @@ def invoke(*args,cwd):
                            capture_output=True,text=True,timeout=180)
 
 
+@pytest.mark.parametrize('command,phrases',[
+    ('run',['Start a new CT run','raw field isovalues','maximum in bounded preparation']),
+    ('plan',['Estimate source geometry and disk use','without creating the output','maximum in bounded preparation']),
+    ('resume',['Resume an existing run','published levels are unchanged']),
+    ('export-sheets',['Export flattened CT from a field or mesh','unavailable for historical patches','raw field isovalues']),
+    ('tifxyz',['Export XYZ directly from a saved field','does not sample CT']),
+    ('verify-tifxyz',['Verify a direct-field READY or PARTIAL publication','does not modify the export']),
+])
+def test_command_help_describes_current_contract(command,phrases,capsys):
+    from winding_field.cli import main
+    with pytest.raises(SystemExit) as result:main([command,'--help'])
+    assert result.value.code==0
+    text=' '.join(capsys.readouterr().out.split())
+    for phrase in phrases:assert phrase in text
+
+
 @pytest.mark.parametrize('available,device,expected',[
     (False,None,'cpu'),
     (True,None,'cuda:0'),

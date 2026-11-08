@@ -1,12 +1,24 @@
-# Field-to-TIFXYZ setup
+# Flatten fields or meshes and sample CT
 
-Start with the [commands in README section 5](../README.md). Use original mapping
-for global CT plus optional XYZ TIFFs; native runs use their saved configuration.
+Start with [README section 5](../README.md). Choose the route before creating an
+output directory:
+
+| Goal | Use |
+| --- | --- |
+| Choose LSCM or SLIM on patches or whole sheets | `export-sheets --flattening-solver ... --scope ...` below |
+| Run the original global LSCM recipe | [Original mapping](#new-ct-run-with-original-mapping) |
+| Continue a normal CT run | [Native output](#native-output); use the saved run configuration |
+| Align neighbouring W levels on one UV grid | [UVW](UVW.md) |
+| Export directly from the field, without a mesh | [Experimental direct-field TIFXYZ](#experimental-direct-field-tifxyz) |
+
+CT images and optional XYZ TIFFs are different products. Missing CT does not
+necessarily mean missing geometry; always inspect masks and coverage.
 
 ## Explicit solver × scope matrix
 
 `export-sheets` accepts **both** `--flattening-solver lscm|slim` and
-`--scope patches|sheet`. Install `.[tifxyz,ct]` and run on Linux. The four
+`--scope patches|sheet`. Follow the [installation guide](../README.md), add the
+`tifxyz` extra and run on Linux. The four
 combinations use the same source-preserving preparation and tiled CT exporter:
 
 | Selection | Domain | Algorithm |
@@ -170,6 +182,8 @@ For a CLI block checkpoint, replace the `field` object with:
 Copy `geometry` from that run's `FIELD.json`. Keep the immutable checkpoint and
 its chunk files together. The existing field determines coarse/fine resolution.
 Missing chunks are unsupported; `observed` also requires observation support.
+Scalar `--levels` are raw field isovalues. For a nominal winding value W, use
+`raw_level = W * sheet_step`; the values coincide only when `sheet_step` is 1.
 
 ### `flattening.json`: the output coordinates
 
@@ -186,8 +200,10 @@ Missing chunks are unsupported; `observed` also requires observation support.
 
 Set the ID, origin and voxel size to the destination scan's frame. This writes
 XYZ in 8.64 µm voxels; it does not change field resolution. Conversion is
-`xyz = (physical_xyz_um - output_origin_um) / output_voxel_um`. Valid TIFF XYZ
-must be nonnegative; −1 marks invalid nodes.
+`xyz = (physical_xyz_um - output_origin_um) / output_voxel_um`. Mesh-derived TIFFs
+use float32, nonnegative valid XYZ and −1 for invalid nodes. The separate
+[UVW exporter](UVW.md#products) uses float64 and NaN instead; do not interchange
+their validity conventions.
 
 `--source` must be the matching CT. `--voxel-um` supplies its scale if metadata
 lacks units, separately from the output frame. Select CT pyramid level with
@@ -201,7 +217,7 @@ with `--mesh-bundle /data/run/meshes`. The immutable bundle must contain
 
 ## New CT run with original mapping
 
-After preparing `flattening.json` and installing `.[tifxyz]`:
+After preparing `flattening.json` and installing the `tifxyz` extra:
 
 ```bash
 winding-field run --source /data/scroll.zarr --voxel-um 8.64 \
@@ -291,8 +307,8 @@ resume/verification. If admission created no output root, retry the initial comm
 
 Strict coverage is default. Set `"coverage_policy":"allow_partial"` **before**
 starting to permit partial coverage after geometry gates pass. READY and PARTIAL
-are distinct final markers; only READY certifies the declared supported ROI at
-the recorded tolerance. Verification exits 0 for verified READY, 2 for verified
+are distinct final markers; only READY passes the exporter's coverage checks for
+the declared supported ROI at the recorded tolerance. Verification exits 0 for verified READY, 2 for verified
 PARTIAL; resource blocks exit 75. Neither proves physical-sheet correctness.
 macOS production runtime is unsupported. No whole-W throughput guarantee is made.
 
