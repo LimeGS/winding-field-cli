@@ -15,3 +15,4 @@ include tools/run_field.py
 include tools/run_surfaces.py
 include tools/benchmark_blocks.py
 include tools/bench_solver.py
+include tools/install.sh
