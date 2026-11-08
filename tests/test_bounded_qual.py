@@ -83,6 +83,42 @@ def test_lazy_qual_pooling_and_stencils_match_dense_reference():
         assert family['seeds'][ij]==seeds[ij]
 
 
+def test_fourfold_pooling_keeps_global_centres_and_drops_only_incomplete_cells():
+    from winding_field.bounded_qual import QualFields
+    shape=(85,89,93)
+    z,y,x=np.indices(shape)
+    native=np.stack([(z+y+x)/1024,np.zeros(shape)]).astype('f4')
+    def read(lo,hi):return native[(slice(None),)+tuple(slice(a,b) for a,b in zip(lo,hi))]
+    fields=QualFields(shape,read,downsample=4)
+    assert fields.shape==(21,22,23)
+    lo=np.array([15,16,17]);hi=np.array([18,19,20])
+    z,y,x=np.meshgrid(*(np.arange(a,b) for a,b in zip(lo,hi)),indexing='ij')
+    expected=np.rint((4*(z+y+x)+4.5)/1024*255).astype('u1')
+    pooled=fields.pooled(lo,hi)
+    np.testing.assert_array_equal(pooled[0],expected)
+    np.testing.assert_array_equal(pooled[1],np.zeros((3,3,3),'u1'))
+
+
+def test_fourfold_centrality_keeps_native_stencil_reads_bounded():
+    from winding_field.bounded_qual import QualFields
+    reads=[]
+    def read(lo,hi):
+        size=hi-lo;reads.append(size)
+        assert np.all(size<=256)
+        return np.zeros((2,*size),'f4')
+    fields=QualFields((512,512,512),read,downsample=4)
+    family=fields.family(1)
+    assert family['centrality'][64,64,64]==0
+    assert reads
+
+
+@pytest.mark.parametrize('factor',[True,1,3,8])
+def test_qual_fields_reject_unsupported_downsampling(factor):
+    from winding_field.bounded_qual import QualFields
+    with pytest.raises(ValueError,match='downsampl'):
+        QualFields((32,32,32),lambda a,b:None,downsample=factor)
+
+
 def test_raw_curve_replay_preserves_cross_window_coverage_and_family_seed_skip():
     from winding_field.bounded_qual import PagedField,CoverageReplay,trace_one
     from avf_spline_generator import core
@@ -126,6 +162,21 @@ def test_finished_curves_keep_native_family_validation_across_paging(monkeypatch
     actual=finish_curves([points],fields,fields[0],1,Native())
     np.testing.assert_array_equal(actual[1],expected[1])
     np.testing.assert_allclose(actual[0],expected[0],rtol=0,atol=1e-5)
+
+
+def test_fourfold_fitting_validates_family_at_original_native_voxel_centres():
+    from winding_field.bounded_qual import finish_curves
+    shape=(16,16,32)
+    vertical=np.full(shape,255,'u1');horizontal=np.zeros(shape,'u1')
+    seen=[]
+    class Native:
+        def sample(self,xyz):
+            seen.append(xyz.copy())
+            return np.column_stack([np.full(len(xyz),255),np.zeros(len(xyz))]).astype('f4')
+    points=np.column_stack([np.arange(2.,28.,.75),np.full(35,8.),np.full(35,8.)]).astype('f4')
+    fitted,offsets=finish_curves([points],[vertical,horizontal],vertical,1,Native(),downsample=4)
+    assert offsets[-1]>2 and len(fitted)==offsets[-1]
+    np.testing.assert_array_equal(seen[0][0],[9.5,33.5,33.5])
 
 
 def test_empty_seed_commits_reuse_coverage_without_replaying_history(tmp_path):

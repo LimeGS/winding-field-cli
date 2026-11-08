@@ -108,7 +108,8 @@ def plan(config,volume=None,stages=()):
         observations=dict(shape_zyx=shape.tolist(),spacing_xyz=(np.asarray(volume.spacing_xyz)*stride).tolist(),
                           origin_xyz=(np.asarray(volume.origin_xyz)+lo[::-1]*volume.spacing_xyz).tolist(),
                           frame=digest(volume.identity))
-        lasagna_staging=lasagna_workspace=lasagna_import=0; lasagna_input=None
+        lasagna_staging=lasagna_workspace=lasagna_import=lasagna_products=0; lasagna_input=None
+        lasagna_grids={}
         if config.get('lasagna_input'):
             from .lasagna_input import source_identity
             lasagna_input=source_identity(config['lasagna_input'],config.get('lasagna_geometry'),
@@ -118,6 +119,17 @@ def plan(config,volume=None,stages=()):
             from .lasagna import input_geometry,CHUNK,BORDER
             staged=input_geometry(volume,dict(observations,stride=stride,roi_lo_zyx=lo.tolist()))
             stage_shape=np.asarray(staged['shape_zyx'])
+            from .config import lasagna_downsamples
+            product_shape=np.asarray(volume.shape) if config.get('bounded_preparation') else stage_shape
+            product_origin=(np.asarray(volume.origin_xyz) if config.get('bounded_preparation') else
+                            np.asarray(volume.origin_xyz)+np.asarray(staged['source_start_zyx'])[::-1]*volume.spacing_xyz)
+            for name,factor in lasagna_downsamples(config).items():
+                reduced=(product_shape+factor-1)//factor
+                size=math.prod(((reduced+CHUNK-1)//CHUNK*CHUNK).tolist())
+                lasagna_grids[name]=dict(downsample=factor,shape_zyx=reduced.tolist(),
+                    spacing_xyz=(np.asarray(observations['spacing_xyz'])*factor).tolist(),
+                    origin_xyz=product_origin.tolist(),estimated_array_bytes=size)
+                lasagna_products+=size
             lasagna_staging=math.prod(((stage_shape+CHUNK-1)//CHUNK*CHUNK).tolist())*volume.dtype.itemsize
             lasagna_workspace=math.prod((stage_shape+2*BORDER).tolist())*32+lasagna_staging*8
             stage_lo=np.asarray(staged['source_start_zyx']); stage_hi=stage_lo+(stage_shape-1)*stride+1
@@ -129,7 +141,7 @@ def plan(config,volume=None,stages=()):
             from .bounded_coarse import endpoint_grid
             field=endpoint_grid(observations,config['field_spacing_um'])
         observation_nodes=math.prod(shape.tolist()); field_nodes=math.prod(field['shape_zyx'])
-        prepare_bytes=observation_nodes*48+lasagna_staging+lasagna_workspace+lasagna_import
+        prepare_bytes=observation_nodes*48+lasagna_staging+lasagna_workspace+lasagna_import+lasagna_products
         fibre_bytes=observation_nodes*12
         if config.get('fibres'): fibre_bytes+=Path(config['fibres']).stat().st_size*4
         spline_bytes=0
@@ -145,7 +157,11 @@ def plan(config,volume=None,stages=()):
             extra.update(bounded_preparation=True,solver_device=config.get('device','cpu'),
                          field_chunk=config.get('field_chunk',64),field_halo=2,solver_dtype='float64',
                          canonical_windows=dict(qual=128,qual_core=48,lasagna=64,lasagna_core=32),
-                         output_budget_is_cap=True,geometry_bytes_are_data_dependent=True)
+                          output_budget_is_cap=True,geometry_bytes_are_data_dependent=True)
+            factor=config.get('fibre_downsample',2)
+            extra['fibre_tracing']=dict(downsample=factor,shape_zyx=(shape//factor).tolist(),
+                spacing_xyz=(np.asarray(observations['spacing_xyz'])*factor).tolist(),
+                origin_xyz=(np.asarray(observations['origin_xyz'])+np.asarray(observations['spacing_xyz'])*(factor-1)/2).tolist())
         folders=('maps','lasagna','lasagna-source','fibres','field','meshes','flat','surfaces','original')
         if config.get('bounded_preparation'):folders=(*folders,'coarse','pairs')
         product_reserve=config.get('reserve_bytes',1<<30)
@@ -186,7 +202,8 @@ def plan(config,volume=None,stages=()):
             raise ValueError('requested CT download exceeds cache or available-space budget; increase budget or use stream')
         return dict(source=volume.identity,prediction=method,roi_lo_zyx=lo.tolist(),roi_hi_zyx=hi.tolist(),shape_zyx=shape.tolist(),
                      surface_method='external-lasagna' if lasagna_input else 'classical' if method=='classical' else 'lasagna',
-                     lasagna_input=lasagna_input,estimated_lasagna_import_bytes=lasagna_import,
+                      lasagna_input=lasagna_input,estimated_lasagna_import_bytes=lasagna_import,
+                      lasagna_output_grids=lasagna_grids,estimated_lasagna_output_bytes=0 if config.get('bounded_preparation') else lasagna_products,
                      observations=observations,field=field,
                     input_lo_zyx=input_lo.tolist(),input_hi_zyx=input_hi.tolist(),ct_policy=mode,
                      estimated_ct_bytes=ct_bytes,estimated_products_bytes=output_bytes,

@@ -79,6 +79,15 @@ and ROI origins divisible by 4. Its field grid includes the ROI endpoints, so
 actual spacing can differ slightly from the requested maximum. Inspect the plan.
 This bounds retained/scratch work, not execution time: CPU inference can be slow.
 
+`--fibre-downsample 4` selects a 4× post-prediction tracing grid instead of the
+default 2× grid, with about eight times fewer tracing voxels. It requires bounded
+preparation and ROI origins divisible by 8. Qual/Lasagna still read native CT;
+field spacing and final CT sampling are unchanged. Complete pooling cells use
+their original voxel-centre coordinates; incomplete trailing cells are omitted.
+The coarser grid may discard fine fibres and does not reduce Lasagna calibration
+work or promise an eightfold reduction in total disk use. The selected factor is
+bound into tracing/resume identities; changed recipes require a fresh run.
+
 Bounded Qual tracing and coverage replay use the pinned Numba kernels with
 globally addressed tile readers. Cached scalar reads stay compiled; a tile miss
 calls the existing Python loader. Each field keeps one bounded LRU cache shared

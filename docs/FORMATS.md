@@ -280,6 +280,13 @@ the run pauses and can extend its absolute sweep budget with
 `resume RUN --field-sweeps N`; repeating N does not add N more sweeps. This
 numerical check still does not certify a physical sheet.
 
+Bounded plans report `fibre_tracing` separately from observations and field grids.
+`--fibre-downsample 2|4` defaults to 2; the 4× option pools native predictions over
+4³ cells and traces at cell centres, mapping XYZ back by `q * 4 + 1.5` before
+physical calibration. `FIBRES.json` records `fibre_downsample`, which is also
+bound into the input and tracing journal identities. Inference resolution stays
+native; this is not a CT pyramid or field-spacing choice.
+
 The grid adapter orients fine unsigned normals before trilinearly sampling the
 physical density-normal target. All contributing interpolation nodes must be
 supported. Tiles are loaded jointly for density/normals/support, once per request;

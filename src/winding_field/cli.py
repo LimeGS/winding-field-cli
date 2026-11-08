@@ -75,6 +75,7 @@ def main(argv=None):
         p.add_argument('--field-spacing-um',type=float,help='solve-grid pitch in micrometres: exact normally, maximum in bounded preparation; default: observation pitch')
         p.add_argument('--bounded-preparation',action='store_true',help='recompute Lasagna/Qual windows; requires Qual V2, stride 1, --field-spacing-um and no imported inputs')
         p.add_argument('--bounded-gib',type=float,default=12.,help='bounded producer retained/scratch allowance, excluding CT cache and disk reserve (default: 12 GiB)')
+        p.add_argument('--fibre-downsample',type=int,choices=[2,4],default=2,help='post-prediction fibre grid reduction per axis (default: 2); 4 requires bounded preparation; model input and CT resolution unchanged')
         p.add_argument('--chunk',type=int,default=64,help='observation tile edge in sampled voxels (default: 64)')
         p.add_argument('--prediction',choices=['classical','sd2','qual-v2'],default='qual-v2',help='fibre predictor (default: qual-v2); learned predictors use Lasagna surfaces, classical uses CT intensity')
         p.add_argument('--model-path',help='local checkpoint for the selected fibre predictor'); p.add_argument('--device',default='cpu',help='PyTorch prediction/field device, e.g. cpu or cuda (default: cpu)')
@@ -82,6 +83,10 @@ def main(argv=None):
         p.add_argument('--fibres-geometry',help='explicit AFV XYZ-to-world geometry JSON')
         p.add_argument('--lasagna-python',help='isolated official Python 3.14 runtime')
         p.add_argument('--lasagna-model-path',help='local pinned Lasagna surface checkpoint')
+        from .config import LASAGNA_DOWNSAMPLE
+        for name,default in LASAGNA_DOWNSAMPLE.items():
+            p.add_argument('--lasagna-'+name.replace('_','-')+'-downsample',type=int,choices=[1,2,4,8],
+                default=argparse.SUPPRESS,help=f'{name} prediction output reduction per axis (default: {default}); nx/ny must match; model input and CT unchanged')
         p.add_argument('--lasagna-input',help='local Lasagna v2 surface manifest; skips surface inference; cannot combine with --bounded-preparation')
         p.add_argument('--lasagna-geometry',help='explicit Lasagna base-grid XYZ-to-world geometry JSON')
         p.add_argument('--threshold',type=float,help='classical predictor CT intensity threshold; default: calibrated Otsu; unused by learned predictors')

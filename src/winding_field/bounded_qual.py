@@ -70,33 +70,40 @@ def python_kernels():
 
 
 class QualFields:
-    """Recompute the pinned half-resolution stencils from native V/H windows.
+    """Recompute tracing stencils from pooled native V/H windows.
 
     ``read_native(lo,hi)`` returns float32 CZYX probabilities on the ORIGINAL
     acquisition lattice, with acquisition validity already applied.
     """
 
-    def __init__(self,native_shape,read_native,*,chunk=32,cache_bytes=8<<20):
-        if len(native_shape)!=3 or any(type(n) is not int or n<4 for n in native_shape):
-            raise ValueError('native Qual shape must have at least four samples per axis')
+    def __init__(self,native_shape,read_native,*,chunk=None,cache_bytes=8<<20,downsample=2):
+        if type(downsample) is not int or downsample not in (2,4):
+            raise ValueError('Qual downsampling must be2 or4')
+        if len(native_shape)!=3 or any(type(n) is not int or n<2*downsample for n in native_shape):
+            raise ValueError('native Qual shape must have at least two tracing samples per axis')
+        # The full centrality/tensor halo must fit a256-cube native read.
+        chunk=chunk if chunk is not None else (32 if downsample==2 else 16)
         if type(chunk) is not int or chunk<2 or chunk%2:
             raise ValueError('even Qual chunk preserves global seed parity')
-        self.shape=tuple(n//2 for n in native_shape)
+        if (chunk+48)*downsample>256:raise ValueError('Qual chunk plus stencils exceeds native read bound')
+        self.downsample=downsample
+        self.shape=tuple(n//downsample for n in native_shape)
         self.read_native=read_native; self.chunk=chunk; self.cache_bytes=cache_bytes
 
     def pooled(self,lo,hi):
         lo=np.asarray(lo,dtype=np.int64); hi=np.asarray(hi,dtype=np.int64)
         if lo.shape!=(3,) or hi.shape!=(3,) or np.any(lo<0) or np.any(hi<=lo) or np.any(hi>self.shape):
             raise ValueError('pooled bounds outside global Qual lattice')
-        native=self.read_native(lo*2,hi*2)
-        if (not isinstance(native,np.ndarray) or native.shape!=(2,*tuple((hi-lo)*2))
+        factor=self.downsample
+        native=self.read_native(lo*factor,hi*factor)
+        if (not isinstance(native,np.ndarray) or native.shape!=(2,*tuple((hi-lo)*factor))
                 or native.dtype!=np.dtype('f4') or not np.isfinite(native).all()
                 or np.any(native<0) or np.any(native>1)):
             raise ValueError('native Qual reader must supply finite float32 V/H probabilities')
         pooled=np.zeros((2,*tuple(hi-lo)),'f4')
-        for z,y,x in itertools.product((0,1),repeat=3):
-            pooled+=native[:,z::2,y::2,x::2]
-        return np.rint(pooled/8*255).clip(0,255).astype('u1')
+        for z,y,x in itertools.product(range(factor),repeat=3):
+            pooled+=native[:,z::factor,y::factor,x::factor]
+        return np.rint(pooled/factor**3*255).clip(0,255).astype('u1')
 
     def axes(self,lo,hi):
         from avf_spline_generator.prepare import tensor_axes
@@ -219,12 +226,13 @@ def sample_field(field,xyz):
     return result.astype('f4')
 
 
-def finish_curves(curves,tracing,presence,family,native):
-    """Pinned fitting and family validation with paged half-resolution reads."""
+def finish_curves(curves,tracing,presence,family,native,*,downsample=2):
+    """Pinned fitting with family validation at original native voxel centres."""
     from avf_spline_generator import tracing as upstream
     from avf_spline_generator import core
     from .bounded_numba import as_numba,fit_kernel
     if family not in (1,2):raise ValueError('invalid Qual family')
+    if type(downsample) is not int or downsample not in (2,4):raise ValueError('Qual downsampling must be2 or4')
     def valid_segments(points,tracing,family,native):
         delta=np.diff(points,axis=0)
         counts=np.maximum(1,np.ceil(np.linalg.norm(delta,axis=1)/.25).astype(int))
@@ -237,7 +245,7 @@ def finish_curves(curves,tracing,presence,family,native):
                 q=(points[ids,None]+delta[ids,None]*t[None,:,None]).reshape(-1,3)
                 values=[sample_field(field,q) for field in tracing]
                 good=values[family-1]+1e-4>=values[2-family]
-                v=native.sample(q*2+.5)
+                v=native.sample(q*downsample+(downsample-1)/2)
                 good &= v[:,family-1]+1e-4>=v[:,2-family]
                 valid[ids]=good.reshape(len(ids),-1).all(axis=1)
         return valid

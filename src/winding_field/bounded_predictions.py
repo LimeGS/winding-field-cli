@@ -109,3 +109,57 @@ class LasagnaWindows:
         if not np.all(weight>0):raise ValueError('uncovered canonical Lasagna output')
         values/=weight[None]
         return values
+
+
+class LasagnaProducts:
+    """Globally anchored raw Gaussian grids, encoded only after reduction."""
+    chunk=16
+
+    def __init__(self,windows,factors):
+        self.windows=windows;self.factors=factors
+        self.cache=OrderedDict();self.resident_bytes=0
+
+    def raw(self,factor,lo,hi):
+        if factor==1:return self.windows.read_raw(lo,hi)
+        from scipy.ndimage import convolve1d
+        parent=(np.asarray(self.windows.shape)+factor//2-1)//(factor//2)
+        axes=[]
+        for a,b,n in zip(lo,hi,parent):
+            q=np.arange(2*a-2,2*(b-1)+3)
+            if n==1:q=np.zeros_like(q)
+            else:
+                q%=2*(n-1);q=np.minimum(q,2*(n-1)-q)
+            axes.append(q)
+        start=np.array([a.min() for a in axes]);end=np.array([a.max()+1 for a in axes])
+        values=self.raw(factor//2,start,end)
+        values=values[np.ix_(np.arange(8),*(a-s for a,s in zip(axes,start)))]
+        for axis in (1,2,3):
+            values=convolve1d(values,np.array([1,4,6,4,1],dtype='f4')/16,axis=axis,mode='mirror')
+        return values[:,2:-2:2,2:-2:2,2:-2:2].copy()
+
+    def tile(self,factor,key):
+        cache_key=(factor,*key)
+        value=self.cache.pop(cache_key,None)
+        if value is None:
+            lo=np.array(key)*self.chunk
+            shape=(np.asarray(self.windows.shape)+factor-1)//factor
+            raw=self.raw(factor,lo,np.minimum(lo+self.chunk,shape))
+            value=self.windows.model.finalize(raw)
+            while self.cache and self.resident_bytes+value.nbytes>32<<20:
+                _,old=self.cache.popitem(last=False);self.resident_bytes-=old.nbytes
+            self.resident_bytes+=value.nbytes
+        self.cache[cache_key]=value
+        return value
+
+    def channel(self,name):
+        owner=self;factor=self.factors[name];index=('grad_mag','nx','ny','cos').index(name)
+        class Channel:
+            shape=tuple((n+factor-1)//factor for n in owner.windows.shape)
+            def sample(self,axes):
+                result=np.empty(tuple(map(len,axes)),'u1')
+                for key in itertools.product(*(np.unique(a//owner.chunk) for a in axes)):
+                    indices=[np.flatnonzero(a//owner.chunk==k) for a,k in zip(axes,key)]
+                    local=[a[i]-k*owner.chunk for a,i,k in zip(axes,indices,key)]
+                    result[np.ix_(*indices)]=owner.tile(factor,key)[index][np.ix_(*local)]
+                return result
+        return Channel()
