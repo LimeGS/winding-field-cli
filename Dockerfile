@@ -78,6 +78,7 @@ RUN mkdir -p /opt/accelerators && \
     python /opt/runtime-provenance/docker/verify-runtime.py --variant "$TORCH_VARIANT" > /opt/runtime-provenance/runtime.json && \
     chown -R worker:worker /home/worker /cache /scratch /outputs
 
+ENV TORCHINDUCTOR_CACHE_DIR=/scratch/torchinductor
 USER 10001:10001
 ENTRYPOINT ["winding-field"]
 CMD ["--help"]
