@@ -23,25 +23,20 @@ CPU/CUDA selection. For a ready-to-build container, use [Docker](docs/DOCKER.md)
 
 ### 1A. Quick install
 
-On **Ubuntu 24.04** with `curl` available, run this from the directory where you
-want the checkout:
+On **Ubuntu 24.04** with `curl` available, run this in **Bash** from the directory
+where you want the checkout:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/LimeGS/winding-field-cli/main/tools/install.sh | bash
+source <(script=$(curl -fsSL https://raw.githubusercontent.com/LimeGS/winding-field-cli/main/tools/install.sh) && printf '%s\n' "$script" || printf 'return 1\n')
 ```
 
 The [installer](tools/install.sh) uses `sudo` for system packages (unless root),
 clones into `./winding-field-cli`, creates the CLI and isolated Lasagna environments,
-and runs `doctor`. Rerun from the same parent directory to reuse them. It does not
-pull updates, reset local edits, download models or create demo outputs; unrelated
+and runs `doctor`, then activates the CLI in this shell. Rerun from the same parent
+directory to reuse them. It does not pull updates, reset local edits, download
+models or create demo outputs; unrelated
 directories and incomplete environments are rejected rather than overwritten.
 Review the script before executing downloaded code, or use the manual steps below.
-
-Activate the CLI in your current shell after installation:
-
-```bash
-source winding-field-cli/.venv/bin/activate
-```
 
 ### 1B. Manual install
 
