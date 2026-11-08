@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# Keep strict setup in a child Bash; only activation touches the caller's shell.
+if bash -s -- "$@" <<'WINDING_FIELD_SETUP'
 set -euo pipefail
 
 # Parse the complete setup before executing it when downloaded through a pipe.
@@ -53,7 +55,18 @@ main() {
     .venv/bin/uv pip install --python "$lasagna/bin/python" --constraint docker/cli.in \
         'vesuvius-lasagna @ https://github.com/ScrollPrize/villa/archive/b29f310957c7b29e7d332f9876e0e487819cfaa3.tar.gz#subdirectory=lasagna'
     .venv/bin/winding-field doctor
-    printf '\nInstalled. Activate the CLI in your shell:\n  source %q\n' "$checkout/.venv/bin/activate"
 }
 
 main "$@"
+WINDING_FIELD_SETUP
+then
+    case "${BASH_SOURCE[0]:-}" in
+        ''|"$0") printf '\nInstalled. Activate the CLI in your shell:\n  source %q\n' "$PWD/winding-field-cli/.venv/bin/activate" ;;
+        *) source "$PWD/winding-field-cli/.venv/bin/activate" && printf '\nCLI installed and activated in this shell.\n' ;;
+    esac
+else
+    case "${BASH_SOURCE[0]:-}" in
+        ''|"$0") exit "$?" ;;
+        *) return "$?" ;;
+    esac
+fi
