@@ -76,6 +76,8 @@ default Lasagna symlink must remain visible. The default container user is
 10001:10001; the example overrides it with the host UID/GID. Mounted directories
 must already be writable by that UID. The entrypoint runs the CLI directly;
 `--init` forwards signals and reaps orphaned child processes.
+PyTorch's compiler/profiler cache uses `/scratch/torchinductor`, so host UIDs
+without an account inside the image work without a username lookup.
 
 ## CUDA
 
