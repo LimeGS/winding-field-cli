@@ -31,7 +31,7 @@ def test_qual_lasagna_plan_preserves_observation_costs_for_each_output(tmp_path,
     assert result['estimated_products_bytes']>=lasagna+splines+512*(60+40+8)
     if branch=='tifxyz':
         products=result['estimated_products_by_stage']
-        assert products['prepare']==512*48+lasagna
+        assert products['prepare']==512*48+lasagna+result['estimated_lasagna_output_bytes']
         assert products['fibres']==512*(12+8)+splines
         assert sum(products.values())==result['estimated_products_bytes']
     assert not (tmp_path/'run').exists()
@@ -66,7 +66,7 @@ def test_new_branches_reject_changed_retained_lasagna_before_resume(tmp_path, mo
         config.update(tifxyz_request=request,tifxyz_request_sha256=digest(request))
     state=run(config,until='prepare')
     assert state['status']=='PAUSED'
-    product=tmp_path/'run/lasagna-source/output/surface_grad_mag.ome.zarr/0/0.0.0'
+    product=tmp_path/'run/lasagna-source/output/surface_grad_mag.ome.zarr/2/0.0.0'
     product.write_bytes(b'changed')
     with pytest.raises(ValueError,match='changed|identity'):
         run(state['config'],resume=True,until='prepare')

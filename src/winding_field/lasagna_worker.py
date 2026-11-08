@@ -11,6 +11,11 @@ def run_tile_inference(self,model,tile,*,device):
     return output['output'] if isinstance(output,dict) else output
 
 
+def output_size(size,factor):
+    # Gaussian decimation keeps index zero, including the last odd-grid sample.
+    return max(1,(int(size)+int(factor)-1)//int(factor))
+
+
 def bounded_main(checkpoint,device_name):
     import contextlib
     import sys
@@ -56,8 +61,16 @@ if __name__=='__main__':
         raise SystemExit(0)
     from contextlib import nullcontext
     import gpu_pause
+    import numpy as np
     import zarr
+    import lasagna.preprocess_cos_omezarr as upstream
     from lasagna.preprocess_cos_omezarr import LasagnaCosPredict3DAdapter,cli_main
+    tiled=sys.modules[upstream.run_tiled_inference_3d.__module__]
+    upstream._ds_size=output_size
+    tiled._ds_size=output_size
+    # Upstream reduced weight views have strided X, rejected by its native adder.
+    accumulate=tiled._add_accumulator_view
+    tiled._add_accumulator_view=lambda destination,source:accumulate(destination,np.ascontiguousarray(source))
     # Persist zero chunks so absent files still mean incomplete/corrupt output.
     zarr.config.set({'array.write_empty_chunks': True})
     # The CLI owns its process; upstream's global training-service scheduler does not.

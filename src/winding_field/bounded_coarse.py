@@ -24,7 +24,7 @@ class NativeMaps(Tiles):
     """Use the existing tile sampler without retaining native prediction maps."""
     def __init__(self,shape,read,*,chunk=32):
         self.shape=tuple(shape);self.chunk=chunk;self.reader=read
-        if len(self.shape)!=3 or any(type(n) is not int or n<2 for n in self.shape):
+        if len(self.shape)!=3 or any(type(n) is not int or n<1 for n in self.shape):
             raise ValueError('invalid native map shape')
         if type(chunk) is not int or not 2<=chunk<=64:raise ValueError('native map chunks must be 2..64')
 
@@ -41,11 +41,13 @@ class NativeMaps(Tiles):
     def close(self):pass
 
 
-def produce(root,native,meta,grid,identity,*,chunk=32,stop=None,reserve_bytes=0,quota_bytes=3<<30):
+def produce(root,native,meta,grid,identity,*,chunk=32,stop=None,reserve_bytes=0,quota_bytes=3<<30,calibration=None):
     root=Path(root);root.mkdir(parents=True,exist_ok=True)
+    calibration_maps,calibration_meta=calibration or (native,meta)
     bind(root/'IDENTITY.json',dict(source=identity,native=meta,grid=grid,chunk=chunk,
                                  native_shape=list(native.shape),native_chunk=native.chunk,
-                                 native_order='zyx-lexicographic-v1',
+                                  native_order='zyx-lexicographic-v1',
+                                  calibration_geometry=calibration_meta,calibration_chunk=calibration_maps.chunk,
                                  algorithm='native-statistics-orient-before-coarse-phase-v2'))
     progress=root/'calibration-progress.json';cal_path=root/'CALIBRATION.json'
     if not cal_path.exists():
@@ -53,13 +55,13 @@ def produce(root,native,meta,grid,identity,*,chunk=32,stop=None,reserve_bytes=0,
             next_tile=0,matrix=np.zeros((3,3)).tolist(),centre=[0.,0.,0.],count=0,density_sum=0.)
         matrix=np.asarray(saved['matrix']);centre=np.asarray(saved['centre'])
         count=saved['count'];density_sum=saved['density_sum']
-        for index,key in enumerate(native.keys()):
+        for index,key in enumerate(calibration_maps.keys()):
             if stop and stop():return 'PAUSED'
             if index<saved['next_tile']:continue
-            data=native.load(key);valid=data['support'];normal=data['normals'][valid].astype(float)
-            matrix+=normal.T@normal;lo,_=native.box(key)
+            data=calibration_maps.load(key);valid=data['support'];normal=data['normals'][valid].astype(float)
+            matrix+=normal.T@normal;lo,_=calibration_maps.box(key)
             coords=np.argwhere(valid)+lo
-            centre+=(coords[:,::-1]*meta['spacing_xyz']+meta['origin_xyz']).sum(0)
+            centre+=(coords[:,::-1]*calibration_meta['spacing_xyz']+calibration_meta['origin_xyz']).sum(0)
             count+=len(coords);density_sum+=float(data['density'][valid].sum(dtype=np.float64))
             atomic_json(progress,dict(next_tile=index+1,matrix=matrix.tolist(),centre=centre.tolist(),
                                       count=count,density_sum=density_sum))

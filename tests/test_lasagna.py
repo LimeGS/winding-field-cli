@@ -119,9 +119,17 @@ def fake_official(command,log,stop=None,reserve_bytes=0,threads=4,**kwargs):
     shape=json.loads((input_path/'.zarray').read_bytes())['shape']
     groups={}
     for name,value in [('grad_mag',100),('nx',255),('ny',128),('cos',255)]:
+        factor=int(command[command.index('--cos-scaledown' if name=='cos' else '--scaledown')+1])
+        level=factor.bit_length()-1
         folder=destination.parent/f'surface_{name}.ome.zarr'
-        if not folder.exists(): write_ct(folder,np.full(shape,value,np.uint8),chunk=32)
-        groups[name]=dict(zarr=folder.name+'/0',scaledown=0,channels=[name])
+        if not folder.exists():
+            write_ct(folder,np.full([(n+factor-1)//factor for n in shape],value,np.uint8),chunk=32)
+            if level: (folder/'0').rename(folder/str(level))
+            for extra in range(level+1,int(command[command.index('--levels')+1])):
+                other=destination.parent/f'fixture-{name}-{extra}'
+                write_ct(other,np.full([(n+(1<<extra)-1)//(1<<extra) for n in shape],value,np.uint8),chunk=32)
+                (other/'0').rename(folder/str(extra))
+        groups[name]=dict(zarr=folder.name+'/'+str(level),scaledown=level,channels=[name])
     atomic_json(destination,dict(version=2,source_to_base=1.,grad_mag_encode_scale=1000.,
         grad_mag_factor=1.,groups=groups,base_shape_zyx=shape,provenance='inference.json'))
     return True
@@ -155,7 +163,7 @@ def test_prepare_rejects_changed_retained_chunks(tmp_path,monkeypatch,product):
     try:
         lasagna.prepare(volume,run,config,geometry)
         path=(run/'lasagna-source/input.zarr/0/0.0.0' if product=='input' else
-              run/'lasagna-source/output/surface_grad_mag.ome.zarr/0/0.0.0')
+              run/'lasagna-source/output/surface_grad_mag.ome.zarr/2/0.0.0')
         if product=='input_metadata': path=run/'lasagna-source/input.zarr/0/.zarray'
         path.write_bytes(b'changed')
         with pytest.raises(ValueError,match='changed|corrupt'):

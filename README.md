@@ -10,6 +10,12 @@ Build a winding field from scroll CT, then extract meshes and CT-textured surfac
 Defaults: Lasagna surface observations, Qual V2 fibres/splines, native surface
 output. Saved stages let you stop and continue later.
 
+Lasagna output reduction defaults to **cos 2×, grad_mag/nx/ny 4× per axis**.
+Use `--lasagna-cos-downsample`, `--lasagna-grad-mag-downsample`,
+`--lasagna-nx-downsample`, `--lasagna-ny-downsample` with 1, 2, 4 or 8
+(`nx`/`ny` must match). Model input and CT texture stay unchanged; see
+[Lasagna grids and recovery](docs/LASAGNA.md#products-units-and-recovery).
+
 Start with **1 → 3** for a small region. Use **1–2** for a full scroll only when
 its plan fits your resources; **4** resumes work, **5** exports surfaces,
 **6** reuses existing inputs, **7** summarizes options and results, and **8** links
@@ -131,6 +137,10 @@ For bounded preparation, add `--bounded-preparation` to both commands: recompute
 model windows, retain coarse observations and global fibre constraints, and gate
 field publication on global numerical verification. Requires `--field-spacing-um`,
 Qual V2, stride 1, no custom inputs, and ROI origins divisible by 4.
+Add `--fibre-downsample 4` to both commands for a 4× post-prediction fibre grid
+instead of the default 2× grid; ROI origins must then be divisible by 8. This uses
+about 8× fewer tracing voxels, not less native model inference or CT resolution,
+and can lose fine fibres. `plan` reports its physical grid separately.
 This trades retained arrays for recomputed context windows: even a small ROI can
 be much slower on CPU than the ordinary ROI recipe. Prefer CUDA when available;
 no whole-scroll throughput is established. Its endpoint-aligned field grid may
