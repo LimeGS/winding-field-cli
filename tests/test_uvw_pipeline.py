@@ -11,28 +11,31 @@ from test_uvw import field_array
 from winding_field.util import atomic_json,file_sha
 
 
-def inputs(tmp_path):
-    field=field_array(tmp_path,lambda p:p[...,2],origin=(10.,20.,30.))
+def inputs(tmp_path,*,origin=(10.,20.,30.),output_origin=None,output_voxel_um=2.):
+    field=field_array(tmp_path,lambda p:p[...,2],origin=origin)
     descriptor=field.source.identity;field.close()
     config=tmp_path/'field.json';atomic_json(config,descriptor)
-    source=write_ct(tmp_path/'ct.zarr',np.full((12,12,12),90,np.uint8),spacing=(1.,1.,1.),origin=(10.,20.,30.))
+    source=write_ct(tmp_path/'ct.zarr',np.full((12,12,12),90,np.uint8),spacing=(1.,1.,1.),origin=origin)
     from winding_field.io import Volume
     volume=Volume(source);ct=volume.identity;volume.close()
     root=tmp_path/'reference'/'original';level=root/'level-0000';level.mkdir(parents=True)
-    frame=dict(id='test',origin_xyz_um=[10.,20.,30.],voxel_um=2.)
+    frame=dict(id='test',origin_xyz_um=list(origin if output_origin is None else output_origin),voxel_um=output_voxel_um)
     world=np.array([[1,1,2.5],[4,1,2.5],[4,4,2.5],[1,4,2.5]],float)
-    np.savez_compressed(level/'map.npz',world=world,uv=world[:,:2],faces=np.array([[0,1,2],[0,2,3]]),
+    world*=2./output_voxel_um
+    world+=(np.asarray(origin)-frame['origin_xyz_um'])/frame['voxel_um']
+    uv=np.array([[1,1],[4,1],[4,4],[1,4]],float)*2./output_voxel_um
+    np.savez_compressed(level/'map.npz',world=world,uv=uv,faces=np.array([[0,1,2],[0,2,3]]),
         display=np.ones(2,bool),scientific=np.ones(2,bool),source_vertex_ids=np.arange(4),source_face_ids=np.arange(2))
     for name in ('image.png','mask.png'):Image.fromarray(np.ones((7,7),np.uint8)).save(level/name)
-    identity=dict(level=35.,level_id=0,mesh_sha256='a'*64,settings=dict(output_frame=frame),ct=ct,export_tifxyz=False)
+    identity=dict(level=float(origin[2])+5.,level_id=0,mesh_sha256='a'*64,settings=dict(output_frame=frame),ct=ct,export_tifxyz=False)
     record=dict(identity=identity,files={p.name:file_sha(p) for p in level.iterdir()},
-        rendering=dict(canvas=dict(width=7,height=7,pitch=.5,u0=1.,v_top=4.)),coverage={})
+        rendering=dict(canvas=dict(width=7,height=7,pitch=1./output_voxel_um,u0=2./output_voxel_um,v_top=8./output_voxel_um)),coverage={})
     atomic_json(level/'LEVEL.json',record)
     with sqlite3.connect(root/'publications.sqlite') as db:
         db.execute('CREATE TABLE levels(name TEXT PRIMARY KEY,receipt_sha TEXT,pending TEXT)')
         db.execute('INSERT INTO levels VALUES(?,?,?)',(level.name,file_sha(level/'LEVEL.json'),'.unused'))
     atomic_json(root/'ORIGINAL.json',dict(level_receipt_sha256={level.name:file_sha(level/'LEVEL.json')}))
-    return SimpleNamespace(field_config=str(config),reference_sheet=str(level),levels=[34.,35.,36.],source=str(source),
+    return SimpleNamespace(field_config=str(config),reference_sheet=str(level),levels=[float(origin[2])+i for i in (4.,5.,6.)],source=str(source),
         voxel_um=None,level=0,output=str(tmp_path/'output'),resume=False,canvas_samples=7)
 
 
@@ -53,6 +56,13 @@ def test_end_to_end_repeat_resume_units_row_direction(tmp_path):
     assert result['status']=='UVW_READY_DIAGNOSTIC';assert not result['physical_acceptance']
     out=tmp_path/'output';first=out/'level-0000'
     x=tifffile.imread(first/'tifxyz/x.tif');y=tifffile.imread(first/'tifxyz/y.tif');z=tifffile.imread(first/'tifxyz/z.tif')
+    assert all(a.dtype==np.float64 for a in (x,y,z))
+    with tifffile.TiffFile(first/'tifxyz/x.tif') as tif:
+        assert tif.pages[0].bitspersample==64 and tif.pages[0].sampleformat==3
+    assert result['identity']['schema']=='aligned-uvw-v2'
+    assert result['identity']['coordinate_dtype']=='float64'
+    meta=json.loads((first/'tifxyz/meta.json').read_text())
+    assert meta['schema']=='aligned-uvw-tifxyz-v2' and meta['coordinate_dtype']=='float64'
     np.testing.assert_allclose(x[3],[1.,1.5,2.,2.5,3.,3.5,4.])
     np.testing.assert_allclose(y[:,3],[4.,3.5,3.,2.5,2.,1.5,1.]);np.testing.assert_allclose(z,2.)
     assert np.asarray(Image.open(first/'geometry-mask.png')).all()
@@ -82,6 +92,15 @@ def test_missing_ct_keeps_geometry_and_binds_availability(tmp_path):
     for p,data in saved:p.write_bytes(data)
     args.resume=True
     with pytest.raises(ValueError,match='availability'):export_existing(args)
+
+
+def test_empty_level_does_not_hide_geometry_in_other_levels(tmp_path):
+    from winding_field.uvw_pipeline import export_existing
+    args=inputs(tmp_path);args.levels=[35.,50.]
+    result=export_existing(args)
+    assert result['status']=='UVW_READY_DIAGNOSTIC'
+    assert result['quality']['common_geometry_pixels']==0
+    assert [level['geometry_pixels'] for level in result['quality']['levels']]==[49,0]
 
 
 def test_invalid_levels_and_descriptor_fail_before_output(tmp_path):
@@ -152,9 +171,9 @@ def test_quality_is_bound_and_publication_rename_recovers(tmp_path):
     with pytest.raises(ValueError,match='quality'):export_existing(args)
 
 
-def test_tifxyz_precision_loss_is_masked(tmp_path):
+def test_float64_output_frame_avoids_float32_precision_loss(tmp_path):
     from pathlib import Path
-    from winding_field.uvw_pipeline import export_existing,CAUSES
+    from winding_field.uvw_pipeline import export_existing
     args=inputs(tmp_path);path=Path(args.reference_sheet);record=json.loads((path/'LEVEL.json').read_text())
     old=np.array(record['identity']['settings']['output_frame']['origin_xyz_um'])
     new=np.full(3,1e12);record['identity']['settings']['output_frame']['origin_xyz_um']=new.tolist()
@@ -165,8 +184,66 @@ def test_tifxyz_precision_loss_is_masked(tmp_path):
     with sqlite3.connect(path.parent/'publications.sqlite') as db:db.execute('UPDATE levels SET receipt_sha=?',(sha,))
     atomic_json(path.parent/'ORIGINAL.json',dict(level_receipt_sha256={path.name:sha}))
     result=export_existing(args)
-    assert result['quality']['common_geometry_pixels']==0
-    assert (np.asarray(Image.open(tmp_path/'output/level-0000/cause-mask.png'))==CAUSES['coordinate_precision']).all()
+    assert result['quality']['common_geometry_pixels']==49
+    assert result['status']=='UVW_READY_DIAGNOSTIC'
+    assert not np.asarray(Image.open(tmp_path/'output/level-0000/cause-mask.png')).any()
+    args.resume=True
+    assert export_existing(args)==result
+
+
+@pytest.mark.parametrize('unit',[2.,.12345])
+def test_global_float64_tiff_readback_and_completed_resume(tmp_path,unit):
+    import tifffile
+    from winding_field.uvw_pipeline import export_existing,load_reference
+    from winding_field.uvw import xyz_to_uvw
+    from winding_field.surface_sources import FieldSource
+    from winding_field.tifxyz_field import PhysicalField
+    origin=np.array([52000.123456,35000.234567,13000.345678])
+    output_origin=np.array([-100000.2345,0.,0.])
+    args=inputs(tmp_path,origin=origin,output_origin=output_origin,output_voxel_um=unit);result=export_existing(args)
+    out=tmp_path/'output';reference,_=load_reference(args.reference_sheet,args.levels,7)
+    reference.band=None  # Export checks requested W separately; encoded endpoints can round across the band.
+    descriptor=json.loads((tmp_path/'field.json').read_text())
+    with PhysicalField(FieldSource(descriptor['field'],descriptor['geometry'])) as field:
+        for index,w in enumerate(args.levels):
+            level=out/f'level-{index:04d}'
+            encoded=np.stack([tifffile.imread(level/'tifxyz'/f'{a}.tif') for a in 'xyz'],axis=-1)
+            assert encoded.dtype==np.float64
+            expected=np.empty((7,7,3));expected[:,:,0]=origin[0]+np.arange(2.,9.)
+            expected[:,:,1]=origin[1]+np.arange(8.,1.,-1.)[:,None];expected[:,:,2]=w
+            np.testing.assert_allclose(encoded*unit+output_origin,expected,rtol=0,atol=1e-10)
+            with sqlite3.connect(out/'publications.sqlite') as db:
+                checkpoint=db.execute('SELECT path FROM batches WHERE key=?',(f'{index}-0',)).fetchone()[0]
+            with np.load(out/checkpoint) as saved:
+                np.testing.assert_array_equal(encoded,saved['encoded_xyz'].reshape(7,7,3))
+                np.testing.assert_array_equal(encoded*unit+output_origin,saved['xyz'].reshape(7,7,3))
+            recovered,valid=xyz_to_uvw(reference,field,encoded.reshape(-1,3)*unit+output_origin)
+            assert valid.all()
+            np.testing.assert_allclose(recovered[:,2],w,rtol=0,atol=1e-9)
+            np.testing.assert_allclose(recovered[:,:2],np.column_stack((np.tile(np.arange(2.,9.),7),
+                np.repeat(np.arange(8.,1.,-1.),7))),rtol=0,atol=1e-6)
+            assert np.asarray(Image.open(level/'geometry-mask.png')).all()
+            assert np.asarray(Image.open(level/'ct-mask.png')).all()
+            assert (np.asarray(Image.open(level/'image.png'))==128).all()
+    hashes={p.relative_to(out):file_sha(p) for p in out.rglob('*') if p.is_file()}
+    args.resume=True;assert export_existing(args)==result
+    assert hashes=={p.relative_to(out):file_sha(p) for p in out.rglob('*') if p.is_file()}
+
+
+@pytest.mark.parametrize('change',['v1','float32','missing_dtype'])
+def test_resume_rejects_incompatible_coordinate_identity_without_rewriting(tmp_path,change):
+    from winding_field.uvw_pipeline import export_existing
+    args=inputs(tmp_path);export_existing(args);out=tmp_path/'output'
+    path=out/'IDENTITY.json';identity=json.loads(path.read_text())
+    assert identity['coordinate_dtype']=='float64'
+    if change=='v1':identity['schema']='aligned-uvw-v1'
+    elif change=='float32':identity['coordinate_dtype']='float32'
+    else:identity.pop('coordinate_dtype')
+    atomic_json(path,identity)
+    hashes={p.relative_to(out):file_sha(p) for p in out.rglob('*') if p.is_file()}
+    args.resume=True
+    with pytest.raises(ValueError,match='resume identity changed'):export_existing(args)
+    assert hashes=={p.relative_to(out):file_sha(p) for p in out.rglob('*') if p.is_file()}
 
 
 def test_curved_projected_reference_uses_physical_inverse_tolerance(tmp_path):

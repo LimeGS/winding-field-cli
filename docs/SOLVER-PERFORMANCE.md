@@ -154,9 +154,13 @@ Installed Linux qualification passed **83 CLI tests** and **214 core tests**,
 using the published archive and CLI wheel in an ephemeral container. A test-only
 follow-up (`dd36513` on the core feature branch) permits CPython's shared-key
 dictionary accounting to shrink by 8 bytes when another operator is constructed;
-buffer addresses and numerical outputs remain checked exactly. The CLI stays
+buffer addresses and numerical outputs remain checked exactly. The measured CLI was
 pinned to `f6387ec8`: the follow-up changes no runtime code. The adjusted ten-test
 work-reuse suite also passed on macOS.
+
+The subsequent distribution rename to `winding-field` pins `5427421`; its numerical
+module contents and recorded source hashes are unchanged. This packaging-only
+rename does not represent a new performance measurement.
 
 Raw reports, arrays, checkpoints and traces are retained under ignored
 `.runtime/solver-measurements-*`; the remote Nsight report and SQLite export are

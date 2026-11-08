@@ -25,7 +25,8 @@ Each command also works as `python -m winding_field.<module_name>`; use undersco
 instead of hyphens. Existing export/probe/atlas flags and artifact formats are
 preserved. `patch_check.evaluate_patch`, `sample_field` and `load_patch` remain
 numerical-library APIs. The old flat surface imports and core `surface`/`plot`
-extras are removed in `winding-field-experiments==1.3.0.dev1`.
+extras were removed in core version `1.3.0.dev1` (then named
+`winding-field-experiments`; now `winding-field`).
 
 Implementation-bound resumes made with the old packages require those packages;
 otherwise use a new output directory. This migration does not rewrite old receipts.

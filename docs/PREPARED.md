@@ -1,7 +1,7 @@
 # Prepared fields, surfaces and rendering
 
 These workflows live in **winding-field-cli** and call the installed original
-`winding-field-experiments` library. The library owns numerical operators,
+`winding-field` library. The library owns numerical operators,
 constraints, block storage and observation sources. The CLI owns recipes,
 command dispatch, prepared execution, field readers for postprocessing,
 geometric extraction, surface exports and PNG rendering.
