@@ -1,9 +1,14 @@
-# Bounded raster and CT verification — 2026-11-05
+# CT and raster performance
 
-The initial changes retained scalar interpolation, original face order
-and ownership, ambiguity blockers, missing CT, and two-node tile halos. The earlier
-native PointPlan sampler was evaluated but not adopted: 57 of 200,000 rounded pixels
-changed (maximum float difference 0.0059814453125), despite exact validity.
+These measurements were recorded on **2026-11-05 and 2026-11-06**. They describe
+specific fixtures and runtimes, not the speed of every later release or a full
+scroll. Current usage and cache settings are in [streaming](STREAMING.md) and
+[patch export](PATCHES.md).
+
+**Practical defaults:** keep rasterization serial until your workload shows a
+gain; size decoded RAM caches separately from disk caches; compare identical
+values, masks and source IDs before trusting a speedup. Cold/warm application
+caches are not the same as cold/warm operating-system or network caches.
 
 ## Verified float64 native sampler
 
@@ -47,47 +52,12 @@ not a storage/network throughput measurement. Both readers retain their ledgers.
 Crop/sample/mask arrays and PNG hashes match exactly, including all repetitions.
 Peak process RSS was 132.7 MiB versus 106.8 MiB. Local crops regressed while
 warm sampling improved; these small fixtures do not establish a universal speedup.
-Evidence: `.runtime/benchmark-vc-reader.py` and
-`.runtime/vc-reader-benchmark-{baseline,candidate}/RESULTS.json`.
-
-#### Local-crop diagnosis
-
-The regression is reproducible for this fixture with a **4 MiB decoded cache
-and a bound integrity ledger**. Four alternating baseline/candidate blocks of
-30 repetitions (120 per configuration), using the same installed runtimes,
-thread settings and exact voxel assertions, gave these medians:
-
-| Configuration | v1.5.0 cold / warm ms | Native-only cold / warm ms |
-| --- | ---: | ---: |
-| Decoded cache 4 MiB, ledger | 7.791 / 1.267 | 9.083 / 1.804 |
-| Decoded cache disabled, ledger | 7.786 / 1.242 | 7.788 / 1.091 |
-| Decoded cache 4 MiB, no ledger (diagnostic) | 0.992 / 0.979 | 1.860 / 0.740 |
-
-The earlier crop path bypassed the optional decoded cache. The native computed
-reader uses it: a warm hit checks the file signature twice while still rereading
-and hashing the encoded bytes against the ledger. Across 27 chunks, Python-level
-file-stat calls increase from 27 to 135. The cache lock also serializes callbacks
-from the caller and one native worker; `threads=1` includes that helper worker.
-
-In a separate randomized diagnostic (500 warm reads per variant), fixed file
-signatures reduced the native median from 1.662 to 1.209 ms. This deliberately
-omits mutation detection and is **not a production fix**. Resident-block callback
-and native assembly cost 0.130 ms; isolated decoding of 27 small chunks cost
-0.198 ms native versus 0.081 ms with numcodecs. Warm decoded hits perform no
-decoding. The main warm regression is therefore the extra cache-verification
-path, not crop assembly; small-chunk decode overhead also affects cache misses.
-
-`Volume` defaults to a zero decoded-cache budget, so the original benchmark
-does not establish a general local-read regression. These measurements concern
-OS-warm, 4 KiB decoded chunks on macOS arm64, not production-scale CT or Linux.
-That diagnostic run did not change production behavior. Evidence and reproduction commands:
-`.runtime/local-crop-investigation.md`, `.runtime/investigate-local-crops.py`,
-`.runtime/crop-investigation-r3-{0,1,2,3}-{baseline,candidate}/RESULTS.json`,
-and `.runtime/crop-isolation-1/RESULTS.json`.
 
 #### Ledger-bound cache correction
 
-Ledger-bound decoded entries now use the encoded-byte SHA check already performed
+The first local-crop regression came from redundant file-signature checks on
+ledger-bound decoded cache hits. Current entries use the encoded-byte SHA check
+already performed
 on every hit, without redundant file signatures. Binding a ledger clears existing
 decoded entries, so retained arrays come from that ledger's verified snapshots.
 Bounded reads, SHA checks, cache locking/eviction and fresh source validation remain
@@ -105,16 +75,9 @@ installed candidate and the corrected source with that same native Release runti
 | 256 KiB (64³) | 2.493 / 2.022 | 18.9% | 10.680 / 10.043 |
 | 2 MiB (128³) | 7.945 / 7.467 | 6.0% | 21.425 / 20.573 |
 
-Python-level file-stat calls return to 27 per crop. Regression coverage includes
-mutation with unchanged signatures, corrupt remote cached bytes, missing local
-chunks, ledger binding, verified snapshots, eviction and concurrent cache charging:
-**142 passed, 1 skipped** across the affected reader/sampling/patch suites and two
-additional cache-boundary tests. The committed correction subsequently passed
-installed macOS and Linux/CUDA qualification; see [end-to-end coverage and its
-TIFXYZ limitation](DOCKER.md#ct-cache-fix-end-to-end-qualification).
-Performance evidence: `.runtime/local-crop-fix.md`,
-`.runtime/benchmark-local-crop-fix.py`, and
-`.runtime/crop-fix-{0,1,2,3}-{before,after}/RESULTS.json` (raw samples and mean/p50/p95).
+Python-level file-stat calls returned to 27 per crop. Mutation, corruption,
+missing chunks, cache eviction and concurrent charging remain checked. See
+[end-to-end scope and its TIFXYZ limitation](DOCKER.md#ct-cache-fix-end-to-end-qualification).
 
 ### Integrated benchmark (gpu-1, 2026-11-05)
 
@@ -137,7 +100,6 @@ with the OS cache warmed by input verification; neither network-cold, CUDA nor
 whole-map performance was measured. The smaller end-to-end gain supersedes any
 interpretation of the isolated sampler's speedup as a complete-render speedup.
 
-Evidence: `/mnt/fast2/paris4-vcreader2440-20261105/cli-benchmark-01/benchmark02/RESULTS.json`.
 
 ### Shared encoded transport migration
 
@@ -149,26 +111,11 @@ verification download. Offline verified payloads and authoritative 404 receipts
 remain distinct from cache misses and corruption. Encoded reads and decoding are
 capped at 256 MiB; disk publication preserves the configured reserve.
 
-The earlier pre-cutover integration run on gpu-1 had **145 passed, 2 skipped** across
-native sampling, shared transport, prefetch, pipeline/mapping/parallelism,
-continuation, CT sources, IO, visual geometry and the original recipe. The run
-reported 50 dependency deprecation warnings from scikit-image with NumPy 2.5.
-This is an isolated Python 3.13 source-test runtime, not an installed-package
-qualification for the advertised Python 3.11/3.12 environments.
-
-## Verification
-
-Experiments ran on gpu-1 in fresh namespaces, independently of the frozen Paris4
-three-turn exporter. Relevant suites: 129 passed, 2 skipped, across the raster,
-patch pipeline/parallel, original recipe, mapping, range and patch-visuals tests.
-The visual test used isolated matplotlib dependencies with original NumPy 2.4.6.
-These results do not constitute a whole-repository test pass.
-
-Independent review identified omitted per-worker sampling workspace. Two
-regressions failed before the fix; admission now reserves up to 100,000 points
-at 1024 bytes each per worker for overlapping corner jobs and sorting arrays.
-Additional tests exercise concurrent shared PatchCT/SQLite access and running
-worker cancellation without publishing later receipts.
+The archived pre-cutover source-test experiment also used Python 3.13. It is
+not qualification for the supported Python 3.11/3.12 installed environments.
+Current raster admission includes per-worker sampling workspace: up to 100,000
+points at 1024 bytes each for corner jobs and sorting, in addition to tile/cache
+memory. Worker cancellation must not publish unfinished tiles.
 
 ## Measurements and limits
 
@@ -200,13 +147,9 @@ The serial default remains appropriate until full-workload gains are established
 No measurement here establishes a complete extraction/flattening/export speedup
 or physical-sheet continuity. Frozen active jobs are not upgraded in place.
 
-Remote evidence directories:
-
-- `/ssd/draft/paris4-raster-parity-20261105`
-- `/ssd/draft/paris4-native-sampling-20261105-02`
-- `/ssd/draft/paris4-raster-threads-20261105`
-- `/ssd/draft/paris4-raster-threads-cached-20261105`
-- `/ssd/draft/paris4-full-tile-benchmark-20261105-02`
+Historical raw reports are development artifacts, not installed inputs or a
+current CI result. For new measurements, retain source versions, cache state,
+thread/CPU limits, output hashes and complete elapsed times.
 
 ## Saved full-map overlap audit
 
@@ -221,6 +164,3 @@ no-swap limit: 22,774,809 narrow tests, 6,634 overlap pairs and 2,141 affected f
 The retained LSCM audit has 7,705 pairs and 2,732 affected faces. Both maps have
 zero inverted faces; these are diagnostic results, with overlap ambiguity masked
 during rasterization, not physical acceptance or global injectivity.
-
-Evidence: `gpu-1:/mnt/fast2/paris4-vcreader2440-20261105/final-map-validation-02/`.
-The original one-hour timeout remains recorded in `final-map-validation-01/`.

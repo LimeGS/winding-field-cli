@@ -105,6 +105,41 @@ def source_bundle(tmp_path):
     return root,ct
 
 
+@pytest.mark.parametrize('kind',['npy','chunks'])
+@pytest.mark.parametrize('scope',['patches','sheet'])
+@pytest.mark.skipif(sys.platform!='linux',reason='Linux process-tree resource guard')
+def test_field_config_extracts_scalar_mesh_and_resumes_verified_export(tmp_path,kind,scope):
+    from winding_field.cli import main
+    from winding_field.patch_mapping import PatchMapping
+    from field_store import BlockStore
+    _,ct=source_bundle(tmp_path)
+    values=np.broadcast_to(np.arange(7.),(7,7,7)).copy()
+    geometry=dict(frame='test',voxel_um=9.6,origin_xyz=[4.]*3,spacing_xyz=[1.]*3,
+                  shape_zyx=[7]*3,sheet_step=1.)
+    if kind=='npy':
+        path=tmp_path/'field.npy';np.save(path,values)
+        field=dict(kind=kind,path=str(path),sha256=file_sha(path))
+    else:
+        with BlockStore(tmp_path/'field',values.shape,8,{'grid':geometry}) as store:
+            store.commit((0,0,0),values,{},np.ones(values.shape,bool))
+        path=tmp_path/'field/CHECKPOINT.json'
+        field=dict(kind=kind,path=str(path),sha256=file_sha(path),support_policy='observed')
+    atomic_json(tmp_path/'field.json',dict(field=field,geometry=geometry))
+    atomic_json(tmp_path/'config.json',request(tmp_path));out=tmp_path/'out'
+    args=['export-sheets','--field-config',str(tmp_path/'field.json'),'--levels','3.5',
+          '--source',str(ct),'--voxel-um','9.6','--flattening-solver','lscm','--scope',scope,
+          '--flattening-config',str(tmp_path/'config.json'),'--output',str(out)]
+    assert main(args)==0
+    record=json.loads((out/'level-0000/LEVEL.json').read_text())
+    assert record['rendering']['CT_observed_pixels']>0
+    with PatchMapping(out/'level-0000') as mapped:
+        np.testing.assert_array_equal(mapped.arrays['field_xyz'][:,0],7.5)
+        assert len(mapped.arrays['faces'])==72
+    before={p:file_sha(p) for p in out.rglob('*') if p.is_file() and p.suffix in ('.json','.npz','.png','.tif','.obj')}
+    assert main(args+['--resume'])==0
+    assert all(file_sha(p)==sha for p,sha in before.items())
+
+
 @pytest.mark.parametrize('solver',['lscm','slim'])
 @pytest.mark.parametrize('scope',['patches','sheet'])
 @pytest.mark.skipif(sys.platform!='linux',reason='Linux process-tree resource guard')

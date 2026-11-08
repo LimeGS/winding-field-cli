@@ -1,5 +1,9 @@
 # CT input and streaming
 
+The CLI reads local or public HTTP/S3 **3D Zarr v2** data without loading the
+whole scan into RAM. Start with a small ROI, inspect `plan`, then run with the
+same options. Zarr v3 and unsupported codecs are rejected.
+
 ## Choose access and inspect usage
 
 ```bash
@@ -9,6 +13,7 @@ winding-field plan --source /data/scroll.zarr --voxel-um 8.64 \
 
 Replace the source and scale with your scan, add `--roi` for a bounded region,
 then use `run` with the same arguments. `plan` does not create the output.
+No `--roi` means the entire selected CT level, which may exceed available disk.
 For a remote source, add `--local /data/mirror.zarr` to reuse matching local
 chunks. `--offline` forbids CT network access; model weights and the Lasagna
 runtime must be provisioned separately.
@@ -27,6 +32,14 @@ hashes and resource bounds. It does not load the entire CT into memory.
 Supported inputs use native compressors and numeric Delta/Shuffle filters with
 C/F storage order. Other codecs and Zarr v3/sharded layouts fail explicitly;
 use the original v1.5.0 runtime for unsupported inputs and older checkpoints.
+
+| Setting | Controls | Does not control |
+| --- | --- | --- |
+| `--ct-mode stream` | Fetch chunks when needed | Model or field memory |
+| `--ct-mode download` | Prefetch the selected input domain | Whole-scroll feasibility |
+| `--cache-gib` | Retained compressed CT payloads on disk | Total RAM or output size |
+| `--reserve-gib` | Free disk headroom | A reservation against other jobs |
+| `--chunk` / `--field-chunk` | Observation tiles / solver blocks | CT's stored chunk layout |
 
 Lookup order is matching local CT, bounded compressed-payload cache, then the
 original remote source. Missing local chunks are fetched remotely. Only an
@@ -59,6 +72,12 @@ inference halo. See [custom inputs](LASAGNA.md#external-lasagna-predictions).
 and cached payload bytes. Include cache state when comparing timings.
 
 ### Bounded Qual CPU execution
+
+`--bounded-preparation` trades retained arrays for repeated model windows. It
+requires Qual V2, stride 1, explicit `--field-spacing-um`, no imported inputs,
+and ROI origins divisible by 4. Its field grid includes the ROI endpoints, so
+actual spacing can differ slightly from the requested maximum. Inspect the plan.
+This bounds retained/scratch work, not execution time: CPU inference can be slow.
 
 Bounded Qual tracing and coverage replay use the pinned Numba kernels with
 globally addressed tile readers. Cached scalar reads stay compiled; a tile miss

@@ -5,13 +5,55 @@ import subprocess
 import sys
 
 import numpy as np
+import pytest
 
 
 def invoke(*args,cwd):
     env=dict(os.environ,OMP_NUM_THREADS='2')
     env.pop('PYTHONPATH',None)
     return subprocess.run([sys.executable,'-m','winding_field',*map(str,args)],cwd=cwd,env=env,
-                          capture_output=True,text=True,timeout=180)
+                           capture_output=True,text=True,timeout=180)
+
+
+@pytest.mark.parametrize('command,phrases',[
+    ('run',['Start a new CT run','raw field isovalues','maximum in bounded preparation']),
+    ('plan',['Estimate source geometry and disk use','without creating the output','maximum in bounded preparation']),
+    ('resume',['Resume an existing run','published levels are unchanged']),
+    ('export-sheets',['Export flattened CT from a field or mesh','unavailable for historical patches','raw field isovalues']),
+    ('tifxyz',['Export XYZ directly from a saved field','does not sample CT']),
+    ('verify-tifxyz',['Verify a direct-field READY or PARTIAL publication','does not modify the export']),
+])
+def test_command_help_describes_current_contract(command,phrases,capsys):
+    from winding_field.cli import main
+    with pytest.raises(SystemExit) as result:main([command,'--help'])
+    assert result.value.code==0
+    text=' '.join(capsys.readouterr().out.split())
+    for phrase in phrases:assert phrase in text
+
+
+@pytest.mark.parametrize('available,device,expected',[
+    (False,None,'cpu'),
+    (True,None,'cuda:0'),
+    (True,'cpu','cpu'),
+    (False,'cuda:1','cuda:1'),
+])
+def test_demo_resolves_device_before_starting_work(tmp_path,monkeypatch,capsys,available,device,expected):
+    from winding_field.cli import main
+    from winding_field import workflow
+
+    def cuda_available():
+        assert device is None, 'an explicit device must not be overridden by detection'
+        return available
+
+    monkeypatch.setattr('torch.cuda.is_available',cuda_available)
+    # Exercise parsing and synthetic CT creation without requiring a GPU on the test host.
+    monkeypatch.setattr(workflow,'run',lambda config:config)
+    command=['demo','--output',str(tmp_path/'demo')]
+    if device is not None:command+=['--device',device]
+    assert main(command)==0
+    result=json.loads(capsys.readouterr().out)
+    assert result['device']==expected
+    assert Path(result['source']).is_dir()
 
 
 def test_installed_end_to_end_demo_and_resume_from_other_directory(tmp_path):

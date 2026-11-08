@@ -4,7 +4,9 @@
 winding gradient. Every W uses the same UV origin, pitch, dimensions and row
 direction. It does not flatten each neighbouring sheet again.
 
-Requires the existing `tifxyz` extra (`pip install 'winding-field-cli[tifxyz]'`).
+Start with an original reference exported using
+[the flattening guide](FLATTENING.md), plus its field descriptor. Install the
+CLI and its `tifxyz` extra using [the installation guide](../README.md).
 
 ```sh
 winding-field export-uvw \
@@ -14,6 +16,15 @@ winding-field export-uvw \
   --source /data/scroll.zarr --voxel-um 8.64 \
   --canvas-samples 512 --output exports/uvw
 ```
+
+Replace paths and W values with your inputs. The requested W band must contain
+the reference W. Keep the full reference export, not just `map.npz`.
+
+**Read the result:** inspect `quality.json`, `geometry-mask.png` and `ct-mask.png`.
+Geometry can exist where CT is unavailable. Black pixels can be valid zero-valued
+CT; an exported image alone is not evidence of a useful reconstruction.
+
+## Workers and memory
 
 For read-only process geometry parallelism, add `--workers 2` (1–8, default 1).
 `--cache-mib 256` is the total retained decoded-CT plus field-region RAM cache
@@ -33,8 +44,9 @@ sampler, preserving output order and positive-weight missingness. CT grouping
 is reused, not duplicated. SIGINT/STOP cancels pending geometry and signals
 running workers; shutdown waits for their bounded work to exit.
 
-Decoded CT hits check encoded-file identity (inode/size/mtime/ctime); cold reads
-retain SHA and source-ledger validation. Field-region hits validate metadata
+Decoded CT hits are checked against the encoded-byte SHA ledger. Reads without
+a bound ledger also use file signatures; cold reads retain source validation.
+Field-region hits validate metadata
 and every touched payload before and after copying cells. `validate_used()`
 clears decoded RAM entries and forces fresh authoritative CT checks, even in
 the same reader. UVW publication uses `validate_used(fresh=False)` within that
@@ -74,7 +86,8 @@ same SHA-bound `field` and explicit `geometry` objects as `export-sheets`:
 Chunked descriptors and optional SHA-bound NPY support masks are also supported.
 Geometry origins and spacings in that descriptor are in `voxel_um` units.
 The numerical API uses physical XYZ **micrometres**, UV **micrometres** and W
-in field units. Original map XYZ are converted using both output-frame scale
+in raw field units, matching the original reference's level. It does not divide
+levels by `sheet_step` as `constant-sheet` and `extract-range` do. Original map XYZ are converted using both output-frame scale
 and origin; UV lengths and canvas pitch use the scale only.
 
 `--canvas-samples` selects a shared square grid, default 512, maximum 1024.
@@ -90,12 +103,26 @@ level, not W. Up to 16 distinct W targets are admitted.
   elapsed level time and process peak RSS.
 - `level-NNNN/`: `image.png`, `geometry-mask.png`, `ct-mask.png`,
   `cause-mask.png`, `cell-mask.png`, `quality.json`, `LEVEL.json`.
-- `level-NNNN/tifxyz/{x,y,z}.tif`: float32 **output-frame voxel coordinates**;
+- `level-NNNN/tifxyz/{x,y,z}.tif`: float64 **output-frame voxel coordinates**;
   `meta.json` supplies origin and voxel size. Convert to physical XYZ by
   `xyz_um = xyz_tiff * voxel_um + origin_xyz_um`.
 - `tifxyz/valid-mask.png`: geometry validity, including points with unavailable
   CT. Invalid coordinates are NaN. Validity masks use 255 valid / 0 invalid.
   `cell-mask.png` has dimensions `(height-1, width-1)`.
+
+The export identity (`aligned-uvw-v2`) and TIFF metadata
+(`aligned-uvw-tifxyz-v2`) record `coordinate_dtype: float64`. Raw XYZ storage
+is 24 bytes/pixel instead of 12; coordinate buffers and I/O grow, not model
+or CT precision. Use a new output directory after this implementation change:
+old float32 checkpoints cannot be resumed or mixed with float64 products.
+Existing original references remain readable without modification.
+
+The [pinned upstream TIFXYZ specification](https://github.com/ScrollPrize/villa/blob/b29f310957c7b29e7d332f9876e0e487819cfaa3/lasagna/tifxyz_format.md)
+allows 32- or 64-bit floating samples. Its
+[VC3D reader](https://github.com/ScrollPrize/villa/blob/b29f310957c7b29e7d332f9876e0e487819cfaa3/volume-cartographer/core/src/QuadSurface.cpp#L2782-L2819)
+accepts 64-bit samples but converts them to internal float32 coordinates;
+that downstream conversion does not retain our stored precision. Actual external
+VC3D binary readback has not been qualified here.
 
 `cause-mask.png` codes: 0 valid, 1 reference outside/excess projection,
 2 distinct reference UV branches, 3 invalid initial field, 4 zero gradient,
@@ -106,6 +133,11 @@ Unsupported paths include
 out-of-field or unusable intermediate samples. CT missingness is separate.
 The preview uses the original fixed intensity window 0–180. Black pixels
 are **not** evidence of air; inspect both masks.
+
+`UVW_READY_DIAGNOSTIC` means at least one requested level retained geometry, not
+that all levels share usable coverage or that CT is available. When every level
+has zero valid geometry, the receipt is `UVW_EMPTY_DIAGNOSTIC`; masks and rejection
+causes are still published and resumable. Neither status is physical acceptance.
 
 ## Python API
 
@@ -182,10 +214,18 @@ may be projected at most 0.25 spacing; final normal residual is at most 0.05
 spacing and checked roundtrip error at most 0.25 spacing. Integration has a
 4,096-iteration bound.
 
-The exporter checks the actual float32 coordinate representation before CT
+The exporter checks the actual float64 coordinate representation before CT
 sampling: rounding must be at most 0.01 spacing, and the stored points must
 pass the field residual and backward roundtrip checks. TIFFs are read back
-before publication.
+before publication. Checkpoints retain the exact validated voxel encoding;
+publication does not re-encode physical XYZ and introduce a second rounding.
+The unique inverse of the stored coordinates must also recover the requested UV
+within **1e−6 µm**. Float64 avoids the observed float32 rounding failure at global
+scroll coordinates without relaxing that gate. Extreme origins or ill-conditioned
+frames can still lose precision even in float64 and remain rejected. A nearby
+output-frame origin reduces coordinate magnitudes, but does not guarantee coverage.
+Do not edit a retained reference's frame or relax inverse/ambiguity checks to make
+rejected samples pass. Create a fresh reference and export when changing the frame.
 
 Forward mapping, inverse mapping and export share the same ambiguity admission.
 The inverse flows back to reference W and searches the actual curved gradient
