@@ -45,7 +45,8 @@ def deduplicate(roots):
         if len(paths) < 2:
             continue
         canonical = {}
-        for path in paths:
+        # Keep existing hardlink groups canonical regardless of traversal order.
+        for path in sorted(paths, key=lambda path: -path.stat().st_nlink):
             with path.open('rb') as stream:
                 digest = hashlib.file_digest(stream, 'sha256').digest()
             original = canonical.setdefault(digest, path)
