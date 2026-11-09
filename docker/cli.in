@@ -1,3 +1,3 @@
 # Compile together with pyproject.toml --extra plot --extra tifxyz.
-winding-field @ https://github.com/LimeGS/winding-field/archive/5427421cfedaa5515ed0c26169dfaf0f66d444ed.tar.gz
+winding-field @ https://github.com/LimeGS/winding-field/archive/96631f3cf8aad385054b58b48c91a05a6a053eb1.tar.gz
 torch==2.10.0
