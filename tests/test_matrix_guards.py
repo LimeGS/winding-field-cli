@@ -12,7 +12,10 @@ from test_flattening_matrix import request, source_bundle
 
 
 @pytest.mark.parametrize('was_missing',[False,True])
-def test_remote_resume_detects_change_despite_retained_native_cache(tmp_path,was_missing):
+def test_remote_resume_detects_change_despite_retained_native_cache(tmp_path,was_missing,monkeypatch):
+    from types import SimpleNamespace
+    # This tiny fixture tests source mutation, not the host's free disk space.
+    monkeypatch.setattr('shutil.disk_usage',lambda path:SimpleNamespace(free=16<<30))
     from winding_field.patch_pipeline import PatchCT
     from winding_field.flattening_matrix import settings
     _,source=source_bundle(tmp_path);chunk=source/'0.0.0';raw=chunk.read_bytes()

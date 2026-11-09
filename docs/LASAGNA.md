@@ -75,11 +75,14 @@ winding-field resume /path/to/run   # finish the saved output branch
 
 ## External Lasagna predictions
 
-Inputs with `--lasagna-geometry` or embedded `original_ct`/physical frame use
+Local inputs with `--lasagna-geometry` or embedded `original_ct`/physical frame use
 [calibrated trilinear interpolation](LASAGNA-CALIBRATED.md#external-lasagna-predictions).
 The base-grid route below preserves pooled-cell semantics, remote reads and
 bounded preparation. These contracts are deliberately distinct: adding a
 physical frame selects interpolation rather than silently changing its density scale.
+Remote manifests declaring embedded physical frames are rejected: download the
+manifest and its channels locally to use calibrated interpolation. Bounded
+preparation accepts only pooled base-grid imports, not calibrated physical frames.
 
 ### Import local, custom or community Lasagna predictions
 

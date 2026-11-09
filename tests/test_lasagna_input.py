@@ -385,6 +385,17 @@ def test_embedded_cli_frame_needs_no_descriptor(tmp_path):
     finally: volume.close()
 
 
+def test_bounded_plan_rejects_calibrated_embedded_frame_before_output(tmp_path):
+    from winding_field.workflow import plan
+    volume,_,config=source_case(tmp_path,embedded=True,shape=(8,8,8),whole=True,spacing=(8.64,)*3)
+    volume.close()
+    config.update(output=str(tmp_path/'run'),prediction='qual-v2',bounded_preparation=True,
+                  bounded_bytes=32<<20,field_spacing_um=17.)
+    with pytest.raises(ValueError,match='bounded.*calibrated|calibrated.*bounded'):
+        plan(config)
+    assert not (tmp_path/'run').exists()
+
+
 @pytest.mark.parametrize('bad',['missing','nan','negative','cos-range'])
 def test_bad_channel_payloads_cannot_publish_a_ready_import(tmp_path,bad):
     module=importer(); volume,geometry,config=source_case(tmp_path)

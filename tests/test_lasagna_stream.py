@@ -385,3 +385,15 @@ def test_cli_offline_replay_preserves_saved_run_identity(tmp_path,http_root,monk
     assert before['config']==after['config']
     assert before['stages']==after['stages']
     assert before['source']==after['source']
+
+
+@pytest.mark.parametrize('key',['original_ct','world_origin_xyz_um','world_spacing_xyz_um'])
+def test_remote_physical_frame_is_not_silently_ignored(tmp_path,http_root,key):
+    cls=reader_type();ct,root,config=fixture(tmp_path)
+    path=root/'input.lasagna.json';manifest=json.loads(path.read_bytes())
+    manifest[key]={'source':'different-scan'} if key=='original_ct' else [123.,456.,789.]
+    atomic_json(path,manifest)
+    config['lasagna_input']=http_root+'/external/input.lasagna.json'
+    with Volume(ct,cache=tmp_path/'ct-cache') as volume:
+        with pytest.raises(ValueError,match='physical|calibrated'):
+            with cls(volume,tmp_path/'run',config):pass

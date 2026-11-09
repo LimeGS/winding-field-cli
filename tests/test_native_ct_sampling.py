@@ -112,7 +112,7 @@ def test_patch_native_hashes_detect_change_after_eviction(tmp_path):
     (source/'0.0.0').write_bytes(bytes([10])*64)
     output=tmp_path/'output';output.mkdir()
     cfg=settings(dict(output_frame=dict(id='test',voxel_um=1.,origin_xyz_um=[0,0,0]),
-        app_run='/unused',cache_dir=str(tmp_path/'cache'),cache_mib=0,tile_size=8))
+        app_run='/unused',cache_dir=str(tmp_path/'cache'),cache_mib=0,tile_size=8,disk_reserve_gib=.001))
     ct=PatchCT(str(source),output,cfg,voxel_um=1.)
     try:
         assert ct.identity['sampler']=='vc_reader-float64-support-v1'
@@ -133,7 +133,7 @@ def test_patch_remote_cache_preserves_missing_and_real_zero(served):
     (root/'ct.zarr/0/1.1.1').unlink()
     output=root/'patch';output.mkdir()
     cfg=settings(dict(output_frame=dict(id='test',voxel_um=1.,origin_xyz_um=[0,0,0]),
-        app_run='/unused',cache_dir=str(root/'patch-cache'),cache_mib=0,ct_workers=4,tile_size=8))
+        app_run='/unused',cache_dir=str(root/'patch-cache'),cache_mib=0,ct_workers=4,tile_size=8,disk_reserve_gib=.001))
     ct=PatchCT(url,output,cfg)
     try:
         points=np.array([[10.,20.,30.],[20.,29.,42.]])
@@ -154,7 +154,7 @@ def test_patch_remote_zero_disk_cache_uses_shared_checked_reader(served):
     from winding_field.patch_pipeline import PatchCT,settings
     root,url,_=served;output=root/'patch';output.mkdir()
     cfg=settings(dict(output_frame=dict(id='test',voxel_um=1.,origin_xyz_um=[0,0,0]),
-        app_run='/unused',cache_dir=str(root/'cache'),cache_gib=0,cache_mib=0,tile_size=8))
+        app_run='/unused',cache_dir=str(root/'cache'),cache_gib=0,cache_mib=0,tile_size=8,disk_reserve_gib=.001))
     ct=PatchCT(url,output,cfg)
     try:
         values,valid=ct.sample(np.array([[11.,21.5,32.]]),cfg['output_frame'])
@@ -177,7 +177,7 @@ def test_patch_local_compressed_chunk_layout(tmp_path,order):
     (source/'0.0.0').write_bytes(codec.encode(np.frombuffer(data.tobytes(order=order),dtype='<u2')))
     output=tmp_path/'output';output.mkdir()
     cfg=settings(dict(output_frame=dict(id='test',voxel_um=1.,origin_xyz_um=[0,0,0]),app_run='/unused',
-        cache_dir=str(tmp_path/'cache'),tile_size=8))
+        cache_dir=str(tmp_path/'cache'),tile_size=8,disk_reserve_gib=.001))
     ct=PatchCT(str(source),output,cfg,voxel_um=1.)
     try:
         values,valid=ct.sample(np.array([[1.5,1.5,.5],[3.,2.,1.]]),cfg['output_frame'])
@@ -214,7 +214,7 @@ def test_native_cache_validates_payload_before_missing_marker(served,cached):
     from winding_field.patch_pipeline import PatchCT,settings
     root,url,expected=served
     cfg=settings(dict(output_frame=dict(id='test',voxel_um=1.,origin_xyz_um=[0,0,0]),app_run='/unused',
-        cache_dir=str(root/'cache'),cache_mib=0,tile_size=8))
+        cache_dir=str(root/'cache'),cache_mib=0,tile_size=8,disk_reserve_gib=.001))
     output=root/'first';output.mkdir();ct=PatchCT(url,output,cfg)
     try:
         ct._chunk((0,0,0));path=ct.volume._native.path(url+'/0/0.0.0')

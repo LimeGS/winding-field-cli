@@ -106,12 +106,13 @@ def test_import_plan_accounts_for_retained_tiles_in_every_output_route(tmp_path,
 
 
 @pytest.mark.parametrize('command', ['plan', 'run'])
-def test_import_rejects_bounded_reinference_before_source_io(tmp_path, capsys, command):
+def test_calibrated_import_rejects_bounded_preparation_before_source_io(tmp_path, capsys, command):
     assert main([command,'--source',str(tmp_path/'missing-ct'),'--output',str(tmp_path/'run'),
                  '--lasagna-input',str(tmp_path/'missing.lasagna.json'),'--bounded-preparation',
+                 '--lasagna-geometry',str(tmp_path/'geometry.json'),
                  '--field-spacing-um','17','--until','field'])==1
     error=capsys.readouterr().err
-    assert '--lasagna-input' in error and 'bounded' in error
+    assert '--lasagna-geometry' in error and 'bounded' in error
     assert not (tmp_path/'run').exists()
 
 
