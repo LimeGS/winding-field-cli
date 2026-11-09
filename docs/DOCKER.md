@@ -9,6 +9,29 @@ installed. Start with CPU for an offline smoke test; choose CUDA for NVIDIA mode
 inference. Build from the checkout, keep outputs outside the container, and start
 with a small ROI. ARM hosts are not qualified for these x86-64 images.
 
+## Shared installation recipe
+
+The README's manual install, Ubuntu quick installer and Docker build all use
+`tools/install-runtime.sh` for the CLI/Lasagna environments, Python dependencies,
+wheel build/install and dependency checks. `tools/ubuntu-packages.txt` is their
+common Ubuntu prerequisite list. Keep dependency changes in `pyproject.toml`,
+`docker/cli.in` and `docker/lasagna.in`, then regenerate the Docker locks below.
+
+Intentional differences:
+- Host installs use automatic CPU/CUDA selection and additive dependency installs,
+  preserving additional user packages; Docker selects `cpu` or `cu128` and syncs
+  hash-locked dependency sets into isolated image environments.
+- The helper creates Python 3.12.12/3.14.0 environments when absent. Host quick
+  and manual paths first bootstrap CLI/uv using system Python 3.12; existing
+  interpreters are not replaced. Docker pins both Python patch versions.
+- Both install the `plot`/`tifxyz` Python extras. Docker alone packages the native
+  Flatboi AppImage, prebuilt accelerators, graphics libraries and container user.
+  Sharing the core recipe does not make resolved inventories byte-identical
+  or add native Flatboi to a host installation.
+
+Docker calls the helper's `dependencies` phase before copying application source
+and its `application` phase afterward, preserving dependency-layer caching.
+
 ## Build
 
 From this checkout, with Docker Buildx/Bake:

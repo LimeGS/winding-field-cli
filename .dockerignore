@@ -12,6 +12,9 @@
 !provenance/**
 !docker/
 !docker/**
+!tools/
+!tools/install-runtime.sh
+!tools/ubuntu-packages.txt
 **/__pycache__
 **/*.pyc
 **/*.egg-info

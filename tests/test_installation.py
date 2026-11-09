@@ -21,7 +21,6 @@ def test_installation_does_not_require_build_or_backend_exports():
     )[1].split('</details>', 1)[0]
     for setting in ('TORCH_BACKEND', 'CMAKE_BUILD_PARALLEL_LEVEL', 'CMAKE_ARGS'):
         assert setting not in install
-    assert 'python -m pip install --upgrade pip uv' in install
     assert 'torch.cuda.is_available()' not in install
 
 
