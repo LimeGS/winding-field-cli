@@ -122,6 +122,8 @@ def plan(config,volume=None,stages=()):
                     with LasagnaInput(volume,root,config) as reader:
                         lasagna_input=reader.identity
             else:
+                if config.get('bounded_preparation'):
+                    raise ValueError('bounded preparation cannot use calibrated physical-frame imports')
                 lasagna_input=source_identity(config['lasagna_input'],config.get('lasagna_geometry'),
                                               volume.identity,observations,volume.cache)
             lasagna_import=math.prod(shape.tolist())*(21+volume.dtype.itemsize)

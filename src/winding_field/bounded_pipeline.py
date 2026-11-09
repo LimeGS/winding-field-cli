@@ -25,6 +25,9 @@ from .util import atomic_json,digest,file_sha
 @contextmanager
 def surface_maps(volume,root,config,lo,hi):
     if config.get('lasagna_input'):
+        from .lasagna_input import streamed
+        if not streamed(config):
+            raise ValueError('bounded preparation cannot use calibrated physical-frame imports')
         from .lasagna_stream import LasagnaInput
         geometry=dict(shape_zyx=(hi-lo).tolist(),roi_lo_zyx=lo.tolist(),stride=1,frame=digest(volume.identity))
         with LasagnaInput(volume,root,config) as reader:

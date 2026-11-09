@@ -53,6 +53,8 @@ class LasagnaInput:
             manifest=self.document(self.source)
             if not isinstance(manifest,dict) or manifest.get('version')!=2:
                 raise ValueError('external Lasagna requires a v2 manifest')
+            if any(k in manifest for k in ('original_ct','world_origin_xyz_um','world_spacing_xyz_um')):
+                raise ValueError('calibrated physical-frame imports require local inputs and the interpolation route')
             self.manifest=manifest
             shape=manifest.get('base_shape_zyx')
             if not isinstance(shape,list) or len(shape)!=3 or any(type(n) is not int or n<1 for n in shape):

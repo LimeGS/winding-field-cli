@@ -136,7 +136,7 @@ def test_export_mesh_real_core_and_source_ids(tmp_path,monkeypatch,capsys):
     from winding_field.util import file_sha
     source=tmp_path/'input.npz';np.savez(source,vertices_xyz=v,faces=f)
     import_mesh(dict(path=str(source),sha256=file_sha(source)),root,metadata)
-    cfg=p.settings(dict(output_frame=dict(id='test',voxel_um=9.6,origin_xyz_um=[0,0,0]),app_run='/unavailable',pitch_um=9.6,tile_size=32))
+    cfg=p.settings(dict(output_frame=dict(id='test',voxel_um=9.6,origin_xyz_um=[0,0,0]),app_run='/unavailable',pitch_um=9.6,tile_size=32,disk_reserve_gib=.001))
     monkeypatch.setattr(p,'check_flatboi',lambda app,recipe:dict(test_external=True))
     monkeypatch.setattr(p,'flatten_native',lambda v,f,app,path,**kw:planar(v,f,path))
     class CT:
@@ -339,7 +339,7 @@ def test_ct_workspace_is_subtracted_from_geometry_admission(tmp_path,monkeypatch
     p=pipeline()
     from types import SimpleNamespace
     from contextlib import contextmanager
-    cfg=p.settings(dict(output_frame=dict(id='test',voxel_um=1.,origin_xyz_um=[0,0,0]),app_run='/missing',memory_gib=1.,tile_size=8,cache_mib=0))
+    cfg=p.settings(dict(output_frame=dict(id='test',voxel_um=1.,origin_xyz_um=[0,0,0]),app_run='/missing',memory_gib=1.,tile_size=8,cache_mib=0,disk_reserve_gib=.001))
     ct=SimpleNamespace(chunks=(256,256,256),dtype=np.dtype('u1'),identity={})
     class StopProbe(Exception):pass
     class DB:

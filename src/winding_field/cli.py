@@ -95,7 +95,6 @@ def main(argv=None):
         p.add_argument('--prepared-cache-bytes',type=int,default=0,help='retained field CPU/device workspaces; 0 disables (not a peak-memory cap)')
         p.add_argument('--constraint-cache-bytes',type=int,default=0,help='retained static fibre restrictions; 0 disables')
         p.add_argument('--maxiter',type=int,default=2000,help='iteration limit per local field solve (default: 2000)'); p.add_argument('--rtol',type=float,default=1e-6,help='relative tolerance of local field solves (default: 1e-6)')
-        p.add_argument('--prepared-cache-bytes',type=int,default=0,help='retained solver workspace budget; callable CT constraints bypass retention (default: 0)')
         p.add_argument('--preconditioner',choices=['jacobi','spectral'],default=argparse.SUPPRESS,help='default: jacobi; spectral is rejected for block workflows')
         p.add_argument('--seed-stride',type=int,default=8,help='fibre seed grid spacing in observation samples (default: 8)'); p.add_argument('--fibre-weight',type=float,default=1.,help='field solver fibre constraint weight (default: 1)')
         p.add_argument('--levels',nargs='+',type=float,help='raw field isovalues (W * sheet_step), e.g. --levels -31; not CT pyramid levels'); p.add_argument('--mesh-tile',type=int,default=64,help='mesh extraction tile edge in field-grid cells (default: 64)')
