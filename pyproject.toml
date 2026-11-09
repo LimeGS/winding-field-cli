@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "winding-field-cli"
-version = "1.5.1"
+version = "1.5.2"
 description = "Resumable original-CT to winding-field, meshes and linked flat charts"
 readme = "README.md"
 requires-python = ">=3.11,<3.13"
