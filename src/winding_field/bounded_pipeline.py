@@ -23,6 +23,13 @@ from .util import atomic_json,digest,file_sha
 
 @contextmanager
 def surface_maps(volume,root,config,lo,hi):
+    if config.get('lasagna_input'):
+        from .lasagna_input import LasagnaInput
+        geometry=dict(shape_zyx=(hi-lo).tolist(),roi_lo_zyx=lo.tolist(),stride=1,frame=digest(volume.identity))
+        with LasagnaInput(volume,root,config) as reader:
+            reader.validate_used()
+            yield NativeMaps(tuple(map(int,hi-lo)),lambda a,b:reader.read(geometry,a,b)),reader.identity
+        return
     model_path=checkpoint(config.get('lasagna_model_path'),config.get('offline',False),prediction='lasagna')
     runtime=runtime_identity(config.get('lasagna_python'))
     with LasagnaModel(runtime['executable'],model_path,config.get('device','cpu'),Path(root)/'lasagna-bounded.log',
@@ -48,7 +55,7 @@ def prepare(volume,run,config,stop=None):
     grid=endpoint_grid(native,config['field_spacing_um'])
     with surface_maps(volume,run,config,lo,hi) as (maps,runtime):
         identity=dict(source=volume.identity,roi_lo=lo.tolist(),roi_hi=hi.tolist(),runtime=runtime,
-                      lasagna_sha256=LASAGNA_MODEL_SHA,qual_sha256=QUAL_MODEL_SHA,
+                      lasagna_sha256=digest(runtime) if config.get('lasagna_input') else LASAGNA_MODEL_SHA,qual_sha256=QUAL_MODEL_SHA,
                       precision='float32-cpu-preampere/bfloat16-ampere',invalid_value=config.get('invalid_value'))
         status=produce(run/'coarse',maps,native,grid,identity,chunk=config.get('field_chunk',64),stop=stop,
                        reserve_bytes=config.get('reserve_bytes',0),quota_bytes=config.get('bounded_bytes',12<<30)//4)
@@ -58,6 +65,7 @@ def prepare(volume,run,config,stop=None):
               source=volume.identity,roi_lo_zyx=lo.tolist(),roi_hi_zyx=hi.tolist(),stride=1,
               prediction='qual-v2',surface_method='lasagna',fibre_method='qual-v2-bounded-global',
               tiles_sha256=coarse['tiles_sha256'],calibration=coarse['calibration'],producer_identity=identity)
+    if config.get('lasagna_input'):meta['surface_origin']='external'
     atomic_json(run/'PREPARED.json',meta)
     return meta
 

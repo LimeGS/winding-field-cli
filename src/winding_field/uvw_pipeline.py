@@ -58,7 +58,8 @@ def load_reference(path,levels,canvas_samples=512):
         required={'world','faces','uv','display','scientific','source_vertex_ids','source_face_ids'}
         if set(mapped.files)!=required or len(mapped.files)!=len(required):raise ValueError('reference map inventory differs')
         ref=Reference(mapped['world']*unit+np.asarray(frame['origin_xyz_um']),mapped['faces'],mapped['uv']*unit,
-            record['identity']['level'],display=mapped['display'],band=(min(levels),max(levels)))
+            record['identity']['level'],display=mapped['display'],band=(min(levels),max(levels)),
+            source_vertex_ids=mapped['source_vertex_ids'],source_face_ids=mapped['source_face_ids'])
         if mapped['scientific'].shape!=(len(ref.faces),) or mapped['source_vertex_ids'].shape!=(len(ref.world),) or mapped['source_face_ids'].shape!=(len(ref.faces),):
             raise ValueError('reference map source inventory differs')
     metadata=dict(path=str(path),level_receipt_sha256=receipt['sha256'],map_sha256=record['files']['map.npz'],

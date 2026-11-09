@@ -53,7 +53,8 @@ def implementation_sha():
 def snapshot_exports(root,stage):
     patterns={'prepare':['lasagna/**/*','LASAGNA.json','lasagna-source/IDENTITY.json','lasagna-source/WORK.json',
                          'lasagna-source/input.sqlite','coarse/IDENTITY.json','coarse/COARSE.json',
-                         'coarse/CALIBRATION.json'],'fibres':['fibres/*.afv'],
+                          'coarse/CALIBRATION.json','lasagna-import/IDENTITY.json',
+                          'lasagna-import/document-*.json'],'fibres':['fibres/*.afv'],
               'field':[],'mesh':['meshes/*.obj'],
               'flatten':['flat/*.obj','flat/*.png','flat/atlas.sqlite'],
               'surfaces':['surfaces/NATIVE.json','surfaces/LEVELS.json','surfaces/level-*/LEVEL.json',
@@ -109,7 +110,7 @@ def plan(config,volume=None,stages=()):
                           origin_xyz=(np.asarray(volume.origin_xyz)+lo[::-1]*volume.spacing_xyz).tolist(),
                           frame=digest(volume.identity))
         lasagna_staging=lasagna_workspace=0
-        if method!='classical':
+        if method!='classical' and not config.get('lasagna_input'):
             from .lasagna import input_geometry,CHUNK,BORDER
             staged=input_geometry(volume,dict(observations,stride=stride,roi_lo_zyx=lo.tolist()))
             stage_shape=np.asarray(staged['shape_zyx'])
@@ -199,7 +200,7 @@ def _validate_products(root,state,stop=None,volume=None):
     from .afv import validate_retained as validate_afv
     validate_lasagna(root,state.get('config',{}))
     bounded=state.get('config',{}).get('bounded_preparation',False)
-    if bounded and (root/'PREPARED.json').exists():
+    if bounded and not state.get('config',{}).get('lasagna_input') and (root/'PREPARED.json').exists():
         from .bounded_pipeline import runtime_identity,checkpoint
         meta=json.loads((root/'PREPARED.json').read_bytes())
         if meta['producer_identity']['runtime']!=runtime_identity(state['config'].get('lasagna_python')):
@@ -326,8 +327,10 @@ def _tifxyz_ready(out,result,request_sha,coverage_policy='strict'):
     return marker_record['sha256']
 
 
-def run(config,resume=False,until=None,extra_surface_seconds=0,field_sweeps=None):
+def run(config,resume=False,until=None,extra_surface_seconds=0,field_sweeps=None,offline=False):
     validate_config(config)
+    if type(offline) is not bool or offline and not resume:
+        raise ValueError('offline transport override requires a resumed run')
     if field_sweeps is not None and (type(field_sweeps) is not int or field_sweeps<1
                                     or not resume or not config.get('bounded_preparation')):
         raise ValueError('field sweep target requires a bounded resume and positive integer')
@@ -365,7 +368,7 @@ def run(config,resume=False,until=None,extra_surface_seconds=0,field_sweeps=None
                 from .afv import source_identity
                 source_identity(config['fibres'],config.get('fibres_geometry'),probe.identity)
         finally: probe.close()
-        if config.get('fibres') or config.get('prediction','classical')!='classical':
+        if not config.get('lasagna_input') and (config.get('fibres') or config.get('prediction','classical')!='classical'):
             from . import lasagna
             lasagna.runtime_identity(config.get('lasagna_python'))
             lasagna.checkpoint(config.get('lasagna_model_path'),config.get('offline',False),prediction='lasagna')
@@ -394,6 +397,7 @@ def run(config,resume=False,until=None,extra_surface_seconds=0,field_sweeps=None
                 state.update(experimental=True,comparison_status='UNMEASURED',comparison_reason='reference OOM',
                              native_face_identity=False,native_topology_equivalence='UNMEASURED')
             atomic_json(root/'RUN.json',state)
+        if offline:config=dict(config,offline=True)
         interrupted=False
         def handle(signum,frame):
             nonlocal interrupted
@@ -420,7 +424,7 @@ def run(config,resume=False,until=None,extra_surface_seconds=0,field_sweeps=None
                 state['fibres_input']=fibres_input
             volume.bind_ledger(root/'source.sqlite')
             if resume:
-                volume.validate_used(); result=_validate_products(root,state,stop,volume)
+                volume.validate_used(); result=_validate_products(root,dict(state,config=config),stop,volume)
                 if result is not None:
                     if terminal=='surfaces':
                         state['native_result']=result
