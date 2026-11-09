@@ -119,11 +119,14 @@ ENV UV_PYTHON_INSTALL_DIR=/opt/python UV_LINK_MODE=copy UV_NO_CACHE=1 \
     LD_LIBRARY_PATH=/usr/local/cuda/lib64 \
     NVIDIA_VISIBLE_DEVICES=all NVIDIA_DRIVER_CAPABILITIES=compute,utility \
     NVIDIA_REQUIRE_CUDA=$NVIDIA_REQUIRE_CUDA \
+    MPLCONFIGDIR=/scratch/matplotlib \
     TORCHINDUCTOR_CACHE_DIR=/scratch/torchinductor
-RUN --mount=type=bind,from=build,source=/usr/local,target=/build-local,readonly \
+RUN --mount=type=bind,from=build,source=/,target=/build-root,readonly \
     if [ "$TORCH_VARIANT" = cu128 ]; then \
-      cp -a /build-local/cuda-12.8/bin/crt /usr/local/cuda-12.8/bin/; \
+      cp -a /build-root/usr/local/cuda-12.8/bin/crt /usr/local/cuda-12.8/bin/ && \
+      cp -a /build-root/NGC-DL-CONTAINER-LICENSE /NGC-DL-CONTAINER-LICENSE; \
     fi && \
+    chmod 755 /home/worker && \
     dpkg-query -W > /opt/runtime-provenance/os-packages.txt && \
     python -m winding_field.tifxyz_build --backend cpu --output /scratch/check-cpu && \
     if [ "$TORCH_VARIANT" = cu128 ]; then \
