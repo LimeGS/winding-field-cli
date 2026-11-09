@@ -6,7 +6,11 @@ Source-preserving constant-W preparation, checkpointed Flatboi, validation and C
 
 Build a winding field from scroll CT, then extract meshes and CT-textured surfaces.
 Defaults: Lasagna surface observations, Qual V2 fibres/splines, native surface
-output. Saved stages let you stop and continue later.
+output with SLIM-optimized local charts. Saved stages let you stop and continue later.
+New `run`/`plan` commands use `--device auto`: CUDA → MPS → CPU, admitting an
+accelerator only if the core's FP64 vector norm works. The concrete device is
+saved before execution; explicit devices and resumed runs are not reselected.
+MPS builds without FP64 support are skipped. There is no fallback after starting.
 
 Follow **1–2** for a full scroll or **1 → 3** for a region; **4** resumes work,
 **5** exports surfaces, and **6** reuses existing inputs.
@@ -143,7 +147,8 @@ implementation require a new output directory.
 
 `resume` finishes native surfaces by default, original mapping for
 `--flattening-method original`, atlas for `--surface-output atlas`, or direct
-export for `--surface-output tifxyz`. To extend an exhausted native time budget:
+export for `--surface-output tifxyz`. It retains the saved flattening method;
+older runs without a method are not switched to SLIM. To extend an exhausted native time budget:
 
 ```bash
 winding-field resume "$RUN" --extra-surface-seconds 600
@@ -183,6 +188,14 @@ Use `runs/175a-full` for the full-scroll example. This automatically runs any
 preceding stages still needed and reuses completed work. Results are under the
 run's `surfaces/`: OBJ meshes in `level-*/meshes/` and CT images, overviews and
 masks in `level-*/component-*/`. The saved run configuration selects the branch.
+
+New native `run`/`plan` requests default to `--flattening-method slim`: existing
+projection/LSCM initialization followed by 10 libigl SLIM iterations per local
+chart, with the same geometry gates and seam assembly. Select
+`--flattening-method default` for the historical local mapping or `original`
+for global LSCM. Base installation includes `libigl==2.6.3` for SLIM; the
+`.[tifxyz]` extra adds TIFF export only. No Flatboi is needed. Explicit `slim` is native-only; atlas/direct-field TIFXYZ retain
+their previous defaults. See [native flattening](docs/FLATTENING.md#native-run-flattening).
 
 ### Export a chosen W level as TIFXYZ
 
@@ -303,12 +316,14 @@ Continue an imported run using its retained metadata and cache with
 | `--level` / `--levels` | CT pyramid level / winding W isovalues |
 | `--stride` / `--field-spacing-um` | Observation sampling / independent solve-grid pitch |
 | `--surface-output native\|atlas\|tifxyz` | Native default / legacy charts and gallery / experimental direct-field export |
+| `--flattening-method slim\|default` | Native local SLIM (new-run default) / historical local mapping |
 | `--flattening-method original --flattening-config FILE` | Global LSCM with explicit output frame; independent of field resolution |
 | `--export-tifxyz` | Add mesh-derived XYZ TIFFs to native or original renders |
 | `--tifxyz-config FILE` | Separate request for the Linux-only experimental direct route |
 | `--coverage-target 1 --surface-time-limit 1800` | Native mapped mesh-area target / cumulative active seconds per W |
 | `--cache-gib 2 --reserve-gib 1` | CT payload cache cap / free disk reserve, not RAM |
 | `--threads 4` | PyTorch threads, not a global worker limit |
+| `--device auto` | New-run default: usable CUDA → usable MPS → CPU; explicit PyTorch devices remain supported |
 | `--offline` | Disable CT networking; provision models/runtime separately |
 | `--invalid-value 0` | Explicitly exclude acquisition fill; otherwise zero CT is valid |
 
