@@ -141,7 +141,8 @@ def transport(field,xyz_um,target_w,settings=None,*,stop=None):
 
 class Reference:
     """One original UV map, in µm. Optional band bounds constrain both APIs."""
-    def __init__(self,world,faces,uv,w,*,display=None,band=None,settings=None):
+    def __init__(self,world,faces,uv,w,*,display=None,band=None,settings=None,
+                 source_vertex_ids=None,source_face_ids=None):
         self.world=np.asarray(world,float);self.faces=np.asarray(faces);self.uv=np.asarray(uv,float);self.w=float(w)
         self.settings=settings or TransportSettings();self.band=band
         if (self.world.ndim!=2 or self.world.shape[1]!=3 or self.uv.shape!=(len(self.world),2)
@@ -151,6 +152,14 @@ class Reference:
             raise ValueError('invalid reference map')
         if band is not None and (len(band)!=2 or not np.isfinite(band).all() or not band[0]<=self.w<=band[1]):
             raise ValueError('invalid reference band')
+        if (source_vertex_ids is None)!=(source_face_ids is None):raise ValueError('both reference source ID arrays required')
+        self.source_vertex_ids=None;self.source_face_ids=None
+        if source_vertex_ids is not None:
+            for name,ids,size in (('source_vertex_ids',source_vertex_ids,len(self.world)),('source_face_ids',source_face_ids,len(self.faces))):
+                ids=np.asarray(ids)
+                if ids.shape!=(size,) or ids.dtype.kind not in 'iu' or (ids<0).any() or (ids>np.iinfo(np.int64).max).any():
+                    raise ValueError('invalid reference '+name)
+                setattr(self,name,ids.astype(np.int64,copy=True))
         self.tri=self.world[self.faces];self.uvtri=self.uv[self.faces]
         a=self.uvtri[:,1]-self.uvtri[:,0];b=self.uvtri[:,2]-self.uvtri[:,0]
         det=a[:,0]*b[:,1]-a[:,1]*b[:,0]
@@ -191,7 +200,12 @@ class Reference:
             if len(candidates) and np.max(np.linalg.norm(candidates-candidates[0],axis=1))<1e-7:
                 xyz[i]=candidates[0];valid[i]=True;owner[i]=ids[inside][0]
                 barycentric[i]=weights[inside][0]
-        if with_provenance:return xyz,valid,dict(face=np.where(valid,owner,-1),barycentric=barycentric)
+        if with_provenance:
+            provenance=dict(face=np.where(valid,owner,-1),barycentric=barycentric)
+            if self.source_face_ids is not None:
+                provenance['source_face_id']=np.where(valid,self.source_face_ids[owner],-1)
+                provenance['source_vertex_ids']=np.where(valid[:,None],self.source_vertex_ids[self.faces[owner]],-1)
+            return xyz,valid,provenance
         return (xyz,valid,owner) if with_faces else (xyz,valid)
 
 

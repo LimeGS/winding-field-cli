@@ -79,12 +79,18 @@ def decode_observations(grad_mag,nx,ny,cos,*,input_spacing_xyz,encode_scale,grad
         raise ValueError('Lasagna input spacing and density scales must be positive finite values')
     normals=decode_lasagna_normals(nx,ny)/spacing
     magnitude=np.linalg.norm(normals,axis=-1)
-    density=np.asarray(grad_mag,dtype=np.float32)/encode_scale*grad_mag_factor*magnitude
+    density=np.asarray(grad_mag,dtype=np.float64)*(grad_mag_factor/encode_scale)*magnitude
+    if (not np.isfinite(normals).all() or not np.isfinite(density).all()
+            or np.any(density>np.finfo(np.float32).max)):
+        raise ValueError('Lasagna physical observations exceed finite float32 range')
+    density=density.astype(np.float32)
+    if np.any((arrays[0]>0)&(magnitude>0)&(density==0)):
+        raise ValueError('Lasagna positive density is below float32 range')
     support=validity & (density>0) & (magnitude>0)
     normals/=np.maximum(magnitude[...,None],1e-12)
     normals[~support]=0; density[~support]=0
     phase=np.where(support,np.asarray(cos,dtype=np.float32)/255,0)
-    return dict(density=density.astype(np.float32),normals=normals.astype(np.float32),
+    return dict(density=density,normals=normals.astype(np.float32),
                 support=support,surface_phase=phase.astype(np.float32))
 
 
@@ -120,6 +126,22 @@ def _validate_work(root):
 
 
 def validate_retained(run,config):
+    if config.get('lasagna_input'):
+        from .lasagna_input import LasagnaInput,retained_import
+        from .workflow import open_volume
+        root=Path(run)/'lasagna-import'
+        if not retained_import(run):return
+        identity=json.loads((root/'IDENTITY.json').read_bytes())
+        source=identity['binding']['ct_selected']
+        volume=open_volume(dict(config,source=source['source'],level=source['level']))
+        try:
+            with LasagnaInput(volume,run,config) as reader:
+                reader.validate_used()
+                receipt=Path(run)/'LASAGNA.json'
+                if receipt.exists() and json.loads(receipt.read_bytes())['identity']!=reader.identity:
+                    raise ValueError('external Lasagna receipt changed')
+        finally:volume.close()
+        return
     root=Path(run)/'lasagna-source'
     if not root.exists(): return
     identity=json.loads((root/'IDENTITY.json').read_bytes())
@@ -158,7 +180,17 @@ def _products(root,shape):
     return manifest,paths
 
 
-def prepare(volume,run,config,geometry,stop=None):
+def prepare(volume,run,config,geometry,stop=None,reader=None):
+    if config.get('lasagna_input'):
+        from .lasagna_input import LasagnaInput
+        if reader is None:
+            with LasagnaInput(volume,run,config) as imported:
+                imported.validate_used()
+                return prepare(volume,run,config,geometry,stop,reader=imported)
+        result=dict(status='LASAGNA_READY',identity=reader.identity,geometry=geometry,
+                    encoding=reader.manifest,density_units='cycles/micrometer',surface_method='external-lasagna')
+        bind(Path(run)/'LASAGNA.json',result)
+        return result
     runtime=runtime_identity(config.get('lasagna_python'))
     weights=checkpoint(config.get('lasagna_model_path'),config.get('offline',False),prediction='lasagna')
     staged=input_geometry(volume,geometry)

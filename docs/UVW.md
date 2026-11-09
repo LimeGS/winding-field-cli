@@ -138,6 +138,49 @@ Reference checkpoints and worker results retain `reference_face` and
 `base`, `reference_valid`, and `cause`. Implementation identity prevents reuse of
 older checkpoints. Compact vertex-to-face connectivity is retained in `Reference`.
 
+`load_reference()` also retains the map's exact `source_vertex_ids` and
+`source_face_ids`. With that reference, both provenance APIs additionally return
+`source_face_id` (N) and `source_vertex_ids` (N×3, in triangle-corner order).
+Invalid inverse results or raw UV locations use -1. As with `face`,
+`reference_points` retains raw provenance when later projection rejects a point;
+always honor its validity mask. These IDs belong to the reference's
+`metadata['identity']['mesh_sha256']` namespace; they are not row numbers in a
+different mesh. Programmatic references may supply both ID arrays, or neither;
+unknown source IDs are never invented. Repeated source IDs at UV cuts are
+permitted and never establish uniqueness.
+
+### Linking a continuous three-turn map
+
+Keep the continuous map's geometry, UV, faces and source IDs intact. Its points
+are **queries** into a separate constant-W reference; their W is evaluated from
+the field. A continuous `[-62,-59]` map is not a W=-60 reference, and its own UV
+is not the reference UV. Do not relabel its storage slot or transport the entire
+map to W=-60 to construct a replacement reference.
+
+For a verified source batch (at most 16,384 vertices), use:
+
+```python
+# query_xyz_um is converted with the QUERY map's declared frame, not ref's frame.
+# query_source_vertex_ids are the unchanged IDs for these same query rows.
+uvw, valid, details = xyz_to_uvw(ref, field, query_xyz_um, with_details=True)
+link = dict(query_source_vertex_ids=query_source_vertex_ids,
+            uvw=uvw, valid=valid, **details)
+```
+
+Bind each link product to the query map hash, source mesh/range receipt,
+query frame, field identity and full reference metadata. Retain the query
+topology separately, with its source face IDs. `details['face']` indexes the
+reference map; `details['source_face_id']` identifies its source face, with
+`barycentric` and `source_vertex_ids` recording the exact raw reference triangle
+before projection. Matching integer IDs across different mesh namespaces does
+not prove correspondence. Unsupported or ambiguous queries remain masked.
+
+The receipt-bound loader still requires the constant-W reference `map.npz`,
+`LEVEL.json`, all receipt-listed products, sibling `publications.sqlite` and
+`ORIGINAL.json`. A preview PNG or a continuous-map NPZ alone cannot replace
+those inputs. Full-height three-turn linkage and coverage remain unverified
+until that reference and its physical frame are available and validated.
+
 ### Performance measurements
 
 Per-level `quality.json` contains `timings` for geometry wall time, recorded
@@ -184,8 +227,10 @@ spacing and checked roundtrip error at most 0.25 spacing. Integration has a
 
 The exporter checks the actual float32 coordinate representation before CT
 sampling: rounding must be at most 0.01 spacing, and the stored points must
-pass the field residual and backward roundtrip checks. TIFFs are read back
-before publication.
+pass the field residual, inverse admission, recovered UV correspondence
+(absolute 1e-6 µm) and backward roundtrip checks. A rounded point outside the
+reference domain or exact band is masked even if the pre-encoding point was
+valid. TIFFs are read back before publication.
 
 Forward mapping, inverse mapping and export share the same ambiguity admission.
 The inverse flows back to reference W and searches the actual curved gradient
@@ -206,6 +251,11 @@ gradient or unresolved tangency masks the query. Numerical root/edge allowance
 is based on max(1e-9 minimum spacing, 64 machine eps × coordinate magnitude).
 These are numerical enclosures around error-controlled trajectories, **not a
 formally rounded interval-ODE proof**; extreme conditioning can remain unresolved.
+
+Correspondence transport uses midpoint error tolerance at most 1e-10 spacing.
+Its accumulated position-error estimate and arrival residual enlarge candidate
+and interval exclusion bounds; a near-missed triangle inside that envelope is
+unresolved. This estimate is numerical, not a rigorous global error bound.
 
 Equal-UV edge/vertex hits collapse at 1e-6 µm; distinct UV branches reject the
 query. Face/barycentric provenance is retained but never used as uniqueness

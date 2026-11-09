@@ -77,7 +77,7 @@ output directory for the new implementation.
 Install the pinned native transport with `pip install '.[ct]'` (requires a
 compatible C++ build environment). For remote volumes with a cache budget of
 at least 256 MiB, an available native extension enables
-`vc_reader.reader.encoded_files.EncodedFiles`. `RUN.json.io.transport` identifies
+`vc_reader.DiskCache`. `RUN.json.io.transport` identifies
 the selected transport; `backend` still identifies the NumPy/numcodecs Zarr-v2
 decoder. Native decoded-array assembly is not enabled by this integration.
 Without the optional extension, or with smaller streaming budgets, the portable
@@ -92,6 +92,10 @@ legacy payloads are reused and revalidated in place; their bytes reduce the nati
 budget, so these are not two independent cache allowances. The parent cache lock
 coordinates CLI writers. Do not point unrelated native writers at this private
 subdirectory. The adapter relies on the pinned reader's SQLite cache schema.
+The CLI preserves old encoded-file ownership during schema migration and owns
+conditional revalidation because the new native file API trusts cached bytes.
+An existing receipt without a strong validator needs a payload fetch on its next
+validation epoch; subsequent epochs can use the recorded strong ETag.
 
 Encoded-byte SHA256 receipts and the run's source ledger remain authoritative.
 Fresh validation starts a new remote epoch; only strong ETags can avoid payload

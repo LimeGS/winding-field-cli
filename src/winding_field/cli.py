@@ -80,6 +80,7 @@ def main(argv=None):
         p.add_argument('--fibres-geometry',help='explicit AFV XYZ-to-world geometry JSON')
         p.add_argument('--lasagna-python',help='isolated official Python 3.14 runtime')
         p.add_argument('--lasagna-model-path',help='local pinned Lasagna surface checkpoint')
+        p.add_argument('--lasagna-input',help='local/HTTP/S3 v2 .lasagna.json; imports surfaces without inference and binds its base grid to selected CT')
         p.add_argument('--threshold',type=float,help='classical predictor CT intensity threshold; default: calibrated Otsu; unused by learned predictors')
         p.add_argument('--invalid-value',type=float,help='acquisition fill value to exclude; zero remains valid unless declared')
         p.add_argument('--field-chunk',type=int,default=64,help='field solver block edge in field-grid samples (default: 64)'); p.add_argument('--sweeps',type=int,default=4,help='field solver block sweeps (default: 4)')
@@ -100,6 +101,8 @@ def main(argv=None):
     for command in ('resume','status','prepare','fibres','field','mesh','flatten','assemble','render'):
         p=sub.add_parser(command,help='continue or inspect an existing run')
         p.add_argument('run')
+        if command!='status':
+            p.add_argument('--offline',action='store_true',help='disable network for this continuation; preserve saved source/product identities')
         if command=='resume':
             p.add_argument('--field-sweeps',type=int,help='absolute total sweep budget for an unpublished bounded field; retries do not add sweeps')
             p.add_argument('--extra-surface-seconds',type=float,default=0.,help='explicit extra native budget; original elapsed/target retained')
@@ -196,6 +199,9 @@ def main(argv=None):
             if config.get('lasagna_python'):
                 # Resolving the venv executable symlink would select the base interpreter.
                 config['lasagna_python']=str(Path(config['lasagna_python']).expanduser().absolute())
+            if config.get('lasagna_input'):
+                from .lasagna_input import location
+                config['lasagna_input']=location(config['lasagna_input'])
             for key in ('cache','reserve','bounded'):
                 value=config.pop(key+'_gib')
                 if not 0<=value<=1e6:
@@ -293,7 +299,7 @@ def main(argv=None):
             else:
                 result=run(state['config'],resume=True,until=None if args.command=='resume' else args.command,
                            extra_surface_seconds=getattr(args,'extra_surface_seconds',0.),
-                           field_sweeps=getattr(args,'field_sweeps',None))
+                           field_sweeps=getattr(args,'field_sweeps',None),offline=args.offline)
         print(json.dumps(result,indent=2,allow_nan=False))
         if native:
             native_result=result.get('native_result',result)

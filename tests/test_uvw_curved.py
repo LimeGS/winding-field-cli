@@ -143,7 +143,14 @@ def test_curved_workers_preserve_geometry_and_provenance(tmp_path):
     with GeometryWorkers(descriptor,level,[5.8,6.,6.2],7,workers=2,region_cache_bytes=1<<20) as pool:
         parallel=list(pool.map(jobs))
     for (a,_),(b,_) in zip(serial,parallel):
-        assert a['geometry'].all() and (a['reference_face']>=0).all()
+        # Stored float32 endpoints may leave the exact band or reference edge;
+        # preserve conservative masks rather than requiring unsafe admission.
+        assert a['geometry'].any() and (a['reference_face']>=0).all()
+        assert (a['cause'][~a['geometry']]==10).all()
+        with field_array(tmp_path,lambda p:p[...,0]*p[...,2]) as field:
+            recovered,valid=xyz_to_uvw(ref,field,a['xyz'][a['geometry']])
+        assert valid.all()
+        np.testing.assert_allclose(recovered[:,:2],uv[a['geometry']],atol=1e-6,rtol=0)
         np.testing.assert_allclose(a['reference_barycentric'].sum(1),1.)
         for key in a:np.testing.assert_array_equal(a[key],b[key])
 
@@ -192,11 +199,30 @@ def test_transport_error_cannot_hide_skinny_competing_branch(tmp_path):
         assert not valid.any()
 
 
-def test_encoded_coordinate_must_recover_requested_uv(tmp_path):
+@pytest.mark.parametrize('other_chart',[False,True])
+def test_encoded_coordinate_must_recover_requested_uv(tmp_path,other_chart):
     from winding_field.uvw_workers import compute_geometry,CAUSES
     world=np.array([[3.00000003,2.,5.],[9.,2.,5.],[9.,8.,5.],[3.00000003,8.,5.]])
     ref=Reference(world,np.array([[0,1,2],[0,2,3]]),world[:,:2],5.)
+    if other_chart:
+        other=np.array([[2.,2.,5.],[3.00000001,2.,5.],[3.00000001,8.,5.],[2.,8.,5.]])
+        ref=Reference(np.concatenate((world,other)),np.concatenate((ref.faces,ref.faces+4)),
+            np.concatenate((ref.uv,other[:,:2]+20)),5.)
     with field_array(tmp_path,lambda p:p[...,2]) as field:
+        recovered,valid=xyz_to_uvw(ref,field,[[3.,4.,6.]])
+        assert bool(valid[0])==other_chart
+        if other_chart:np.testing.assert_allclose(recovered[0],[23.,24.,6.])
         data,_=compute_geometry(ref,field,dict(origin_xyz_um=[0.,0.,0.],voxel_um=1.),np.array([[3.00000003,4.]]),6.)
         assert not data['geometry'][0]
         assert data['cause'][0]==CAUSES['coordinate_precision']
+
+
+def test_incoming_transport_envelope_keeps_near_missed_branch_unresolved(tmp_path):
+    from winding_field.uvw_intersections import trajectory_hits
+    ref=skinny_competing_patch()
+    # Offset across the flow: the skinny triangle is outside the numerical
+    # trajectory but inside the incoming integration-error envelope.
+    base=np.array([3.,4.,2.])+3e-5*np.array([3.,0.,-2.])/np.sqrt(13.)
+    with field_array(tmp_path,lambda p:p[...,0]*p[...,2]) as field:
+        _,resolved=trajectory_hits(ref,field,base,uncertainty_um=1e-4)
+    assert not resolved

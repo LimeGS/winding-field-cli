@@ -35,7 +35,7 @@ def tifxyz_settings(out,request=None,*,resume=False):
 
 
 def validate_observations(config,volume,shape):
-    if (config.get('fibres') or config.get('prediction','classical')!='classical') and volume.dtype not in (np.dtype('uint8'),np.dtype('uint16')):
+    if not config.get('lasagna_input') and (config.get('fibres') or config.get('prediction','classical')!='classical') and volume.dtype not in (np.dtype('uint8'),np.dtype('uint16')):
         raise ValueError('Lasagna requires uint8 or uint16 CT')
     if config.get('prediction')=='qual-v2' and not config.get('fibres'):
         spacing=np.asarray(volume.spacing_xyz)*config.get('stride',1)
@@ -70,6 +70,11 @@ def field_geometry(meta,spacing_um=None):
 
 
 def validate_config(config):
+    if config.get('lasagna_input'):
+        if not isinstance(config['lasagna_input'],str) or not config['lasagna_input'].strip():
+            raise ValueError('--lasagna-input must name a local or remote v2 manifest')
+        if config.get('lasagna_model_path') or config.get('lasagna_python'):
+            raise ValueError('--lasagna-input conflicts with Lasagna inference runtime/checkpoint options')
     if type(config.get('bounded_preparation',False)) is not bool:
         raise ValueError('bounded_preparation must be boolean')
     if config.get('bounded_preparation'):
