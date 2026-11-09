@@ -32,6 +32,16 @@ Intentional differences:
 Docker calls the helper's `dependencies` phase before copying application source
 and its `application` phase afterward, preserving dependency-layer caching.
 
+The shipping stage starts from pinned Ubuntu, not the CUDA development image.
+Build-only libraries and Nsight are excluded; both Python environments and their
+package metadata are preserved. Byte-identical native libraries share read-only
+storage through hardlinks, established before the final image copy. The receipt
+`/opt/runtime-provenance/library-sharing.json` records the deduplicated bytes.
+G++, Ninja and a minimal CUDA compiler/device-runtime subset remain deliberately:
+explicit accelerator rebuilding and Lasagna's JIT extensions still need them.
+The full CUDA toolkit, development profiler and static math-library archives are
+not required for the installed workflows.
+
 ## Build
 
 From this checkout, with Docker Buildx/Bake:
