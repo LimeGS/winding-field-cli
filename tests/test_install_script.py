@@ -134,6 +134,28 @@ def test_shared_locked_runtime_preserves_hashes_and_dependency_layer(installer,b
     assert list((work/'wheels').glob('*.whl')) and (work/'cli/bin/winding-field').exists()
 
 
+@pytest.mark.parametrize('backend',['auto','cpu','cu128'])
+def test_shared_runtime_at_filesystem_root_has_single_slash_paths(installer,backend):
+    run,work,_,log=installer
+    # Simulate the Docker checkout at / without writing into the host root.
+    result=run(content='''pwd() {
+    if [ "$#" -eq 0 ]; then printf '/\\n'; else builtin pwd "$@"; fi
+}
+export -f pwd
+''' + f'bash "$INSTALL_RUNTIME" {backend} "$PWD/cli" "$HOME/lasagna" dependencies\n')
+    assert result.returncode==0,result.stderr
+    calls=[json.loads(line) for line in log.read_text().splitlines()]
+    commands=[c for c in calls if c[:3] in (['uv','pip','install'],['uv','pip','sync'])]
+    assert len(commands)==2
+    for command,name in zip(commands,('cli','lasagna')):
+        assert command[command.index('--build-constraints')+1]=='/docker/build-constraints.txt'
+        if backend=='auto':
+            assert command[command.index('--constraint')+1]=='/docker/cli.in'
+            assert command[command.index('--requirements')+1]==(str(work/'pyproject.toml') if name=='cli' else '/docker/lasagna.in')
+        else:
+            assert command[-1]==f'/docker/{name}-{backend}.txt'
+
+
 @pytest.mark.parametrize('arguments',['cuda cli lasagna','auto cli lasagna wrong-phase'])
 def test_shared_runtime_rejects_invalid_recipe_before_writes(installer,arguments):
     run,work,_,log=installer
