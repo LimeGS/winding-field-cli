@@ -237,7 +237,7 @@ def run_original(run,config,volume,stop=None):
     return result
 
 
-def export_existing(args):
+def export_existing(args,*,run_export=None,volume=None):
     from .range_surface import reject_scalar_range
     if args.mesh_bundle:reject_scalar_range(args.mesh_bundle)
     import fcntl
@@ -246,8 +246,8 @@ def export_existing(args):
     from .io import Volume
     from .workflow import implementation_sha
     out=Path(args.output).expanduser().resolve()
-    request=settings(json.loads(Path(args.flattening_config).read_bytes()))
-    descriptor=json.loads(Path(args.field_config).read_bytes()) if args.field_config else None
+    request=run_export['settings'] if run_export else settings(json.loads(Path(args.flattening_config).read_bytes()))
+    descriptor=run_export['field'] if run_export else json.loads(Path(args.field_config).read_bytes()) if args.field_config else None
     if descriptor is not None and not args.levels:raise ValueError('--levels required with --field-config')
     if args.mesh_bundle and args.levels:raise ValueError('mesh bundle already binds its levels; omit --levels')
     mesh=Path(args.mesh_bundle).expanduser().resolve() if args.mesh_bundle else out/'meshes'
@@ -257,20 +257,52 @@ def export_existing(args):
     identity=dict(native_runtime=runtime_identity(),settings=request,field=descriptor,mesh=str(mesh),levels=args.levels,
                   source=args.source,level=args.level,voxel_um=args.voxel_um,export_tifxyz=args.export_tifxyz,
                   implementation_sha256=implementation_sha())
-    out.mkdir(exist_ok=args.resume)
+    generated={}
+    if run_export:
+        import hashlib
+        generated={name:(json.dumps(value,indent=2,sort_keys=True,allow_nan=False)+'\n').encode()
+                   for name,value in [('field.json',descriptor),('flattening.json',request)]}
+        identity['run']=run_export['binding']
+        identity['generated_configs']={name:hashlib.sha256(data).hexdigest() for name,data in generated.items()}
+    out.mkdir(parents=True,exist_ok=args.resume)
     with (out/'.lock').open('a') as lock:
         fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
         if args.resume:
             if json.loads((out/'EXPORT.json').read_bytes())!=identity:raise ValueError('original resume identity changed')
+            for name in generated:
+                if file_sha(out/name)!=identity['generated_configs'][name]:
+                    raise ValueError('generated export configuration changed: '+name)
         else:atomic_json(out/'EXPORT.json',identity)
+        if not args.resume:
+            from .util import atomic_bytes
+            for name,data in generated.items():atomic_bytes(out/name,data)
+        if run_export:
+            producer=Path(run_export['binding']['path'])/'source.sqlite'
+            expected=run_export['binding']['source_ledger_sha256']
+            if file_sha(producer)!=expected:raise ValueError('producer source ledger changed')
+            ledger=out/'source.sqlite'
+            if args.resume and (ledger.is_symlink() or not ledger.is_file()):
+                raise ValueError('export CT ledger is missing or symlinked')
+            with closing(sqlite3.connect(producer.as_uri()+'?mode=ro',uri=True)) as src:
+                if not args.resume:
+                    with closing(sqlite3.connect(ledger)) as dest:src.backup(dest,pages=256)
+                else:
+                    with closing(sqlite3.connect(ledger.as_uri()+'?mode=ro',uri=True)) as dest:
+                        dest.execute('ATTACH DATABASE ? AS producer',(producer.as_uri()+'?mode=ro',))
+                        if dest.execute('SELECT 1 FROM producer.chunks p LEFT JOIN chunks e ON e.key=p.key '
+                                        'WHERE e.sha IS NULL OR e.sha!=p.sha LIMIT 1').fetchone():
+                            raise ValueError('producer CT hashes missing or changed in export ledger')
+            if file_sha(producer)!=expected:raise ValueError('producer source ledger changed')
         if descriptor is not None:
             with FieldSource(descriptor['field'],descriptor['geometry']) as source:
                 result=extract_mesh(source,mesh,args.levels,resume=mesh.exists())
                 if result['status']!='MESH_READY':return result
-        volume=Volume(args.source,voxel_um=args.voxel_um,level=args.level)
+        own_volume=volume is None
+        if own_volume:volume=Volume(args.source,voxel_um=args.voxel_um,level=args.level)
         try:
             volume.bind_ledger(out/'source.sqlite')
             if args.resume:volume.validate_used()
             return export_mesh(mesh,out/'original',volume,request,export_tifxyz=args.export_tifxyz,
                                stop=lambda:(out/'STOP').exists())
-        finally:volume.close()
+        finally:
+            if own_volume:volume.close()

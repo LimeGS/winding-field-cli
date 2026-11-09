@@ -136,12 +136,13 @@ def main(argv=None):
     p=sub.add_parser('export-sheets',help='LSCM/SLIM on patches or whole sheets; historical recipes also available',
         description='Export flattened CT from a field or mesh. The solver/scope matrix and historical patches require Linux; original mapping also supports macOS. Choose --flattening-solver and --scope together, or a historical --flattening-method. LSCM needs no Flatboi; SLIM requires the pinned binary and cgroup limits. Outputs remain diagnostic.')
     inputs=p.add_mutually_exclusive_group(required=True)
+    inputs.add_argument('--run',help='completed field run; infer saved inputs and original mapping defaults without manual JSON')
     inputs.add_argument('--field-config',help='field path/hash and geometry JSON; requires --levels; not supported by historical patches')
     inputs.add_argument('--mesh-bundle',help='immutable mesh bundle or verified RANGE wrapper; original mapping rejects continuous ranges')
     p.add_argument('--levels',nargs='+',type=float,help='raw field isovalues (W * sheet_step); required with --field-config, forbidden with --mesh-bundle')
-    p.add_argument('--source',required=True,help='original CT Zarr')
-    p.add_argument('--level',type=int,default=0,help='CT Zarr pyramid level (default: 0); not a winding W value');p.add_argument('--voxel-um',type=float,help='micrometre scale for CT geometry lacking units; not field/output spacing')
-    p.add_argument('--output',required=True,help='sheet export directory');p.add_argument('--flattening-config',required=True,help='JSON: output_frame and render settings; explicit slim requires app_run, see docs/FLATTENING.md')
+    p.add_argument('--source',help='original CT Zarr; required except with --run')
+    p.add_argument('--level',type=int,help='CT Zarr pyramid level (default: 0, or saved run level); not a winding W value');p.add_argument('--voxel-um',type=float,help='micrometre scale for CT geometry lacking units; not field/output spacing')
+    p.add_argument('--output',required=True,help='sheet export directory');p.add_argument('--flattening-config',help='JSON: output_frame and render settings; inferred with --run, required otherwise; explicit slim requires app_run')
     p.add_argument('--flattening-method',choices=['original','patches'],help='historical recipe; cannot combine with --flattening-solver/--scope')
     p.add_argument('--flattening-solver',choices=['lscm','slim'],help='explicit algorithm; requires --scope')
     p.add_argument('--scope',choices=['patches','sheet'],help='independent patches or whole connected sheets; requires --flattening-solver')
@@ -251,7 +252,13 @@ def main(argv=None):
             from .range_surface import join_ranges
             result=join_ranges(args.inputs,args.output)
         elif args.command=='export-sheets':
-            if args.flattening_solver is not None or args.scope is not None:
+            if not args.run:
+                if not args.source or not args.flattening_config:
+                    raise ValueError('--source and --flattening-config are required without --run')
+                if args.level is None:args.level=0
+            if args.run:
+                from .run_sheet_export import export_run as export_existing
+            elif args.flattening_solver is not None or args.scope is not None:
                 if args.flattening_method or not (args.flattening_solver and args.scope):
                     raise ValueError('flattening selection requires --flattening-solver and --scope together, without --flattening-method')
                 from .matrix_pipeline import export_existing
