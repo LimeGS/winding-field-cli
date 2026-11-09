@@ -9,6 +9,7 @@ import sqlite3
 from tempfile import TemporaryDirectory
 
 import numpy as np
+import torch
 
 from block_solver import solve_blocks
 from field_constraints import pair_constraints
@@ -111,6 +112,11 @@ def spline_samples(points,low,high,step):
 
 
 def solve(run,config,stop=None,*,sweep_target=None):
+    budget=config.get('prepared_cache_bytes',0)
+    if type(budget) is not int or budget<0:
+        raise ValueError('prepared_cache_bytes must be a nonnegative integer')
+    if config.get('preconditioner','jacobi')!='jacobi':
+        raise ValueError("block workflows require preconditioner='jacobi'")
     run=Path(run); meta=json.loads((run/'PREPARED.json').read_bytes())
     fibres=json.loads((run/'FIBRES.json').read_bytes())
     bounded=meta.get('bounded_preparation',False)
@@ -228,7 +234,6 @@ def solve(run,config,stop=None,*,sweep_target=None):
                 progress['initialization_done']=True
                 store.save_progress(progress)
         if bounded:
-            import torch
             device=torch.device(config.get('device','cpu'))
             if device.type=='cuda':
                 # A fresh resume has not initialized the CUDA allocator through inference.
@@ -239,9 +244,11 @@ def solve(run,config,stop=None,*,sweep_target=None):
             options['sweeps']=extend(root,sweep_target,config.get('sweeps',4),
                                    reserve_bytes=options['reserve_bytes'],max_bytes=options.get('max_bytes'))
             result=solve_blocks(root,shape,chunk,identity,load,resume=True,stop=stop,**options)
+        result['effective_threads']=torch.get_num_threads()
         if result['status']!='SWEEP_BUDGET_REACHED':
             return dict(status='PAUSED',solver=result)
         receipt=dict(status='FIELD_READY',geometry=geometry,checkpoint_sha256=file_sha(checkpoint),
+                     effective_threads=torch.get_num_threads(),
                      calibration=cal,solver=result,global_converged=False,physical_acceptance=False,
                       fibre_constraint_rows=row_count,numerical_status='local solves converged; sweep budget exhausted')
         if bounded:

@@ -84,6 +84,8 @@ def lasagna_downsamples(config):
 
 
 def validate_config(config):
+    if config.get('preconditioner','jacobi')!='jacobi':
+        raise ValueError("block workflows require preconditioner='jacobi'")
     lasagna_downsamples(config)
     if config.get('lasagna_input') and any('lasagna_'+n+'_downsample' in config for n in LASAGNA_DOWNSAMPLE):
         raise ValueError('--lasagna-input conflicts with Lasagna generation downsample flags')
