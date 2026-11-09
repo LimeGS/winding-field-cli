@@ -87,7 +87,7 @@ def main(argv=None):
         for name,default in LASAGNA_DOWNSAMPLE.items():
             p.add_argument('--lasagna-'+name.replace('_','-')+'-downsample',type=int,choices=[1,2,4,8],
                 default=argparse.SUPPRESS,help=f'{name} prediction output reduction per axis (default: {default}); nx/ny must match; model input and CT unchanged')
-        p.add_argument('--lasagna-input',help='local Lasagna v2 surface manifest; skips surface inference; cannot combine with --bounded-preparation')
+        p.add_argument('--lasagna-input',help='local/HTTP/S3 Lasagna v2 manifest; skips surface inference; explicit physical geometry uses calibrated interpolation, otherwise binds to the selected CT base grid')
         p.add_argument('--lasagna-geometry',help='explicit Lasagna base-grid XYZ-to-world geometry JSON')
         p.add_argument('--threshold',type=float,help='classical predictor CT intensity threshold; default: calibrated Otsu; unused by learned predictors')
         p.add_argument('--invalid-value',type=float,help='acquisition fill value to exclude; zero remains valid unless declared')
@@ -112,6 +112,8 @@ def main(argv=None):
         p=sub.add_parser(command,help='continue or inspect an existing run',
             description='Resume an existing run with its saved inputs, settings and runtime. Remove RUN/STOP first; published levels are unchanged.' if command=='resume' else None)
         p.add_argument('run',help='existing run directory containing RUN.json')
+        if command!='status':
+            p.add_argument('--offline',action='store_true',help='disable network for this continuation without changing saved identities')
         if command=='resume':
             p.add_argument('--field-sweeps',type=int,help='absolute total sweep budget for an unpublished bounded field; retries do not add sweeps')
             p.add_argument('--extra-surface-seconds',type=float,default=0.,help='explicit extra native budget; original elapsed/target retained')
@@ -205,9 +207,12 @@ def main(argv=None):
             if until not in dict(stages) and not (config['surface_output']=='native' and until in ('mesh','flatten','assemble','render')):
                 raise ValueError('--until '+until+' is incompatible with the selected surface output')
             config['output']=str(Path(config['output']).expanduser().resolve())
-            for key in ('local','cache','model_path','fibres','fibres_geometry','lasagna_model_path','lasagna_input','lasagna_geometry'):
+            for key in ('local','cache','model_path','fibres','fibres_geometry','lasagna_model_path','lasagna_geometry'):
                 if config.get(key):
                     config[key]=str(Path(config[key]).expanduser().resolve())
+            if config.get('lasagna_input'):
+                from .lasagna_stream import location
+                config['lasagna_input']=location(config['lasagna_input'])
             if config.get('lasagna_python'):
                 # Resolving the venv executable symlink would select the base interpreter.
                 config['lasagna_python']=str(Path(config['lasagna_python']).expanduser().absolute())
@@ -311,7 +316,7 @@ def main(argv=None):
             else:
                 result=run(state['config'],resume=True,until=None if args.command=='resume' else args.command,
                            extra_surface_seconds=getattr(args,'extra_surface_seconds',0.),
-                           field_sweeps=getattr(args,'field_sweeps',None))
+                           field_sweeps=getattr(args,'field_sweeps',None),offline=args.offline)
         print(json.dumps(result,indent=2,allow_nan=False))
         if native:
             native_result=result.get('native_result',result)

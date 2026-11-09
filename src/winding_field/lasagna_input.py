@@ -17,6 +17,15 @@ from .splines import bind
 from .util import atomic_json, file_sha
 
 
+def streamed(config):
+    """Explicit/embedded physical frames retain the calibrated interpolation route."""
+    if not config.get('lasagna_input') or config.get('lasagna_geometry'):return False
+    path=http_url(config['lasagna_input'])
+    if path.startswith(('http://','https://')):return True
+    manifest,_=_json(path)
+    return not any(k in manifest for k in ('original_ct','world_origin_xyz_um','world_spacing_xyz_um'))
+
+
 def _json(path):
     with Path(path).open('rb') as stream:
         raw=stream.read((1<<20)+1)

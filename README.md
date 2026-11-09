@@ -381,6 +381,12 @@ Qual still supplies fibres by default. Add `--fibres /path/fibres.afv` (and its
 geometry descriptor if needed) to import both inputs without running either
 model. Keep the original prediction files for hash-verified resume.
 
+Without explicit or embedded physical geometry, local/HTTP/S3 manifests use the
+selected CT base-grid binding and pooled-cell sampling instead. This route also
+supports bounded preparation and `resume RUN --offline`; see
+[the streaming input contract](docs/LASAGNA.md). Explicit/embedded physical-frame
+inputs retain [calibrated interpolation](docs/LASAGNA-CALIBRATED.md).
+
 </details>
 
 <details>

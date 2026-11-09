@@ -111,9 +111,19 @@ def plan(config,volume=None,stages=()):
         lasagna_staging=lasagna_workspace=lasagna_import=lasagna_products=0; lasagna_input=None
         lasagna_grids={}
         if config.get('lasagna_input'):
-            from .lasagna_input import source_identity
-            lasagna_input=source_identity(config['lasagna_input'],config.get('lasagna_geometry'),
-                                          volume.identity,observations,volume.cache)
+            from .lasagna_input import source_identity,streamed
+            if streamed(config):
+                from contextlib import ExitStack
+                from tempfile import TemporaryDirectory
+                from .lasagna_stream import LasagnaInput
+                with ExitStack() as stack:
+                    output=Path(config.get('output','.'))
+                    root=output if (output/'lasagna-import/IDENTITY.json').exists() else stack.enter_context(TemporaryDirectory())
+                    with LasagnaInput(volume,root,config) as reader:
+                        lasagna_input=reader.identity
+            else:
+                lasagna_input=source_identity(config['lasagna_input'],config.get('lasagna_geometry'),
+                                              volume.identity,observations,volume.cache)
             lasagna_import=math.prod(shape.tolist())*(21+volume.dtype.itemsize)
         elif method!='classical':
             from .lasagna import input_geometry,CHUNK,BORDER
@@ -223,7 +233,7 @@ def _validate_products(root,state,stop=None,volume=None):
     from .afv import validate_retained as validate_afv
     validate_lasagna(root,state.get('config',{}))
     bounded=state.get('config',{}).get('bounded_preparation',False)
-    if bounded and (root/'PREPARED.json').exists():
+    if bounded and not state.get('config',{}).get('lasagna_input') and (root/'PREPARED.json').exists():
         from .bounded_pipeline import runtime_identity,checkpoint
         meta=json.loads((root/'PREPARED.json').read_bytes())
         if meta['producer_identity']['runtime']!=runtime_identity(state['config'].get('lasagna_python')):
@@ -350,8 +360,10 @@ def _tifxyz_ready(out,result,request_sha,coverage_policy='strict'):
     return marker_record['sha256']
 
 
-def run(config,resume=False,until=None,extra_surface_seconds=0,field_sweeps=None):
+def run(config,resume=False,until=None,extra_surface_seconds=0,field_sweeps=None,offline=False):
     validate_config(config)
+    if type(offline) is not bool or offline and not resume:
+        raise ValueError('offline transport override requires a resumed run')
     if field_sweeps is not None and (type(field_sweeps) is not int or field_sweeps<1
                                     or not resume or not config.get('bounded_preparation')):
         raise ValueError('field sweep target requires a bounded resume and positive integer')
@@ -421,6 +433,7 @@ def run(config,resume=False,until=None,extra_surface_seconds=0,field_sweeps=None
                 state.update(experimental=True,comparison_status='UNMEASURED',comparison_reason='reference OOM',
                              native_face_identity=False,native_topology_equivalence='UNMEASURED')
             atomic_json(root/'RUN.json',state)
+        if offline:config=dict(config,offline=True)
         interrupted=False
         def handle(signum,frame):
             nonlocal interrupted
@@ -447,7 +460,7 @@ def run(config,resume=False,until=None,extra_surface_seconds=0,field_sweeps=None
                 state['fibres_input']=fibres_input
             volume.bind_ledger(root/'source.sqlite')
             if resume:
-                volume.validate_used(); result=_validate_products(root,state,stop,volume)
+                volume.validate_used(); result=_validate_products(root,dict(state,config=config),stop,volume)
                 if result is not None:
                     if terminal=='surfaces':
                         state['native_result']=result

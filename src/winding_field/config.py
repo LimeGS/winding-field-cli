@@ -94,8 +94,8 @@ def validate_config(config):
     if type(config.get('bounded_preparation',False)) is not bool:
         raise ValueError('bounded_preparation must be boolean')
     if config.get('bounded_preparation'):
-        if config.get('lasagna_input'):
-            raise ValueError('--lasagna-input conflicts with --bounded-preparation; omit bounded preparation to import surfaces')
+        if config.get('lasagna_geometry'):
+            raise ValueError('--bounded-preparation requires base-grid imports without --lasagna-geometry')
         if config.get('prediction')!='qual-v2' or config.get('fibres') or config.get('stride',1)!=1:
             raise ValueError('bounded preparation requires native Qual V2 with stride1 and no external fibres')
         if config.get('field_spacing_um') is None:
