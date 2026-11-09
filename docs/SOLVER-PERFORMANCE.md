@@ -145,3 +145,10 @@ of the timing tables; historical suite counts are not a current CI result.
 Historical raw reports are development artifacts, not installed inputs. To
 measure your current version, run `tools/bench_solver.py` into a fresh directory
 and retain its `report.json`, `fields.npz` and optional `trace.json`.
+## Mesh preparation integration
+
+The core v2 multi-level mesh optimization now lives in the CLI mesh engine:
+support masks and field ranges are prepared once per tile and reused across W
+levels. Recursive precision-recovery crops prepare their own masks. Existing
+geometry, topology, level ordering and source-integrity checks are unchanged;
+the transferred regression tests cover exact single-/multi-level parity.

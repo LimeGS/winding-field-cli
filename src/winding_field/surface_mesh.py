@@ -421,13 +421,24 @@ class _LatticePrecisionError(ValueError):
     pass
 
 
-def _tile_mesh_once(values, valid, low, level, origin, spacing, flips=()):
-    from skimage.measure import marching_cubes
-
+def _prepare_tile(values, valid):
+    """Level-independent support and range; retain only one tile's boolean mask."""
     cells = np.ones(tuple(n - 1 for n in values.shape), bool)
     for bits in itertools.product((0, 1), repeat=3):
         cells &= valid[tuple(slice(b, n - 1 + b) for b, n in zip(bits, values.shape))]
-    if not cells.any() or not valid.any() or not values[valid].min() <= level <= values[valid].max():
+    if not cells.any() or not valid.any():
+        return None, np.inf, -np.inf
+    minimum, maximum = values[valid].min(), values[valid].max()
+    mask = np.zeros(values.shape, bool)
+    mask[1:, 1:, 1:] = cells
+    return mask, minimum, maximum
+
+
+def _tile_mesh_once(values, valid, low, level, origin, spacing, flips=(), *, prepared=None):
+    from skimage.measure import marching_cubes
+
+    mask, minimum, maximum = _prepare_tile(values, valid) if prepared is None else prepared
+    if mask is None or not minimum <= level <= maximum:
         return [], np.empty((0, 3)), np.empty((0, 3), np.int64)
     work = np.where(valid, values - level, 0).astype(np.float32)
     if not np.isfinite(work).all():
@@ -436,8 +447,6 @@ def _tile_mesh_once(values, valid, low, level, origin, spacing, flips=()):
         raise _LatticePrecisionError("level crossing underflows float32")
     if flips:
         work = np.flip(work, axis=flips)
-    mask = np.zeros(values.shape, bool)
-    mask[1:, 1:, 1:] = cells
     try:
         # Keep tiny faces until their edge positions have been reconstructed in float64.
         vertices, faces, _, _ = marching_cubes(work, 0.0, mask=mask, allow_degenerate=True)
@@ -481,9 +490,11 @@ def _tile_mesh_once(values, valid, low, level, origin, spacing, flips=()):
     return keys, np.asarray(world), faces[:, ::-1]
 
 
-def _tile_mesh(values, valid, low, level, origin, spacing):
+def _tile_mesh(values, valid, low, level, origin, spacing, *, prepared=None):
+    if prepared is None:
+        prepared = _prepare_tile(values, valid)
     try:
-        return _tile_mesh_once(values, valid, low, level, origin, spacing)
+        return _tile_mesh_once(values, valid, low, level, origin, spacing, prepared=prepared)
     except _LatticePrecisionError:
         cells = np.asarray(values.shape) - 1
         if (cells == 1).all():
@@ -493,7 +504,7 @@ def _tile_mesh(values, valid, low, level, origin, spacing):
                 if not axes:
                     continue
                 try:
-                    return _tile_mesh_once(values, valid, low, level, origin, spacing, axes)
+                    return _tile_mesh_once(values, valid, low, level, origin, spacing, axes, prepared=prepared)
                 except _LatticePrecisionError:
                     continue
             raise
@@ -567,10 +578,13 @@ def extract_mesh(
             high = np.minimum(low + tile, np.asarray(source.shape) - 1)
             check_resources(output, reserve_bytes=reserve_bytes + int(np.prod(high - low)) * 128)
             values, valid = source.read(low, high + 1)
+            prepared = _prepare_tile(values, valid)
             with store.db:
                 for start in range(0, len(levels), level_batch):
                     for j in range(start, min(start + level_batch, len(levels))):
-                        keys, vertices, faces = _tile_mesh(values, valid, low, levels[j], source.origin, source.spacing)
+                        keys, vertices, faces = _tile_mesh(
+                            values, valid, low, levels[j], source.origin, source.spacing, prepared=prepared
+                        )
                         if len(faces):
                             store.add(j, keys, vertices, faces)
                 store.checkpoint_tile(index)
