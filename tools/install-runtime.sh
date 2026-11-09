@@ -7,6 +7,7 @@ cli=${2:-"$PWD/.venv"}
 lasagna=${3:-"$HOME/.cache/winding-field/lasagna-venv"}
 phase=${4:-all}
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+root=${root%/} # A checkout at / needs an empty prefix before /docker.
 uv=${UV:-uv}
 case "$backend:$phase" in
     auto:all|auto:dependencies|auto:application|cpu:all|cpu:dependencies|cpu:application|cu128:all|cu128:dependencies|cu128:application) ;;
