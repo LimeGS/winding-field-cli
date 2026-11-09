@@ -82,13 +82,16 @@ def test_symlink_roots_are_rejected_before_any_modification(tmp_path):
     assert not a.samefile(b)
 
 
-def test_existing_hardlinks_and_overlapping_roots_are_not_double_counted(tmp_path):
+@pytest.mark.parametrize('unlinked_first', [False, True])
+def test_existing_hardlinks_and_overlapping_roots_are_not_double_counted(tmp_path, unlinked_first):
     a = library(tmp_path / 'a', 'lib.so')
     b = tmp_path / 'a' / 'alias.so'
     os.link(a, b)
     c = library(tmp_path / 'b', 'lib.so')
-    assert run_helper(tmp_path, a.parent) == {'files': 1, 'bytes': 7}
+    roots = (c.parent, tmp_path, a.parent) if unlinked_first else (tmp_path, a.parent)
+    assert run_helper(*roots) == {'files': 1, 'bytes': 7}
     assert a.samefile(b) and b.samefile(c)
+    assert run_helper(*roots) == {'files': 0, 'bytes': 0}
 
 
 def test_different_ownership_is_not_shared(tmp_path):
