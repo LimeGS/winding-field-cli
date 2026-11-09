@@ -120,9 +120,18 @@ ENV UV_PYTHON_INSTALL_DIR=/opt/python UV_LINK_MODE=copy UV_NO_CACHE=1 \
     NVIDIA_VISIBLE_DEVICES=all NVIDIA_DRIVER_CAPABILITIES=compute,utility \
     NVIDIA_REQUIRE_CUDA=$NVIDIA_REQUIRE_CUDA \
     TORCHINDUCTOR_CACHE_DIR=/scratch/torchinductor
-RUN dpkg-query -W > /opt/runtime-provenance/os-packages.txt && \
+RUN --mount=type=bind,from=build,source=/usr/local,target=/build-local,readonly \
+    if [ "$TORCH_VARIANT" = cu128 ]; then \
+      cp -a /build-local/cuda-12.8/bin/crt /usr/local/cuda-12.8/bin/; \
+    fi && \
+    dpkg-query -W > /opt/runtime-provenance/os-packages.txt && \
+    python -m winding_field.tifxyz_build --backend cpu --output /scratch/check-cpu && \
+    if [ "$TORCH_VARIANT" = cu128 ]; then \
+      python -m winding_field.tifxyz_build --backend cuda --host-compiler /usr/bin/g++ --output /scratch/check-cuda; \
+    fi && \
     python /opt/runtime-provenance/docker/verify-runtime.py --variant "$TORCH_VARIANT" \
-      > /opt/runtime-provenance/runtime.json
+      > /opt/runtime-provenance/runtime.json && \
+    rm -rf /scratch/check-cpu /scratch/check-cuda
 WORKDIR /outputs
 USER 10001:10001
 ENTRYPOINT ["winding-field"]
