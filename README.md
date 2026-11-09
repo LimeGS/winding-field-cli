@@ -244,29 +244,24 @@ masks in `level-*/component-*/`. The saved run configuration selects the branch.
 
 ### Export a chosen W level as TIFXYZ
 
-Install the export dependencies once in your active environment:
+Use the run created in section 3 (or `runs/175a-full` from section 2).
+The installer already includes the TIFXYZ dependencies. No configuration files
+or repeated CT path/scale are needed:
 
 ```bash
-uv pip install --constraint docker/cli.in '.[tifxyz]'
-```
-
-Prepare two [configuration files](docs/FLATTENING.md#configuration-files):
-
-- `field.json` describes the saved field data and its geometry.
-- `flattening.json` defines the output coordinates.
-
-Replace the paths and CT scale (`--voxel-um`) with those for your scan:
-
-```bash
-mkdir -p exports
-winding-field export-sheets --field-config field.json --levels -31 \
-  --source /data/scroll.zarr --voxel-um 8.64 \
-  --flattening-method original --flattening-config flattening.json \
+winding-field export-sheets --run runs/175a-roi --levels -31 \
   --export-tifxyz --output exports/W-31
 ```
 
-Choose more W values with `--levels -31 -30`. To resume, repeat the same command
-with the same configuration and add `--resume`.
+Choose more levels with `--levels -31 -30`; these are raw field isovalues, as
+in the rest of the CLI. The command uses the saved field and CT metadata plus
+the original global LSCM recipe. Default XYZ coordinates are physical micrometres
+(unit 1, zero origin), not CT voxel indices.
+
+The resolved `field.json` and `flattening.json` are saved automatically in the
+export directory and verified on resume; do not edit them. Repeat the same
+command with `--resume` to continue. Source runs remain unchanged. Missing or
+inconsistent saved metadata produces an error rather than guessed coordinates.
 
 Main outputs:
 

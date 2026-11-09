@@ -5,6 +5,7 @@ output directory:
 
 | Goal | Use |
 | --- | --- |
+| Export selected levels from a saved CLI run | `export-sheets --run RUN --levels ... --export-tifxyz` below |
 | Choose LSCM or SLIM on patches or whole sheets | `export-sheets --flattening-solver ... --scope ...` below |
 | Run the original global LSCM recipe | [Original mapping](#new-ct-run-with-original-mapping) |
 | Continue a normal CT run | [Native output](#native-output); use the saved run configuration |
@@ -14,11 +15,58 @@ output directory:
 CT images and optional XYZ TIFFs are different products. Missing CT does not
 necessarily mean missing geometry; always inspect masks and coverage.
 
+## Export from a saved run
+
+After the README's `run --until field`, export without creating configuration files:
+
+```sh
+winding-field export-sheets --run runs/175a-roi --levels -31 \
+  --export-tifxyz --output exports/W-31
+```
+
+`--run` selects the original global LSCM recipe. It loads the completed field
+receipt/checkpoint, CT source, CT pyramid level and scale from the saved run.
+It verifies field hashes and geometry, current CT metadata and previously
+consumed encoded CT chunks before creating the export. Keep `RUN.json`,
+`FIELD.json`, `field/` and `source.sqlite` intact. This is a new read-only export,
+not a resume of the producer; the old producer implementation need not match
+the exporter. Revalidating the saved field and CT history can take time on large runs.
+The export retains a copy of the producer's CT hash ledger, so those expected
+hashes also protect rendering after admission. Resume rejects lost producer rows
+or a missing/symlinked export ledger instead of accepting fresh source bytes.
+
+Default output frame: the saved field's frame identity, `voxel_um: 1`,
+`origin_xyz_um: [0,0,0]`. Thus XYZ TIFFs contain physical micrometres; nonzero
+CT origins and anisotropic spacing remain accounted for. Original mapping's
+existing automatic raster pitch and 4 GiB memory-admission estimate are unchanged.
+Do not treat a successful diagnostic export as physical-sheet acceptance.
+
+The exporter creates `field.json` and `flattening.json` inside `OUT`, binding their
+hashes and source receipts in `EXPORT.json`. Repeat the identical command with
+`--resume`; edited/missing configuration or changed sources are rejected, never
+silently regenerated. Use a fresh output for changed settings. The output must
+be separate from the source run, not inside or above it.
+
+To override output coordinates, pitch or memory admission, supply an explicit
+`--flattening-config` using the original recipe's format below. Do not combine
+`--run` with `--source`, `--level`, `--voxel-um`, another input selector, patches,
+or the solver/scope matrix: saved inputs are authoritative. `--levels` retains
+the existing **raw field isovalue** contract, not automatic W recalibration.
+
+The shared manual/quick/Docker installation already includes `plot` and `tifxyz`.
+Only for an environment installed without these extras, run from the checkout:
+
+```sh
+uv pip install --constraint docker/cli.in '.[tifxyz]'
+```
+
+For external fields/meshes, keep using the explicit configuration routes below.
+
 ## Explicit solver × scope matrix
 
 `export-sheets` accepts **both** `--flattening-solver lscm|slim` and
-`--scope patches|sheet`. Follow the [installation guide](../README.md), add the
-`tifxyz` extra and run on Linux. The four
+`--scope patches|sheet`. Follow the [installation guide](../README.md)
+and run on Linux. The four
 combinations use the same source-preserving preparation and tiled CT exporter:
 
 | Selection | Domain | Algorithm |
