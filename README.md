@@ -48,47 +48,42 @@ Review the script before executing downloaded code, or use the manual steps belo
 
 Run these steps in order.
 
-**A. Install system dependencies (Linux)**
+**A. Clone the checkout and install shared system dependencies (Linux)**
 
 Ubuntu 24.04 (omit `sudo` when running as root):
 
 ```bash
 sudo apt-get update
-sudo apt-get install -y \
-  python3.12-venv python3.12-dev git build-essential cmake ninja-build pkg-config \
-  nlohmann-json3-dev libcurl4-openssl-dev libsqlite3-dev \
-  libblosc-dev libzstd-dev liblz4-dev zlib1g-dev \
-  libtiff-dev libpng-dev libjpeg-dev
+sudo apt-get install -y git
+git clone https://github.com/LimeGS/winding-field-cli.git
+cd winding-field-cli
+sudo apt-get install -y $(cat tools/ubuntu-packages.txt)
 ```
 
-**B. Install the CLI** — use Python 3.12 below; Python 3.11 is also supported.
+**B. Install the CLI and Lasagna** — bootstrap with Python 3.12 below.
 CPU or CUDA is selected automatically from the available hardware and driver.
 
 ```bash
-git clone https://github.com/LimeGS/winding-field-cli.git
-cd winding-field-cli
 python3.12 -m venv .venv
 source .venv/bin/activate
-python -m pip install --upgrade pip uv
-
-uv pip install --constraint docker/cli.in .
+python -m pip install --upgrade pip 'uv>=0.9.17'
+bash tools/install-runtime.sh
 ```
 
-**C. Install Lasagna** — required for the default CT pipeline. Skip only if you
-use existing predictions with `--lasagna-input` or the classical predictor.
+The shared recipe installs both environments, including the `plot` and `tifxyz`
+Python extras, builds the CLI wheel and checks dependencies. The CLI remains in
+`.venv`; Lasagna uses its own Python 3.14.0 environment at
+`~/.cache/winding-field/lasagna-venv`. Do **not** activate Lasagna: the CLI finds
+it automatically. Existing environments and additional user packages are retained;
+model weights download on first use, not during installation.
 
-```bash
-uv python install 3.14
-uv venv --python 3.14 ~/.cache/winding-field/lasagna-venv
-uv pip install --python ~/.cache/winding-field/lasagna-venv/bin/python \
-  --constraint docker/cli.in \
-  'vesuvius-lasagna @ https://github.com/ScrollPrize/villa/archive/b29f310957c7b29e7d332f9876e0e487819cfaa3.tar.gz#subdirectory=lasagna'
-```
+Docker uses this same recipe and Ubuntu package list, with explicit CPU/CUDA
+hash-locked dependency sets and exact Python versions. Host installation resolves
+from their shared dependency specifications with automatic backend selection.
+Docker additionally bundles native Flatboi and prebuilt accelerators; see
+[the installation differences](docs/DOCKER.md#shared-installation-recipe).
 
-Lasagna needs its own Python 3.14 environment. Do **not** activate it: the CLI
-finds it automatically. Model weights download on first use.
-
-**D. Check the installation** — no model downloads:
+**C. Check the installation** — no model downloads:
 
 ```bash
 winding-field doctor

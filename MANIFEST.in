@@ -16,3 +16,5 @@ include tools/run_surfaces.py
 include tools/benchmark_blocks.py
 include tools/bench_solver.py
 include tools/install.sh
+include tools/install-runtime.sh tools/ubuntu-packages.txt
+recursive-include docker *.in *.txt

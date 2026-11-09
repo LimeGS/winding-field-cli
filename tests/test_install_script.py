@@ -1,7 +1,9 @@
 import json
 import os
+import re
 from pathlib import Path
 import shlex
+import shutil
 import subprocess
 import sys
 
@@ -10,6 +12,7 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / 'tools/install.sh'
+RUNTIME = ROOT / 'tools/install-runtime.sh'
 
 
 @pytest.fixture
@@ -21,6 +24,10 @@ def installer(tmp_path):
     subprocess.run(['git','init','-q','--initial-branch=main',str(remote)],check=True)
     for name in ('pyproject.toml','uv.toml','docker/cli.in'):
         p=remote/name;p.parent.mkdir(exist_ok=True);p.write_text('# fixture\n')
+    (work/'pyproject.toml').write_text('[project]\nname="fixture"\nversion="0.0.1"\n')
+    for name in ('tools/install-runtime.sh','tools/ubuntu-packages.txt','docker/lasagna.in','docker/build-constraints.txt'):
+        if (ROOT/name).exists():
+            p=remote/name;p.parent.mkdir(exist_ok=True);shutil.copyfile(ROOT/name,p)
     subprocess.run(['git','-C',str(remote),'add','.'],check=True)
     subprocess.run(['git','-C',str(remote),'-c','user.name=Test','-c','user.email=test@example.org',
                     'commit','-qm','fixture'],check=True)
@@ -36,8 +43,11 @@ from pathlib import Path
 name=Path(sys.argv[0]).name;args=sys.argv[1:]
 with open(os.environ['INSTALL_LOG'],'a') as f:f.write(json.dumps([name,*args])+'\\n')
 if os.environ.get('INSTALL_FAIL')==name:sys.exit(42)
-if name=='uv' and args[:2]==['pip','install']:
-    stage='cli' if args[-1]=='.' else 'lasagna'
+if name=='uv' and args[0]=='build' and os.environ.get('INSTALL_FAIL_STAGE')=='build':sys.exit(43)
+if name=='uv' and args[:2]==['pip','check'] and os.environ.get('INSTALL_FAIL_STAGE')=='check':sys.exit(43)
+if name=='uv' and args[:2] in (['pip','install'],['pip','sync']):
+    target=Path(args[args.index('--python')+1]) if '--python' in args else Path(sys.argv[0]).with_name('python')
+    stage='lasagna' if 'lasagna' in str(target) else 'cli'
     if os.environ.get('INSTALL_FAIL_STAGE')==stage:sys.exit(43)
 if name=='uname':print(os.environ.get('INSTALL_OS','Linux'))
 elif name=='curl':
@@ -57,22 +67,130 @@ elif name=='uv':
     if args[0]=='venv':
         dest=Path(args[-1]);(dest/'bin').mkdir(parents=True)
         (dest/'bin/python').symlink_to(Path(__file__).resolve())
-    elif args[:2]==['pip','install'] and args[-1]=='.':
-        entry=Path(sys.argv[0]).with_name('winding-field');entry.unlink(missing_ok=True)
+        (dest/'bin/activate').write_text('export VIRTUAL_ENV='+shlex.quote(str(dest.absolute()))+'\\nexport PATH="$VIRTUAL_ENV/bin:$PATH"\\n')
+    elif args[0]=='build':
+        dest=Path(args[args.index('--out-dir')+1]);dest.mkdir(parents=True,exist_ok=True)
+        (dest/'winding_field_cli-0.1.0-py3-none-any.whl').write_bytes(b'fixture wheel')
+    elif args[:2]==['pip','install'] and (args[-1]=='.' or args[-1].endswith('.whl')):
+        target=Path(args[args.index('--python')+1]) if '--python' in args else Path(sys.argv[0]).with_name('python')
+        entry=target.with_name('winding-field');entry.unlink(missing_ok=True)
         entry.symlink_to(Path(__file__).resolve())
 elif name=='winding-field':assert args==['doctor']
 elif name!='apt-get':raise AssertionError((name,args))
 ''')
     driver.chmod(0o755)
-    for name in ('uname','sudo','apt-get','python3.12','curl'):(bin/name).symlink_to(driver)
+    for name in ('uname','sudo','apt-get','python3.12','curl','uv'):(bin/name).symlink_to(driver)
     env=dict(os.environ,HOME=str(home),PATH=str(bin)+os.pathsep+os.environ['PATH'],
              GIT_CONFIG_GLOBAL=str(config),GIT_CONFIG_NOSYSTEM='1',INSTALL_LOG=str(log),
-             INSTALL_SCRIPT=str(SCRIPT))
+             INSTALL_SCRIPT=str(SCRIPT),INSTALL_RUNTIME=str(RUNTIME))
     def run(*,content=None,**overrides):
         return subprocess.run(['bash',str(SCRIPT)] if content is None else ['bash'],
                               input=content,cwd=work,env=dict(env,**overrides),
                               capture_output=True,text=True,timeout=30)
     return run,work,home,log
+
+
+def test_shared_auto_runtime_installs_specs_extras_and_wheel(installer):
+    run,work,home,log=installer
+    result=run(content='bash "$INSTALL_RUNTIME" auto "$PWD/cli" "$HOME/lasagna"\n')
+    assert result.returncode==0,result.stderr
+    calls=[json.loads(l) for l in log.read_text().splitlines()]
+    installs=[c for c in calls if c[:3]==['uv','pip','install']]
+    assert len(installs)==3
+    cli=next(c for c in installs if '--extra' in c)
+    assert cli[cli.index('--requirements')+1]==str(work/'pyproject.toml')
+    assert cli.count('--extra')==2 and 'plot' in cli and 'tifxyz' in cli
+    assert cli[cli.index('--torch-backend')+1]=='auto'
+    assert cli[cli.index('--constraint')+1]==str(ROOT/'docker/cli.in')
+    lasagna=next(c for c in installs if str(home/'lasagna/bin/python') in c)
+    assert lasagna[lasagna.index('--requirements')+1]==str(ROOT/'docker/lasagna.in')
+    assert all('--build-constraints' in c for c in (cli,lasagna))
+    assert (work/'cli/bin/winding-field').is_file()
+    assert len([c for c in calls if c[:3]==['uv','pip','check']])==2
+    before=(work/'cli/bin/python').lstat().st_ino
+    assert run(content='bash "$INSTALL_RUNTIME" auto "$PWD/cli" "$HOME/lasagna"\n').returncode==0
+    assert (work/'cli/bin/python').lstat().st_ino==before
+
+
+@pytest.mark.parametrize('backend',['cpu','cu128'])
+def test_shared_locked_runtime_preserves_hashes_and_dependency_layer(installer,backend):
+    run,work,home,log=installer
+    result=run(content=f'bash "$INSTALL_RUNTIME" {backend} "$PWD/cli" "$HOME/lasagna" dependencies\n')
+    assert result.returncode==0,result.stderr
+    calls=[json.loads(l) for l in log.read_text().splitlines()]
+    sync=[c for c in calls if c[:3]==['uv','pip','sync']]
+    assert len(sync)==2 and not any(c[:2]==['uv','build'] for c in calls)
+    for c,name in zip(sync,('cli','lasagna')):
+        assert '--require-hashes' in c and '--build-constraints' in c
+        assert c[-1]==str(ROOT/f'docker/{name}-{backend}.txt')
+        assert c[c.index('--torch-backend')+1]==backend
+    assert not (work/'cli/bin/winding-field').exists()
+    before=len(calls)
+    result=run(content=f'bash "$INSTALL_RUNTIME" {backend} "$PWD/cli" "$HOME/lasagna" application "$PWD/wheels"\n')
+    assert result.returncode==0,result.stderr
+    later=[json.loads(l) for l in log.read_text().splitlines()][before:]
+    assert not any(c[:3]==['uv','pip','sync'] for c in later)
+    assert not any(c[:2]==['uv','venv'] for c in later)
+    assert list((work/'wheels').glob('*.whl')) and (work/'cli/bin/winding-field').exists()
+
+
+@pytest.mark.parametrize('arguments',['cuda cli lasagna','auto cli lasagna wrong-phase'])
+def test_shared_runtime_rejects_invalid_recipe_before_writes(installer,arguments):
+    run,work,_,log=installer
+    result=run(content=f'bash "$INSTALL_RUNTIME" {arguments}\n')
+    assert result.returncode!=0 and 'usage' in result.stderr.lower()
+    assert not log.exists() and not (work/'cli').exists()
+
+
+def test_shared_runtime_preserves_broken_environment(installer):
+    run,work,_,log=installer
+    target=work/'cli';target.mkdir();(target/'keep').write_text('user data')
+    result=run(content='bash "$INSTALL_RUNTIME" auto "$PWD/cli" "$HOME/lasagna"\n')
+    assert result.returncode!=0 and 'incomplete' in result.stderr
+    assert (target/'keep').read_text()=='user data' and not log.exists()
+
+
+@pytest.mark.parametrize('alias',['./cli','nested/../cli','cli/'])
+def test_shared_runtime_rejects_equivalent_missing_environments(installer,alias):
+    run,work,_,log=installer
+    result=run(content=f'bash "$INSTALL_RUNTIME" auto cli {shlex.quote(alias)} dependencies\n')
+    assert result.returncode!=0 and 'separate environments' in result.stderr
+    assert not log.exists() and not (work/'cli').exists()
+
+
+def test_shared_runtime_rejects_missing_environments_through_parent_symlink(installer):
+    run,work,_,log=installer
+    (work/'alias').symlink_to(work,target_is_directory=True)
+    result=run(content='bash "$INSTALL_RUNTIME" auto cli alias/cli dependencies\n')
+    assert result.returncode!=0 and 'separate environments' in result.stderr
+    assert not log.exists() and not (work/'cli').exists()
+
+
+def test_quick_install_uses_shared_runtime_specs_and_checks(installer):
+    run,work,home,log=installer
+    result=run()
+    assert result.returncode==0,result.stderr
+    calls=[json.loads(l) for l in log.read_text().splitlines()]
+    assert any(c[:2]==['uv','build'] for c in calls)
+    cli=next(c for c in calls if '--extra' in c)
+    assert cli[cli.index('--requirements')+1]==str(work/'winding-field-cli/pyproject.toml')
+    assert 'plot' in cli and 'tifxyz' in cli
+    assert len([c for c in calls if c[:3]==['uv','pip','check']])==2
+    packages=[c for c in calls if c[:3]==['apt-get','install','-y']]
+    assert any('libcurl4-openssl-dev' in c and 'python3.12-venv' in c for c in packages)
+
+
+def test_readme_manual_install_runs_shared_runtime(installer):
+    run,work,home,log=installer
+    section=(ROOT/'README.md').read_text().split('### 1B. Manual install',1)[1].split('</details>',1)[0]
+    blocks=re.findall(r'```bash\n(.*?)```',section,re.S)
+    result=run(content='set -eu\n'+'\n'.join(blocks[:2]))
+    assert result.returncode==0,result.stderr
+    assert (work/'winding-field-cli/.venv/bin/winding-field').exists()
+    assert (home/'.cache/winding-field/lasagna-venv/bin/python').exists()
+    calls=[json.loads(l) for l in log.read_text().splitlines()]
+    assert any(c[:2]==['uv','build'] for c in calls)
+    assert len([c for c in calls if c[:3]==['uv','pip','check']])==2
 
 
 def test_install_script_reuses_environments_and_preserves_dirty_checkout(installer):
@@ -256,11 +374,18 @@ fi
 
 @pytest.mark.parametrize('failure,status',[
     (dict(INSTALL_FAIL='apt-get'),42),
+    (dict(INSTALL_FAIL_STAGE='cli'),43),
     (dict(INSTALL_FAIL_STAGE='lasagna'),43),
+    (dict(INSTALL_FAIL_STAGE='build'),43),
+    (dict(INSTALL_FAIL_STAGE='check'),43),
+    (dict(INSTALL_FAIL_STAGE='missing-helper'),127),
     (dict(INSTALL_OS='Darwin'),1),
 ])
 def test_sourced_install_returns_failures_without_exiting_or_changing_caller(installer,failure,status):
-    run,_,_,_=installer
+    run,work,_,_=installer
+    if failure.get('INSTALL_FAIL_STAGE')=='missing-helper':
+        first=run();assert first.returncode==0,first.stderr
+        (work/'winding-field-cli/tools/install-runtime.sh').unlink()
     result=run(content=f'''
 set -eu
 set -o pipefail
@@ -283,3 +408,4 @@ printf 'CALLER_ALIVE\\n'
 ''',**failure)
     assert result.returncode==0,result.stderr
     assert 'CALLER_ALIVE' in result.stdout
+    assert 'activated in this shell' not in result.stdout
