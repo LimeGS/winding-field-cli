@@ -26,6 +26,11 @@ from winding_field.patch_pipeline import check_flatboi
 
 assert torch.__version__=='2.10.0+'+args.variant, 'unexpected CLI Torch build'
 assert torch.version.cuda==('12.8' if args.variant=='cu128' else None)
+assert not Path('/opt/nvidia/nsight-compute').exists(), 'development profiler must not ship'
+if args.variant=='cu128':
+    relative='site-packages/nvidia/cublas/lib/libcublas.so.12'
+    assert (Path('/opt/winding-field/lib/python3.12')/relative).samefile(
+        Path('/opt/lasagna/lib/python3.14')/relative), 'CUDA library sharing lost in final image'
 reader_source=json.loads(metadata.distribution('vc-reader').read_text('direct_url.json'))
 assert reader_source['url']=='https://github.com/LimeGS/villa/archive/84207424c3a988e6cafe6b50fe7d4d7e5f839929.tar.gz'
 import numpy as np
