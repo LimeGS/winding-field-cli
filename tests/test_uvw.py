@@ -191,6 +191,32 @@ def test_forward_rejects_duplicate_reference_charts(tmp_path):
         assert not valid.any();assert np.isnan(xyz).all()
 
 
+def test_source_provenance_is_not_reindexed_or_used_to_admit_ambiguity(tmp_path):
+    from winding_field.uvw import Reference,xyz_to_uvw
+    base=reference(duplicate=True)
+    ref=Reference(base.world,base.faces,base.uv,5.,
+        source_vertex_ids=np.array([91,12,33,4,91,12,33,4]),source_face_ids=np.array([71,82,71,82]))
+    _,valid,details=ref.locate_uv([[3.,4.],[23.,24.],[100.,100.]],with_provenance=True)
+    assert valid.tolist()==[True,True,False]
+    np.testing.assert_array_equal(details['source_face_id'],[82,82,-1])
+    np.testing.assert_array_equal(details['source_vertex_ids'],[[91,33,4],[91,33,4],[-1,-1,-1]])
+    with field_array(tmp_path,lambda p:p[...,2]) as field:
+        _,valid,details=xyz_to_uvw(ref,field,[[3.,4.,6.]],with_details=True)
+    assert not valid[0]
+    assert details['source_face_id'][0]==-1
+
+
+@pytest.mark.parametrize('vertices,faces',[
+    ([1,2,3,4],None), (None,[1,2]), ([1.,2.,3.,4.],[1,2]),
+    ([1,2,-1,4],[1,2]), ([1,2,3],[1,2]), ([1,2,3,4],[1,2**63]),
+])
+def test_reference_rejects_unusable_source_ids(vertices,faces):
+    from winding_field.uvw import Reference
+    ref=reference()
+    with pytest.raises(ValueError,match='source'):
+        Reference(ref.world,ref.faces,ref.uv,5.,source_vertex_ids=vertices,source_face_ids=faces)
+
+
 def test_sampled_orientation_follows_rotating_reference_gradient(tmp_path):
     from winding_field.uvw import transport
     from winding_field.uvw_pipeline import _sampled_cells

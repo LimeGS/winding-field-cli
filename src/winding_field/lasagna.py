@@ -89,9 +89,12 @@ def physical_observations(grad_mag,normals,cos,*,input_spacing_xyz,encode_scale,
         raise ValueError('Lasagna input spacing and density scales must be positive finite values')
     normals=normals/spacing
     magnitude=np.linalg.norm(normals,axis=-1)
-    density=np.asarray(grad_mag,dtype=np.float64)/encode_scale*grad_mag_factor*magnitude
+    density=np.asarray(grad_mag,dtype=np.float64)*(grad_mag_factor/encode_scale)*magnitude
     if not np.isfinite(density).all() or (density>np.finfo(np.float32).max).any():
         raise ValueError('Lasagna physical density exceeds finite float32 range')
+    encoded=density.astype(np.float32)
+    if np.any((density>0)&(encoded==0)):
+        raise ValueError('Lasagna positive density is below float32 range')
     support=validity & (density>0) & (magnitude>0)
     normals/=np.maximum(magnitude[...,None],1e-12)
     normals[~support]=0; density[~support]=0
@@ -133,6 +136,22 @@ def _validate_work(root):
 
 def validate_retained(run,config):
     if config.get('lasagna_input'):
+        from .lasagna_input import streamed
+        if streamed(config):
+            from .lasagna_stream import LasagnaInput,retained_import
+            from .workflow import open_volume
+            if not retained_import(run):return
+            identity=json.loads((Path(run)/'lasagna-import/IDENTITY.json').read_bytes())
+            source=identity['binding']['ct_selected']
+            volume=open_volume(dict(config,source=source['source'],level=source['level']))
+            try:
+                with LasagnaInput(volume,run,config) as reader:
+                    reader.validate_used()
+                    receipt=Path(run)/'LASAGNA.json'
+                    if receipt.exists() and json.loads(receipt.read_bytes())['identity']!=reader.identity:
+                        raise ValueError('external Lasagna receipt changed')
+            finally:volume.close()
+            return
         from .lasagna_input import validate_retained as validate_input
         return validate_input(run,config)
     root=Path(run)/'lasagna-source'
@@ -201,8 +220,13 @@ def select_products(root,factors):
                 shutil.rmtree(child)
 
 
-def prepare(volume,run,config,geometry,stop=None):
+def prepare(volume,run,config,geometry,stop=None,reader=None):
     if config.get('lasagna_input'):
+        if reader is not None:
+            result=dict(status='LASAGNA_READY',identity=reader.identity,geometry=geometry,
+                        encoding=reader.manifest,density_units='cycles/micrometer',surface_method='external-lasagna')
+            bind(Path(run)/'LASAGNA.json',result)
+            return result
         from .lasagna_input import prepare as import_input
         return import_input(volume,run,config,geometry,stop)
     runtime=runtime_identity(config.get('lasagna_python'))

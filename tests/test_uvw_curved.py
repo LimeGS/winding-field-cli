@@ -231,6 +231,15 @@ def test_encoded_band_endpoints_preserve_curved_correspondence(tmp_path,w):
         assert not valid.any()
 
 
+def test_incoming_transport_envelope_keeps_near_missed_branch_unresolved(tmp_path):
+    from winding_field.uvw_intersections import trajectory_hits
+    ref=skinny_competing_patch()
+    base=np.array([3.,4.,2.])+3e-5*np.array([3.,0.,-2.])/np.sqrt(13.)
+    with field_array(tmp_path,lambda p:p[...,0]*p[...,2]) as field:
+        _,resolved=trajectory_hits(ref,field,base,uncertainty_um=1e-4)
+    assert not resolved
+
+
 def test_publish_exact_encoding_without_second_affine_rounding(tmp_path):
     from winding_field.uvw_workers import compute_geometry
     x=2286189799.342009;origin=np.array([-1996792493.6633632,0.,0.]);unit=.12345

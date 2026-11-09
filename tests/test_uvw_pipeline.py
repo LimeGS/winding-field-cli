@@ -159,6 +159,23 @@ def test_reference_inventory_tamper(tmp_path):
     with pytest.raises(ValueError,match='product changed'):load_reference(args.reference_sheet,args.levels,7)
 
 
+def test_loaded_reference_keeps_source_ids_for_xyz_linkage(tmp_path):
+    from winding_field.uvw_pipeline import load_reference
+    from winding_field.uvw import xyz_to_uvw
+    args=inputs(tmp_path)
+    ref,metadata=load_reference(args.reference_sheet,args.levels,7)
+    np.testing.assert_array_equal(ref.source_vertex_ids,[0,1,2,3])
+    np.testing.assert_array_equal(ref.source_face_ids,[0,1])
+    with field_array(tmp_path,lambda p:p[...,2],origin=(10.,20.,30.)) as field:
+        uvw,valid,details=xyz_to_uvw(ref,field,[[16.,23.,36.],[30.,23.,36.]],with_details=True)
+    assert valid.tolist()==[True,False]
+    np.testing.assert_allclose(uvw[0],[6.,3.,36.])
+    np.testing.assert_array_equal(details['source_face_id'],[0,-1])
+    np.testing.assert_array_equal(details['source_vertex_ids'],[[0,1,2],[-1,-1,-1]])
+    np.testing.assert_allclose(details['barycentric'][0]@ref.world[ref.faces[0]],[16.,23.,35.])
+    assert metadata['identity']['mesh_sha256']=='a'*64
+
+
 def test_quality_is_bound_and_publication_rename_recovers(tmp_path):
     from winding_field.uvw_pipeline import export_existing
     args=inputs(tmp_path);result=export_existing(args);out=tmp_path/'output'
