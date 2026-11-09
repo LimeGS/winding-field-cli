@@ -33,27 +33,19 @@ main() {
         elevate=(sudo)
     fi
     "${elevate[@]}" apt-get update
-    "${elevate[@]}" apt-get install -y \
-        python3.12-venv python3.12-dev git build-essential cmake ninja-build pkg-config \
-        nlohmann-json3-dev libcurl4-openssl-dev libsqlite3-dev \
-        libblosc-dev libzstd-dev liblz4-dev zlib1g-dev \
-        libtiff-dev libpng-dev libjpeg-dev
+    "${elevate[@]}" apt-get install -y git
 
     if [[ ! -e "$checkout" ]]; then
         git clone "$repo" "$checkout"
     fi
     cd "$checkout"
+    mapfile -t packages < tools/ubuntu-packages.txt
+    "${elevate[@]}" apt-get install -y "${packages[@]}"
     if [[ ! -x .venv/bin/python ]]; then
         python3.12 -m venv .venv
     fi
     .venv/bin/python -m pip install 'uv>=0.9.17'
-    .venv/bin/uv pip install --python .venv/bin/python --constraint docker/cli.in .
-    .venv/bin/uv python install 3.14
-    if [[ ! -x "$lasagna/bin/python" ]]; then
-        .venv/bin/uv venv --python 3.14 "$lasagna"
-    fi
-    .venv/bin/uv pip install --python "$lasagna/bin/python" --constraint docker/cli.in \
-        'vesuvius-lasagna @ https://github.com/ScrollPrize/villa/archive/b29f310957c7b29e7d332f9876e0e487819cfaa3.tar.gz#subdirectory=lasagna'
+    UV="$checkout/.venv/bin/uv" bash tools/install-runtime.sh auto "$checkout/.venv" "$lasagna"
     .venv/bin/winding-field doctor
 }
 
