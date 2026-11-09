@@ -40,6 +40,16 @@ def test_physical_planar_field_and_fibre_constraints(tmp_path):
     assert receipt['physical_acceptance'] is False
 
 
+@pytest.mark.parametrize('config',[{'preconditioner':'spectral'},{'prepared_cache_bytes':True},
+                                  {'prepared_cache_bytes':-1},{'prepared_cache_bytes':1.5}])
+def test_general_solver_rejects_invalid_execution_before_io(tmp_path,config):
+    from winding_field.config import validate_config
+    from winding_field.field import solve
+    with pytest.raises(ValueError):validate_config(config)
+    with pytest.raises(ValueError):solve(tmp_path/'absent',config)
+    assert not (tmp_path/'absent').exists()
+
+
 def test_nonconstant_layer_separation_is_not_replaced_by_mean(tmp_path):
     from winding_field.field import solve,open_field
     run=prepared_run(tmp_path/'run',shape=(6,6,32),chunk=32,variable=True)

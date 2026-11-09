@@ -134,7 +134,9 @@ def load_run_config(path: str | Path) -> dict[str, Any]:
             if name in config:
                 config[name] = _artifact(config[name], path.parent)
         solver = {"device": "cpu", "dtype": "float64", "rtol": 1e-5, "maxiter": 4000, **config.get("solver", {})}
-        _keys(solver, {"device", "dtype", "rtol", "maxiter"}, "solver")
+        _keys(solver, {"device", "dtype", "rtol", "maxiter", "preconditioner"}, "solver")
+        if solver.pop("preconditioner", "jacobi") != "jacobi":
+            raise ValueError("prepared block workflows require preconditioner='jacobi'")
         if solver["dtype"] not in ("float32", "float64") or solver["device"] not in ("cpu", "cuda:0"):
             raise ValueError("solver requires float32/float64 and cpu or allocated cuda:0")
         positive(solver["rtol"], "rtol")
@@ -292,6 +294,7 @@ def _prepare_run(config: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]
         **{k: config[k] for k in ("frame", "voxel_um", "grid", "sheet_step", "calibration")},
         config_path=config["config_path"],
         config_sha256=config["config_sha256"],
+        effective_threads=torch.get_num_threads(),
     )
     options = dict(
         shape=shape,
@@ -373,7 +376,9 @@ def run_field(
             client = ObservationPrefetch(
                 options["load_observations"], options["shape"], max_bytes=math.prod(window) * 17 + 1024**2
             )
-        return solve_blocks(output, **options, resume=resume, stop=stop, admit=admission, prefetch=client)
+        result=solve_blocks(output, **options, resume=resume, stop=stop, admit=admission, prefetch=client)
+        result["effective_threads"]=metadata["effective_threads"]
+        return result
 
 
 def verify_field(config_path,output):
