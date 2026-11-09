@@ -14,49 +14,35 @@ ENV UV_PYTHON_INSTALL_DIR=/opt/python UV_LINK_MODE=copy UV_NO_CACHE=1 \
     HOME=/home/worker XDG_CACHE_HOME=/cache TMPDIR=/scratch \
     PATH=/opt/winding-field/bin:/usr/local/cuda/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
+COPY tools/ubuntu-packages.txt /opt/runtime-provenance/tools/ubuntu-packages.txt
 RUN mkdir -p /scratch && test "$TARGETARCH" = amd64 && \
     case "$TORCH_VARIANT" in cpu|cu128) ;; *) exit 1 ;; esac && \
     rm -f /etc/apt/sources.list.d/cuda*.list && \
     sed -i -E 's|http://[^ ]+/ubuntu/?|https://snapshot.ubuntu.com/ubuntu/20261101T000000Z/|g' /etc/apt/sources.list.d/ubuntu.sources && \
     printf 'Acquire::Retries "5";\nAcquire::https::Pipeline-Depth "0";\n' > /etc/apt/apt.conf.d/80snapshot && \
     apt-get update -o APT::Update::Error-Mode=any && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-      ca-certificates curl git build-essential cmake ninja-build pkg-config \
-      libcurl4-openssl-dev libblosc-dev libzstd-dev liblz4-dev libsqlite3-dev \
-      nlohmann-json3-dev zlib1g-dev libtiff-dev libpng-dev libjpeg-dev \
+      ca-certificates $(cat /opt/runtime-provenance/tools/ubuntu-packages.txt) \
       libglx0 libopengl0 libglib2.0-0 libfreetype6 libfontconfig1 squashfs-tools && \
     mkdir -p /opt/runtime-provenance /scratch && \
     dpkg-query -W > /opt/runtime-provenance/os-packages.txt && \
     rm -rf /var/lib/apt/lists/*
 
-RUN uv python install 3.12.12 3.14.0 && \
-    uv venv --python 3.12.12 /opt/winding-field && \
-    uv venv --python 3.14.0 /opt/lasagna
-
 COPY docker/*-cpu.txt docker/*-cu128.txt docker/build-constraints.txt /opt/runtime-provenance/docker/
+COPY tools/install-runtime.sh /opt/runtime-provenance/tools/install-runtime.sh
+RUN bash /opt/runtime-provenance/tools/install-runtime.sh "$TORCH_VARIANT" /opt/winding-field /opt/lasagna dependencies
 COPY provenance /opt/runtime-provenance/sources
 RUN python -c 'import json,urllib.request; p=json.load(open("/opt/runtime-provenance/sources/flatboi.json")); urllib.request.urlretrieve(p["url"],"/scratch/vc3d.AppImage")' && \
     python -c 'import hashlib,json; p=json.load(open("/opt/runtime-provenance/sources/flatboi.json")); assert hashlib.file_digest(open("/scratch/vc3d.AppImage","rb"),"sha256").hexdigest()==p["sha256"]' && \
     unsquashfs -no-progress -d /opt/vc3d -o 944632 /scratch/vc3d.AppImage && \
     rm /scratch/vc3d.AppImage
 
-RUN uv pip sync --python /opt/winding-field/bin/python --require-hashes \
-      --torch-backend "$TORCH_VARIANT" --build-constraints /opt/runtime-provenance/docker/build-constraints.txt \
-      /opt/runtime-provenance/docker/cli-${TORCH_VARIANT}.txt && \
-    uv pip sync --python /opt/lasagna/bin/python --require-hashes \
-      --torch-backend "$TORCH_VARIANT" --build-constraints /opt/runtime-provenance/docker/build-constraints.txt \
-      /opt/runtime-provenance/docker/lasagna-${TORCH_VARIANT}.txt
-
 WORKDIR /build
 COPY pyproject.toml README.md LICENSE THIRD_PARTY.md ./
 COPY licenses ./licenses
 COPY provenance ./provenance
 COPY src ./src
-RUN uv build --wheel --python /opt/winding-field/bin/python \
-      --build-constraints /opt/runtime-provenance/docker/build-constraints.txt --out-dir /scratch/wheels && \
-    uv pip install --python /opt/winding-field/bin/python --no-deps /scratch/wheels/*.whl && \
+RUN bash /opt/runtime-provenance/tools/install-runtime.sh "$TORCH_VARIANT" /opt/winding-field /opt/lasagna application /scratch/wheels && \
     sha256sum /scratch/wheels/*.whl > /opt/runtime-provenance/cli-wheel.sha256 && \
-    uv pip check --python /opt/winding-field/bin/python && \
-    uv pip check --python /opt/lasagna/bin/python && \
     uv pip freeze --python /opt/winding-field/bin/python > /opt/runtime-provenance/cli-installed.txt && \
     uv pip freeze --python /opt/lasagna/bin/python > /opt/runtime-provenance/lasagna-installed.txt && \
     rm -rf /build /scratch/wheels
