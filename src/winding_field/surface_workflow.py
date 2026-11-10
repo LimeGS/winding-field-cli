@@ -112,11 +112,15 @@ def load_surface_config(path: str | Path) -> dict[str, Any]:
         raise ValueError("explicit frame and positive voxel_um required")
     if "field" in config:
         field = config["field"]
-        _keys(field, {"kind", "path", "sha256", "mask", "support_policy"})
-        descriptor = _artifact({k: field[k] for k in ("path", "sha256") if k in field}, path.parent)
-        descriptor.update({k: v for k, v in field.items() if k not in descriptor})
-        if "mask" in field:
-            descriptor["mask"] = _artifact(field["mask"], path.parent)
+        if isinstance(field, dict) and field.get('kind') == 'zarr-v2':
+            _keys(field, {'kind', 'url', 'sha256', 'complete_sha256', 'support_policy'})
+            descriptor = dict(field)
+        else:
+            _keys(field, {"kind", "path", "sha256", "mask", "support_policy"})
+            descriptor = _artifact({k: field[k] for k in ("path", "sha256") if k in field}, path.parent)
+            descriptor.update({k: v for k, v in field.items() if k not in descriptor})
+            if "mask" in field:
+                descriptor["mask"] = _artifact(field["mask"], path.parent)
         config["field"] = descriptor
         config["levels"] = _levels(config.get("levels"))
         if len(config["levels"]) > 4096:
