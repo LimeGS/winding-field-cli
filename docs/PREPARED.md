@@ -222,3 +222,44 @@ Imports use `winding_field.field_workflow`, `winding_field.surface_workflow` and
 Resume identities include the numerical library's code. Use the original runtime
 for incompatible old runs, or start a fresh output. Do not edit receipts to bypass
 that check.
+## Parallel prepared levels
+
+Use the existing config's `levels` list (raw field values with your calibration):
+
+```bash
+winding-field prepared mesh --parallel-levels \
+  --config surface-run.json --output runs/parallel-surfaces
+# Use "surfaces" instead of "mesh" to render each selected level as well.
+```
+
+Each child owns its database and normal bundle under `level-0000/`,
+`level-0001/`, etc. `LEVELS.json` preserves config order, raw level values,
+child paths, product hashes, status, peak workers and resource observations.
+Child-local mesh level IDs are zero. Open/render/export each child bundle;
+the collection is not accepted as a single combined mesh by existing readers.
+`render.levels` selects raw values: unselected children are still extracted but
+not rendered. Imported meshes and render-only commands do not support this flag.
+Without the flag the existing single-bundle workflow is unchanged.
+
+Each process uses one numerical thread. Automatic admission respects CPU affinity
+and Linux cgroup quotas (including mounted v1/hybrid namespaces), available host/container RAM, field cache, tile workspace,
+render buffers and concurrent disk staging. It retains 2 GiB host RAM headroom,
+128 MiB coordinator/container margin and the configured `execution.reserve_bytes`
+once on the shared filesystem. Unknown memory observations disable fan-out, not
+the existing single-child resource checks. Estimates are conservative admission
+budgets, not hard per-process RSS caps or a guarantee that all future output fits.
+Competing workloads can change available resources after admission.
+
+Create `runs/parallel-surfaces/STOP` or send SIGINT/SIGTERM to the supervisor to
+stop scheduling and request tile-boundary checkpoints. Finalization or rendering
+already in progress may finish before shutdown. Started children are reaped;
+successful siblings are retained if another level fails. Logs stay under `logs/`.
+
+Remove a user-created STOP before resuming, then use the identical command plus
+`--resume`. Completed bundles are hash-verified read-only; compatible partial
+children continue. Corrupt, modified, missing committed or ambiguously initialized
+outputs reject without repair. Never add the flag to resume an old single bundle.
+CLI exit codes: 0 complete, 3 checkpointed stop, 75 resource unavailable, nonzero
+on failure. No geometry reduction, GPU backend or shared-database parallel writes
+are introduced. Extra readers compete for disk bandwidth, so speedup is not linear
+and parallel mode is not necessarily faster for small jobs or slow storage.
