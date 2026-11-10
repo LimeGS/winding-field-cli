@@ -4,19 +4,19 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "winding-field-cli"
-version = "1.5.2"
+version = "1.5.3"
 description = "Resumable original-CT to winding-field, meshes and linked flat charts"
 readme = "README.md"
 requires-python = ">=3.11,<3.13"
 license = "MIT"
 license-files = ["LICENSE", "licenses/*.txt"]
-dependencies = ["winding-field==1.5.1", "numpy>=1.26,<3", "scipy>=1.11", "torch>=2.6", "scikit-image>=0.22", "numcodecs>=0.12", "Pillow>=10", "dynamic-network-architectures==0.4.4", "avf-spline-generator @ https://github.com/Qualzz/AVF_SPLINE_GENERATOR/archive/3c8b73628ca56cb28042b9b2e79439b2e1c693d2.tar.gz", "vc-reader @ https://github.com/LimeGS/villa/archive/84207424c3a988e6cafe6b50fe7d4d7e5f839929.tar.gz#subdirectory=vc_reader"]
+dependencies = ["winding-field==1.5.1", "numpy>=1.26,<3", "scipy>=1.11", "torch>=2.6", "scikit-image>=0.22", "numcodecs>=0.12", "Pillow>=10", "libigl==2.6.3", "dynamic-network-architectures==0.4.4", "avf-spline-generator @ https://github.com/Qualzz/AVF_SPLINE_GENERATOR/archive/3c8b73628ca56cb28042b9b2e79439b2e1c693d2.tar.gz", "vc-reader @ https://github.com/LimeGS/villa/archive/84207424c3a988e6cafe6b50fe7d4d7e5f839929.tar.gz#subdirectory=vc_reader"]
 
 [project.optional-dependencies]
 ct = []
 plot = ["matplotlib>=3.8,<4"]
 test = ["pytest>=8", "build>=1", "matplotlib>=3.8,<4"]
-tifxyz = ["libigl==2.6.3", "tifffile>=2023.7"]
+tifxyz = ["tifffile>=2023.7"]
 
 [project.scripts]
 winding-field = "winding_field.cli:main"

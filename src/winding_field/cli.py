@@ -23,6 +23,23 @@ TOOLS = {
 }
 
 
+def resolve_device(device: str) -> str:
+    """Freeze automatic selection before starting; explicit and saved devices are never replaced."""
+    if device!='auto':
+        return device
+    import torch
+    for name,available in (('cuda',torch.cuda.is_available),('mps',torch.backends.mps.is_available)):
+        if not available():
+            continue
+        try:
+            # The core's norm reduces in FP64 even for float32 fields (unsupported by current MPS).
+            float(torch.linalg.vector_norm(torch.ones(1,device=name),dtype=torch.float64))
+        except (RuntimeError,TypeError):
+            continue
+        return name
+    return 'cpu'
+
+
 def tifxyz_exit_code(result):
     status=result.get('status')
     if status in ('READY','TIFXYZ_VERIFIED','COMPLETE','PAUSED'):
@@ -114,7 +131,7 @@ def main(argv=None):
         p.add_argument('--fibre-downsample',type=int,choices=[2,4],default=2,help='post-prediction fibre grid reduction per axis (default: 2); 4 requires bounded preparation; model input and CT resolution unchanged')
         p.add_argument('--chunk',type=int,default=64,help='observation tile edge in sampled voxels (default: 64)')
         p.add_argument('--prediction',choices=['classical','sd2','qual-v2'],default='qual-v2',help='fibre predictor (default: qual-v2); learned predictors use Lasagna surfaces, classical uses CT intensity')
-        p.add_argument('--model-path',help='local checkpoint for the selected fibre predictor'); p.add_argument('--device',default='cpu',help='PyTorch prediction/field device, e.g. cpu or cuda (default: cpu)')
+        p.add_argument('--model-path',help='local checkpoint for the selected fibre predictor'); p.add_argument('--device',default='auto',help='PyTorch prediction/field device: auto (default) selects usable CUDA, then MPS, then CPU; or an explicit device such as cpu or cuda:0')
         p.add_argument('--fibres',help='external AFV; replaces fibre inference/tracing')
         p.add_argument('--fibres-geometry',help='explicit AFV XYZ-to-world geometry JSON')
         p.add_argument('--lasagna-python',help='isolated official Python 3.14 runtime')
@@ -137,7 +154,7 @@ def main(argv=None):
         p.add_argument('--chart-faces',type=int,default=1024,help='native/atlas local chart face budget (default: 1024); not original global flattening'); p.add_argument('--threads',type=int,default=4,help='PyTorch CPU thread count (default: 4); not a global worker limit')
         p.add_argument('--no-previews',dest='previews',action='store_false',help='skip legacy atlas chart previews; retain final CT renders')
         p.add_argument('--surface-output',choices=['native','atlas','tifxyz'],default='native',help='pipeline branch: native surfaces (default), legacy atlas, or experimental direct-field tifxyz; not an output file format')
-        p.add_argument('--flattening-method',choices=['default','original'],default='default',help='original global LSCM; independent of field resolution')
+        p.add_argument('--flattening-method',choices=['slim','default','original'],help='native SLIM (default for new native runs), default: legacy local mapping, original: global LSCM; independent of field resolution')
         p.add_argument('--flattening-config',help='original-mapping JSON: output_frame, optional pitch and memory_gib; requires --flattening-method original')
         p.add_argument('--coverage-target',type=float,default=1.,help='native mapped mesh-area fraction in (0,1] (default: 1); not observed CT coverage')
         p.add_argument('--surface-time-limit',dest='surface_time_limit_s',type=float,default=1800.,help='cumulative active seconds per native W (default: 1800)')
@@ -233,6 +250,9 @@ def main(argv=None):
             from .config import validate_config,read_tifxyz_request
             from .util import digest
             config=vars(args).copy(); command=config.pop('command'); until=config.pop('until')
+            config['device']=resolve_device(config['device'])
+            if config['flattening_method'] is None:
+                config['flattening_method']='slim' if config['surface_output']=='native' else 'default'
             original=config.pop('flattening_config')
             if original:
                 config['original_request']=json.loads(Path(original).read_bytes())

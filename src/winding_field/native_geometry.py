@@ -9,6 +9,8 @@ from scipy.sparse.linalg import spsolve
 
 from .flatten import components,cross2,overlap_pairs,parameterize
 
+SLIM_ITERATIONS=10
+
 
 @lru_cache(maxsize=1)
 def _solver():
@@ -19,9 +21,17 @@ def _solver():
     return igl
 
 
-def solver_identity():
-    return dict(solver='scipy-lsqr' if _solver() is None else 'libigl-lscm',numpy=np.__version__,
+def solver_identity(method='default'):
+    if method not in ('default','slim'):
+        raise ValueError('invalid native flattening method')
+    if method=='slim' and _solver() is None:
+        raise ValueError('SLIM flattening requires libigl==2.6.3; reinstall winding-field-cli with its base dependencies')
+    result=dict(solver='scipy-lsqr' if _solver() is None else 'libigl-lscm',numpy=np.__version__,
                 scipy=version('scipy'),libigl=None if _solver() is None else version('libigl'))
+    if method=='slim':
+        result.update(solver='libigl-slim',iterations=SLIM_ITERATIONS,energy='symmetric-dirichlet',
+                      initialization='tangent-projection-or-lscm')
+    return result
 
 
 def _lscm(vertices,faces):
@@ -66,14 +76,14 @@ def _queue(store,name,child=False):
         ('e.chart' if child else 'p.chart')+'=? GROUP BY e.chart,p.chart',(name,))
 
 
-def _pieces(v,f,face_ids,vertex_ids,minimum=64):
+def _pieces(v,f,face_ids,vertex_ids,minimum=64,*,method='default',check=None):
     # Shared edge IDs connect faces; a point contact cannot pin a separate LSCM island.
     edges=np.sort(np.concatenate([f[:,[0,1]],f[:,[1,2]],f[:,[2,0]]]),axis=1)
     _,edge_ids=np.unique(edges,axis=0,return_inverse=True)
     groups=list(components(edge_ids.reshape(3,len(f)).T))
     if len(groups)>1:
         for group in groups:
-            yield from _pieces(v,f[group],face_ids[group],vertex_ids,minimum)
+            yield from _pieces(v,f[group],face_ids[group],vertex_ids,minimum,method=method,check=check)
         return
     used,local=np.unique(f,return_inverse=True)
     vertices=v[used]; faces=local.reshape(-1,3)
@@ -82,11 +92,15 @@ def _pieces(v,f,face_ids,vertex_ids,minimum=64):
             uv,quality=_project(vertices,faces)
         except ValueError:
             uv,quality=_lscm(vertices,faces)
+        if method=='slim':
+            initialization=quality.get('method','LSCM')
+            uv,quality=_slim(vertices,faces,uv,check)
+            quality['initialization']=initialization
     except (ValueError,RuntimeError) as error:
         if len(f)>minimum:
             mid=len(f)//2
-            yield from _pieces(v,f[:mid],face_ids[:mid],vertex_ids,minimum)
-            yield from _pieces(v,f[mid:],face_ids[mid:],vertex_ids,minimum)
+            yield from _pieces(v,f[:mid],face_ids[:mid],vertex_ids,minimum,method=method,check=check)
+            yield from _pieces(v,f[mid:],face_ids[mid:],vertex_ids,minimum,method=method,check=check)
             return
         uv=np.empty((0,2)); quality={'error':str(error)}
     yield vertices,faces,uv,face_ids,vertex_ids[used],quality
@@ -110,9 +124,30 @@ def _project(vertices,faces):
     return uv,dict(quality,method='tangent-projection')
 
 
-def flatten_mesh(reader,store,chart_faces=1024,until=None,max_batches=None):
+def _slim(vertices: np.ndarray,faces: np.ndarray,uv: np.ndarray,check=None) -> tuple[np.ndarray,dict]:
+    """Bounded symmetric-Dirichlet optimization; invalid seeds/results never bypass native gates."""
+    _validate(vertices,faces,uv)
+    igl=_solver()
+    if igl is None:
+        raise ValueError('SLIM flattening requires libigl')
+    if check:check()
+    data=igl.slim_precompute(vertices.astype(float),faces.astype(np.int32),uv.copy(),
+                            igl.MappingEnergyType.SYMMETRIC_DIRICHLET,
+                            np.empty(0,np.int32),np.empty((0,2)),0.)
+    for _ in range(SLIM_ITERATIONS):
+        if check:check()
+        result=igl.slim_solve(data,1).copy()
+    if check:check()
+    result-=result.min(0)
+    quality=_validate(vertices,faces,result)
+    return result,dict(quality,method='SLIM',iterations=SLIM_ITERATIONS)
+
+
+def flatten_mesh(reader,store,chart_faces=1024,until=None,max_batches=None,*,method='default'):
     if type(chart_faces) is not int or not 1<=chart_faces<=8192:
         raise ValueError('chart_faces must be1..8192')
+    if method not in ('default','slim'):
+        raise ValueError('invalid native flattening method')
     _schema(store)
     total,area,last=store.get('source_faces'),store.get('source_area'),store.get('last_face')
     if total is None:
@@ -145,7 +180,7 @@ def flatten_mesh(reader,store,chart_faces=1024,until=None,max_batches=None):
             selection=np.flatnonzero(rows[:,4]==component)
             for connected in components(faces[selection]):
                 subset=selection[connected]
-                for v,f,uv,ids,source_ids,quality in _pieces(vertices,faces[subset],rows[subset,0],vi):
+                for v,f,uv,ids,source_ids,quality in _pieces(vertices,faces[subset],rows[subset,0],vi,method=method,check=store.check):
                     store.check()
                     name=f'chart-{int(ids.min()):012d}'
                     area2=np.linalg.norm(np.cross(v[f[:,1]]-v[f[:,0]],v[f[:,2]]-v[f[:,0]]),axis=1)
