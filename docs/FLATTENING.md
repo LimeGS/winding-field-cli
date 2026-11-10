@@ -62,6 +62,13 @@ uv pip install --constraint docker/cli.in '.[tifxyz]'
 
 For external fields/meshes, keep using the explicit configuration routes below.
 
+Remote field exports can use the same `zarr-v2` field descriptor documented in
+[Prepared: remote Zarr v2](PREPARED.md#read-a-remote-zarr-v2-field), including
+`--field-config` inputs. A flatten/export field-config contains `field` and
+`geometry` from the [Paris4 example](../examples/paris4-remote.json); levels are
+still supplied with `--levels` in raw phi units. This adds remote **field** reads,
+not CT texturing or a different flattening algorithm.
+
 ## Native run flattening
 
 New `winding-field run` and `plan` requests with `--surface-output native`

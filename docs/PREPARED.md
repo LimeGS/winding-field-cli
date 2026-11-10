@@ -6,11 +6,41 @@ For raw CT and model inference, use [the main pipeline](../README.md) instead.
 | Input | Command | Result |
 | --- | --- | --- |
 | Target gradients, weights and support arrays | `prepared build` | Block field checkpoint |
-| NPY/chunk field or OBJ/NPZ mesh | `prepared surfaces` | Indexed mesh and geometry previews |
+| NPY/chunk/remote Zarr v2 field or OBJ/NPZ mesh | `prepared surfaces` | Indexed mesh and geometry previews |
 | Existing indexed mesh | `prepared render` | Geometry PNGs, not CT images |
 
 The CLI owns these workflows and calls the installed `winding-field` numerical
 library. Install them together using [the installation guide](../README.md).
+
+## Read a remote Zarr v2 field
+
+The [PHerc. Paris. 4 example](../examples/paris4-remote.json) reads the published
+coarse field over HTTPS, without staging the complete array:
+
+```bash
+winding-field prepared mesh --config examples/paris4-remote.json --output runs/paris4-remote-W-60
+# Repeat with --resume after interruption, using the same config/runtime.
+```
+
+`field.kind="zarr-v2"` requires an HTTPS `field.json` URL for a
+`winding-field-zarr-v1` export, its `sha256`, the sibling completion marker's
+`complete_sha256`, and `support_policy="stored"|"observed"`. Keep an immutable
+revision in the URL. Geometry must match the export. `HF_TOKEN` is optional for
+private HF datasets; it is never stored in recipes/receipts or forwarded to CDN
+redirect hosts. Do not put credentials in URLs.
+
+Only intersecting scalar/support chunks are fetched and decoded with `vc_reader`;
+completion, inventory, lengths and hashes are checked. Missing expected chunks
+are errors. `execution.cache_bytes` bounds decoded retention, not total working
+memory; requests also need a crop and one chunk. There is no offline/disk-cache
+mode. Cache hits still verify remote bytes; full extraction and resume validation
+may read all chunks and incur repeated network traffic.
+
+Use `stored` for Paris4: its `observed` array is an unavailable-support sentinel.
+`levels` remain **raw phi**: nominal W=-60 is `-60 * 1.192497988541921`, as in the
+example. Nothing rescales the source. Arbitrary Zarr arrays without these field
+export metadata/receipts are not supported by this interface. CT streaming uses
+the existing CT input route, not this field descriptor.
 
 ## Build and resume a prepared field
 

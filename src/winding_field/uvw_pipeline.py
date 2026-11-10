@@ -271,7 +271,7 @@ def export_existing(args,*,stop=None):
         source_path=Path(args.source).expanduser().resolve()
         if out==source_path or out in source_path.parents or source_path in out.parents:raise ValueError('output overlaps CT source')
     with PhysicalField(FieldSource(descriptor['field'],descriptor['geometry']),region_cache_bytes=region_budget) as field:
-        field.validate()
+        field.validate(hashes=args.resume and descriptor['field'].get('kind') == 'zarr-v2')
         for item in (descriptor['field'],descriptor['field'].get('mask',{})):
             if item.get('path') and (out==Path(item['path']) or out in Path(item['path']).parents):raise ValueError('output overlaps field source')
         reference,metadata=load_reference(args.reference_sheet,levels,args.canvas_samples)

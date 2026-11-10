@@ -190,8 +190,14 @@ class FieldSource:
         self._closed = False
         self._geometry = geometry
         self._kind = field.get("kind")
-        self._file = _file(field)
+        self._remote = None
         self._identity = dict(field=field, geometry=geometry)
+        if self._kind == 'zarr-v2':
+            from .remote_field import RemoteField
+            self._remote = RemoteField(field, geometry, cache_bytes=cache_bytes)
+            self._identity = self._remote.identity
+            return
+        self._file = _file(field)
         try:
             if self._kind == "npy":
                 if field.keys() - {"kind", "path", "sha256", "mask"}:
@@ -309,6 +315,8 @@ class FieldSource:
 
     def validate(self, *, hashes: bool = False) -> None:
         """Fail on changed metadata or referenced files, including cached files."""
+        if self._remote is not None:
+            return self._remote.validate(hashes=hashes)
         self._validate(payloads=True)
         if hashes:
             for file in self._payloads.values():
@@ -316,6 +324,8 @@ class FieldSource:
 
     def validate_region(self, lo: Sequence[int], hi: Sequence[int]) -> None:
         """Validate retained crop inputs with the same metadata/payload checks as read, without decoding."""
+        if self._remote is not None:
+            return self._remote.validate_region(field_store._triple(lo), field_store._triple(hi))
         self._validate(payloads=False)
         low,high=field_store._triple(lo),field_store._triple(hi)
         if any(b<=a or b>n for a,b,n in zip(low,high,self.shape)):raise ValueError('field read outside grid')
@@ -348,6 +358,8 @@ class FieldSource:
 
     def read(self, lo: Sequence[int], hi: Sequence[int]) -> tuple[NDArray[np.float64], NDArray[np.bool_]]:
         """Copy a nonempty half-open integer ZYX crop and its admissible mask."""
+        if self._remote is not None:
+            return self._remote.read(field_store._triple(lo), field_store._triple(hi))
         self._validate(payloads=False)
         low, high = field_store._triple(lo), field_store._triple(hi)
         if any(b <= a or b > n for a, b, n in zip(low, high, self.shape)):
@@ -389,6 +401,8 @@ class FieldSource:
 
     def close(self) -> None:
         """Release mappings and cache retention; safe to call repeatedly."""
+        if self._remote is not None:
+            self._remote.close()
         for array in self._arrays:
             array.close()
         self._arrays.clear()

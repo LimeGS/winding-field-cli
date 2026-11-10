@@ -55,14 +55,17 @@ def _recipe(request, source):
         raise ValueError('max_edge_world must be finite and positive')
     field=dict(request['field']);field.pop('path',None)
     if 'mask' in field:field['mask']={'sha256':field['mask']['sha256']}
-    return dict(field=field,geometry=source.identity['geometry'],umbilicus=cp.tolist(),
+    result = dict(field=field,geometry=source.identity['geometry'],umbilicus=cp.tolist(),
         h=request['h'],W_ref=-60,theta_ref=0,samples_per_w=samples,max_edge_world=edge,
         numeric_contract=dict(policy=POLICY,algorithm='radial-cell-quadratic-v1',
             python=platform.python_version(),implementation=sys.implementation.name,
             numpy=np.__version__,platform=platform.platform(),machine=platform.machine(),
             code={name:sha(Path(__file__).with_name(name)) for name in
                   ('range_surface.py','surface_sources.py','surface_mesh.py')},
-            field_decoder_sha256=sha(field_store.__file__)))
+             field_decoder_sha256=sha(field_store.__file__)))
+    if field.get('kind') == 'zarr-v2':
+        result['numeric_contract']['remote_source_identity'] = source.identity
+    return result
 
 
 def _bounds(bounds,samples):
@@ -359,6 +362,8 @@ def extract_range(recipe,w_range,output,resume=False,*,block_ticks=16,cache_byte
     if not isinstance(recipe,dict) or not {'field','geometry'}<=recipe.keys():
         raise ValueError('range recipe requires field and geometry')
     with FieldSource(recipe['field'],recipe['geometry']) as source:
+        if resume and recipe['field'].get('kind') == 'zarr-v2':
+            source.validate(hashes=True)
         cache=_PlaneCache(source,cache_bytes)
         normalized=_recipe(recipe,source);ticks=_bounds(w_range,normalized['samples_per_w'])
         identity=_identity(normalized,ticks);output=Path(output)

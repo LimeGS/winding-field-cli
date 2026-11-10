@@ -229,6 +229,7 @@ def run_parallel_levels(config_path, output, *, resume=False, render=False, stop
     config = load_surface_config(config_path)
     if 'field' not in config:
         raise ValueError('parallel levels require a prepared field')
+    remote_field = config['field'].get('kind') == 'zarr-v2'
     selected = config['render'].get('levels', config['levels'])
     if render and any(level not in config['levels'] for level in selected):
         raise ValueError('requested render level absent from collection')
@@ -236,7 +237,7 @@ def run_parallel_levels(config_path, output, *, resume=False, render=False, stop
     _safe(output)
     check_resources(output.parent, reserve_bytes=config['execution']['reserve_bytes'] + (1 << 20))
     with FieldSource(config['field'], config['geometry'], cache_bytes=0) as source:
-        source.validate(hashes=True)
+        source.validate(hashes=resume or not remote_field)
         identity = source.identity
     binding = dict(config_sha256=config['config_sha256'], config_path=config['config_path'], render=render,
                    source=identity, code={name: sha(Path(__file__).with_name(name)) for name in
@@ -417,7 +418,8 @@ def _supervise(config, output, result, identity, selected, render, stop):
         for record in result['levels']:
             changed(record)
         with FieldSource(config['field'], config['geometry'], cache_bytes=0) as source:
-            source.validate(hashes=True)
+            source.validate(hashes=config['field'].get('kind') != 'zarr-v2'
+                            or all(r['state'] == 'ready' for r in result['levels']))
         result['status'] = ('LEVELS_READY' if all(r['state'] == 'ready' for r in result['levels']) else
                             'RESOURCE_UNAVAILABLE' if resource_blocked else 'LEVELS_FAILED' if failed else 'CHECKPOINTED_STOP')
         save()
