@@ -17,14 +17,39 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
+  preflight:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install pytest PyYAML
+      - run: python -m pytest -q --durations=30 -o pythonpath= .github/tests/test_ci_workflows.py tests/test_container_layout.py tests/test_install_script.py
+
   cpu:
+    needs: preflight
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
-      - run: docker buildx bake cpu --load
+        id: buildx
+      - name: Build CPU image with persistent cache
+        uses: docker/bake-action@5be5f02ff8819ecd3092ea6b2e6261c31774f2b4 # v6
+        with:
+          builder: ${{ steps.buildx.outputs.name }}
+          source: .
+          targets: cpu
+          load: true
+          set: |
+            cpu.cache-from=type=gha,scope=winding-field-cli-cpu
+            cpu.cache-to=type=gha,scope=winding-field-cli-cpu,mode=max,ignore-error=true
       - name: Installed non-root runtime and offline workflows
         run: |
           mkdir -p "$RUNNER_TEMP/wf"/{outputs,models,cache,scratch}
@@ -52,9 +77,10 @@ jobs:
             --mount "type=bind,src=$RUNNER_TEMP/wf/scratch,dst=/scratch" \
             --mount "type=bind,src=$RUNNER_TEMP/wf/outputs,dst=/outputs" \
             --mount "type=bind,src=$RUNNER_TEMP/wf/cache,dst=/cache" \
-            winding-field:cpu-tests -q -o pythonpath= -o cache_dir=/scratch/pytest-cache /tests
+            winding-field:cpu-tests -q --durations=30 -o pythonpath= -o cache_dir=/scratch/pytest-cache /tests
 
   cuda:
+    needs: preflight
     if: github.event_name == 'workflow_dispatch' && inputs.cuda
     runs-on: [self-hosted, linux, x64, nvidia]
     timeout-minutes: 120
