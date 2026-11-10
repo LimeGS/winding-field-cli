@@ -384,29 +384,14 @@ def run(config,resume=False,until=None,extra_surface_seconds=0,field_sweeps=None
         raise ValueError('extra surface seconds require a native resume and a finite nonnegative allowance')
     if until not in dict(path):
         raise ValueError('invalid final stage for selected surface output')
-    import torch
-    from .predict import prepare
-    from .fibres import trace
-    from .field import solve
-    from .meshes import mesh
-    from .flatten import flatten
-    from .exports import export_lasagna,export_afv
-    config=dict(config); root=Path(config['output']).expanduser().resolve(); config['output']=str(root)
-    torch.set_num_threads(config.get('threads',min(4,os.cpu_count() or 1)))
+    config=dict(config); output=Path(config['output']).expanduser()
+    if not resume and output.is_symlink():
+        raise FileExistsError('output is a symlink; use a new directory')
+    root=output.resolve(); config['output']=str(root)
     if root.exists() and not resume:
         raise FileExistsError('output exists; use resume or a new directory')
-    if not resume:
-        probe=open_volume(config)
-        try:
-            plan(config,probe)
-            if config.get('fibres'):
-                from .afv import source_identity
-                source_identity(config['fibres'],config.get('fibres_geometry'),probe.identity)
-        finally: probe.close()
-        if not config.get('lasagna_input') and (config.get('fibres') or config.get('prediction','classical')!='classical'):
-            from . import lasagna
-            lasagna.runtime_identity(config.get('lasagna_python'))
-            lasagna.checkpoint(config.get('lasagna_model_path'),config.get('offline',False),prediction='lasagna')
+    if resume and not (root/'RUN.json').is_file():
+        raise FileNotFoundError('resume requires an existing output with RUN.json')
     root.mkdir(parents=True,exist_ok=resume)
     with (root/'.run.lock').open('a') as lock:
         fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
@@ -430,7 +415,7 @@ def run(config,resume=False,until=None,extra_surface_seconds=0,field_sweeps=None
             (root/'STOP').unlink(missing_ok=True)
         else:
             state=dict(schema='winding-field-run-v1',version=__version__,config=config,stages={},
-                       status='STARTING',physical_acceptance=False,created=time.time(),implementation_sha256=implementation_sha())
+                       status='STARTING',physical_acceptance=False,created=time.time())
             if terminal=='tifxyz':
                 state.update(experimental=True,comparison_status='UNMEASURED',comparison_reason='reference OOM',
                              native_face_identity=False,native_topology_equivalence='UNMEASURED')
@@ -450,6 +435,15 @@ def run(config,resume=False,until=None,extra_surface_seconds=0,field_sweeps=None
             return state
         volume=None
         try:
+            if not resume:state['implementation_sha256']=implementation_sha()
+            import torch
+            from .predict import prepare
+            from .fibres import trace
+            from .field import solve
+            from .meshes import mesh
+            from .flatten import flatten
+            from .exports import export_lasagna,export_afv
+            torch.set_num_threads(config.get('threads',min(4,os.cpu_count() or 1)))
             volume=open_volume(config)
             if 'source' in state and state['source']!=volume.identity:
                 raise ValueError('source metadata changed')
@@ -475,6 +469,10 @@ def run(config,resume=False,until=None,extra_surface_seconds=0,field_sweeps=None
                             return unfinished(result)
                         state['tifxyz_result']=result
             estimate=plan(config,volume,state['stages']); state['plan']=estimate
+            if not resume and not config.get('lasagna_input') and (config.get('fibres') or config.get('prediction','classical')!='classical'):
+                from . import lasagna
+                lasagna.runtime_identity(config.get('lasagna_python'))
+                lasagna.checkpoint(config.get('lasagna_model_path'),config.get('offline',False),prediction='lasagna')
             if estimate['lasagna_input']:
                 if 'lasagna_input' in state and state['lasagna_input']!=estimate['lasagna_input']:
                     raise ValueError('external Lasagna input identity changed')
