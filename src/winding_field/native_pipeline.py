@@ -34,7 +34,8 @@ def _settings(config):
     result=dict(coverage_target=config.get('coverage_target',1.),
                 surface_time_limit_s=config.get('surface_time_limit_s',1800.),
                 chart_faces=config.get('chart_faces',1024),mesh_tile=config.get('mesh_tile',64),
-                export_tifxyz=config.get('export_tifxyz',False),parameterizer=solver_identity())
+                export_tifxyz=config.get('export_tifxyz',False),
+                parameterizer=solver_identity(config.get('flattening_method','default')))
     if (type(result['coverage_target']) not in (int,float) or not 0<result['coverage_target']<=1
             or type(result['surface_time_limit_s']) not in (int,float)
             or not math.isfinite(result['surface_time_limit_s']) or result['surface_time_limit_s']<=0
@@ -102,11 +103,12 @@ def _geometry_and_render(reader,store,volume,settings,pitch,until):
     from .native_geometry import flatten_mesh,assemble,summary
     from .native_render import render
     target=settings['coverage_target']
+    method='slim' if settings['parameterizer']['solver']=='libigl-slim' else 'default'
     available=target
     if until in ('flatten','assemble'):
         if store.get('render_identity') is not None:
             return None
-        flatten_mesh(reader,store,settings['chart_faces'],until=available)
+        flatten_mesh(reader,store,settings['chart_faces'],until=available,method=method)
         if until=='assemble':
             assemble(store,target)
         return None
@@ -116,7 +118,7 @@ def _geometry_and_render(reader,store,volume,settings,pitch,until):
         uv_deadline=store.elapsed+max(0.,store.seconds-store.elapsed)*.6
         while True:
             previous=store.get('face_cursor',0)
-            flatten_mesh(reader,store,settings['chart_faces'],until=available,max_batches=4)
+            flatten_mesh(reader,store,settings['chart_faces'],until=available,max_batches=4,method=method)
             mapped=assemble(store,target)
             if (mapped['coverage_fraction']+1e-12>=target or store.get('flatten_complete',False)
                     or store.elapsed>=uv_deadline):
