@@ -40,6 +40,42 @@ def tifxyz_exit_code(result):
     return 1
 
 
+def dependency_preflight(config):
+    """Inspect selected inference dependencies without installation or model execution."""
+    from . import lasagna,models
+    from .config import validate_config
+    config=dict(config,prediction=config.get('prediction') or 'qual-v2')
+    validate_config(config)
+    checks={name:dict(status='NOT_REQUIRED') for name in
+            ('lasagna_runtime','lasagna_checkpoint','fibre_checkpoint')}
+    weights=[]
+    if not config.get('lasagna_input') and (config.get('fibres') or config['prediction']!='classical'):
+        python=str(Path(config.get('lasagna_python') or lasagna.DEFAULT_PYTHON).expanduser().absolute())
+        runtime=dict(executable=python)
+        try:
+            lasagna.runtime_identity(python)
+            runtime['status']='READY'
+        except FileNotFoundError as error:
+            runtime.update(status='MISSING',error=str(error))
+        except (ValueError,OSError,RuntimeError) as error:
+            runtime.update(status='INCOMPATIBLE',error=str(error))
+        checks['lasagna_runtime']=runtime
+        weights.append(('lasagna_checkpoint','lasagna',config.get('lasagna_model_path')))
+    if not config.get('fibres') and config['prediction']!='classical':
+        weights.append(('fibre_checkpoint',config['prediction'],config.get('model_path')))
+    for name,prediction,path in weights:
+        check=dict(prediction=prediction)
+        try:
+            checkpoint=models.checkpoint(path,offline=True,prediction=prediction)
+            check.update(status='READY',path=str(checkpoint))
+        except FileNotFoundError as error:
+            check.update(status='MISSING',error=str(error))
+        except (ValueError,OSError) as error:
+            check.update(status='INVALID',error=str(error))
+        checks[name]=check
+    return dict(ready=all(check['status'] in ('READY','NOT_REQUIRED') for check in checks.values()),checks=checks)
+
+
 def main(argv=None):
     argv=list(sys.argv[1:] if argv is None else argv)
     if argv and argv[0]=='prepared':
@@ -163,7 +199,13 @@ def main(argv=None):
     p.add_argument('--output',required=True,help='synthetic demo run directory')
     p.add_argument('--prediction',choices=['classical','sd2'],default='classical',help='demo observation predictor (default: classical)')
     p.add_argument('--model-path',help='local SD2 checkpoint path'); p.add_argument('--device',help='PyTorch device (default: CUDA when available, otherwise CPU)')
-    sub.add_parser('doctor',help='report installed runtime and CUDA availability')
+    p=sub.add_parser('doctor',help='report CLI runtime; selected inference checks are read-only')
+    p.add_argument('--prediction',choices=['classical','sd2','qual-v2'],help='check dependencies for this fibre predictor without downloads/inference')
+    p.add_argument('--lasagna-python',help='explicit isolated Lasagna Python; preserve the venv executable path')
+    p.add_argument('--lasagna-model-path',help='local pinned Lasagna checkpoint to verify')
+    p.add_argument('--model-path',help='local pinned fibre checkpoint to verify')
+    p.add_argument('--lasagna-input',help='imported surfaces; no Lasagna inference runtime/checkpoint required')
+    p.add_argument('--fibres',help='imported AFV; no fibre inference checkpoint required')
     p=sub.add_parser('models',help='download and verify a pinned checkpoint')
     p.add_argument('--path',help='checkpoint destination; default: model cache')
     p.add_argument('--prediction',choices=['qual-v2','sd2','lasagna'],default='qual-v2',help='checkpoint to download (default: qual-v2)')
@@ -179,7 +221,9 @@ def main(argv=None):
         elif args.command=='doctor':
             import platform,torch
             result=dict(version=__version__,python=platform.python_version(),platform=platform.platform(),
-                        torch=torch.__version__,cuda=torch.cuda.is_available(),reader='vc_reader-zarr-v2-checked-v1')
+                         torch=torch.__version__,cuda=torch.cuda.is_available(),reader='vc_reader-zarr-v2-checked-v1')
+            if any(value is not None for name,value in vars(args).items() if name!='command'):
+                result['preflight']=dependency_preflight(vars(args))
         elif args.command=='models':
             from .models import checkpoint,model_sha
             result=dict(path=str(checkpoint(args.path,prediction=args.prediction)),
@@ -208,7 +252,7 @@ def main(argv=None):
             until=until or stages[-1][0]
             if until not in dict(stages) and not (config['surface_output']=='native' and until in ('mesh','flatten','assemble','render')):
                 raise ValueError('--until '+until+' is incompatible with the selected surface output')
-            config['output']=str(Path(config['output']).expanduser().resolve())
+            config['output']=str(Path(config['output']).expanduser().absolute())
             for key in ('local','cache','model_path','fibres','fibres_geometry','lasagna_model_path','lasagna_geometry'):
                 if config.get(key):
                     config[key]=str(Path(config[key]).expanduser().resolve())
@@ -326,6 +370,7 @@ def main(argv=None):
                            extra_surface_seconds=getattr(args,'extra_surface_seconds',0.),
                            field_sweeps=getattr(args,'field_sweeps',None),offline=args.offline)
         print(json.dumps(result,indent=2,allow_nan=False))
+        if args.command=='doctor' and not result.get('preflight',{}).get('ready',True):return 1
         if native:
             native_result=result.get('native_result',result)
             if result.get('status')=='PAUSED' and native_result.get('reason') in ('TIME_LIMIT','RSS_LIMIT','RSS_OBSERVATION','DISK_HEADROOM','SCRATCH_LIMIT'):

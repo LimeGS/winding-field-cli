@@ -103,14 +103,17 @@ def test_completed_prepare_rejects_changed_retained_inputs(tmp_path,monkeypatch,
         run(state['config'],resume=True,until='prepare')
 
 
-def test_missing_lasagna_runtime_does_not_create_run(tmp_path):
+def test_missing_lasagna_runtime_records_failed_run_without_executed_stages(tmp_path):
     from winding_field.workflow import run
     ct=write_ct(tmp_path/'ct',np.ones((8,)*3,np.uint8),spacing=(9.,)*3)
     config=dict(source=str(ct),output=str(tmp_path/'run'),prediction='qual-v2',cache=str(tmp_path/'cache'),
                 lasagna_python=str(tmp_path/'missing-python'),reserve_bytes=0)
     with pytest.raises(FileNotFoundError,match='Lasagna'):
         run(config,until='prepare')
-    assert not (tmp_path/'run').exists()
+    state=json.loads((tmp_path/'run/RUN.json').read_bytes())
+    assert state['status']=='FAILED' and state['stages']=={}
+    assert 'Lasagna Python runtime missing' in state['error']
+    assert state['physical_acceptance'] is False
 
 
 @pytest.mark.parametrize('bad',[dict(fibres_geometry='geometry.json'),dict(fibres='input.afv',model_path='qual.pt')])
