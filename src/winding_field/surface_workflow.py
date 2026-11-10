@@ -20,6 +20,7 @@ from field_runtime import ResourceUnavailable, check_resources
 from field_store import atomic_json
 from .field_workflow import _invalid, _object
 from .surface_mesh import MeshReader, _integer, _levels, extract_mesh, import_mesh, sha
+from .native_mesh import extract_mesh as extract_batched_mesh
 from .surface_sources import FieldSource
 
 
@@ -266,8 +267,17 @@ def run_surfaces(
         return stop is not None and bool(stop())
 
     if "field" in config:
+        extractor = extract_batched_mesh
+        binding = output / "RUN.json"
+        if resume and binding.exists():
+            if binding.is_symlink():
+                raise ValueError("mesh RUN identity cannot be a symlink")
+            saved = _json(binding)
+            identity = saved.get("identity") if isinstance(saved, dict) else None
+            if isinstance(identity, dict) and identity.get("algorithm") == "lewiner-shifted-f32-adaptive-global-edges-v2":
+                extractor = extract_mesh
         with FieldSource(config["field"], config["geometry"], cache_bytes=execution["cache_bytes"]) as source:
-            result = extract_mesh(
+            result = extractor(
                 source,
                 output,
                 config["levels"],
@@ -305,8 +315,17 @@ def main(argv=None) -> int:
     parser.add_argument("--mesh", type=Path)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--resume", action="store_true")
+    parser.add_argument("--parallel-levels", action="store_true", help="independent per-level bundles; automatically bound CPU/RAM/disk concurrency")
     args = parser.parse_args(argv)
     try:
+        if args.parallel_levels:
+            if args.action == "render" or args.config is None:
+                raise ValueError("--parallel-levels requires mesh/surfaces with --config")
+            from .surface_parallel import run_parallel_levels
+
+            result = run_parallel_levels(args.config, args.output, resume=args.resume, render=args.action == "surfaces")
+            print(json.dumps(result, allow_nan=False))
+            return {"LEVELS_READY": 0, "CHECKPOINTED_STOP": 3, "RESOURCE_UNAVAILABLE": 75}.get(result["status"], 1)
         if args.action == "render":
             if args.mesh is None:
                 raise ValueError("render requires --mesh BUNDLE")

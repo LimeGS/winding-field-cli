@@ -360,6 +360,12 @@ field-level calibration see [prepared inputs](docs/PREPARED.md#extract-or-import
 are geometry views; original CT/TIFXYZ needs the matching CT and the
 [export-sheets recipe](docs/FLATTENING.md).
 
+For several field levels, add `--parallel-levels` to `prepared mesh` or
+`prepared surfaces`. CPU, available RAM and disk headroom bound the number of
+independent processes automatically. Results are separate `level-0000/`,
+`level-0001/`, … bundles indexed by `LEVELS.json`, not a merged mesh.
+See [parallel prepared levels](docs/PREPARED.md#parallel-prepared-levels).
+
 ### External Lasagna predictions (`.lasagna.json`)
 
 Use existing surface predictions from the **same CT acquisition** to skip Lasagna
