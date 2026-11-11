@@ -39,11 +39,12 @@ def location(value,base=None):
 
 class LasagnaInput:
     """Nearest pooled-cell sampling; channel downsampling never rescales density."""
+    stream_contract_version=2
 
     def __init__(self,volume,run,config):
         self.volume=volume; self.config=config; self.products={}; self.stack=ExitStack()
         self.root=Path(run)/'lasagna-import'; self.root.mkdir(parents=True,exist_ok=True)
-        self.source=location(config['lasagna_input']); self.documents={}
+        self.source=location(config['lasagna_input']); self.documents={};self.stream_policy=False;self.metadata_pins={}
         try:
             retained_import(run)
             seal=self.root/'CHUNKS.json'
@@ -56,6 +57,8 @@ class LasagnaInput:
             if any(k in manifest for k in ('original_ct','world_origin_xyz_um','world_spacing_xyz_um')):
                 raise ValueError('calibrated physical-frame imports require local inputs and the interpolation route')
             self.manifest=manifest
+            self.stream_policy=manifest.get('required_transport')=='vc_reader.DiskCache'
+            self.metadata_pins=manifest.get('studio_stream',{}).get('metadata_sha256',{})
             shape=manifest.get('base_shape_zyx')
             if not isinstance(shape,list) or len(shape)!=3 or any(type(n) is not int or n<1 for n in shape):
                 raise ValueError('invalid Lasagna base_shape_zyx')
@@ -86,7 +89,8 @@ class LasagnaInput:
                 raise ValueError('selected CT level does not share the Lasagna base grid')
             self.selected_to_base=np.rint(ratio[::-1]).astype(np.int64)
             explicit=manifest.get('ct_source')
-            if explicit is not None and explicit!=base.identity:
+            legacy_identity={k:v for k,v in base.identity.items() if k not in ('backend','native_runtime')}
+            if explicit is not None and explicit not in (base.identity,legacy_identity):
                 raise ValueError('Lasagna manifest CT source identity differs')
             provenance=self.document(location(manifest['provenance'],self.source)) if manifest.get('provenance') else None
             groups=manifest.get('groups',{})
@@ -110,8 +114,15 @@ class LasagnaInput:
                 if direct and direct.get('multiscales'):raise ValueError('Lasagna groups must name direct arrays')
                 product=Volume(source,voxel_um=1.,cache=config.get('cache',volume.cache),
                     cache_bytes=config.get('cache_bytes',volume.limit),offline=config.get('offline',False),
-                    reserve_bytes=config.get('reserve_bytes',volume.reserve))
+                    reserve_bytes=config.get('reserve_bytes',volume.reserve),stream_policy=self.stream_policy,
+                    metadata_pins=self.metadata_pins)
                 self.stack.callback(product.close)
+                expected=group.get('metadata_sha256')
+                if expected is not None and expected!=digest([attrs,direct,product.metadata]):
+                    raise ValueError('Lasagna channel metadata differs from imported snapshot: '+name)
+                required=manifest.get('required_transport')
+                if required is not None and (required!='vc_reader.DiskCache' or product._transport!=required):
+                    raise ValueError('Lasagna required transport is unavailable: '+str(required))
                 if (product.array_path or product.dtype!=np.uint8
                         or tuple(product.shape)!=tuple((self.base_shape+scale-1)//scale)
                         or product.metadata.get('fill_value')!=0):
@@ -137,17 +148,25 @@ class LasagnaInput:
             record=json.loads(path.read_bytes())
         else:
             try:
-                if remote:raw=fetch(source,limit=4<<20)[0]
+                if remote:raw=fetch(source,limit=4<<20,stream_policy=self.stream_policy)[0]
                 else:
                     with Path(source).open('rb') as stream:raw=stream.read((4<<20)+1)
                 if len(raw)>4<<20:raise ValueError('Lasagna metadata exceeds 4MiB budget')
+                expected=self.metadata_pins.get(source)
+                if expected is not None and hashlib.sha256(raw).hexdigest()!=expected:
+                    raise ValueError('Lasagna metadata differs from imported snapshot: '+source)
                 record=dict(source=source,sha256=hashlib.sha256(raw).hexdigest(),value=json.loads(raw))
             except FileNotFoundError:
+                if source in self.metadata_pins:
+                    raise ValueError('pinned Lasagna metadata disappeared: '+source)
                 if not optional:raise
                 record=dict(source=source,sha256=None,value=None)
             if shutil.disk_usage(self.root).free<self.config.get('reserve_bytes',0)+(4<<20):
                 raise OSError('Lasagna metadata disk reserve exhausted')
             bind(path,record)
+        expected=self.metadata_pins.get(source)
+        if expected is not None and record['sha256']!=expected:
+            raise ValueError('Lasagna metadata differs from imported snapshot: '+source)
         self.documents[source]=dict(sha256=record['sha256'],value_sha256=digest(record['value']))
         return record['value']
 
