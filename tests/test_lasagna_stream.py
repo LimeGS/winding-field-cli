@@ -1,4 +1,5 @@
 import importlib.util
+import hashlib
 import json
 from contextlib import closing
 
@@ -90,6 +91,65 @@ def test_missing_local_prediction_chunk_fails_closed(tmp_path):
     (root/'nx.ome.zarr/2/0.0.0').unlink()
     with Volume(ct,cache=tmp_path/'ct-cache') as volume, cls(volume,tmp_path/'run',config) as reader:
         with pytest.raises(FileNotFoundError):reader.read(geometry(volume),[0,0,0],[4,4,4])
+
+
+@pytest.mark.parametrize('changed',[False,True])
+def test_manifest_channel_metadata_pin_rejects_changed_metadata(tmp_path,changed):
+    ct,root,config=fixture(tmp_path)
+    path=root/'input.lasagna.json';manifest=json.loads(path.read_bytes())
+    for group in manifest['groups'].values():
+        channel=root/group['zarr']
+        group['metadata_sha256']=digest([json.loads((channel.parent/'.zattrs').read_bytes()),None,
+                                        json.loads((channel/'.zarray').read_bytes())])
+    atomic_json(path,manifest)
+    channel=root/manifest['groups']['nx']['zarr']
+    if changed:
+        metadata=json.loads((channel/'.zarray').read_bytes());metadata['changed_after_import']=True
+        atomic_json(channel/'.zarray',metadata)
+    with Volume(ct,cache=tmp_path/'ct-cache') as volume:
+        if changed:
+            with pytest.raises(ValueError,match='metadata'):reader_type()(volume,tmp_path/'run',config)
+        else:
+            with reader_type()(volume,tmp_path/'run',config):pass
+
+
+def test_required_native_transport_cannot_fall_back(tmp_path):
+    ct,root,config=fixture(tmp_path);path=root/'input.lasagna.json'
+    manifest=json.loads(path.read_bytes());manifest['required_transport']='vc_reader.DiskCache';atomic_json(path,manifest)
+    with Volume(ct,cache=tmp_path/'ct-cache') as volume:
+        with pytest.raises(ValueError,match='transport'):reader_type()(volume,tmp_path/'run',config)
+
+
+@pytest.mark.parametrize('changed',[False,True])
+def test_studio_legacy_ct_identity_requires_all_semantic_fields(tmp_path,changed):
+    ct,root,config=fixture(tmp_path);path=root/'input.lasagna.json';manifest=json.loads(path.read_bytes())
+    with Volume(ct,cache=tmp_path/'ct-cache') as volume:
+        manifest['ct_source']={k:v for k,v in volume.identity.items() if k not in ('backend','native_runtime')}
+        if changed:manifest['ct_source']['metadata_sha256']='0'*64
+        atomic_json(path,manifest)
+        if changed:
+            with pytest.raises(ValueError,match='identity'):reader_type()(volume,tmp_path/'run',config)
+        else:
+            with reader_type()(volume,tmp_path/'run',config) as reader:
+                assert reader.identity['binding']['ct_base']==volume.identity
+
+
+def test_pinned_optional_metadata_cannot_disappear(tmp_path):
+    ct,root,config=fixture(tmp_path);path=root/'input.lasagna.json';manifest=json.loads(path.read_bytes())
+    attrs=root/'nx.ome.zarr/.zattrs'
+    manifest['studio_stream']={'metadata_sha256':{str(attrs):hashlib.sha256(attrs.read_bytes()).hexdigest()}}
+    atomic_json(path,manifest);attrs.unlink()
+    with Volume(ct,cache=tmp_path/'ct-cache') as volume:
+        with pytest.raises(ValueError,match='metadata'):
+            reader_type()(volume,tmp_path/'run',config)
+
+
+def test_modern_ct_native_identity_cannot_be_ignored(tmp_path):
+    ct,root,config=fixture(tmp_path);path=root/'input.lasagna.json';manifest=json.loads(path.read_bytes())
+    with Volume(ct,cache=tmp_path/'ct-cache') as volume:
+        manifest['ct_source']={**volume.identity,'native_runtime':{}}
+        atomic_json(path,manifest)
+        with pytest.raises(ValueError,match='identity'):reader_type()(volume,tmp_path/'run',config)
 
 
 def test_classical_fibres_external_surface_bypasses_runtime(tmp_path,monkeypatch):
