@@ -287,6 +287,8 @@ family column is missing, empty or `unknown`; an existing family takes precedenc
 `FIBRES.json` reports source/imported/excluded counts. Exported imported
 curves have `automatically_traced=false` and their source AFV hash.
 
+For large inputs, see [bounded AFV batches, durable progress and benchmarks](AFV-IMPORT.md).
+
 ## Products, units and recovery
 
 `lasagna-source/input.zarr` stages only the sampled ROI plus 16 observations of
