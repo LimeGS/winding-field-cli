@@ -59,8 +59,75 @@ def test_new_cli_defaults_native_and_records_requested_controls(tmp_path):
     assert result.returncode==0,result.stdout+result.stderr
     config=json.loads((out/'RUN.json').read_bytes())['config']
     assert config['surface_output']=='native'
+    assert config['flattening_method']=='slim'
+    assert config['device'] in ('cuda','mps','cpu')
     assert config['coverage_target']==.9
     assert config['surface_time_limit_s']==20
+
+
+@pytest.mark.parametrize('branch,method,want',[
+    ('native',None,'slim'),('native','slim','slim'),('native','default','default'),
+    ('atlas',None,'default'),('tifxyz',None,'default'),
+])
+def test_run_and_plan_resolve_flattening_only_at_new_cli_boundary(tmp_path,monkeypatch,capsys,branch,method,want):
+    from winding_field.cli import main
+    from winding_field.util import atomic_json
+    import winding_field.workflow as workflow
+    def capture(config,**kwargs):
+        atomic_json(tmp_path/'captured.json',config)
+        return {'status':'PAUSED'}
+    monkeypatch.setattr(workflow,'run',capture)
+    monkeypatch.setattr(workflow,'plan',capture)
+    for command in ('run','plan'):
+        args=[command,'--source','unused','--output',str(tmp_path/'out'),'--surface-output',branch]
+        if method:args+=['--flattening-method',method]
+        if branch=='tifxyz':
+            request=tmp_path/'direct.json'
+            atomic_json(request,dict(levels=[1.],reserve_disk_gib=0,max_pixels=4096))
+            args+=['--tifxyz-config',str(request)]
+        assert main(args)==0,capsys.readouterr().err
+        config=json.loads((tmp_path/'captured.json').read_bytes())
+        assert config['flattening_method']==want
+        assert config['surface_output']==branch
+
+
+@pytest.mark.parametrize('branch',[None,'atlas','tifxyz'])
+def test_explicit_slim_rejects_nonnative_branches_before_io(branch,tmp_path,capsys):
+    from winding_field.config import validate_config
+    config=dict(flattening_method='slim')
+    if branch:config['surface_output']=branch
+    with pytest.raises(ValueError,match='SLIM.*native'):
+        validate_config(config)
+    if branch:
+        from winding_field.cli import main
+        assert main(['run','--source','unused','--output',str(tmp_path/'out'),
+                     '--surface-output',branch,'--flattening-method','slim'])==1
+        assert 'native' in capsys.readouterr().err
+        assert not (tmp_path/'out').exists()
+
+
+def test_slim_requires_libigl_before_creating_run(tmp_path,monkeypatch):
+    from winding_field.workflow import run
+    monkeypatch.setattr('winding_field.native_geometry._solver',lambda:None)
+    with pytest.raises(ValueError,match='SLIM.*libigl'):
+        run(dict(source='unused',output=str(tmp_path/'out'),surface_output='native',flattening_method='slim'))
+    assert not (tmp_path/'out').exists()
+
+
+@pytest.mark.parametrize('method',[None,'default','original'])
+def test_resume_does_not_reinterpret_saved_native_method(tmp_path,monkeypatch,method):
+    from winding_field.cli import main
+    from winding_field.util import atomic_json
+    config=dict(surface_output='native',output=str(tmp_path))
+    if method:config['flattening_method']=method
+    atomic_json(tmp_path/'RUN.json',dict(config=config,status='PAUSED'))
+    before=(tmp_path/'RUN.json').read_bytes()
+    def resume(saved,**kwargs):
+        assert saved==config and kwargs['resume'] is True
+        return {'status':'PAUSED','config':saved}
+    monkeypatch.setattr('winding_field.workflow.run',resume)
+    assert main(['resume',str(tmp_path)])==0
+    assert (tmp_path/'RUN.json').read_bytes()==before
 
 
 def test_installed_cli_native_renders_and_resumes_from_other_directory(tmp_path):

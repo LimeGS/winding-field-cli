@@ -136,11 +136,13 @@ def validate_config(config):
         if len(set(config['levels']))!=len(config['levels']):
             raise ValueError('duplicate levels')
     for name,choices in [('prediction',('classical','sd2','qual-v2')),('ct_mode',('auto','download','stream')),
-                          ('surface_output',('atlas','tifxyz','native')),('flattening_method',('default','original'))]:
+                          ('surface_output',('atlas','tifxyz','native')),('flattening_method',('default','original','slim'))]:
         if name in config and config[name] not in choices:
             raise ValueError('invalid '+name)
     if config.get('flattening_method')=='original' and config.get('surface_output')=='tifxyz':
         raise ValueError('original flattening uses --export-tifxyz, not the direct-field surface-output branch')
+    if config.get('flattening_method')=='slim' and config.get('surface_output','atlas')!='native':
+        raise ValueError('SLIM flattening requires --surface-output native')
     if config.get('surface_output','atlas')=='native':
         coverage=config.get('coverage_target',1.)
         seconds=config.get('surface_time_limit_s',1800.)

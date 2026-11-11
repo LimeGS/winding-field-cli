@@ -62,6 +62,42 @@ uv pip install --constraint docker/cli.in '.[tifxyz]'
 
 For external fields/meshes, keep using the explicit configuration routes below.
 
+Remote field exports can use the same `zarr-v2` field descriptor documented in
+[Prepared: remote Zarr v2](PREPARED.md#read-a-remote-zarr-v2-field), including
+`--field-config` inputs. A flatten/export field-config contains `field` and
+`geometry` from the [Paris4 example](../examples/paris4-remote.json); levels are
+still supplied with `--levels` in raw phi units. This adds remote **field** reads,
+not CT texturing or a different flattening algorithm.
+
+## Native run flattening
+
+New `winding-field run` and `plan` requests with `--surface-output native`
+default to `--flattening-method slim`. Each bounded local chart uses the existing
+near-planar projection or LSCM initialization, then **10 libigl SLIM iterations**
+with symmetric-Dirichlet energy. The base package requires `libigl==2.6.3`;
+`.[tifxyz]` adds TIFF export only. No Flatboi executable or external export
+pipeline is involved.
+
+Seeds and optimized UVs must pass the unchanged finite, positive-area,
+non-overlap and edge-stretch gates (0.25–4). Failed charts remain accounted for;
+there is no silent fallback to unoptimized UVs. Exact source geometry/IDs and
+the existing seam welding, cuts, recovery and rendering remain unchanged.
+This is local optimization, not a whole-sheet or globally injective SLIM map.
+Ten iterations are a work bound, not a convergence or physical-acceptance claim.
+
+`--flattening-method default` retains historical local mapping;
+`--flattening-method original --flattening-config FILE` retains global LSCM.
+Explicit `slim` is rejected for `--surface-output atlas|tifxyz`; omitting the
+method on those branches keeps their historical behavior. `--export-tifxyz`
+still adds mesh-derived TIFFs to native renders.
+
+The CLI saves the resolved method in `RUN.json`; native identities bind the
+algorithm, initialization, energy and iteration bound. Resume uses the saved
+method without backfilling missing fields: historical configs with no method
+still use historical mapping. As before, implementation/runtime changes require
+the original package or a new output. Completed charts are verified/reused;
+interruption within SLIM restarts only the uncommitted chart on continuation.
+
 ## Explicit solver × scope matrix
 
 `export-sheets` accepts **both** `--flattening-solver lscm|slim` and
