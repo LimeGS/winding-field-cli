@@ -20,13 +20,32 @@ def memory_report(proc=Path('/proc'),groups=Path('/sys/fs/cgroup')):
         if match is None:raise ValueError('missing MemAvailable')
         host=int(match[1])*1024;entries=(proc/'self/cgroup').read_text().splitlines()
         unified=next((line.split('::',1)[1] for line in entries if line.startswith('0::')),None)
+        legacy=next((line.split(':',2)[2] for line in entries if 'memory' in line.split(':',2)[1].split(',')),None)
+        # Hybrid hierarchies can expose v2 without assigning it the memory controller.
+        if legacy is not None:unified=None
         if unified is not None:
             relative=unified;root=groups;names=('memory.max','memory.current');keys=('file','shmem','file_dirty','file_writeback','file_mapped')
         else:
-            relative=next(line.split(':',2)[2] for line in entries if 'memory' in line.split(':',2)[1].split(','))
+            if legacy is None:raise ValueError('missing memory cgroup')
+            relative=legacy
             root=groups/'memory';names=('memory.limit_in_bytes','memory.usage_in_bytes');keys=('cache','shmem','dirty','writeback','mapped_file')
-        if '..' in Path(relative).parts:raise ValueError('ambiguous cgroup namespace')
-        leaf=root/relative.lstrip('/');directory=leaf;available=[host]
+        relative=Path(relative)
+        if not relative.is_absolute() or '..' in relative.parts:raise ValueError('ambiguous cgroup namespace')
+        mount_root=Path('/')
+        mountinfo=proc/'self/mountinfo'
+        if mountinfo.exists():
+            mounts=[]
+            unescape=lambda text:re.sub(r'\\([0-7]{3})',lambda m:chr(int(m[1],8)),text)
+            for line in mountinfo.read_text().splitlines():
+                left,right=line.split(' - ',1);fields=left.split();kind,_,options=right.split()[:3]
+                if (Path(unescape(fields[4]))==root and
+                        (kind=='cgroup2' if unified is not None else kind=='cgroup' and 'memory' in options.split(','))):
+                    mounts.append(Path(unescape(fields[3])))
+            if len(mounts)!=1:raise ValueError('missing or ambiguous memory cgroup mount')
+            mount_root=mounts[0]
+            if not mount_root.is_absolute() or '..' in mount_root.parts:raise ValueError('invalid memory cgroup mount root')
+        # Only a matching mount can translate a host cgroup path to a container leaf.
+        leaf=root/relative.relative_to(mount_root);directory=leaf;available=[host]
         while True:
             if directory==leaf or any((directory/n).exists() for n in names):
                 text=(directory/names[0]).read_text().strip();used=int((directory/names[1]).read_text())

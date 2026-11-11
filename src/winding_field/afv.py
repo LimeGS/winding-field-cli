@@ -1,6 +1,6 @@
 """Read-only, calibrated AFV import into bounded world-coordinate curve blocks."""
 
-from contextlib import closing
+from contextlib import closing, suppress
 from functools import lru_cache
 import hashlib
 import heapq
@@ -11,6 +11,7 @@ import math
 from pathlib import Path
 import shutil
 import sqlite3
+import time
 
 import numpy as np
 
@@ -18,6 +19,10 @@ from .artifacts import Tiles
 from .io import http_url
 from .splines import bind
 from .util import atomic_json,digest,file_sha
+
+_BATCH_BLOCKS = 1000
+_BATCH_SECONDS = 2.
+_PROGRESS_SECONDS = 2.
 
 
 def _open(path):
@@ -168,6 +173,7 @@ def validate_retained(run,config):
 
 
 def import_fibres(run,config,stop=None):
+    started=time.monotonic()
     run=Path(run); meta=json.loads((run/'PREPARED.json').read_bytes())
     source=source_identity(config['fibres'],config.get('fibres_geometry'),meta['source'])
     identity=dict(input=source,maps=meta['tiles_sha256'],origin=meta['origin_xyz'],spacing=meta['spacing_xyz'])
@@ -175,6 +181,29 @@ def import_fibres(run,config,stop=None):
     validate_retained(run,config)
     if (run/'FIBRES.json').exists(): return json.loads((run/'FIBRES.json').read_bytes())
     maps=Tiles(run/'maps'); src=_open(config['fibres']); db=sqlite3.connect(root/'fibres.sqlite')
+    pending=processed=commits=0; committed=None
+    batch_started=last_commit_utc=last_update=None
+
+    def progress(status,force=False):
+        nonlocal last_update
+        if committed is None: return
+        now=time.monotonic()
+        if not force and last_update is not None and now-last_update<_PROGRESS_SECONDS: return
+        elapsed=max(0.,now-started)
+        atomic_json(root/'STATUS.json',dict(schema='afv-import-progress-v1',status=status,
+            identity_sha256=digest(identity),blocks_total=source['block_count'],blocks_processed=processed,
+            blocks_committed=committed,blocks_pending=pending,commits_this_invocation=commits,
+            elapsed_s=elapsed,blocks_per_second=processed/elapsed if elapsed else 0.,
+            last_batch_committed_utc=last_commit_utc,updated_utc=time.time()))
+        last_update=now
+
+    def commit_batch():
+        nonlocal pending,batch_started,committed,commits,last_commit_utc
+        if pending:
+            db.commit()
+            committed+=pending; commits+=1; last_commit_utc=time.time()
+            pending=0; batch_started=None
+
     try:
         if maps.identity()!=meta['tiles_sha256']: raise ValueError('AFV import maps changed')
         db.executescript('CREATE TABLE IF NOT EXISTS done(fid INTEGER,block INTEGER,sha TEXT,PRIMARY KEY(fid,block));'
@@ -185,6 +214,17 @@ def import_fibres(run,config,stop=None):
                        'LEFT JOIN curve_bounds b ON b.id=c.id WHERE d.fid IS NULL OR b.id IS NULL LIMIT 1').fetchone()
                 or db.execute('SELECT 1 FROM curve_bounds b LEFT JOIN curves c ON c.id=b.id WHERE c.id IS NULL LIMIT 1').fetchone()):
             raise ValueError('imported AFV inventory changed')
+        committed=db.execute('SELECT count(*) FROM done').fetchone()[0]
+        status_path=root/'STATUS.json'
+        if status_path.is_file() and status_path.stat().st_size<=65536:
+            with suppress(OSError,ValueError,TypeError,AttributeError):
+                previous_status=json.loads(status_path.read_bytes())
+                stamp=previous_status.get('last_batch_committed_utc')
+                if (previous_status.get('identity_sha256')==digest(identity)
+                        and previous_status.get('blocks_committed')==committed
+                        and type(stamp) in (int,float) and math.isfinite(stamp)):
+                    last_commit_utc=stamp
+        progress('IMPORTING',force=True)
         family_column='family' if 'family' in {r[1] for r in src.execute('PRAGMA table_info(fibers)')} else "'unknown'"
         total_blocks=0
         for fid,family,count,annotation in src.execute(f'SELECT id,{family_column},point_count,annotation FROM fibers ORDER BY id'):
@@ -195,7 +235,8 @@ def import_fibres(run,config,stop=None):
             tag=classification.get('manual_tag') if isinstance(classification,dict) else None
             if family=='unknown' and tag in ('V','H'): family=tag
             for first,raw in src.execute('SELECT first_segment,points FROM blocks WHERE fiber_id=? ORDER BY first_segment',(fid,)):
-                if stop and stop(): return dict(status='PAUSED')
+                if stop and stop():
+                    raise InterruptedError('AFV import paused')
                 if first!=cursor or len(raw)%24 or not 2<=len(raw)//24<=257:
                     raise ValueError('invalid or discontinuous AFV block')
                 points=np.frombuffer(raw,dtype='<f8').reshape(-1,3)
@@ -208,7 +249,8 @@ def import_fibres(run,config,stop=None):
                 old=db.execute('SELECT sha FROM done WHERE fid=? AND block=?',(fid,first)).fetchone()
                 rows=db.execute('SELECT id,points,family,annotation FROM curves WHERE source_id=? AND source_block=? ORDER BY id',(fid,first)) if old else None
                 checksum=hashlib.sha256(digest([family,annotation]).encode())
-                db.execute('BEGIN')
+                if not old and not db.in_transaction:
+                    db.execute('BEGIN'); batch_started=time.monotonic()
                 for piece in _pieces(local,maps,stop):
                     world=piece*meta['spacing_xyz']+meta['origin_xyz']
                     buffer=io.BytesIO(); np.save(buffer,world,allow_pickle=False)
@@ -230,18 +272,31 @@ def import_fibres(run,config,stop=None):
                 if old:
                     if old!=(checksum.hexdigest(),) or rows.fetchone() is not None:
                         raise ValueError('imported AFV inventory changed')
-                else: db.execute('INSERT INTO done VALUES (?,?,?)',(fid,first,checksum.hexdigest()))
-                db.commit()
+                else:
+                    db.execute('INSERT INTO done VALUES (?,?,?)',(fid,first,checksum.hexdigest()))
+                    pending+=1
+                processed+=1
+                if pending and (pending>=_BATCH_BLOCKS or time.monotonic()-batch_started>=_BATCH_SECONDS):
+                    commit_batch()
+                progress('IMPORTING')
             if cursor+1!=count: raise ValueError('AFV block point inventory mismatch')
         if total_blocks!=source['block_count'] or db.execute('SELECT count(*) FROM done').fetchone()[0]!=total_blocks:
             raise ValueError('imported AFV inventory changed')
-        if stop and stop(): return dict(status='PAUSED')
+        commit_batch()
+        if stop and stop(): raise InterruptedError('AFV import paused')
+        progress('VALIDATING',force=True)
         if source!=source_identity(config['fibres'],config.get('fibres_geometry'),meta['source']):
             raise ValueError('external AFV source changed during import')
         count=db.execute('SELECT count(*) FROM curves').fetchone()[0]
         kept=db.execute('SELECT count(DISTINCT source_id) FROM curves').fetchone()[0]
     except InterruptedError:
-        db.rollback(); return dict(status='PAUSED')
+        db.rollback(); pending=0
+        progress('PAUSED',force=True)
+        return dict(status='PAUSED')
+    except BaseException:
+        db.rollback(); pending=0
+        with suppress(OSError): progress('FAILED',force=True)
+        raise
     finally:
         maps.close(); src.close(); db.close()
     result=dict(status='FIBRES_READY',method='external-afv',spatial_index=True,count=count,
@@ -249,4 +304,5 @@ def import_fibres(run,config,stop=None):
         exclusion_reason='outside ROI or unsupported surface',identity=identity,sha256=file_sha(root/'fibres.sqlite'),
         coordinates='XYZ micrometres',physical_accuracy='UNVALIDATED')
     atomic_json(run/'FIBRES.json',result)
+    progress('FIBRES_READY',force=True)
     return result
