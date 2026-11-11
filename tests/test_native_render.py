@@ -315,7 +315,7 @@ def test_changing_parameterizer_runtime_cannot_relabel_completed_geometry(tmp_pa
     with MeshReader(plane_bundle(tmp_path)) as reader, analytic_ct(tmp_path) as volume:
         out=tmp_path/'render'
         render_mesh(reader,out,volume,{'chart_faces':8})
-        monkeypatch.setattr(geometry,'solver_identity',lambda:{'solver':'changed'},raising=False)
+        monkeypatch.setattr(geometry,'solver_identity',lambda method='default':{'solver':'changed'},raising=False)
         with pytest.raises(ValueError,match='identity'):
             render_mesh(reader,out,volume,{'chart_faces':8})
 
