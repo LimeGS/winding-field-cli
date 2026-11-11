@@ -53,13 +53,14 @@ def _forget_file(db, path):
 
 
 class EncodedTransport:
-    def __init__(self, root, limit, *, offline=False, reserve=0):
+    def __init__(self, root, limit, *, offline=False, reserve=0, stream_policy=False):
         from vc_reader.reader.disk_cache import disk_budget
         from vc_reader.reader import ObjectStore
 
         self.root = Path(root).resolve()
         self.root.mkdir(parents=True, exist_ok=True)
         self.limit, self.reserve, self.offline = limit, reserve, offline
+        self.stream_policy=stream_policy;self._relay=None
         index = self.root / '.vc_reader_cache.sqlite3'
         if index.exists():
             with cache_index(index) as db:
@@ -139,7 +140,7 @@ class EncodedTransport:
             etag = validator[0] if validator else None
             headers = {'If-None-Match':etag} if etag and not etag.startswith('W/') else {}
             try:
-                checked, new_etag = fetch(url, headers=headers)
+                checked, new_etag = fetch(url, headers=headers,stream_policy=self.stream_policy)
             except FileNotFoundError:
                 raw = etag = None
             else:
@@ -148,6 +149,15 @@ class EncodedTransport:
                     self.cache_hits += 1
                 else:
                     self.bytes_read += len(checked);raw = checked;etag = new_etag
+        elif self.stream_policy:
+            from .stream_policy import ChunkRelay
+            if self._relay is None:self._relay=ChunkRelay()
+            try:
+                source,name=self._relay.location(url).rsplit('/',1)
+                raw=ObjectStore(source,auth=None,max_read_bytes=256<<20).read(name)
+            except FileNotFoundError:raw=None
+            finally:self._relay.raw=None
+            if raw is not None:self.bytes_read+=len(raw)
         else:
             source, name = url.rsplit('/', 1)
             if source != self._source:
@@ -173,4 +183,6 @@ class EncodedTransport:
         return raw
 
     def close(self):
-        self.db.close()
+        try:self.db.close()
+        finally:
+            if self._relay is not None:self._relay.close()

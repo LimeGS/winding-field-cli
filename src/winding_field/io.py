@@ -36,16 +36,22 @@ def http_url(source):
     return source
 
 
-def fetch(url, *, headers=None, limit=256 << 20):
+def fetch(url, *, headers=None, limit=256 << 20, stream_policy=False):
     for attempt in range(3):
         try:
-            with urlopen(Request(url, headers=headers or {}), timeout=60) as response:
+            if stream_policy:
+                from .stream_policy import open_stream
+                response=open_stream(url,headers or {})
+            else:response=urlopen(Request(url,headers=headers or {}),timeout=60)
+            with response:
                 if int(response.headers.get('Content-Length', 0)) > limit:
                     raise ValueError(f'remote object exceeds {limit} byte read budget: {url}')
                 data = response.read(limit + 1)
                 if len(data) > limit:
                     raise ValueError('remote response exceeds read budget')
                 encoding=response.headers.get('Content-Encoding','identity').lower().strip()
+                if stream_policy and encoding not in ('','identity'):
+                    raise ValueError('unsupported streaming Content-Encoding')
                 if encoding=='gzip':
                     with gzip.GzipFile(fileobj=io.BytesIO(data)) as decoded:
                         data=decoded.read(limit+1)
@@ -119,7 +125,9 @@ def bounds(lo, hi, shape):
 
 class Volume:
     def __init__(self, source, *, local=None, cache=None, cache_bytes=2 << 30,
-                 offline=False, voxel_um=None, level=0, reserve_bytes=0, decoded_cache_bytes=0):
+                 offline=False, voxel_um=None, level=0, reserve_bytes=0, decoded_cache_bytes=0,
+                 stream_policy=False, metadata_pins=None):
+        self.stream_policy=stream_policy;self.metadata_pins=metadata_pins or {}
         try:
             from vc_reader.reader import ObjectStore, ZarrReader, ArrayMeta, decode_chunk
         except ImportError as exc:
@@ -161,6 +169,9 @@ class Volume:
             if level:
                 raise ValueError('a direct Zarr array has no pyramid levels')
         m = self.metadata
+        if self.stream_policy:
+            from .stream_policy import validate_array
+            validate_array(m)
         if m.get('zarr_format') != 2:
             raise ValueError('checked reader requires Zarr v2; unsupported layout is not substituted')
         self.shape, self.chunks = tuple(m['shape']), tuple(m['chunks'])
@@ -194,7 +205,7 @@ class Volume:
                 self._native_limit = max(0,self.limit-legacy)
                 if self.remote:
                     self._native = EncodedTransport(self.cache/'vc-reader', self._native_limit,
-                                                    offline=self.offline,reserve=self.reserve)
+                                                    offline=self.offline,reserve=self.reserve,stream_policy=self.stream_policy)
                     self._transports[threading.get_ident()] = self._native
             self._reader = ZarrReader.computed(self._chunk, shape=self.shape, chunks=self.chunks,
                 dtype=self.dtype.str, fill_value=m.get('fill_value',0), memory_cache=0, threads=1)
@@ -231,16 +242,21 @@ class Volume:
             elif self.offline:
                 raw = (cached if cached.exists() else self.local/key if self.local else cached).read_bytes()
             else:
-                raw, _ = fetch(self.source+'/'+key, limit=4 << 20)
-                atomic_bytes(cached, raw)
+                raw, _ = fetch(self.source+'/'+key, limit=4 << 20,stream_policy=self.stream_policy)
         except FileNotFoundError:
+            if self.source+'/'+key in self.metadata_pins:
+                raise ValueError('pinned streaming metadata disappeared: '+key)
             if optional:
                 return None
             raise FileNotFoundError(f'metadata missing (offline={self.offline}): {self.source}/{key}')
+        expected=self.metadata_pins.get(self.source+'/'+key)
+        if expected is not None and hashlib.sha256(raw).hexdigest()!=expected:
+            raise ValueError('streaming metadata differs from imported snapshot: '+key)
         value = json.loads(raw)
         if self.local and (self.local/key).exists():
             if json.loads((self.local/key).read_bytes()) != value:
                 raise ValueError('local metadata differs from original source: '+key)
+        if self.remote and not self.offline:atomic_bytes(cached,raw)
         return value
 
     def _geometry(self, attrs, voxel_um):
@@ -339,7 +355,7 @@ class Volume:
             if worker not in self._transports:
                 from .ct_reader import EncodedTransport
                 transport = EncodedTransport(self.cache/'vc-reader',self._native_limit,
-                                             offline=self.offline,reserve=self.reserve)
+                                             offline=self.offline,reserve=self.reserve,stream_policy=self.stream_policy)
                 transport._checked = self._native._checked
                 self._transports[worker] = transport
             transport = self._transports[worker]
@@ -393,7 +409,12 @@ class Volume:
                         raise ValueError('CT source/cache changed during decode')
                 retained_signature=after
         from vc_reader.reader import decode_chunk
-        raw=decode_chunk(raw,self.metadata,max_decode_bytes=256<<20)
+        metadata=self.metadata
+        if self.stream_policy:
+            from .stream_policy import decode_chunk as bounded_decode
+            raw=bounded_decode(raw,metadata)
+            metadata={**metadata,'compressor':None}
+        raw=decode_chunk(raw,metadata,max_decode_bytes=256<<20)
         array=np.frombuffer(raw,dtype=self.dtype)
         if array.size!=math.prod(self.chunks):raise ValueError('corrupt CT chunk: '+key)
         array=array.reshape(self.chunks);array.flags.writeable=False

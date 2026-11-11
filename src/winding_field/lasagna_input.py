@@ -16,6 +16,9 @@ from .lasagna import CHUNK, physical_observations
 from .splines import bind
 from .util import atomic_json, file_sha
 
+# Preserve the streamed-reader import used by existing Studio capability probes.
+from .lasagna_stream import LasagnaInput
+
 
 def streamed(config):
     """Explicit/embedded physical frames retain the calibrated interpolation route."""
