@@ -365,6 +365,14 @@ def main(argv=None):
                 progress=root/'surfaces/STATUS.json'
                 if progress.is_file():
                     result=dict(state,native_progress=json.loads(progress.read_bytes()))
+                afv_progress=root/'fibres/STATUS.json'
+                try:
+                    detail=json.loads(afv_progress.read_bytes())
+                    if isinstance(detail,dict) and detail.get('schema')=='afv-import-progress-v1':
+                        json.dumps(detail,allow_nan=False)
+                        result=dict(result,afv_progress=detail)
+                except (OSError,ValueError):
+                    pass  # Advisory progress must not hide the authoritative run state.
             else:
                 result=run(state['config'],resume=True,until=None if args.command=='resume' else args.command,
                            extra_surface_seconds=getattr(args,'extra_surface_seconds',0.),

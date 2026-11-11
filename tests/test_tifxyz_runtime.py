@@ -26,6 +26,88 @@ def test_cgroup_leaf_required_and_ancestor_caps(tmp_path):
     assert report['known'] and report['effective_headroom_bytes']==1000
 
 
+def memory_namespace(tmp_path, *, v1, membership, mount_root='/tenant', hybrid=False):
+    proc=tmp_path/'proc';groups=tmp_path/'groups'
+    (proc/'self').mkdir(parents=True);groups.mkdir()
+    (proc/'meminfo').write_text('MemAvailable: 10000 kB\n')
+    (proc/'self/cgroup').write_text(('6:memory:'+membership+'\n' if v1 else '')+
+        ('0::'+membership+'\n' if not v1 or hybrid else ''))
+    root=groups/'memory' if v1 else groups;root.mkdir(exist_ok=True)
+    kind='cgroup cgroup rw,memory' if v1 else 'cgroup2 cgroup rw'
+    escaped=str(root).replace(' ','\\040')
+    (proc/'self/mountinfo').write_text(f'12 1 0:32 {mount_root} {escaped} ro - {kind}\n')
+    limit,usage=('memory.limit_in_bytes','memory.usage_in_bytes') if v1 else ('memory.max','memory.current')
+    (root/limit).write_text('6000');(root/usage).write_text('5000')
+    return proc,groups,root,limit,usage
+
+
+def test_hybrid_memory_uses_v1_controller_and_verified_mount_root(tmp_path):
+    from winding_field.tifxyz_runtime import memory_report
+    proc,groups,root,_,_=memory_namespace(tmp_path,v1=True,membership='/tenant',hybrid=True)
+    # A unified entry does not mean the memory controller belongs to v2.
+    (groups/'tenant').mkdir();(groups/'tenant/memory.max').write_text('9999999')
+    (groups/'tenant/memory.current').write_text('0')
+    report=memory_report(proc,groups)
+    assert report['known'] and report['effective_headroom_bytes']==1000
+    assert report['bounds'][0]['path']==str(root)
+
+
+@pytest.mark.parametrize('v1',[False,True])
+def test_namespaced_memory_leaf_keeps_visible_ancestor_cap(tmp_path,v1):
+    from winding_field.tifxyz_runtime import memory_report
+    proc,groups,root,limit,usage=memory_namespace(tmp_path,v1=v1,membership='/tenant/child')
+    child=root/'child';child.mkdir()
+    (child/limit).write_text('9000');(child/usage).write_text('10')
+    report=memory_report(proc,groups)
+    assert report['known'] and report['effective_headroom_bytes']==1000
+    assert [b['path'] for b in report['bounds']]==[str(child),str(root)]
+
+
+@pytest.mark.parametrize('membership',['/tenant/missing','/other','/tenant/../other'])
+@pytest.mark.parametrize('v1',[False,True])
+def test_namespaced_memory_never_substitutes_mount_root_for_unknown_leaf(tmp_path,v1,membership):
+    from winding_field.tifxyz_runtime import memory_report
+    proc,groups,*_=memory_namespace(tmp_path,v1=v1,membership=membership)
+    report=memory_report(proc,groups)
+    assert not report['known'] and report['effective_headroom_bytes']==0
+    assert report['errors']
+
+
+def test_hybrid_missing_v1_controller_never_falls_back_to_v2(tmp_path):
+    from winding_field.tifxyz_runtime import memory_report
+    proc,groups,root,limit,_=memory_namespace(tmp_path,v1=True,membership='/tenant',hybrid=True)
+    (root/limit).unlink()
+    (groups/'tenant').mkdir();(groups/'tenant/memory.max').write_text('9999999')
+    (groups/'tenant/memory.current').write_text('0')
+    assert not memory_report(proc,groups)['known']
+
+
+@pytest.mark.parametrize('damage',['missing','duplicate','wrong-controller','traversal'])
+def test_memory_mount_mapping_must_be_unambiguous(tmp_path,damage):
+    from winding_field.tifxyz_runtime import memory_report
+    proc,groups,*_=memory_namespace(tmp_path,v1=True,membership='/tenant')
+    path=proc/'self/mountinfo';text=path.read_text()
+    if damage=='missing':text=''
+    elif damage=='duplicate':text+=text
+    elif damage=='wrong-controller':text=text.replace('rw,memory','rw,cpu')
+    else:text=text.replace('/tenant','/tenant/..')
+    path.write_text(text)
+    assert not memory_report(proc,groups)['known']
+
+
+@pytest.mark.parametrize('v1',[False,True])
+def test_memory_mount_mapping_preserves_host_cap_and_reclaim_exclusions(tmp_path,v1):
+    from winding_field.tifxyz_runtime import memory_report
+    proc,groups,root,_,_=memory_namespace(tmp_path,v1=v1,membership='/tenant')
+    keys=('total_cache','total_shmem','total_dirty','total_writeback','total_mapped_file') if v1 else ('file','shmem','file_dirty','file_writeback','file_mapped')
+    (root/'memory.stat').write_text('\n'.join(f'{key} {value}' for key,value in zip(keys,[2000,100,200,300,400])))
+    report=memory_report(proc,groups)
+    assert report['known'] and report['effective_headroom_bytes']==2000
+    assert report['bounds'][0]['reclaim']==1000
+    (proc/'meminfo').write_text('MemAvailable: 1 kB\n')
+    assert memory_report(proc,groups)['effective_headroom_bytes']==1024
+
+
 def test_parent_and_margin_charged_before_child_limit():
     from winding_field.tifxyz_runtime import child_ceiling
     from winding_field.tifxyz_contract import Blocked
