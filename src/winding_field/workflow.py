@@ -86,6 +86,10 @@ def open_volume(config):
 
 def plan(config,volume=None,stages=()):
     validate_config(config)
+    if config.get('reuse_from') or config.get('reuse_from_sha256'):
+        from .reuse import validate_reuse_request
+        if not config.get('reuse_from'):raise ValueError('reuse requires --reuse-from')
+        validate_reuse_request(Path(config['reuse_from']),config,config.get('reuse_from_sha256'))
     own=volume is None
     volume=open_volume(config) if own else volume
     try:
@@ -379,6 +383,8 @@ def run(config,resume=False,until=None,extra_surface_seconds=0,field_sweeps=None
             state=json.loads((root/'RUN.json').read_bytes())
             if state['config']!=config:
                 raise ValueError('run configuration changed; use a new output')
+            if config.get('reuse_from') and not state.get('reuse'):
+                raise ValueError('reuse admission incomplete; use a new output')
             if state.get('implementation_sha256')!=implementation_sha():
                 raise ValueError('implementation changed; resume with the original package or use a new output')
             if field_sweeps is not None:
@@ -422,7 +428,16 @@ def run(config,resume=False,until=None,extra_surface_seconds=0,field_sweeps=None
                 if 'fibres_input' in state and state['fibres_input']!=fibres_input:
                     raise ValueError('external AFV input identity changed')
                 state['fibres_input']=fibres_input
-            volume.bind_ledger(root/'source.sqlite')
+            if not resume and config.get('reuse_from'):
+                from .reuse import reuse_stages
+                try:
+                    reused=reuse_stages(Path(config['reuse_from']),root,config,volume,config.get('reuse_from_sha256'),stop)
+                except InterruptedError:
+                    state['status']='PAUSED';atomic_json(root/'RUN.json',state);return state
+                state.update(reused)
+                atomic_json(root/'RUN.json',state)
+                print('[prepare/fibres] reused verified stages',file=sys.stderr,flush=True)
+            else:volume.bind_ledger(root/'source.sqlite')
             if resume:
                 volume.validate_used(); result=_validate_products(root,dict(state,config=config),stop,volume)
                 if result is not None:
