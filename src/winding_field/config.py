@@ -70,6 +70,8 @@ def field_geometry(meta,spacing_um=None):
 
 
 def validate_config(config):
+    if config.get('nonconvergence_policy','fail') not in ('fail','continue'):
+        raise ValueError('invalid nonconvergence_policy')
     if config.get('lasagna_input'):
         if not isinstance(config['lasagna_input'],str) or not config['lasagna_input'].strip():
             raise ValueError('--lasagna-input must name a local or remote v2 manifest')

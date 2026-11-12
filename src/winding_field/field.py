@@ -143,7 +143,8 @@ def solve(run,config,stop=None,*,sweep_target=None):
     options=dict(origin_xyz=geometry['origin_xyz'],spacing_xyz=geometry['spacing_xyz'],
                  order=list(itertools.product(*(range((n-1)//chunk+1) for n in shape))),
                  halo=2,sweeps=sweeps,rtol=config.get('rtol',1e-6),
-                 maxiter=config.get('maxiter',2000),dtype='float64',device=config.get('device','cpu'),
+                  maxiter=config.get('maxiter',2000),dtype='float64',device=config.get('device','cpu'),
+                  nonconvergence_policy=config.get('nonconvergence_policy','fail'),
                   cache_bytes=64<<20,reserve_bytes=config.get('reserve_bytes',0))
     if bounded:options['max_bytes']=config.get('bounded_bytes',12<<30)//8
     db=sqlite3.connect((run/'fibres/fibres.sqlite').resolve().as_uri()+'?mode=ro',uri=True)
@@ -226,7 +227,9 @@ def solve(run,config,stop=None,*,sweep_target=None):
             return dict(status='PAUSED',solver=result)
         receipt=dict(status='FIELD_READY',geometry=geometry,checkpoint_sha256=file_sha(checkpoint),
                      calibration=cal,solver=result,global_converged=False,physical_acceptance=False,
-                      fibre_constraint_rows=row_count,numerical_status='local solves converged; sweep budget exhausted')
+                       fibre_constraint_rows=row_count,numerical_status=(
+                           'local solves converged; sweep budget exhausted' if result['local_solves_converged']
+                           else 'local solves not converged; sweep budget exhausted'))
         if bounded:
             from .global_residual import verify
             backend=dict(name='canonical-block-solver',device=str(torch.empty(0,device=device).device),
@@ -247,12 +250,18 @@ def solve(run,config,stop=None,*,sweep_target=None):
                                     constraints=pair_provider,rtol=options['rtol'],stop=stop,gauge_offset=gauge_offset)
                 source.validate(hashes=True)
             verification.update(checkpoint_sha256=receipt['checkpoint_sha256'],solver_backend=backend)
+            if verification['status']!='PAUSED' and (
+                    verification['fixed_storage_max_error']!=0 or
+                    not all(math.isfinite(verification[k]) for k in ('residual_l2','rhs_l2'))):
+                raise ValueError('global verification found invalid gauge or nonfinite residual')
             atomic_json(run/'GLOBAL_RESIDUAL.json',verification)
-            if not verification['global_converged']:
+            if verification['status']=='PAUSED' or (not verification['global_converged'] and options['nonconvergence_policy']=='fail'):
                 return dict(status='PAUSED',solver=result,verification=verification,
                             reason='global numerical verification not passed; sweep budget is not convergence')
-            receipt.update(global_converged=True,verification=verification,solver_backend=backend,
-                           numerical_status='stored global normal equations and codec-encoded zero gauge verified')
+            receipt.update(global_converged=verification['global_converged'],verification=verification,solver_backend=backend,
+                           numerical_status=receipt['numerical_status']+'; '+(
+                               'stored global normal equations and codec-encoded zero gauge verified' if verification['global_converged']
+                               else 'stored global normal equations not converged'))
         atomic_json(run/'FIELD.json',receipt)
         return receipt
     finally:
