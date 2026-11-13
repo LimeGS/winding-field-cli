@@ -1,6 +1,7 @@
 """Scheduling/cache optimizations must retain the expensive qualification gates."""
 from pathlib import Path
 import re
+import shlex
 
 import pytest
 import yaml
@@ -56,6 +57,19 @@ def test_cpu_cache_uses_pinned_bake_action_and_explicit_builder_and_path():
         'cpu.cache-to=type=gha,scope=winding-field-cli-cpu,mode=max,ignore-error=true',
     ]
     assert inputs.get('push', 'false') == 'false'
+
+
+def test_test_image_build_uses_runner_dns_without_enabling_runtime_network():
+    steps = workflow('docker.yml')['jobs']['cpu']['steps']
+    commands = [line.strip() for step in steps for line in step.get('run', '').splitlines()]
+    build = next(shlex.split(line) for line in commands
+                 if line.startswith('docker build ') and 'docker/testing.Dockerfile' in line)
+    assert '--network=host' in build
+    offline = next(step['run'] for step in steps
+                   if step.get('name') == 'Installed non-root runtime and offline workflows')
+    assert '--network=none' in offline
+    assert 'APT::Update::Error-Mode=any' in (ROOT / 'docker/testing.Dockerfile').read_text()
+    assert 'https://snapshot.ubuntu.com/ubuntu/20261101T000000Z/' in (ROOT / 'Dockerfile').read_text()
 
 
 def test_full_suites_and_optional_gpu_checks_are_preserved_and_timed():

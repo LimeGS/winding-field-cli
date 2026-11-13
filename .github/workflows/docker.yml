@@ -62,7 +62,8 @@ jobs:
             'python /opt/runtime-provenance/docker/verify-runtime.py --variant cpu && python /opt/runtime-provenance/docker/smoke.py --output /outputs/smoke'
       - name: Installed suite with official native checkpoint qualification
         run: |
-          docker build -f docker/testing.Dockerfile -t winding-field:cpu-tests .
+          # Test-tool installation needs runner DNS; the runtime smoke above stays offline.
+          docker build --network=host -f docker/testing.Dockerfile -t winding-field:cpu-tests .
           docker run --rm --init --user "$(id -u):$(id -g)" --memory=6g --memory-swap=6g \
             -e MATRIX_NATIVE_APP=/opt/vc3d/AppRun -e MATRIX_NATIVE_RECIPE=historical \
             -e WINDING_LASAGNA_PYTHON=/opt/lasagna/bin/python \
