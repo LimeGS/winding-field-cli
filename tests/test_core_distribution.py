@@ -1,4 +1,6 @@
 import importlib.metadata as metadata
+import importlib.util
+import hashlib
 import json
 from pathlib import Path
 import tomllib
@@ -21,6 +23,14 @@ def test_core_archive_constraint_matches_provenance():
     assert archive in (ROOT / 'docker/cli.in').read_text().splitlines()
     for variant in ('cpu', 'cu128'):
         assert archive + ' \\' in (ROOT / f'docker/cli-{variant}.txt').read_text().splitlines()
+
+
+def test_installed_core_matches_frozen_source():
+    provenance = json.loads((ROOT / 'provenance/core.json').read_text())
+    assert metadata.version('winding-field') == provenance['version']
+    for name, expected in provenance['source_sha256'].items():
+        path = Path(importlib.util.find_spec(Path(name).stem).origin)
+        assert hashlib.sha256(path.read_bytes()).hexdigest() == expected, f'core source differs: {path}'
 
 
 def test_installed_cli_version_matches_package_metadata():
