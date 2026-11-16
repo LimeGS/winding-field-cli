@@ -8,6 +8,7 @@ from contextlib import contextmanager, nullcontext
 import fcntl
 import gzip
 import hashlib
+from http.client import RemoteDisconnected
 import io
 import itertools
 import json
@@ -67,7 +68,7 @@ def fetch(url, *, headers=None, limit=256 << 20, stream_policy=False):
                 raise FileNotFoundError(url) from exc
             if exc.code < 500 or attempt == 2:
                 raise
-        except (URLError, TimeoutError):
+        except (URLError, TimeoutError, RemoteDisconnected):
             if attempt == 2:
                 raise
         time.sleep(2**attempt)
@@ -140,6 +141,7 @@ class Volume:
         from collections import OrderedDict
         self._decoded=OrderedDict();self._decoded_bytes=0;self._decoded_limit=decoded_cache_bytes
         self._decoded_lock=threading.RLock()
+        self._verified_sampling=False
         self.reserve=reserve_bytes
         self.source = http_url(source)
         self.remote = self.source.startswith(('https://', 'http://'))
@@ -295,7 +297,11 @@ class Volume:
 
     def bind_ledger(self, path):
         """Pin every consumed encoded chunk; changed bytes cannot enter a resumed run."""
-        self._decoded.clear();self._decoded_bytes=0
+        if self._verified_sampling:raise ValueError('cannot switch ledger during verified sampling')
+        for key,(array,_,pin) in list(self._decoded.items()):
+            if pin is None:
+                del self._decoded[key];self._decoded_bytes-=array.nbytes+512
+        if self._ledger is not None:self._ledger.close()
         self._ledger = sqlite3.connect(path, check_same_thread=False)
         self._ledger.execute('CREATE TABLE IF NOT EXISTS chunks (key TEXT PRIMARY KEY, sha TEXT NOT NULL)')
         self._ledger.commit()
@@ -303,14 +309,37 @@ class Volume:
     def _record(self, key, data):
         if self._ledger is not None:
             sha = digest('authoritative-zarr-fill') if data is None else hashlib.sha256(data).hexdigest()
-            with self._transport_lock:
-                old = self._ledger.execute('SELECT sha FROM chunks WHERE key=?', (key,)).fetchone()
-                if old and old[0] != sha:
-                    raise ValueError('source chunk changed: '+key)
-                if old is None:
-                    self._ledger.execute('INSERT INTO chunks VALUES (?,?)', (key,sha))
-                    self._ledger.commit()
+            self._record_sha(key,sha)
         return data
+
+    def _record_sha(self,key,sha):
+        with self._transport_lock:
+            old=self._ledger.execute('SELECT sha FROM chunks WHERE key=?',(key,)).fetchone()
+            if old and old[0]!=sha:raise ValueError('source chunk changed: '+key)
+            if old is None:
+                self._ledger.execute('INSERT INTO chunks VALUES (?,?)',(key,sha));self._ledger.commit()
+
+    @contextmanager
+    def verified_chunks(self):
+        """Reuse immutable decoded snapshots; hash all consumed bytes before accepting results.
+
+        Results must not be published until this scope exits successfully. Remote
+        verification epochs are unchanged; even stat collisions are checked on exit.
+        """
+        with self._decoded_lock:
+            if self._ledger is None or self._verified_sampling:
+                raise ValueError('verified sampling requires a ledger and a non-nested scope')
+            self._verified_sampling=True
+        # Native readers invoke chunk callbacks on another thread; do not lock across yield.
+        try:
+            yield
+            self.validate_used(fresh=False)
+        except BaseException:
+            with self._decoded_lock:
+                self._decoded.clear();self._decoded_bytes=0
+            raise
+        finally:
+            with self._decoded_lock:self._verified_sampling=False
 
     def validate_used(self,*,fresh=True):
         """Check ledger-bound encoded bytes, bypassing decoded RAM.
@@ -333,11 +362,12 @@ class Volume:
         if local and local.is_file():
             raw = self._objects.read(key)
             if raw is None:raise FileNotFoundError('local CT chunk disappeared: '+key)
-            sha = hashlib.sha256(raw).hexdigest()
-            if self.remote and not self.offline and self._verified_local.get(key) != sha:
-                if self._native_bytes(key) != raw:
-                    raise ValueError('local CT chunk differs from original source: '+key)
-                self._verified_local[key] = sha
+            if self.remote and not self.offline:
+                sha = hashlib.sha256(raw).hexdigest()
+                if self._verified_local.get(key) != sha:
+                    if self._native_bytes(key) != raw:
+                        raise ValueError('local CT chunk differs from original source: '+key)
+                    self._verified_local[key] = sha
             self._stats['local_hits'] += 1
             return self._record(key, raw)
         if not self.remote:
@@ -390,10 +420,11 @@ class Volume:
         before=self._encoded_signature(key) if self._decoded_limit and not ledger_bound else None
         cached=self._decoded.get(key)
         if cached is not None:
-            array,signature=cached
+            array,signature,pin=cached
             if ledger_bound or before==signature:
-                # bind_ledger clears RAM; its SHA pins the bytes used to decode every retained array.
-                if ledger_bound:self._chunk_bytes(key)
+                if ledger_bound:
+                    if pin is not None:self._record_sha(key,pin)
+                    if not self._verified_sampling or pin is None:self._chunk_bytes(key)
                 if ledger_bound or self._encoded_signature(key)==signature:
                     self._decoded.move_to_end(key);self._stats['decoded_hits']+=1
                     return array
@@ -421,9 +452,10 @@ class Volume:
         self._stats['decodes']+=1;charge=array.nbytes+512
         if (ledger_bound or retained_signature is not None) and charge<=self._decoded_limit:
             while self._decoded_bytes+charge>self._decoded_limit:
-                _,(retired,_)=self._decoded.popitem(last=False)
+                _,(retired,_,_)=self._decoded.popitem(last=False)
                 self._decoded_bytes-=retired.nbytes+512;self._stats['decoded_evictions']+=1
-            self._decoded[key]=(array,retained_signature);self._decoded_bytes+=charge
+            pin=self._ledger.execute('SELECT sha FROM chunks WHERE key=?',(key,)).fetchone()[0] if ledger_bound else None
+            self._decoded[key]=(array,retained_signature,pin);self._decoded_bytes+=charge
         return array
 
     def read(self, lo_zyx, hi_zyx):
