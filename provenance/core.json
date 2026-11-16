@@ -1,9 +1,9 @@
 {
   "origin": "https://github.com/LimeGS/winding-field",
   "distribution": "winding-field",
-  "version": "1.5.1",
-  "revision": "96631f3cf8aad385054b58b48c91a05a6a053eb1",
-  "changes": "winding-field v1.5.1 release source: merged solver performance v3 and bounded prepared work reuse, live restriction templates, CPU consensus indices, optional standalone spectral PCG and durable/cache optimizations; Lean excluded; no numerical core bundled in the CLI",
+  "version": "1.5.2",
+  "revision": "0b96e7e3105c0c0cf02b2a4c8c1ce48596b754e1",
+  "changes": "winding-field v1.5.2 release source: strict physical-boundary validation before normalized stencil clipping fixes exact final-node roundoff; solver behavior otherwise unchanged; no numerical core bundled in the CLI",
   "migrated_workflows": {
     "revision": "769ed1b1587fc2a275a66059e15a36b8fa7acc93",
     "changes": "moved to winding_field with tests, examples and wrappers; package imports, prepared command routing and module-based supervised launch",
@@ -36,7 +36,7 @@
     "field_solver.py": "6799619f5dd1b4a8d2853560892fa4df6f5191a135dd4e991ff7b855cc6f0a17",
     "field_prefetch.py": "3ac983503f5a41661302b0cdd2a0b8526e5a96e86c201e10a18081bd00cb84f8",
     "field_constraints.py": "71065fb4f0b5c03d689d2b5514c34a8551398dc5801e3def2d571152a162d84a",
-    "physical_grid.py": "98595a0568cb425b3f2c631d420741ff9b1a437933d8e20f84ffba94c6e2018e",
+    "physical_grid.py": "fb50699ae462f5a923ef1a4aa2e2251ea4ebdf299bd7ad80bf1f09ad34e53bf1",
     "constraint_templates.py": "4101b786adc4e1c1012987661d25ecc0a52565a7eb0aaeaab014922f784802e8",
     "field_observations.py": "be10f03b4bcf07f5b5b43bfcdd382701b843a3ee6516a7beefa0c724f66a249e"
   }
