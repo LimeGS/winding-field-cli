@@ -227,6 +227,63 @@ def test_native_budget_eviction_is_an_offline_miss(endpoint):
         offline.close()
 
 
+def test_reopened_cache_accounts_for_unindexed_owned_payloads(endpoint):
+    from winding_field.ct_reader import EncodedTransport
+    from winding_field.native_cache_index import cache_index
+    root,url=endpoint
+    (root/'a').write_bytes(b'12345678');(root/'b').write_bytes(b'abcdefgh')
+    old=EncodedTransport(root/'cache',16)
+    assert old.read(url+'/a')==b'12345678';assert old.read(url+'/b')==b'abcdefgh';old.close()
+    with cache_index(root/'cache/.vc_reader_cache.sqlite3') as db:
+        db.execute('DELETE FROM chunks');db.execute('UPDATE budget SET total=0')
+    current=EncodedTransport(root/'cache',8,offline=True)
+    try:
+        payloads=list((root/'cache/encoded').glob('*.blob'))
+        assert sum(p.stat().st_size for p in payloads)==current.size==8
+        assert len(payloads)==1
+        key='/a' if payloads[0]==current.path(url+'/a') else '/b'
+        assert current.read(url+key) in (b'12345678',b'abcdefgh')
+    finally:current.close()
+
+
+def test_cache_repair_rebases_owned_paths_without_touching_payloads(endpoint):
+    from winding_field.ct_reader import EncodedTransport
+    from winding_field.native_cache_index import cache_index
+    root,url=endpoint;(root/'a').write_bytes(b'12345678')
+    old=EncodedTransport(root/'cache',16);assert old.read(url+'/a')==b'12345678';path=old.path(url+'/a');old.close()
+    with cache_index(root/'cache/.vc_reader_cache.sqlite3') as db:
+        db.execute('UPDATE chunks SET path=?',('/old-mount/encoded/'+path.name,))
+    current=EncodedTransport(root/'cache',16,offline=True)
+    try:
+        assert current.size==8 and path.read_bytes()==b'12345678'
+        assert current.read(url+'/a')==b'12345678'
+        with cache_index(root/'cache/.vc_reader_cache.sqlite3') as db:
+            assert db.execute('SELECT path FROM chunks').fetchall()==[(str(path),)]
+    finally:current.close()
+
+
+def test_cache_repair_rejects_symlinks_without_touching_target(endpoint):
+    from winding_field.ct_reader import EncodedTransport
+    root,url=endpoint;(root/'a').write_bytes(b'12345678')
+    old=EncodedTransport(root/'cache',16);old.read(url+'/a');old.close()
+    target=root/'not-cache';target.write_bytes(b'preserve')
+    (root/'cache/encoded'/('f'*64+'.blob')).symlink_to(target)
+    with pytest.raises(ValueError,match='owned native CT cache'):EncodedTransport(root/'cache',8)
+    assert target.read_bytes()==b'preserve'
+
+
+@pytest.mark.parametrize('operation',['reconcile','trim'])
+def test_cache_repair_and_trim_reject_symlinked_namespace(endpoint,operation):
+    from winding_field.ct_reader import EncodedTransport,reconcile_cache,trim_cache
+    root,url=endpoint;(root/'a').write_bytes(b'12345678')
+    old=EncodedTransport(root/'cache',16);old.read(url+'/a');payload=old.path(url+'/a').name;old.close()
+    encoded=root/'cache/encoded';target=root/'not-cache';encoded.rename(target);encoded.symlink_to(target,target_is_directory=True)
+    with pytest.raises(ValueError,match='owned native CT cache'):
+        if operation=='reconcile':reconcile_cache(root/'cache')
+        else:trim_cache(root/'cache',0)
+    assert (target/payload).read_bytes()==b'12345678'
+
+
 def test_decoded_hit_checks_ledger_even_when_stat_signature_collides(served, monkeypatch):
     from winding_field.io import Volume
 
