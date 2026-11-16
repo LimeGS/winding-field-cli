@@ -124,7 +124,7 @@ def main(argv=None):
         p.add_argument('--offline',action='store_true',help='disable CT network access; provision model weights and runtime separately')
         p.add_argument('--voxel-um',type=float,help='micrometre scale for CT geometry lacking units; not field/output spacing'); p.add_argument('--level',type=int,default=0,help='CT Zarr pyramid level (default: 0); not a winding W value')
         p.add_argument('--roi',nargs=6,type=int,metavar=('Z0','Z1','Y0','Y1','X0','X1'),help='half-open CT voxel bounds at the selected pyramid level; default: whole volume')
-        p.add_argument('--stride',type=int,default=1,help='CT observation sampling step; keep 1 for fine inference')
+        p.add_argument('--stride',type=int,default=1,help='CT observation sampling step: 1..8; 16 or 32 require both --fibres and --lasagna-input; keep 1 for fine inference')
         p.add_argument('--field-spacing-um',type=float,help='solve-grid pitch in micrometres: exact normally, maximum in bounded preparation; default: observation pitch')
         p.add_argument('--bounded-preparation',action='store_true',help='recompute Lasagna/Qual windows; requires Qual V2, stride 1, --field-spacing-um and no imported inputs')
         p.add_argument('--bounded-gib',type=float,default=12.,help='bounded producer retained/scratch allowance, excluding CT cache and disk reserve (default: 12 GiB)')
