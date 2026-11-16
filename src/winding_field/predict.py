@@ -72,8 +72,6 @@ def _prepare(volume,run,config,stop,stack):
     run=Path(run); run.mkdir(parents=True,exist_ok=True)
     lo,hi=bounds(config.get('roi_lo',[0,0,0]),config.get('roi_hi',list(volume.shape)),volume.shape)
     stride=config.get('stride',1); chunk=config.get('chunk',32)
-    if type(stride) is not int or not 1<=stride<=8 or type(chunk) is not int or not 4<=chunk<=128:
-        raise ValueError('stride must be 1..8 and chunk 4..128')
     method='external-afv' if config.get('fibres') else config.get('prediction','classical')
     surface=method!='classical' or bool(config.get('lasagna_input'))
     imported=None

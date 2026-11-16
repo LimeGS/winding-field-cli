@@ -83,6 +83,13 @@ def open_volume(config):
                   reserve_bytes=config.get('reserve_bytes',1<<30))
 
 
+def _input_chunk_axes(config,lo,hi,chunks):
+    stride=config.get('stride',1) if config.get('fibres') and config.get('lasagna_input') else 1
+    return [range(a//c,(a+(b-a-1)//stride*stride)//c+1) if stride<=c
+            else tuple(i//c for i in range(a,b,stride))
+            for a,b,c in zip(lo,hi,chunks)]
+
+
 def plan(config,volume=None,stages=()):
     validate_config(config)
     own=volume is None
@@ -103,7 +110,7 @@ def plan(config,volume=None,stages=()):
             end=((lo//stride+shape-1)//core+1)*core
             input_lo=np.maximum(0,lo%stride+start*stride-halo)
             input_hi=np.minimum(volume.shape,lo%stride+(end+40-1)*stride+1)
-        chunk_count=np.prod((input_hi-1)//volume.chunks-input_lo//volume.chunks+1,dtype=np.int64)
+        chunk_count=math.prod(len(a) for a in _input_chunk_axes(config,input_lo,input_hi,volume.chunks))
         ct_bytes=int(chunk_count)*math.prod(volume.chunks)*volume.dtype.itemsize
         observations=dict(shape_zyx=shape.tolist(),spacing_xyz=(np.asarray(volume.spacing_xyz)*stride).tolist(),
                           origin_xyz=(np.asarray(volume.origin_xyz)+lo[::-1]*volume.spacing_xyz).tolist(),
@@ -484,7 +491,7 @@ def run(config,resume=False,until=None,extra_surface_seconds=0,field_sweeps=None
                 raise OSError('insufficient disk space for products and reserve; choose explicit stride/ROI or another disk')
             if estimate['ct_policy']=='download' and not state['stages']:
                 low=np.array(estimate['input_lo_zyx']); high=np.array(estimate['input_hi_zyx']); chunks=np.array(volume.chunks)
-                for key in itertools.product(*(range(a//c,(b-1)//c+1) for a,b,c in zip(low,high,chunks))):
+                for key in itertools.product(*_input_chunk_axes(config,low,high,chunks)):
                     a=np.array(key)*chunks; b=np.minimum(a+chunks,volume.shape)
                     volume.read(a,b)
                     if stop():
