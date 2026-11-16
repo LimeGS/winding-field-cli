@@ -1,6 +1,7 @@
 """Scheduling/cache optimizations must retain the expensive qualification gates."""
 from pathlib import Path
 import re
+import shlex
 
 import pytest
 import yaml
@@ -77,3 +78,11 @@ def test_full_suites_and_optional_gpu_checks_are_preserved_and_timed():
     assert 'gpu' in docker['on']['workflow_dispatch']['inputs']
     assert any('--models --device cuda:0' in step.get('run', '') and step.get('if') == 'inputs.gpu'
                for step in gpu['steps'])
+
+
+def test_installed_sdist_checks_have_their_build_dependencies():
+    steps = workflow('tests.yml')['jobs']['installed-package']['steps']
+    setup = next(step['run'] for step in steps
+                 if step.get('run', '').startswith('python -m pip install build '))
+    packages = set(shlex.split(setup)[4:])
+    assert {'build', 'pytest', 'wheel'} <= packages

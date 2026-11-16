@@ -26,6 +26,34 @@ def test_http_gzip_decodes_and_limits_decoded_bytes(monkeypatch):
         reader.fetch('https://test/catalog',limit=100)
 
 
+@pytest.mark.parametrize('disconnects,status',[(2,200),(1,304),(3,200)])
+def test_http_disconnect_retries_preserve_validators_and_stop_after_three_attempts(disconnects,status):
+    from http.client import RemoteDisconnected
+    from http.server import BaseHTTPRequestHandler,ThreadingHTTPServer
+    import winding_field.io as reader
+    requests=[];payload=b'verified CT bytes'
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            requests.append((self.path,self.headers.get('If-None-Match')))
+            if len(requests)<=disconnects:
+                self.close_connection=True;return
+            self.send_response(status);self.send_header('ETag','"pinned"')
+            self.send_header('Content-Length',str(len(payload) if status==200 else 0));self.end_headers()
+            if status==200:self.wfile.write(payload)
+        def log_message(self,*args):pass
+    server=ThreadingHTTPServer(('127.0.0.1',0),Handler)
+    thread=threading.Thread(target=server.serve_forever,daemon=True);thread.start()
+    try:
+        url=f'http://127.0.0.1:{server.server_port}/0/1.2.3';headers={'If-None-Match':'"pinned"'}
+        if disconnects==3:
+            with pytest.raises(RemoteDisconnected):reader.fetch(url,headers=headers,limit=64)
+        else:
+            expected=(payload,'"pinned"') if status==200 else (None,None)
+            assert reader.fetch(url,headers=headers,limit=64)==expected
+        assert requests==[('/0/1.2.3','"pinned"')]*min(disconnects+1,3)
+    finally:server.shutdown();server.server_close();thread.join()
+
+
 def test_offline_mirror_uses_local_metadata_but_rejects_cached_conflict(tmp_path,monkeypatch):
     import winding_field.io as reader
     local=tmp_path/'local'; expected=make_volume(local)

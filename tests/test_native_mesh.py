@@ -170,6 +170,42 @@ def test_connected_tile_assembly_does_not_query_sql_per_face(tmp_path):
         assert store.finish()[0]['faces']==2048
 
 
+@pytest.mark.parametrize('existing_faces',[64,8192])
+def test_small_tile_sql_work_does_not_scan_accumulated_mesh(tmp_path,existing_faces):
+    from winding_field.native_mesh import MeshDB
+    vertices=np.tile([[0.,0.,0.],[1.,0.,0.],[0.,1.,0.]],(existing_faces,1))
+    vertices[:,0]+=np.repeat(np.arange(existing_faces)*3.,3)
+    faces=np.arange(len(vertices)).reshape(-1,3)
+    with MeshDB(tmp_path/'mesh',Field().identity['geometry'],{'levels':[0.],'total_tiles':2}) as store:
+        with store.db:
+            store.add(0,list(map(str,range(len(vertices)))),vertices,faces)
+            store.checkpoint_tile(0)
+        steps=0
+        def budget():
+            nonlocal steps
+            steps+=1000
+            return steps>50000
+        store.db.set_progress_handler(budget,1000)
+        try:
+            with store.db:
+                store.add(0,['0','1','new'],np.array([[0.,0.,0.],[1.,0.,0.],[0.,0.,1.]]),np.array([[1,0,2]]))
+        except sqlite3.OperationalError as error:
+            pytest.fail(f'one-triangle tile exceeded bounded SQL work ({steps} VM steps): {error}')
+        finally:
+            store.db.set_progress_handler(None,0)
+        assert store.db.execute('SELECT a,b,c FROM faces ORDER BY id DESC LIMIT 1').fetchone()==(2,1,len(vertices)+1)
+        with pytest.raises(ValueError,match='coordinates differ'),store.db:
+            store.add(0,['0','1','new'],np.array([[9.,0.,0.],[1.,0.,0.],[0.,0.,1.]]),np.array([[1,0,2]]))
+        with store.db:
+            store.checkpoint_tile(1)
+        summary=store.finish()[0]
+        assert summary['vertices']==len(vertices)+1
+        assert summary['faces']==existing_faces+1
+        assert summary['components']==existing_faces
+        assert summary['boundary_edges']==3*existing_faces+1
+        assert summary['nonmanifold_edges']==summary['duplicate_faces']==0
+
+
 @pytest.mark.parametrize('faces,components,nonmanifold,duplicates',[
     ([[0,1,2],[0,3,4]],2,0,0),
     ([[0,1,2],[1,0,3],[0,1,4]],1,1,0),

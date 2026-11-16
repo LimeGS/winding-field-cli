@@ -76,7 +76,7 @@ class MeshDB(core.MeshDB):
         self.db.executemany('INSERT INTO _edge_batch VALUES (?,?,?,?,?)',
             ((int(a),int(b),int(f),int(n),int(s)) for (a,b),f,n,s in zip(edges,owners,counts,signs)))
         self.db.execute('INSERT OR IGNORE INTO _joins '
-            'SELECT a.parent,b.parent FROM _edge_batch n JOIN edges e ON e.level=? AND e.a=n.a AND e.b=n.b '
+            'SELECT a.parent,b.parent FROM _edge_batch n CROSS JOIN edges e ON e.level=? AND e.a=n.a AND e.b=n.b '
             'JOIN faces a ON a.id=e.face JOIN faces b ON b.id=n.face',(level,))
         for a,b in self.db.execute('SELECT a,b FROM _joins'):
             a,b=self.find(a),self.find(b)
@@ -99,7 +99,8 @@ class MeshDB(core.MeshDB):
             ((i,str(k),*map(float,v)) for i,(k,v) in enumerate(zip(keys,vertices))))
         if self.db.execute('SELECT 1 FROM _incoming GROUP BY key HAVING min(x)!=max(x) OR min(y)!=max(y) OR min(z)!=max(z) LIMIT 1').fetchone():
             raise ValueError('shared lattice vertex coordinates differ')
-        if self.db.execute('SELECT 1 FROM _incoming i JOIN vertices v ON v.level=? AND v.key=i.key '
+        # Keep small batches outermost; scanning the accumulated level makes each tile grow slower.
+        if self.db.execute('SELECT 1 FROM _incoming i CROSS JOIN vertices v ON v.level=? AND v.key=i.key '
             'WHERE v.x!=i.x OR v.y!=i.y OR v.z!=i.z LIMIT 1',(level,)).fetchone():
             raise ValueError('shared lattice vertex coordinates differ')
         local=self.db.execute('SELECT coalesce(max(local),0)+1 FROM vertices WHERE level=?',(level,)).fetchone()[0]
@@ -108,7 +109,7 @@ class MeshDB(core.MeshDB):
             'FROM (SELECT min(i.local) first FROM _incoming i LEFT JOIN vertices v ON v.level=? AND v.key=i.key '
             'WHERE v.id IS NULL GROUP BY i.key) fresh JOIN _incoming i ON i.local=fresh.first',
             (level,local,level))
-        ids=np.fromiter((r[0] for r in self.db.execute('SELECT v.id FROM _incoming i JOIN vertices v '
+        ids=np.fromiter((r[0] for r in self.db.execute('SELECT v.id FROM _incoming i CROSS JOIN vertices v '
                         'ON v.level=? AND v.key=i.key ORDER BY i.local',(level,))),np.int64,count=len(vertices))
         triangles=ids[faces]
         v=vertices[faces]
