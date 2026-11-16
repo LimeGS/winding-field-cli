@@ -228,17 +228,26 @@ def test_completed_mesh_export_revalidates_the_original_ct_payload(tmp_path):
             render_mesh(reader,out,volume,{'chart_faces':8})
 
 
-def test_uv_budget_leaves_time_to_publish_a_partial_render(tmp_path,monkeypatch):
+@pytest.fixture
+def uv_budget_clock(monkeypatch):
     import time
+    from types import SimpleNamespace
     import winding_field.native_geometry as geometry
-    from winding_field.surface_mesh import MeshReader
-    from winding_field.native_pipeline import render_mesh
+    import winding_field.native_store as storage
+    clock=[1000.]
+    monkeypatch.setattr(storage,'time',SimpleNamespace(monotonic=lambda:clock[0],time=time.time))
     original=geometry._pieces
     def slow(*args,**kwargs):
         for result in original(*args,**kwargs):
-            time.sleep(.05)
+            clock[0]+=.05
             yield result
     monkeypatch.setattr(geometry,'_pieces',slow)
+    return clock
+
+
+def test_uv_budget_leaves_time_to_publish_a_partial_render(tmp_path,uv_budget_clock):
+    from winding_field.surface_mesh import MeshReader
+    from winding_field.native_pipeline import render_mesh
     with MeshReader(plane_bundle(tmp_path,nx=17,ny=17)) as reader, analytic_ct(tmp_path) as volume:
         result=render_mesh(reader,tmp_path/'out',volume,{'chart_faces':2,'surface_time_limit_s':3.})
         assert result['status']=='PARTIAL',result
@@ -265,24 +274,18 @@ def test_render_refuses_to_reuse_tiles_after_geometry_changes(tmp_path):
             render(store,volume,.5)
 
 
-def test_resume_finishes_the_frozen_partial_raster_without_moving_its_geometry(tmp_path,monkeypatch):
-    import time
+def test_resume_finishes_the_frozen_partial_raster_without_moving_its_geometry(tmp_path,uv_budget_clock):
     import sqlite3
-    import winding_field.native_geometry as geometry
     from winding_field.surface_mesh import MeshReader
     from winding_field.native_pipeline import render_mesh
-    original=geometry._pieces
-    def slow(*args,**kwargs):
-        for result in original(*args,**kwargs):
-            time.sleep(.05)
-            yield result
-    monkeypatch.setattr(geometry,'_pieces',slow)
     out=tmp_path/'out'; config={'chart_faces':2,'surface_time_limit_s':3.}
     with MeshReader(plane_bundle(tmp_path,nx=17,ny=17)) as reader, analytic_ct(tmp_path) as volume:
         result=render_mesh(reader,out,volume,config,stop=lambda:any(out.glob('component-*/tiles/*.npz')))
         assert result['status']=='PAUSED'
+        assert result['reason']=='STOP'
         with sqlite3.connect(out/'work.sqlite') as db:
             before=db.execute("SELECT name,uv_path FROM charts WHERE status='MAPPED' ORDER BY name").fetchall()
+        assert before
         assert render_mesh(reader,out,volume,config)['status']=='PARTIAL'
         with sqlite3.connect(out/'work.sqlite') as db:
             assert before==db.execute("SELECT name,uv_path FROM charts WHERE status='MAPPED' ORDER BY name").fetchall()
