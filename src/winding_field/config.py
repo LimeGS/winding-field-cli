@@ -114,7 +114,11 @@ def validate_config(config):
         raise ValueError('--fibres-geometry requires --fibres')
     if config.get('fibres') and config.get('model_path'):
         raise ValueError('external AFV --fibres conflicts with a fibre --model-path')
-    integers={'stride':(1,8),'chunk':(4,128),'field_chunk':(4,256),'level':(0,None),
+    stride=config.get('stride',1)
+    if (type(stride) is not int or not (1<=stride<=8 or
+            (stride in (16,32) and config.get('fibres') and config.get('lasagna_input')))):
+        raise ValueError('stride must be 1..8; 16 or 32 require both --fibres and --lasagna-input')
+    integers={'chunk':(4,128),'field_chunk':(4,256),'level':(0,None),
               'sweeps':(1,None),'maxiter':(1,None),'seed_stride':(1,None),
               'mesh_tile':(1,256),'chart_faces':(1,8192),'threads':(1,None),
               'cache_bytes':(0,None),'reserve_bytes':(0,None),'bounded_bytes':(16<<20,None),

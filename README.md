@@ -390,6 +390,14 @@ Qual still supplies fibres by default. Add `--fibres /path/fibres.afv` (and its
 geometry descriptor if needed) to import both inputs without running either
 model. Keep the original prediction files for hash-verified resume.
 
+With **both** `--fibres` and `--lasagna-input`, `--stride 16` and `--stride 32`
+are also supported (other routes retain 1..8). Stride samples the selected CT
+level from the ROI origin; it does not rescale imported fibre coordinates or
+Lasagna density. Planning and CT download visit only sampled CT chunks.
+Field pitch remains independent, e.g. `--field-spacing-um 172.8`, and both
+grids need at least two samples per axis. Use a new output to change stride;
+existing runs retain their original geometry and resume identity.
+
 Without explicit or embedded physical geometry, local/HTTP/S3 manifests use the
 selected CT base-grid binding and pooled-cell sampling instead. This route also
 supports bounded preparation and `resume RUN --offline`; see
