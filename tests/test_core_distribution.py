@@ -30,6 +30,24 @@ def test_core_archive_constraint_matches_provenance():
         assert lines[index + 1].strip() == '--hash=sha256:' + provenance['archive_sha256']
 
 
+def test_spline_dependency_matches_provenance_and_frozen_archives():
+    from packaging.requirements import Requirement
+    from winding_field.splines import SPLINE_REV
+    config = tomllib.loads((ROOT / 'pyproject.toml').read_text())
+    provenance = json.loads((ROOT / 'provenance/qual.json').read_text())
+    spline = next(Requirement(value) for value in config['project']['dependencies']
+                  if Requirement(value).name == 'avf-spline-generator')
+    assert SPLINE_REV == provenance['spline_revision']
+    archive = f"{provenance['spline_repository']}/archive/{provenance['spline_revision']}.tar.gz"
+    assert spline.url == archive
+    installed = next(Requirement(value) for value in metadata.requires('winding-field-cli')
+                     if Requirement(value).name == 'avf-spline-generator')
+    assert installed.url == archive
+    for variant in ('cpu', 'cu128'):
+        assert 'avf-spline-generator @ ' + archive + ' \\' in (
+            ROOT / f'docker/cli-{variant}.txt').read_text().splitlines()
+
+
 def test_installed_core_matches_frozen_source():
     provenance = json.loads((ROOT / 'provenance/core.json').read_text())
     assert metadata.version('winding-field') == provenance['version']
