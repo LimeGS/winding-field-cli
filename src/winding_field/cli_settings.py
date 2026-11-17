@@ -23,11 +23,37 @@ def request_sha256(request: dict) -> str:
     return digest(request)
 
 
+def _yaml_settings(raw):
+    import json
+    import yaml
+
+    class Loader(yaml.SafeLoader):
+        def compose_node(self,parent,index):
+            if self.check_event(yaml.AliasEvent):
+                raise ValueError('YAML aliases are not supported in settings')
+            return super().compose_node(parent,index)
+
+        def construct_mapping(self,node,deep=False):
+            result={}
+            for key,value in self.construct_pairs(node,deep=deep):
+                if not isinstance(key,str):raise ValueError('settings keys must be strings')
+                if key in result:raise ValueError('duplicate settings key: '+key)
+                result[key]=value
+            return result
+
+    try:
+        result=yaml.load(raw,Loader=Loader)
+        json.dumps(result,allow_nan=False)
+        return result
+    except (yaml.YAMLError,TypeError,RecursionError) as error:
+        raise ValueError('invalid YAML settings: '+str(error)) from error
+
+
 def read_settings(path,*,sources=None) -> dict:
     from .tifxyz_contract import parse_json
     raw=Path(path).read_bytes()
-    result=parse_json(raw)
-    if not isinstance(result,dict):raise ValueError('settings must be a JSON object')
+    result=_yaml_settings(raw) if Path(path).suffix.lower() in ('.yaml','.yml') else parse_json(raw)
+    if not isinstance(result,dict):raise ValueError('settings must be an object')
     if sources is not None:sources[str(Path(path).resolve())]=hashlib.sha256(raw).hexdigest()
     return result
 
@@ -46,7 +72,7 @@ def _config_arguments(parser):
         names=['--cli-config']
         if '--config' not in parser._option_string_actions:names.append('--config')
         parser.add_argument(*names,dest='_cli_config',default=argparse.SUPPRESS,
-            help='JSON defaults using argument names; explicit flags override; file paths are relative to this file')
+            help='JSON/YAML defaults using argument names; explicit flags override; file paths are relative to this file')
     for action in parser._actions:
         if isinstance(action,argparse._SubParsersAction):
             for child in set(action.choices.values()):_config_arguments(child)
@@ -140,11 +166,7 @@ def parse_options(parser,argv=None,*,paths=(),lexical_paths=(),sources=None):
     snapshots=[];groups=[]
     try:
         source=Path(selected.file).expanduser().resolve()
-        raw=source.read_bytes()
-        from .tifxyz_contract import parse_json
-        settings=parse_json(raw.decode())
-        if not isinstance(settings,dict):raise ValueError('settings must be a JSON object')
-        if sources is not None:sources[str(source)]=hashlib.sha256(raw).hexdigest()
+        settings=read_settings(source,sources=sources)
         if set(settings)-set(actions):raise ValueError('unknown settings: '+', '.join(sorted(set(settings)-set(actions))))
         for name,value in settings.items():
             action=actions[name];value=_value(action,value)

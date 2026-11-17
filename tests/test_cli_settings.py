@@ -144,3 +144,49 @@ def test_legacy_booleans_can_explicitly_override_both_file_values(tmp_path,negat
     assert args.enabled is negative
     with pytest.raises(SystemExit):parse_options(parser,['--enabled','--no-enabled'])
     assert parse_options(parser,[]).enabled is negative
+
+
+@pytest.mark.parametrize('suffix',['.yaml','.yml','.YAML'])
+def test_yaml_defaults_keep_types_precedence_paths_and_raw_provenance(tmp_path,monkeypatch,suffix):
+    import hashlib
+    from winding_field.cli_settings import parse_options
+    path=tmp_path/('options'+suffix)
+    raw=b'input: relative.npy\nenabled: false\ncount: 0\npoint: [[1, 2, 3]]\n'
+    path.write_bytes(raw)
+    elsewhere=tmp_path/'other';elsewhere.mkdir();monkeypatch.chdir(elsewhere)
+    parser=argparse.ArgumentParser()
+    parser.add_argument('--input',type=Path,required=True)
+    parser.add_argument('--enabled',action=argparse.BooleanOptionalAction,default=True)
+    parser.add_argument('--count',type=int,default=64)
+    parser.add_argument('--point',type=float,nargs=3,action='append')
+    sources={}
+    args=parse_options(parser,['--cli-config',str(path)],sources=sources)
+    assert args.input==tmp_path/'relative.npy' and args.enabled is False and args.count==0
+    assert args.point==[[1.,2.,3.]]
+    assert sources=={str(path):hashlib.sha256(raw).hexdigest()}
+    args=parse_options(parser,['--config',str(path),'--count','2','--enabled','--point','4','5','6'])
+    assert args.count==2 and args.enabled is True and args.point==[[4.,5.,6.]]
+    assert path.read_bytes()==raw
+
+
+def test_yaml_settings_support_nested_lists_and_null_without_json_conversion(tmp_path):
+    from winding_field.cli_settings import read_settings
+    path=tmp_path/'recipe.yaml'
+    path.write_text('solver:\n  rtol: 0.000001\nviews:\n  - [front, 0, 20]\nmax_bytes: null\n')
+    assert read_settings(path)=={'solver':{'rtol':1e-6},'views':[['front',0,20]],'max_bytes':None}
+
+
+@pytest.mark.parametrize('text',[
+    'threads: 1\nthreads: 2\n',
+    'nested:\n  count: 1\n  count: 2\n',
+    'value: .nan\n','value: .inf\n',
+    'value: !!python/object/apply:os.system ["false"]\n',
+    'value: &recursive [*recursive]\n',
+    'base: &base {count: 1}\ncopy: *base\n',
+    'value: !!set {a: null}\n','value: 2026-11-17\n',
+    '1: value\n','value: [broken\n','---\na: 1\n---\na: 2\n','[]\n','',
+])
+def test_yaml_settings_reject_unsafe_ambiguous_or_non_json_values(tmp_path,text):
+    from winding_field.cli_settings import read_settings
+    path=tmp_path/'bad.yaml';path.write_text(text)
+    with pytest.raises(ValueError):read_settings(path)

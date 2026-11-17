@@ -23,6 +23,38 @@ Existing published options and native config formats remain supported.
   still validate before work. A config cannot change the selected command.
 - Neither mode accepts credentials as new flags or logs secret values.
 
+### YAML configuration
+
+Every command accepts `--cli-config options.yaml` or `options.yml` in addition
+to JSON. The `--config` alias accepts YAML wherever it aliases `--cli-config`;
+native legacy recipe options retain their own formats and meanings.
+For the complete commented `run`/`plan` option reference, copy
+[`examples/run-plan.template.yaml`](../examples/run-plan.template.yaml).
+It includes typed examples, choices/ranges/units and conditional-mode notes;
+optional or incompatible modes are commented rather than activated together.
+
+```yaml
+field_kind: npy
+field_path: phi.npy
+field_sha256: "REPLACE_WITH_THE_FILE_SHA256"
+field_frame: my-scroll/world
+field_voxel_um: 9.6
+field_origin_xyz: [0, 0, 0]
+field_spacing_xyz: [32, 32, 32]
+field_shape_zyx: [3, 4, 5]
+sheet_step: 1.0
+levels: [1.5]
+output: mesh
+```
+
+Run with `winding-field prepared mesh --cli-config options.yaml`. Use the
+actual geometry and file hash. Explicit flags still override the file; relative
+file paths still use its directory. Booleans, nulls, numbers and nested lists use
+the same typed validation as JSON. Quote strings that resemble YAML booleans,
+dates or numbers. Duplicate keys, aliases/merge keys, custom object tags,
+nonfinite numbers and values outside JSON's data types are rejected.
+Generated requests, checkpoints and receipts remain JSON.
+
 ## Coverage inventory
 
 Each row is a required acceptance family. Settings-only content is not exempt
