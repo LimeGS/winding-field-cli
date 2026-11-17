@@ -398,6 +398,16 @@ Field pitch remains independent, e.g. `--field-spacing-um 172.8`, and both
 grids need at least two samples per axis. Use a new output to change stride;
 existing runs retain their original geometry and resume identity.
 
+Local imports reuse bounded decoded/support caches and batch durable source
+ledgers and exports. Calibrated Lasagna observations go directly into the main
+maps, without a second normalized map copy. Add `--import-workers 0` for
+resource-admitted automatic parallelism, or `--import-workers N` for a requested
+maximum; default **1** retains serial computation. Workers only compute:
+the parent validates source pins and writes results in input order. Remote
+inputs remain serial; unknown memory headroom also selects serial execution.
+This option is separate from `--threads` (PyTorch).
+[Admission, recovery and benchmarking](docs/AFV-IMPORT.md#local-prepare-and-import-throughput).
+
 Without explicit or embedded physical geometry, local/HTTP/S3 manifests use the
 selected CT base-grid binding and pooled-cell sampling instead. This route also
 supports bounded preparation and `resume RUN --offline`; see

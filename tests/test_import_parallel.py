@@ -169,3 +169,27 @@ def test_worker_maps_cannot_write_or_recreate_missing_indexes(tmp_path):
     (tmp_path/'run/maps/tiles.sqlite').unlink()
     with pytest.raises(sqlite3.OperationalError):Tiles(tmp_path/'run/maps',readonly=True)
     assert not (tmp_path/'run/maps/tiles.sqlite').exists()
+
+
+@pytest.mark.parametrize('requested',[0,4])
+def test_surface_workers_stay_serial_when_parent_runs_fibre_inference(tmp_path,monkeypatch,requested):
+    from contextlib import ExitStack
+    from test_lasagna_stream import fixture,geometry
+    from winding_field.artifacts import Tiles
+    from winding_field.io import Volume
+    from winding_field.lasagna_stream import LasagnaInput
+    from winding_field.import_tiles import observations
+    ct,_,config=fixture(tmp_path)
+    config.update(import_workers=requested,threads=4)
+    resources(monkeypatch,cpus=4)
+    with ExitStack() as stack:
+        volume=stack.enter_context(closing(Volume(ct,cache=tmp_path/'cache')))
+        volume.bind_ledger(tmp_path/'source.sqlite')
+        reader=stack.enter_context(LasagnaInput(volume,tmp_path/'run',config))
+        grid=geometry(volume)
+        maps=stack.enter_context(closing(Tiles(tmp_path/'run/maps',shape=grid['shape_zyx'],chunk=4,identity={})))
+        jobs,execution=observations(reader,volume,grid,maps,config,stack,None)
+        assert jobs is None
+        assert execution['workers']==1
+        assert execution['limiting_resource']=='parent-inference'
+        assert config['threads']==4

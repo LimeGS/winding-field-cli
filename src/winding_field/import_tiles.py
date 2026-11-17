@@ -32,7 +32,7 @@ def _compute(job):
     key,lo,hi=job
     products=dict(_READER.products,ct=_VOLUME)
     before={name:sum(p._stats[name] for p in products.values()) for name in ('decodes','hashed_bytes','chunk_commits')}
-    budget=dict(remaining=RESULT_BYTES);pins={}
+    budget=dict(remaining=RESULT_BYTES-4096);pins={}
     try:
         with ExitStack() as stack:
             for name,product in products.items():
@@ -57,7 +57,8 @@ def observations(reader,volume,geometry,maps,config,stack,stop):
     scratch=(1280 if isinstance(reader,CalibratedLasagnaInput) else 256)*maps.chunk**3
     execution=(limits(requested,output=maps.root,reserve_bytes=config.get('reserve_bytes',0),
                       worker_bytes=(768<<20)+8*largest+scratch+2*RESULT_BYTES)
-               if local else dict(workers=1,max_inflight=2,requested=requested,limiting_resource='remote-input'))
+               if local and config.get('fibres') else dict(workers=1,max_inflight=2,requested=requested,
+                   limiting_resource='remote-input' if not local else 'parent-inference'))
     execution.update(worker_pids=[],decodes=0,hashed_bytes=0,chunk_commits=0,streaming_replays=0,complete=False)
     if volume._ledger is None and execution['workers']>1:
         execution.update(workers=1,max_inflight=2,limiting_resource='unbound-ct-ledger')
