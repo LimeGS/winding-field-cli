@@ -10,10 +10,13 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def test_core_dependency_and_provenance_use_renamed_distribution():
+    from packaging.requirements import Requirement
     config = tomllib.loads((ROOT / 'pyproject.toml').read_text())
     provenance = json.loads((ROOT / 'provenance/core.json').read_text())
     assert provenance['distribution'] == 'winding-field'
-    assert f"winding-field=={provenance['version']}" in config['project']['dependencies']
+    core = next(Requirement(value) for value in config['project']['dependencies']
+                if Requirement(value).name == 'winding-field')
+    assert core.url == f"{provenance['origin']}/archive/{provenance['revision']}.tar.gz"
     assert not any('winding-field-experiments' in value for value in config['project']['dependencies'])
 
 
@@ -22,7 +25,9 @@ def test_core_archive_constraint_matches_provenance():
     archive = f"winding-field @ {provenance['origin']}/archive/{provenance['revision']}.tar.gz"
     assert archive in (ROOT / 'docker/cli.in').read_text().splitlines()
     for variant in ('cpu', 'cu128'):
-        assert archive + ' \\' in (ROOT / f'docker/cli-{variant}.txt').read_text().splitlines()
+        lines = (ROOT / f'docker/cli-{variant}.txt').read_text().splitlines()
+        index = lines.index(archive + ' \\')
+        assert lines[index + 1].strip() == '--hash=sha256:' + provenance['archive_sha256']
 
 
 def test_installed_core_matches_frozen_source():

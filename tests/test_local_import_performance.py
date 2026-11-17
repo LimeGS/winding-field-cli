@@ -1,4 +1,5 @@
 import importlib.util
+import importlib.metadata
 import json
 from pathlib import Path
 
@@ -58,7 +59,7 @@ def test_benchmark_records_stage_costs_and_preserves_inputs(tmp_path,physical):
     assert record['completed_resume_seconds']>0
     assert result['resume']['partial_resume_seconds']>0 and result['resume']['partial_pause_seconds']>0
     assert result['resume']['logical_sha256']==record['logical_sha256']
-    assert result['runtime']['core_version']=='1.5.2'
+    assert result['runtime']['core_version']==importlib.metadata.version('winding-field')
 
 
 @pytest.mark.parametrize('overlap',['existing','inside','contains'])

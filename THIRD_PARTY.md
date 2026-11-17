@@ -3,7 +3,8 @@
 ## Winding-field numerical core
 
 The original [winding-field](https://github.com/LimeGS/winding-field) library is
-installed as `winding-field==1.5.2`. Numerical modules are imported
+installed from an immutable source archive as `winding-field` version
+`1.5.3.dev0` (observer-capable development source, not a stable release). Numerical modules are imported
 directly from that distribution; no numerical core is bundled here. The original
 revision and numerical source hashes are recorded in `provenance/core.json`.
 

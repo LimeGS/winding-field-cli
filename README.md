@@ -274,8 +274,10 @@ winding-field field-advice runs/prepared-field
 ```
 
 The report never runs a solver or verification, stops work or adds sweeps.
-Published core **1.5.2 does not support this opt-in**; the stable dependency pin
-is deliberately unchanged. See [scope, recovery and interpretation](docs/FIELD-ADVICE.md).
+Published core **1.5.2 does not support this opt-in**; new installations pin an
+observer-capable development core archive by exact revision and hash, recorded in
+`provenance/core.json`. This is not a stable core release.
+See [scope, recovery and interpretation](docs/FIELD-ADVICE.md).
 
 </details>
 
