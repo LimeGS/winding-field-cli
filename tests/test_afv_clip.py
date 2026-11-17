@@ -1,5 +1,4 @@
 from contextlib import closing
-import json
 
 import numpy as np
 import pytest

@@ -1,5 +1,7 @@
 from contextlib import closing
 import sqlite3
+import subprocess
+import sys
 from types import SimpleNamespace
 
 import numpy as np
@@ -142,3 +144,54 @@ def test_pin_capture_is_bounded_and_does_not_weaken_metadata_checks(tmp_path):
                 volume.read([0]*3,[4]*3)
                 path=source/'0/.zarray';data=json.loads(path.read_bytes());data['order']='F'
                 path.write_text(json.dumps(data))
+
+
+def test_hard_exit_keeps_only_durable_source_pin_batches(tmp_path):
+    source=write_ct(tmp_path/'ct',np.ones((4,4,516),np.uint8),chunk=4)
+    script=f"""
+import os
+from winding_field.io import Volume
+v=Volume({str(source)!r},cache={str(tmp_path/'cache')!r})
+v.bind_ledger({str(tmp_path/'source.sqlite')!r})
+with v.chunk_batch():
+    v.read([0,0,0],[4,4,516])
+    os._exit(23)
+"""
+    child=subprocess.run([sys.executable,'-c',script],capture_output=True,text=True)
+    assert child.returncode==23,child.stderr
+    with sqlite3.connect(tmp_path/'source.sqlite') as db:
+        assert db.execute('SELECT count(*) FROM chunks').fetchone()[0]==128
+    with closing(Volume(source,cache=tmp_path/'cache')) as volume:
+        volume.bind_ledger(tmp_path/'source.sqlite');volume.validate_used()
+        with volume.chunk_batch():volume.read([0]*3,[4,4,516])
+    with sqlite3.connect(tmp_path/'source.sqlite') as db:
+        assert db.execute('SELECT count(*) FROM chunks').fetchone()[0]==129
+
+
+def test_hard_exit_export_keeps_atomic_curves_bounds_and_cursor(tmp_path):
+    config=many(tmp_path/'run',1002);afv.import_fibres(tmp_path/'run',config)
+    script=f"""
+import os,sqlite3
+from types import SimpleNamespace
+from winding_field import exports
+exports.time=SimpleNamespace(monotonic=lambda:0.)
+connect=sqlite3.connect
+class Crash(sqlite3.Connection):
+    def execute(self,sql,args=()):
+        if sql.startswith('INSERT INTO fibers') and args[0]==1002:os._exit(24)
+        return super().execute(sql,args)
+def opened(path,*args,**kwargs):
+    if str(path).endswith('fibres.partial.afv'):kwargs['factory']=Crash
+    return connect(path,*args,**kwargs)
+sqlite3.connect=opened
+exports.export_afv({str(tmp_path/'run')!r})
+"""
+    child=subprocess.run([sys.executable,'-c',script],capture_output=True,text=True)
+    assert child.returncode==24,child.stderr
+    with sqlite3.connect(tmp_path/'run/fibres/fibres.partial.afv') as db:
+        assert db.execute('SELECT count(*) FROM fibers').fetchone()[0]==1000
+        assert db.execute('SELECT count(*) FROM block_bounds').fetchone()[0]==1000
+        assert db.execute("SELECT value FROM metadata WHERE key='export_last_id'").fetchone()[0]=='1000'
+    assert exports.export_afv(tmp_path/'run')
+    with sqlite3.connect(tmp_path/'run/fibres/fibres.afv') as db:
+        assert db.execute('SELECT count(*) FROM fibers').fetchone()[0]==1002

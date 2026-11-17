@@ -226,9 +226,11 @@ def _clip_initialize(path,cache_bytes):
 
 def _clip_worker(job):
     from .import_parallel import RESULT_BYTES,worker_stopped
-    before=_WORKER_SUPPORT.loads;fragments=[];charge=0
+    before=_WORKER_SUPPORT.loads;fragments=[]
+    charge=len(job[3].encode())+job[-1].nbytes+4096
+    if charge>RESULT_BYTES:return job,None,dict(pid=os.getpid(),support_loads=0)
     for piece in _pieces(job[-1],_WORKER_SUPPORT,worker_stopped):
-        charge+=piece.nbytes
+        charge+=piece.nbytes+256
         if charge>RESULT_BYTES:
             fragments=None;break
         fragments.append(piece)
@@ -242,7 +244,7 @@ def import_fibres(run,config,stop=None,*,verified_source=None):
     identity=dict(input=source,maps=meta['tiles_sha256'],origin=meta['origin_xyz'],spacing=meta['spacing_xyz'])
     from .import_parallel import limits,local_inputs,ordered_map
     execution=limits(config.get('import_workers',1) if local_inputs(config) else 1,
-                     output=run,reserve_bytes=config.get('reserve_bytes',0),worker_bytes=356<<20)
+                     output=run,reserve_bytes=config.get('reserve_bytes',0),worker_bytes=368<<20)
     execution.update(worker_pids=[],worker_support_loads=0,streaming_replays=0)
     root=run/'fibres'; root.mkdir(exist_ok=True); bind(root/'IMPORT.json',identity)
     validate_retained(run,config,verified_source=source)

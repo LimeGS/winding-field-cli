@@ -51,9 +51,13 @@ def test_benchmark_records_stage_costs_and_preserves_inputs(tmp_path,physical):
     assert record['curves']>0 and record['output_bytes']>0 and record['peak_rss_bytes']>0
     assert record['decodes']>0 and record['support_loads']>0 and record['commits']>0
     assert record['hashed_bytes']>0
-    assert all(record['stage_seconds'][name]>0 for name in ('prepare','fibres','export_lasagna','export_afv'))
+    assert all(record['stage_seconds'][name]>0 for name in ('prepare','fibres','export_lasagna','export_afv',
+                                                           'validation','map_compression'))
     assert result['profile']['profiled'] and not record['profiled']
     assert result['profile']['pid']!=record['pid']
+    assert record['completed_resume_seconds']>0
+    assert result['resume']['partial_resume_seconds']>0 and result['resume']['partial_pause_seconds']>0
+    assert result['resume']['logical_sha256']==record['logical_sha256']
     assert result['runtime']['core_version']=='1.5.2'
 
 
@@ -105,7 +109,6 @@ def test_cached_prediction_mutation_is_rejected_before_prepared_publication(tmp_
 
 @pytest.mark.parametrize('embedded',[False,True])
 def test_direct_calibrated_import_avoids_second_map_copy(tmp_path,embedded):
-    from contextlib import closing
     from winding_field import lasagna_input
     volume,geometry,config=source_case(tmp_path,embedded=embedded)
     try:
@@ -187,3 +190,20 @@ def test_parallel_prepare_stop_or_mutation_never_certifies_partial_inputs(tmp_pa
         (run/'STOP').unlink()
         assert 'prepare' in workflow.run(config,resume=True,until='prepare')['stages']
         assert before==(file_sha(first),first.stat().st_mtime_ns)
+
+
+def test_stop_while_tile_jobs_are_pending_is_paused_not_failed(tmp_path,monkeypatch):
+    from concurrent.futures import ProcessPoolExecutor
+    from test_import_parallel import resources
+    from winding_field import workflow
+    config=json.loads(local_case(tmp_path/'input').read_bytes())
+    root=tmp_path/'run';config.update(output=str(root),import_workers=2);resources(monkeypatch)
+    submit=ProcessPoolExecutor.submit
+    def interrupted(self,*args,**kwargs):
+        result=submit(self,*args,**kwargs);(root/'STOP').touch();return result
+    with monkeypatch.context() as patch:
+        patch.setattr(ProcessPoolExecutor,'submit',interrupted)
+        assert workflow.run(config,until='prepare')['status']=='PAUSED'
+    assert not (root/'PREPARED.json').exists()
+    (root/'STOP').unlink()
+    assert 'prepare' in workflow.run(config,resume=True,until='prepare')['stages']

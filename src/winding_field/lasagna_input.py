@@ -203,7 +203,7 @@ def _sample(products,base_axes,level,names,crops):
     nodes=[np.unique(np.concatenate([a,b])) for a,b in zip(lower,upper)]
     valid=np.ones(tuple(len(a) for a in nodes),bool); arrays=[]
     for name in names:
-        with products[name].chunk_batch() if products[name]._ledger is not None else nullcontext():
+        with products[name].chunk_batch() if getattr(products[name],'_ledger',None) is not None else nullcontext():
             raw=products[name].sample(nodes)
         if not np.isfinite(raw).all() or (raw<0).any() or (name!='grad_mag' and (raw>255).any()):
             raise ValueError('invalid Lasagna channel values: '+name)

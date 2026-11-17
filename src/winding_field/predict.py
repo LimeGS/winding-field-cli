@@ -64,10 +64,13 @@ def observations(ct,spacing_xyz,*,threshold=None,presence=None,tangents=None,val
 
 def prepare(volume,run,config,stop=None,*,verified_lasagna=None):
     from contextlib import ExitStack
-    with ExitStack() as stack:
-        if config.get('lasagna_input') and not volume.remote and volume._ledger is not None:
-            stack.enter_context(volume.verified_chunks())
-        result=_prepare(volume,run,config,stop,stack,verified_lasagna)
+    try:
+        with ExitStack() as stack:
+            if config.get('lasagna_input') and not volume.remote and volume._ledger is not None:
+                stack.enter_context(volume.verified_chunks())
+            result=_prepare(volume,run,config,stop,stack,verified_lasagna)
+    except InterruptedError:
+        return dict(status='PAUSED')
     if result['status']=='PREPARED':atomic_json(Path(run)/'PREPARED.json',result)
     return result
 
