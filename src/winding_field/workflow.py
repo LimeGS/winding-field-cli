@@ -80,6 +80,8 @@ def open_volume(config):
                 local=str(path); break
     return Volume(config['source'],local=local,cache=config.get('cache'),cache_bytes=config.get('cache_bytes',2<<30),
                   offline=config.get('offline',False),voxel_um=config.get('voxel_um'),level=config.get('level',0),
+                  decoded_cache_bytes=(config.get('_import_cache_bytes',256<<20)//6
+                      if config.get('lasagna_input') and not str(config['source']).startswith(('http','s3://')) else 0),
                   reserve_bytes=config.get('reserve_bytes',1<<30))
 
 

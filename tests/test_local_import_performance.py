@@ -64,3 +64,40 @@ def test_benchmark_rejects_existing_or_overlapping_output(tmp_path,overlap):
     with pytest.raises((ValueError,FileExistsError)):
         benchmark().run(output,config=config,repeats=1)
     assert not (tmp_path/'input/ct/bench').exists()
+
+
+def test_adjacent_lasagna_reads_reuse_decoded_chunks(tmp_path):
+    from contextlib import closing
+    from test_lasagna_stream import fixture,geometry
+    from winding_field.io import Volume
+    from winding_field.lasagna_stream import LasagnaInput
+    ct,_,config=fixture(tmp_path)
+    with closing(Volume(ct,cache=tmp_path/'cache')) as volume, LasagnaInput(volume,tmp_path/'run',config) as reader:
+        first=reader.read(geometry(volume),[0]*3,[2]*3)
+        second=reader.read(geometry(volume),[1]*3,[3]*3)
+        assert first['support'].all() and second['support'].all()
+        assert sum(p.stats()['decodes'] for p in reader.products.values())==4
+        assert sum(p._decoded_limit for p in reader.products.values())<=256<<20
+        assert sum(p.stats()['decoded_cache_bytes'] for p in reader.products.values())<=256<<20
+
+
+def test_cached_prediction_mutation_is_rejected_before_prepared_publication(tmp_path,monkeypatch):
+    from test_lasagna_stream import fixture
+    from winding_field import predict
+    from winding_field.io import Volume
+    from winding_field.artifacts import Tiles
+    from contextlib import closing
+    ct,root,config=fixture(tmp_path);config['fibres']='unused-by-prepare'
+    original=Tiles.write;changed=False
+    def write(self,*args,**kwargs):
+        nonlocal changed
+        result=original(self,*args,**kwargs)
+        if not changed:
+            changed=True
+            (root/'nx.ome.zarr/2/0.0.0').write_bytes(bytes(64))
+        return result
+    monkeypatch.setattr(Tiles,'write',write)
+    with closing(Volume(ct,cache=tmp_path/'cache')) as volume:
+        with pytest.raises(ValueError,match='changed'):
+            predict.prepare(volume,tmp_path/'run',config)
+    assert not (tmp_path/'run/PREPARED.json').exists()
