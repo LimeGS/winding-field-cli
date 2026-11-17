@@ -209,6 +209,12 @@ class LasagnaInput:
         return mask
 
     def read(self,geometry,lo,hi):
+        with ExitStack() as stack:
+            for product in (*self.products.values(),self.volume):
+                if product._ledger is not None:stack.enter_context(product.chunk_batch())
+            return self._read(geometry,lo,hi)
+
+    def _read(self,geometry,lo,hi):
         lo,hi=bounds(lo,hi,geometry['shape_zyx'])
         if np.prod(hi-lo,dtype=object)>128**3:raise ValueError('Lasagna read exceeds 128-cube sample budget')
         if geometry['frame']!=digest(self.volume.identity):raise ValueError('Lasagna CT frame changed')

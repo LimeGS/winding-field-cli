@@ -1,6 +1,6 @@
 """Calibrated, read-only Lasagna v2 inputs normalized to resumable surface tiles."""
 
-from contextlib import ExitStack, closing
+from contextlib import ExitStack, closing, nullcontext
 import hashlib
 import itertools
 import json
@@ -195,7 +195,8 @@ def _sample(products,base_axes,level,names,crops):
     nodes=[np.unique(np.concatenate([a,b])) for a,b in zip(lower,upper)]
     valid=np.ones(tuple(len(a) for a in nodes),bool); arrays=[]
     for name in names:
-        raw=products[name].sample(nodes)
+        with products[name].chunk_batch() if products[name]._ledger is not None else nullcontext():
+            raw=products[name].sample(nodes)
         if not np.isfinite(raw).all() or (raw<0).any() or (name!='grad_mag' and (raw>255).any()):
             raise ValueError('invalid Lasagna channel values: '+name)
         if name in ('grad_mag','presence'): valid &= raw>0
@@ -242,7 +243,8 @@ def prepare(volume,run,config,geometry,stop=None):
         for key in maps.keys():
             if stop and stop(): return dict(status='PAUSED')
             lo,hi=maps.box(key)
-            ct=volume.sample([geometry['roi_lo_zyx'][i]+np.arange(a,b)*geometry['stride'] for i,(a,b) in enumerate(zip(lo,hi))])
+            with volume.chunk_batch() if volume._ledger is not None else nullcontext():
+                ct=volume.sample([geometry['roi_lo_zyx'][i]+np.arange(a,b)*geometry['stride'] for i,(a,b) in enumerate(zip(lo,hi))])
             if not np.isfinite(ct).all(): raise ValueError('finite CT required for Lasagna inputs')
             ct_sha=hashlib.sha256(ct.tobytes()).hexdigest()
             if maps.has(key):

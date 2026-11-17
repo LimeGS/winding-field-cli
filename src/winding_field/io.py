@@ -142,6 +142,7 @@ class Volume:
         self._decoded=OrderedDict();self._decoded_bytes=0;self._decoded_limit=decoded_cache_bytes
         self._decoded_lock=threading.RLock()
         self._verified_sampling=False
+        self._batching=False;self._pending_chunks=0;self._batch_started=0.
         self.reserve=reserve_bytes
         self.source = http_url(source)
         self.remote = self.source.startswith(('https://', 'http://'))
@@ -297,7 +298,7 @@ class Volume:
 
     def bind_ledger(self, path):
         """Pin every consumed encoded chunk; changed bytes cannot enter a resumed run."""
-        if self._verified_sampling:raise ValueError('cannot switch ledger during verified sampling')
+        if self._verified_sampling or self._batching:raise ValueError('cannot switch ledger during verified sampling/batch')
         for key,(array,_,pin) in list(self._decoded.items()):
             if pin is None:
                 del self._decoded[key];self._decoded_bytes-=array.nbytes+512
@@ -317,7 +318,30 @@ class Volume:
             old=self._ledger.execute('SELECT sha FROM chunks WHERE key=?',(key,)).fetchone()
             if old and old[0]!=sha:raise ValueError('source chunk changed: '+key)
             if old is None:
-                self._ledger.execute('INSERT INTO chunks VALUES (?,?)',(key,sha));self._ledger.commit()
+                self._ledger.execute('INSERT INTO chunks VALUES (?,?)',(key,sha))
+                if not self._pending_chunks:self._batch_started=time.monotonic()
+                self._pending_chunks+=1
+                if not self._batching or self._pending_chunks>=128 or time.monotonic()-self._batch_started>=2:
+                    self._flush_chunks()
+
+    def _flush_chunks(self):
+        if self._pending_chunks:
+            self._ledger.commit();self._pending_chunks=0
+
+    @contextmanager
+    def chunk_batch(self):
+        """Bounded durable source pins; flush before publishing the consuming tile."""
+        if self._ledger is None or self._batching:raise ValueError('chunk batch requires a ledger and non-nested scope')
+        self._batching=True
+        try:
+            yield
+            with self._transport_lock:self._flush_chunks()
+        except BaseException:
+            with self._transport_lock:
+                self._ledger.rollback();self._pending_chunks=0
+                self._decoded.clear();self._decoded_bytes=0
+            raise
+        finally:self._batching=False
 
     @contextmanager
     def verified_chunks(self):
