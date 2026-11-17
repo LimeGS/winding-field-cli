@@ -58,8 +58,7 @@ def _value(action,value):
     if value is None:
         if action.required:raise ValueError(action.dest+' is required')
         return None
-    def scalar(value):
-        converter=action.type
+    def scalar(value,converter=action.type):
         if converter in (int,float):
             if isinstance(value,bool) or (converter is int and isinstance(value,float) and not value.is_integer()):
                 raise ValueError('invalid number for '+action.dest)
@@ -74,7 +73,8 @@ def _value(action,value):
             if not isinstance(value,list):raise ValueError(action.dest+' must be a list')
             if isinstance(action.nargs,int) and len(value)!=action.nargs:raise ValueError('wrong arity for '+action.dest)
             if action.nargs=='+' and not value:raise ValueError(action.dest+' cannot be empty')
-            return [scalar(v) for v in value]
+            types=getattr(action,'element_types',None)
+            return [scalar(v,types[i]) if types else scalar(v) for i,v in enumerate(value)]
         return scalar(value)
     if isinstance(action,argparse._AppendAction):
         if not isinstance(value,list):raise ValueError(action.dest+' must be a list')
@@ -82,7 +82,7 @@ def _value(action,value):
     return item(value)
 
 
-def parse_options(parser,argv=None,*,paths=(),sources=None):
+def parse_options(parser,argv=None,*,paths=(),lexical_paths=(),sources=None):
     """Use typed argparse defaults, not JSON-to-argv translation or a new schema."""
     tokens=list(sys.argv[1:] if argv is None else argv)
     _config_arguments(parser)
@@ -103,9 +103,11 @@ def parse_options(parser,argv=None,*,paths=(),sources=None):
     selected,remaining=reader.parse_known_args(tokens)
     if selected.file is None:return parser.parse_args(tokens)
     if '--help' in tokens or '-h' in tokens:return parser.parse_args(tokens)
-    actions={a.dest:a for p in parents for a in p._actions
-             if not isinstance(a,(argparse._HelpAction,argparse._VersionAction,argparse._SubParsersAction))
-             and a.dest!='_cli_config'}
+    actions={}
+    for p in parents:
+        for a in p._actions:
+            if not isinstance(a,(argparse._HelpAction,argparse._VersionAction,argparse._SubParsersAction)) and a.dest!='_cli_config':
+                actions.setdefault(a.dest,a)
     snapshots=[];groups=[]
     try:
         source=Path(selected.file).expanduser().resolve()
@@ -117,12 +119,17 @@ def parse_options(parser,argv=None,*,paths=(),sources=None):
         if set(settings)-set(actions):raise ValueError('unknown settings: '+', '.join(sorted(set(settings)-set(actions))))
         for name,value in settings.items():
             action=actions[name];value=_value(action,value)
-            if value is not None and (action.type is Path or name in paths):
+            positions=[p[1] for p in paths if isinstance(p,tuple) and p[0]==name]
+            if value is not None and (action.type is Path or name in paths or name in lexical_paths or positions):
                 def absolute(v):
                     if str(v).startswith(('https://','http://','s3://')):return v
-                    result=(source.parent/Path(v).expanduser()).resolve()
+                    result=source.parent/Path(v).expanduser()
+                    result=result.absolute() if name in lexical_paths else result.resolve()
                     return result if action.type is Path else str(result)
-                value=[absolute(v) for v in value] if isinstance(value,list) else absolute(value)
+                if positions:
+                    for row in value if isinstance(action,argparse._AppendAction) else [value]:
+                        for index in positions:row[index]=absolute(row[index])
+                else:value=[absolute(v) for v in value] if isinstance(value,list) else absolute(value)
             snapshots.append((action,action.default,action.required,action.nargs))
             action.default=(None if isinstance(action,argparse._AppendAction)
                             and explicit.intersection(action.option_strings) else value)

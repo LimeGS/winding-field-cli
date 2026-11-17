@@ -215,3 +215,39 @@ explicit false overrides rather than falling back to true file defaults.
 over optional `--flattening-config`; no frame is invented if neither supplies one.
 These output settings remain separate from CT `--roi`, `--voxel-um`, `--level`
 and the observation/field resource budgets.
+
+### AFV/Lasagna input declarations
+
+`run` and `plan` may keep the existing native `--fibres-geometry`,
+`--lasagna-geometry`, and `--lasagna-input` files, or supply their settings inline:
+
+| Setting | Flag |
+|---|---|
+| AFV physical frame | `--fibres-source`, `--fibres-origin-xyz-um X Y Z`, `--fibres-spacing-xyz-um X Y Z` |
+| Explicit Lasagna physical frame | `--lasagna-source`, `--lasagna-origin-xyz-um X Y Z`, `--lasagna-spacing-xyz-um X Y Z` |
+| Base dimensions / encoding | `--lasagna-base-shape-zyx Z Y X`, `--lasagna-source-to-base`, `--lasagna-grad-mag-encode-scale`, `--lasagna-grad-mag-factor` |
+| Scalar channel declarations | repeated `--lasagna-channel GROUP CHANNEL ZARR SCALEDOWN` (scaledown is an exponent, including zero) |
+| Optional per-channel metadata pins | repeated `--lasagna-channel-metadata-sha256 GROUP SHA256` |
+| Coverage crops | repeated `--lasagna-crop X Y Z WIDTH HEIGHT DEPTH`; `--no-lasagna-crops` explicitly clears the list |
+| Producer receipt | `--lasagna-provenance PATH` (actual producer data, not a handwritten settings recipe) |
+| Transport policy | `--lasagna-required-transport vc_reader.DiskCache` |
+| Frozen metadata inventory | repeated `--lasagna-metadata-pin LOCATION SHA256`; `--clear-lasagna-metadata-pins` clears that map |
+| Declared CT identity | `--lasagna-ct-source CT_DATA`, optional `--lasagna-ct-level`, `--lasagna-ct-voxel-um`; identity is read from the actual CT artifact |
+| Embedded physical-frame variant | the declared CT source plus `--lasagna-embedded-origin-xyz-um X Y Z` and `--lasagna-embedded-spacing-xyz-um X Y Z` |
+
+The manifest schema remains version 2. CT identity documents are scientific
+provenance: the flags derive those complete identities from actual dataset
+metadata rather than requiring users to copy backend/library hashes manually.
+Prediction arrays and any existing producer receipts remain read-only inputs.
+
+Omitted physical geometry still means base-grid binding; explicit/embedded
+physical geometry still selects calibrated interpolation. Neither route rescales
+density because channel grids are downsampled. All source/channel metadata pins,
+support/crop checks, input ledgers and final revalidation remain active. Mixed
+file+flag inputs preserve raw recipe hashes in `input_recipe_sources`; changing
+one during a run or before continuation fails rather than relabeling provenance.
+
+All leaves are also available through `--cli-config`. Channel rows use typed
+`[group, channel, path, integer_scaledown]` arrays; the path element uses the
+config directory, not the worker CWD. Executable paths such as `lasagna_python`
+retain virtual-environment symlinks instead of resolving to a different Python.

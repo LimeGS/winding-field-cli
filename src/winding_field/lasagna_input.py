@@ -6,6 +6,7 @@ import itertools
 import json
 from pathlib import Path
 import shutil
+from copy import deepcopy
 
 import numpy as np
 
@@ -23,6 +24,8 @@ from .lasagna_stream import LasagnaInput
 def streamed(config):
     """Explicit/embedded physical frames retain the calibrated interpolation route."""
     if not config.get('lasagna_input') or config.get('lasagna_geometry'):return False
+    if isinstance(config['lasagna_input'],dict):
+        return not any(k in config['lasagna_input'] for k in ('original_ct','world_origin_xyz_um','world_spacing_xyz_um'))
     path=http_url(config['lasagna_input'])
     if path.startswith(('http://','https://')):return True
     manifest,_=_json(path)
@@ -30,6 +33,10 @@ def streamed(config):
 
 
 def _json(path):
+    if isinstance(path,dict):
+        from .input_settings import declaration
+        value,pin,_=declaration(path)
+        return value,pin
     with Path(path).open('rb') as stream:
         raw=stream.read((1<<20)+1)
     if len(raw)>1<<20: raise ValueError('Lasagna header exceeds 1 MiB')
@@ -51,7 +58,11 @@ def _source(value):
 
 
 def source_identity(path,geometry_path,source,geometry,cache):
-    path=_local(path); manifest,sha=_json(path)
+    from .input_settings import declaration_location
+    path=declaration_location(path)
+    if not isinstance(path,dict):path=_local(path)
+    base=Path.cwd() if isinstance(path,dict) else path.parent
+    manifest,sha=_json(path)
     if type(manifest.get('version')) is not int or manifest['version']!=2:
         raise ValueError('Lasagna manifest v2 required')
     shape=manifest.get('base_shape_zyx')
@@ -72,7 +83,8 @@ def source_identity(path,geometry_path,source,geometry,cache):
                       spacing_xyz_um=manifest.get('world_spacing_xyz_um'))
     descriptor_sha=None; explicit=None
     if geometry_path:
-        geometry_path=_local(geometry_path); explicit,descriptor_sha=_json(geometry_path)
+        geometry_path=declaration_location(geometry_path)
+        explicit,descriptor_sha=_json(geometry_path)
         if set(explicit)!={'source','origin_xyz_um','spacing_xyz_um'}:
             raise ValueError('Lasagna geometry requires source, origin_xyz_um and spacing_xyz_um')
     for frame in (embedded,explicit):
@@ -103,10 +115,10 @@ def source_identity(path,geometry_path,source,geometry,cache):
     if crops and not any((low>=np.asarray(c[:3])-1e-8).all() and
                          (high<np.asarray(c[:3])+c[3:]).all() for c in crops):
         raise ValueError('observation ROI must lie inside one declared Lasagna crop')
-    files={str(path):sha}
-    if geometry_path: files[str(geometry_path)]=descriptor_sha
+    files={} if isinstance(path,dict) else {str(path):sha}
+    if geometry_path and not isinstance(geometry_path,dict):files[str(geometry_path)]=descriptor_sha
     if manifest.get('provenance'):
-        provenance=_local(manifest['provenance'],path.parent); report,files[str(provenance)]=_json(provenance)
+        provenance=_local(manifest['provenance'],base); report,files[str(provenance)]=_json(provenance)
         if report.get('status','completed')!='completed': raise ValueError('Lasagna producer is not completed')
     groups=manifest.get('groups')
     if not isinstance(groups,dict) or not all(isinstance(g,dict) and isinstance(g.get('channels'),list)
@@ -120,7 +132,7 @@ def source_identity(path,geometry_path,source,geometry,cache):
             raise ValueError('Lasagna requires one scalar ZYX array for '+name)
         group=matches[0]; level=group.get('scaledown')
         if type(level) is not int or not 0<=level<=30: raise ValueError('invalid Lasagna scaledown')
-        array=_local(group.get('zarr'),path.parent)
+        array=_local(group.get('zarr'),base)
         if not (array/'.zarray').is_file(): raise ValueError('Lasagna group must name a Zarr v2 array: '+name)
         with closing(Volume(array,voxel_um=1.,cache=cache,offline=True)) as product:
             if list(product.shape)!=[(n+(1<<level)-1)//(1<<level) for n in shape]:
@@ -131,7 +143,7 @@ def source_identity(path,geometry_path,source,geometry,cache):
     if channels['nx']['scaledown']!=channels['ny']['scaledown']:
         raise ValueError('Lasagna normal components nx/ny must share a grid')
     if any(file_sha(p)!=value for p,value in files.items()): raise ValueError('Lasagna inputs changed during preflight')
-    return dict(path=str(path),geometry_path=str(geometry_path) if geometry_path else None,
+    return dict(path=deepcopy(path) if isinstance(path,dict) else str(path),geometry_path=geometry_path if geometry_path else None,
                 files=files,frame=frame,manifest=manifest,channels=channels)
 
 
@@ -300,6 +312,8 @@ def read_observations(run,geometry,lo,hi):
 class CalibratedLasagnaInput:
     """Read calibrated source observations directly; never duplicate map payloads."""
     def __init__(self,volume,run,config,geometry,*,verified_source=None):
+        from .input_settings import declaration_location,check_recipe_sources
+        check_recipe_sources(config)
         self.volume=volume;self.config=config;self.geometry=json.loads(json.dumps(geometry))
         self.root=Path(run)/'lasagna-source';self.stack=ExitStack();self.closed=False
         try:
@@ -307,8 +321,8 @@ class CalibratedLasagnaInput:
             if source is None:
                 source=source_identity(config['lasagna_input'],config.get('lasagna_geometry'),
                                        volume.identity,geometry,volume.cache)
-            elif (not isinstance(source,dict) or source.get('path')!=str(_local(config['lasagna_input']))
-                    or source.get('geometry_path')!=(str(_local(config['lasagna_geometry'])) if config.get('lasagna_geometry') else None)
+            if source is not None and (not isinstance(source,dict) or source.get('path')!=declaration_location(config['lasagna_input'])
+                    or source.get('geometry_path')!=declaration_location(config.get('lasagna_geometry'))
                     or source.get('frame',{}).get('source')!=_source(volume.identity['source'])):
                 raise ValueError('verified Lasagna input context changed')
             self.manifest=source['manifest']
@@ -362,6 +376,8 @@ class CalibratedLasagnaInput:
         if self.closed:return
         self.closed=True
         try:
+            from .input_settings import check_recipe_sources
+            check_recipe_sources(self.config)
             if self.identity['input']!=source_identity(self.config['lasagna_input'],self.config.get('lasagna_geometry'),
                     self.volume.identity,self.geometry,self.volume.cache):
                 raise ValueError('Lasagna input identity changed during import')
