@@ -251,3 +251,48 @@ All leaves are also available through `--cli-config`. Channel rows use typed
 `[group, channel, path, integer_scaledown]` arrays; the path element uses the
 config directory, not the worker CWD. Executable paths such as `lasagna_python`
 retain virtual-environment symlinks instead of resolving to a different Python.
+
+### Public tool settings and artifact boundaries
+
+Every tool, including all `constant-sheet` and `sheet-atlas` subcommands,
+accepts `--cli-config` with typed underscore option names. `--config` aliases it
+only when that tool has no native recipe named `--config`.
+
+| Tool / native object | Flag mapping |
+|---|---|
+| Surface export/probe/atlas field metadata | `--field-frame`, `--field-voxel-um`, `--field-origin-xyz`, `--field-spacing-xyz`, `--field-shape-zyx`, `--field-sha256`, `--sheet-step`, `--calibration`; WORLD XYZ / ZYX, µm per WORLD unit |
+| Support metadata | `--support`, `--support-sha256`, `--support-array-sha256`; probe/atlas also `--core-ownership` |
+| Surface export/atlas CT metadata | `--ct-frame`, `--ct-voxel-um`, `--ct-origin-xyz`, `--ct-spacing-xyz`, `--ct-shape-zyx`, `--ct-display-window LOW HIGH` |
+| Probe dataset view | `--dataset-frame`, `--dataset-voxel-um`, `--ct-source`, `--ct-sha256`, CT geometry above; `--prior-source`, `--prior-sha256`, `--prior-frame`, `--prior-origin-xyz`, `--prior-spacing-xyz` |
+| Probe/atlas render context | `--seed-margin`, `--ct-padding-samples` (sample counts), `--render-pitch-world`, `--render-depth-offsets-world`, `--render-mesh-step`, `--ct-window`; display-window aliases must agree |
+| Atlas frozen inputs | `--seed`, `--seed-sha256`, `--ct`, `--ct-sha256`, `--ct-metadata`, `--ct-metadata-sha256`, `--inputs-field-sha256`, `--inputs-metadata-sha256` |
+| CT visual case settings | `--visualization-schema`, `--archive-manifest`, `--archive-manifest-sha256`, `--reference-key` / `--no-reference-key`, `--reference-label`, `--requires-support` / `--no-requires-support`, `--case-step`, `--dataset-frame`, `--dataset-voxel-um` |
+| Patch visual geometry | Field geometry above; legacy WORLD-only metadata remains valid without invented µm calibration; existing `--step`, `--margin` retain their meanings |
+| Constant-sheet centerline | Repeated `--centerline-point X Y Z` replaces optional `--centerline` JSON; strictly increasing WORLD Z, for prepare and validate |
+| Constant-sheet render | `--ct-source`, `--ct-level`, `--ct-voxel-um`, all historical flattening settings above, `--prior-identity`, `--prior-ledger`, `--prior-ledger-sha256` |
+
+Original native metadata/case/inputs recipes may be combined with explicit
+settings. Raw file pins remain separately recorded in `request_sources`; a
+changed file is never silently repinned. Generated effective metadata lives in
+the tool's new output/work directory, never overwrites the user's input.
+
+The following document content is **scientific data/provenance**, not an
+additional settings recipe to author:
+
+- Field receipts' solver/pilot results, byte/array hashes, source ownership,
+  saved grids, seeds, CT crops, support arrays and original observation history.
+- CT visual archive manifests, receipts, NPY/PNG planes and their hashes; a case's
+  unrelated benchmark results are not consumed as plotting controls.
+- Geometry-check metadata, registration reports, pointmaps and source receipts
+  already SHA-bound to those artifacts; the external gate/policy files and their
+  pins remain explicit inputs, not settings synthesized by this CLI.
+- Atlas/query sheets, validated maps, native checkpoints, producer/prior ledgers,
+  backend executables and their identities.
+- Legacy full dataset AFV, prediction, orientation, constraints, execution and
+  solver sections: probe consumes only frame/units, CT/prior sources and surface
+  render context. Inline requests expose that consumed view; legacy full files
+  still pass the original full dataset validator.
+
+`run-watch` config supports its literal `command` string array. Explicit child
+arguments (with or without `--`) stay opaque, including child `--config` options;
+no shell interpolation or JSON-to-shell translation is introduced.

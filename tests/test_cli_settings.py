@@ -130,3 +130,17 @@ def test_contradictory_positive_and_negative_flags_reject():
     parser=argparse.ArgumentParser()
     parser.add_argument('--enabled',action=argparse.BooleanOptionalAction,default=True)
     with pytest.raises(SystemExit):parse_options(parser,['--enabled','--no-enabled'])
+
+
+@pytest.mark.parametrize('negative',[False,True])
+def test_legacy_booleans_can_explicitly_override_both_file_values(tmp_path,negative):
+    from winding_field.cli_settings import parse_options
+    config=tmp_path/'cli.json'
+    config.write_text(json.dumps(dict(enabled=not negative)))
+    parser=argparse.ArgumentParser()
+    if negative:parser.add_argument('--no-enabled',dest='enabled',action='store_false')
+    else:parser.add_argument('--enabled',action='store_true')
+    args=parse_options(parser,['--config',str(config),'--enabled' if negative else '--no-enabled'])
+    assert args.enabled is negative
+    with pytest.raises(SystemExit):parse_options(parser,['--enabled','--no-enabled'])
+    assert parse_options(parser,[]).enabled is negative

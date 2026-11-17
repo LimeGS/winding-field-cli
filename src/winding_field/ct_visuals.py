@@ -365,18 +365,31 @@ def render(visual, field, meta, support, output):
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     for name in ("case", "field", "metadata", "output"):
-        parser.add_argument("--" + name, type=Path, required=True)
+        parser.add_argument("--" + name, type=Path, required=name not in ('case','metadata'))
     parser.add_argument("--support", type=Path)
     parser.add_argument("--support-sha256")
     parser.add_argument("--config", type=Path, help="explicit geometry for a historical case lacking voxel_um")
     parser.add_argument("--check-only", action="store_true")
-    args = parser.parse_args(argv)
+    from .tool_settings import metadata_arguments,metadata_request,case_arguments,case_request,materialize_metadata,check_sources
+    from .cli_settings import parse_options
+    metadata_arguments(parser,ownership=False)
+    case_arguments(parser)
+    args = parse_options(parser,argv)
+    try:
+        meta=metadata_request(args,require_pin=True)
+        case=case_request(args,meta)
+    except (ValueError,OSError,KeyError,TypeError) as error:
+        print(f"ERROR: {type(error).__name__}: {error}",file=sys.stderr)
+        return 2
     try:
         args.output.mkdir(exist_ok=False)
     except OSError as error:
         print(f"New output directory required: {error}", file=sys.stderr)
         return 2
     try:
+        materialize_metadata(args,args.output,meta)
+        if args._inline_case:
+            args.case=args.output/'case-request.json';atomic_json(args.case,case)
         inputs = {
             "dataset_config" if name == "config" else name:
                 dict(path=str(path.resolve()), sha256=file_sha(path), bytes=path.stat().st_size)
@@ -387,6 +400,9 @@ def main(argv=None):
         meta = json.loads(args.metadata.read_text())
         validate_frame(case.get("frame"))
         configured = None if args.config is None else load_dataset(args.config)
+        if hasattr(args,'dataset_frame') or hasattr(args,'dataset_voxel_um'):
+            configured={**(configured or {}),**{name:vars(args)['dataset_'+name] for name in ('frame','voxel_um')
+                if 'dataset_'+name in vars(args)}}
         step = positive(case["step"], "case step")
         unit = positive(case.get("voxel_um", configured["voxel_um"] if configured else None), "case voxel_um")
         if configured is not None and (configured["frame"] != case["frame"] or configured["voxel_um"] != unit):
@@ -424,16 +440,17 @@ def main(argv=None):
             raise ValueError("nonfinite field values in declared support")
         visual = prepare(case["visualization"], args.case.parent, case["frame"], step, voxel_um=unit)
         inputs.update(visual["inputs"])
-        receipt = dict(status="PASS_PREFLIGHT", inputs=inputs,
+        receipt = dict(status="PASS_PREFLIGHT", inputs=inputs,request_sources=getattr(args,'_request_sources',{}),
                        source_sha256={str(path): file_sha(path) for path in (
                            Path(__file__), Path(point_stencils.__code__.co_filename),
                            Path(positive.__code__.co_filename), Path(file_sha.__code__.co_filename))},
-                       environment=dict(numpy=np.__version__, matplotlib=visual["matplotlib_version"]))
+                        environment=dict(numpy=np.__version__, matplotlib=visual["matplotlib_version"]))
         atomic_json(args.output / "PREFLIGHT.json", receipt)
         result = None if args.check_only else render(visual, field, meta, support, args.output)
         for entry in inputs.values():
             if file_sha(entry["path"]) != entry["sha256"]:
                 raise ValueError("input changed during visualization: " + entry["path"])
+        check_sources(args)
         if result is not None:
             atomic_json(args.output / "SUMMARY.json", dict(status="PASS_VISUALIZED", visualization=result,
                         preflight_sha256=file_sha(args.output / "PREFLIGHT.json")))
