@@ -153,14 +153,18 @@ def main(argv=None):
         p.add_argument('--seed-stride',type=int,default=8,help='fibre seed grid spacing in observation samples (default: 8)'); p.add_argument('--fibre-weight',type=float,default=1.,help='field solver fibre constraint weight (default: 1)')
         p.add_argument('--levels',nargs='+',type=float,help='raw field isovalues (W * sheet_step), e.g. --levels -31; not CT pyramid levels'); p.add_argument('--mesh-tile',type=int,default=64,help='mesh extraction tile edge in field-grid cells (default: 64)')
         p.add_argument('--chart-faces',type=int,default=1024,help='native/atlas local chart face budget (default: 1024); not original global flattening'); p.add_argument('--threads',type=int,default=4,help='PyTorch CPU thread count (default: 4); not a global worker limit')
-        p.add_argument('--no-previews',dest='previews',action='store_false',help='skip legacy atlas chart previews; retain final CT renders')
+        p.add_argument('--previews',action=argparse.BooleanOptionalAction,default=True,help='legacy atlas chart previews; final CT renders are retained')
         p.add_argument('--surface-output',choices=['native','atlas','tifxyz'],default='native',help='pipeline branch: native surfaces (default), legacy atlas, or experimental direct-field tifxyz; not an output file format')
         p.add_argument('--flattening-method',choices=['slim','default','original'],help='native SLIM (default for new native runs), default: legacy local mapping, original: global LSCM; independent of field resolution')
         p.add_argument('--flattening-config',help='original-mapping JSON: output_frame, optional pitch and memory_gib; requires --flattening-method original')
         p.add_argument('--coverage-target',type=float,default=1.,help='native mapped mesh-area fraction in (0,1] (default: 1); not observed CT coverage')
         p.add_argument('--surface-time-limit',dest='surface_time_limit_s',type=float,default=1800.,help='cumulative active seconds per native W (default: 1800)')
-        p.add_argument('--export-tifxyz',action='store_true',help='add mesh-derived XYZ TIFFs to native/original CT renders; not direct-field export')
+        p.add_argument('--export-tifxyz',action=argparse.BooleanOptionalAction,default=False,help='add mesh-derived XYZ TIFFs to native/original CT renders; not direct-field export')
         p.add_argument('--tifxyz-config',help='Linux-only direct-export JSON; requires --surface-output tifxyz; frozen by content')
+        from .export_settings import tifxyz_arguments,auto_float
+        tifxyz_arguments(p,prefix='tifxyz-',include_levels=False)
+        p.add_argument('--pitch',type=auto_float,default=argparse.SUPPRESS,help='original mapping WORLD pitch, or auto')
+        p.add_argument('--original-memory-gib',type=float,default=argparse.SUPPRESS)
         p.add_argument('--until',choices=['prepare','fibres','field','mesh','flatten','assemble','render','tifxyz','original'],
                        help='default: terminal stage of the selected branch')
     for command in ('resume','status','prepare','fibres','field','mesh','flatten','assemble','render'):
@@ -176,6 +180,8 @@ def main(argv=None):
         description='Export XYZ directly from a saved field in an admitted Linux worker. This experimental route does not sample CT; it is separate from mesh-derived TIFFs. A new export requires --config.')
     p.add_argument('field_run',help='existing run directory containing the field'); p.add_argument('--output',required=True,help='direct-field TIFXYZ export directory')
     p.add_argument('--config',help='direct-field export request JSON; required for a new export'); p.add_argument('--resume',action='store_true',help='continue the saved export request in --output')
+    from .export_settings import tifxyz_arguments
+    tifxyz_arguments(p)
     p=sub.add_parser('verify-tifxyz',help='read-only verification in an admitted Linux worker',
         description='Verify a direct-field READY or PARTIAL publication in an admitted Linux worker. Rechecks geometry, coverage and file integrity; does not modify the export or establish physical sheet correctness.')
     p.add_argument('output',help='direct-field export directory, not a native/original/UVW TIFF directory')
@@ -264,24 +270,36 @@ def main(argv=None):
                         prediction=args.prediction,sha256=model_sha(args.prediction))
         elif args.command in ('run','plan'):
             from .workflow import run,plan,stage_path
-            from .config import validate_config,read_tifxyz_request
+            from .config import validate_config
+            from .export_settings import tifxyz_request,pop_tifxyz_options,output_frame_overrides
+            from .cli_settings import merge_explicit,read_settings
             from .util import digest
             config=vars(args).copy(); command=config.pop('command'); until=config.pop('until')
             config['device']=resolve_device(config['device'])
             if config['flattening_method'] is None:
                 config['flattening_method']='slim' if config['surface_output']=='native' else 'default'
             original=config.pop('flattening_config')
-            if original:
-                config['original_request']=json.loads(Path(original).read_bytes())
+            original_flags={key:config.pop(flag) for flag,key in
+                            (('pitch','pitch'),('original_memory_gib','memory_gib')) if flag in config}
             if config['flattening_method']=='original':
                 from .original_pipeline import settings
-                settings(config.get('original_request'))
-            elif original:
+                if any(name in config for name in ('output_frame','output_shape_zyx','output_source_identity_sha256')):
+                    raise ValueError('direct TIFXYZ frame selection/shape/source pin is not an original-mapping setting')
+                frame=output_frame_overrides(args)
+                if frame:original_flags['output_frame']=frame
+                config['original_request']=settings(merge_explicit(read_settings(original) if original else {},original_flags))
+            elif original or original_flags:
                 raise ValueError('--flattening-config requires --flattening-method original')
             request=config.pop('tifxyz_config')
-            if request:
-                config['tifxyz_request']=read_tifxyz_request(request)
+            has_tifxyz=any(name.startswith('tifxyz_') for name in config) or request is not None
+            if config['surface_output']=='tifxyz':
+                config['tifxyz_request']=tifxyz_request(args,path=request,prefix='tifxyz-')
                 config['tifxyz_request_sha256']=digest(config['tifxyz_request'])
+            elif has_tifxyz:
+                raise ValueError('--tifxyz settings require --surface-output tifxyz')
+            elif config['flattening_method']!='original' and any(name.startswith('output_') for name in config):
+                raise ValueError('output frame flags require original mapping or direct TIFXYZ')
+            pop_tifxyz_options(config,prefix='tifxyz-')
             direct=config['surface_output']=='tifxyz' and command=='run'
             native=config['surface_output']=='native' and config['flattening_method']!='original' and command=='run'
             validate_config(config)
@@ -369,7 +387,8 @@ def main(argv=None):
             result=export_existing(args)
         elif args.command in ('tifxyz','verify-tifxyz'):
             from .tifxyz import _path,export_field,verify_export
-            from .config import read_tifxyz_request,tifxyz_settings
+            from .config import tifxyz_settings
+            from .export_settings import tifxyz_request
             direct=True
             out=_path(Path(args.output).expanduser())
             interrupted=False
@@ -387,7 +406,7 @@ def main(argv=None):
                     source=_path(Path(args.field_run).expanduser())
                     if out==source or source in out.parents:
                         raise ValueError('standalone output must be outside the read-only field run')
-                    request=read_tifxyz_request(args.config) if args.config else None
+                    request=tifxyz_request(args)
                     settings=tifxyz_settings(out,request,resume=args.resume)
                     result=export_field(source,out,settings,resume=args.resume,stop=stop)
             finally:

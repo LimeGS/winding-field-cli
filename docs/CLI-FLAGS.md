@@ -179,3 +179,39 @@ reference-sheet artifact, CT binding, levels, canvas samples, workers and
 cache MiB retain their established meanings and validation. The same settings
 are available through `--cli-config`; all known file paths use that file's
 directory and explicit flag paths use the current directory.
+
+### Direct TIFXYZ and nested run/plan requests
+
+Direct `tifxyz FIELD_RUN --output OUTPUT` uses optional native `--config` or:
+
+- `--levels PHI...` (raw field values).
+- `--roi-lo-zyx Z Y X --roi-hi-zyx Z Y X` (half-open field node ROI);
+  `--whole-field` clears a file ROI.
+- `--pitch-um NUMBER|auto`, `--tolerance-um NUMBER|auto`.
+- `--memory-gib`, `--scratch-gib`, `--reserve-disk-gib` (zero reserve remains
+  explicit zero, not an omitted/default value), `--max-pixels`.
+- `--audit-backend numpy|cpu|cuda`, `--coverage-policy strict|allow_partial`.
+- `--output-frame selected-source`, or the complete explicit frame:
+  `--output-frame-id`, `--output-origin-xyz-um X Y Z`, `--output-voxel-um`,
+  `--output-shape-zyx Z Y X`, `--output-source-identity-sha256`.
+
+New requests retain the fixed `winding-field-tifxyz-v1` schema and strict coverage
+default. Selected-source mode is not an invented frame; it uses the existing
+producer's validated source binding. Linux worker admission is unchanged.
+
+`run`/`plan --surface-output tifxyz` share raw `--levels` and output-frame flags.
+Their direct-export-only settings use `--tifxyz-` prefixes, for example
+`--tifxyz-pitch-um`, `--tifxyz-memory-gib`, `--tifxyz-roi-lo-zyx`,
+`--tifxyz-reserve-disk-gib`. These settings cannot leak into other branches.
+`--tifxyz-config` remains optional and merges before explicit leaves.
+The producer's existing `--levels` must still agree with a file's direct-export
+levels. Use `--tifxyz-levels` to explicitly replace that nested list (and, when
+also supplied, give the same producer `--levels`). File-free requests may use
+producer `--levels` directly. `--no-export-tifxyz` and `--no-previews` preserve
+explicit false overrides rather than falling back to true file defaults.
+
+`run`/`plan --flattening-method original` accept the output-frame flags,
+`--pitch NUMBER|auto` in WORLD units, and `--original-memory-gib`. They merge
+over optional `--flattening-config`; no frame is invented if neither supplies one.
+These output settings remain separate from CT `--roi`, `--voxel-um`, `--level`
+and the observation/field resource budgets.

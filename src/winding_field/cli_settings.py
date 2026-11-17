@@ -8,7 +8,6 @@ from pathlib import Path
 import sys
 from tempfile import NamedTemporaryFile
 
-from .tifxyz_contract import parse_json
 from .util import digest
 
 
@@ -25,6 +24,7 @@ def request_sha256(request: dict) -> str:
 
 
 def read_settings(path) -> dict:
+    from .tifxyz_contract import parse_json
     result=parse_json(Path(path).read_text())
     if not isinstance(result,dict):raise ValueError('settings must be a JSON object')
     return result
@@ -110,6 +110,7 @@ def parse_options(parser,argv=None,*,paths=(),sources=None):
     try:
         source=Path(selected.file).expanduser().resolve()
         raw=source.read_bytes()
+        from .tifxyz_contract import parse_json
         settings=parse_json(raw.decode())
         if not isinstance(settings,dict):raise ValueError('settings must be a JSON object')
         if sources is not None:sources[str(source)]=hashlib.sha256(raw).hexdigest()

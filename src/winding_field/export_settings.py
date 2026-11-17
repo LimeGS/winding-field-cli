@@ -97,3 +97,66 @@ def range_request(args):
                      ('theta_ref','theta_ref'),('samples_per_w','samples_per_w'),('max_edge_world','max_edge_world')):
         if flag in vars(args):request[key]=vars(args)[flag]
     return request
+
+
+_TIFXYZ_FLOATS=('pitch_um','tolerance_um','memory_gib','scratch_gib','reserve_disk_gib')
+_TIFXYZ_OPTIONS=(*_TIFXYZ_FLOATS,'roi_lo_zyx','roi_hi_zyx','whole_field','max_pixels','audit_backend','coverage_policy')
+_FRAME_OPTIONS=('output_frame','output_frame_id','output_origin_xyz_um','output_voxel_um',
+                'output_shape_zyx','output_source_identity_sha256')
+
+
+def tifxyz_arguments(parser,*,prefix='',include_levels=True):
+    output_frame_arguments(parser)
+    group=parser.add_argument_group('direct TIFXYZ request',argument_default=argparse.SUPPRESS)
+    if include_levels:group.add_argument('--levels',type=float,nargs='+',help='raw field isovalues')
+    elif prefix:group.add_argument('--'+prefix+'levels',type=float,nargs='+',help='direct export raw isovalues; must agree with producer --levels when supplied')
+    for name in _TIFXYZ_FLOATS:
+        group.add_argument('--'+prefix+name.replace('_','-'),type=auto_float if name in ('pitch_um','tolerance_um') else float,
+                           help='micrometres; auto uses existing defaults' if name in ('pitch_um','tolerance_um') else 'GiB')
+    for name in ('roi_lo_zyx','roi_hi_zyx'):
+        group.add_argument('--'+prefix+name.replace('_','-'),type=int,nargs=3,help='half-open field node bounds, ZYX')
+    group.add_argument('--'+prefix+'whole-field',action='store_true')
+    group.add_argument('--'+prefix+'max-pixels',type=int)
+    group.add_argument('--'+prefix+'audit-backend',choices=('numpy','cpu','cuda'))
+    group.add_argument('--'+prefix+'coverage-policy',choices=('strict','allow_partial'))
+    group.add_argument('--output-frame',choices=('selected-source',))
+    group.add_argument('--output-shape-zyx',type=int,nargs=3)
+    group.add_argument('--output-source-identity-sha256')
+
+
+def tifxyz_request(args,*,path=None,prefix=''):
+    from .tifxyz_contract import validate_request
+    request=read_settings(path) if path else {}
+    if path is None and not prefix and getattr(args,'config',None):
+        request=read_settings(args.config)
+    values=vars(args);overrides={}
+    nested_levels=prefix.replace('-','_')+'levels'
+    if prefix and nested_levels in values:overrides['levels']=values[nested_levels]
+    elif values.get('levels') is not None and (not prefix or 'levels' not in request):
+        overrides['levels']=values['levels']
+    for name in _TIFXYZ_OPTIONS:
+        flag=prefix.replace('-','_')+name
+        if flag not in values:continue
+        value=values[flag]
+        if name in ('roi_lo_zyx','roi_hi_zyx'):
+            overrides.setdefault('roi',{})[name[4:]]=value
+        elif name!='whole_field':overrides[name]=value
+    if values.get(prefix.replace('-','_')+'whole_field'):
+        if 'roi' in overrides:raise ValueError('whole-field conflicts with explicit ROI')
+        overrides['roi']=None
+    frame=output_frame_overrides(args)
+    for flag,key in (('output_shape_zyx','shape_zyx'),('output_source_identity_sha256','source_identity_sha256')):
+        if flag in values:frame[key]=values[flag]
+    if 'output_frame' in values:
+        if frame:raise ValueError('selected-source conflicts with explicit output frame')
+        overrides['output_frame']=values['output_frame']
+    elif frame:overrides['output_frame']=frame
+    if not request and not overrides:return None
+    return validate_request(merge_explicit(request,overrides))
+
+
+def pop_tifxyz_options(config,*,prefix=''):
+    """Do not leak nested output options into the producer's saved configuration."""
+    for name in (*_FRAME_OPTIONS,*(prefix.replace('-','_')+n for n in _TIFXYZ_OPTIONS)):
+        config.pop(name,None)
+    if prefix:config.pop(prefix.replace('-','_')+'levels',None)
