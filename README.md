@@ -15,6 +15,7 @@ saved before execution; explicit devices and resumed runs are not reselected.
 MPS builds without FP64 support are skipped. There is no fallback after starting.
 
 **Flags or config files:** all public commands accept `--cli-config FILE`
+in JSON or YAML (`.yaml`/`.yml`),
 using underscore option names. Explicit flags win over file values, then defaults.
 Native recipe options such as `--config` remain supported but are optional when
 their settings are supplied by flags. Scientific input arrays, hashes and frame

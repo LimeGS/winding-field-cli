@@ -11,6 +11,7 @@ recursive-include tests *.py
 include tools/vendor.py
 include examples/*.py
 include examples/*.json
+include examples/*.yaml
 include tools/run_field.py
 include tools/run_surfaces.py
 include tools/benchmark_blocks.py

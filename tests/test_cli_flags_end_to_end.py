@@ -178,6 +178,26 @@ def test_max_bytes_auto_clears_inherited_prepared_memory_limit(tmp_path):
     assert request['execution']['max_bytes'] is None
 
 
+def test_yaml_cli_recipe_runs_real_prepared_mesh_and_resume_without_yaml_file(tmp_path,monkeypatch):
+    import yaml
+    source=tmp_path/'phi.npy';np.save(source,np.indices((3,4,5))[2].astype(float))
+    options=tmp_path/'options.yml'
+    options.write_text(yaml.safe_dump(dict(field_kind='npy',field_path='phi.npy',field_sha256=file_sha(source),
+        field_frame='test/world',field_voxel_um=9.6,field_origin_xyz=[10.,20.,30.],
+        field_spacing_xyz=[2.,3.,4.],field_shape_zyx=[3,4,5],sheet_step=1.,levels=[1.5],
+        tile=2,output='mesh output')))
+    pin=file_sha(options)
+    elsewhere=tmp_path/'elsewhere';elsewhere.mkdir();monkeypatch.chdir(elsewhere)
+    assert main(['prepared','mesh','--cli-config',str(options)])==0
+    output=tmp_path/'mesh output'
+    manifest=json.loads((output/'MESH.json').read_bytes())
+    assert manifest['metadata']['voxel_um']==9.6 and manifest['levels'][0]['level']==1.5
+    recipe=Path(json.loads((output/'REQUEST.json').read_bytes())['config_path'])
+    assert json.loads(recipe.read_bytes())['sources']=={str(options):pin}
+    options.unlink()
+    assert main(['prepared','mesh','--resume','--output',str(output)])==0
+
+
 @pytest.mark.skipif(sys.platform!='linux',reason='whole-sheet LSCM process-tree resource guard requires Linux')
 def test_prepared_mesh_to_whole_sheet_lscm_ct_xyz_without_user_json(tmp_path):
     from test_flattening_matrix import source_bundle,request
