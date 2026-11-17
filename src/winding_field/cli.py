@@ -134,6 +134,7 @@ def main(argv=None):
         p.add_argument('--model-path',help='local checkpoint for the selected fibre predictor'); p.add_argument('--device',default='auto',help='PyTorch prediction/field device: auto (default) selects usable CUDA, then MPS, then CPU; or an explicit device such as cpu or cuda:0')
         p.add_argument('--fibres',help='external AFV; replaces fibre inference/tracing')
         p.add_argument('--fibres-geometry',help='explicit AFV XYZ-to-world geometry JSON')
+        p.add_argument('--import-workers',type=int,default=1,help='local AFV/Lasagna compute workers: 1 serial (default), 0 resource-admitted auto; parent writes in order')
         p.add_argument('--lasagna-python',help='isolated official Python 3.14 runtime')
         p.add_argument('--lasagna-model-path',help='local pinned Lasagna surface checkpoint')
         from .config import LASAGNA_DOWNSAMPLE

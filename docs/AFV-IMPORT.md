@@ -2,7 +2,8 @@
 
 External AFV import retains the existing source/geometry/map checks, physical
 coordinates, classification/annotations, ROI/support clipping and curve checksums.
-It still streams one source block at a time. No scientific parameter or SQLite
+The serial route streams one source block at a time; optional local workers use
+bounded in-flight blocks and one ordered parent writer. No scientific parameter or SQLite
 durability setting is changed.
 
 ## Transactions and recovery
@@ -23,7 +24,7 @@ durability setting is changed.
   contract. Different commit boundaries can change SQLite bytes; logical curves,
   annotations, clipping, spatial indexes and inventories must match instead.
 
-No list of batches/fibres/results is accumulated in Python. SQLite retains its
+There is no unbounded list of batches/fibres/results. SQLite retains its
 existing bounded page cache and normal journal/spill behavior. These limits do
 not make an individual oversized source block acceptable: existing block-size
 validation is unchanged.
@@ -51,6 +52,7 @@ pause/failure and completion. A fast batch commit does not force a progress writ
 | `last_batch_committed_utc` | Epoch seconds recorded after a successful commit; null if unknown |
 | `updated_utc` | Snapshot wall-clock epoch seconds |
 | `identity_sha256` | Import identity associated with this advisory snapshot |
+| `execution` | Requested/admitted workers, limiting resource, worker PIDs and support loads; advisory only |
 
 On resume, committed blocks can exceed processed blocks while retained data is
 being revalidated. After rollback, processed work can exceed durable work while
@@ -65,7 +67,116 @@ status write fails, import stops safely; confirmed batches remain durable and
 the original failure is not replaced by another telemetry write failure.
 Completion authority remains the verified `FIBRES.json` receipt.
 
-## Reproduce the benchmark
+## Local prepare and import throughput
+
+- `--import-workers 1` is the default serial reference. `0` requests automatic
+  admission; positive `N` is a maximum, not a promise to start N processes.
+- Admission respects CPU affinity/quota, writer capacity, effective memory and
+  shared disk headroom. It preserves 2 GiB host and 128 MiB effective-cgroup RAM
+  headroom and the configured disk reserve. Unknown memory selects serial mode.
+  Decoded source chunks, interpolation scratch, in-flight results and parent
+  replay are charged, not just output tile size.
+- Parallel tile computation requires purely local CT and prediction channels.
+  Remote/mirror-backed sources retain serial surface reads. Direct
+  `predict.prepare` callers without a bound CT ledger also stay serial.
+  Without external `--fibres`, surface reads stay serial alongside parent fibre
+  inference; its `--threads` setting is unchanged.
+- Imported observations use at most 256 MiB aggregate decoded cache across
+  parent/workers; support caches are separately bounded. Exact vectorized fibre
+  clipping retains the scalar streaming reference for pathological blocks.
+  Results/pins exceeding the 16 MiB worker envelope are recomputed by the parent,
+  never truncated or downsampled.
+- Calibrated local predictions are sampled directly into main maps. The legacy
+  standalone normalized-map importer remains available; saved identities are not
+  silently relabeled or migrated.
+- Source-ledger writes flush at 128 new chunks or 2 seconds and before the
+  consuming tile is published. AFV export commits up to 1,000 complete fibres or
+  2 seconds with its bounds/cursor atomically; a graceful export stop flushes its
+  complete records. Lasagna export records up to 128 atomically written files or
+  2 seconds. Exceptions roll back only pending database writes.
+- Worker errors are not silently replayed. STOP cancels admission and reaps owned
+  processes; after 5 seconds uncooperative workers are terminated. Graceful
+  partial/completed resume preserves committed tiles. A hard-killed parent
+  leaving an unsealed source inventory still rejects recovery rather than
+  guessing; use a new output for that existing failure mode.
+
+`lasagna-import/PERFORMANCE.json` (base-grid) or
+`lasagna-source/PERFORMANCE.json` (calibrated) reports tile admission/counters.
+AFV execution is in `fibres/STATUS.json`. Neither is a completion receipt.
+Hashes, geometry, missingness and authoritative ledgers remain the acceptance
+boundary. Incompatible implementation/config identities still require a new run.
+
+To measure **prepare + fibres + mandatory exports**, use a local-input JSON
+containing `source`, `fibres`, `lasagna_input` and any required geometry/ROI fields:
+
+```bash
+python tools/bench_local_imports.py --config /immutable-inputs/import.json \
+  --output /new-owned-directory/import-benchmark --repeats 3 \
+  --workers 1 2 4 0 --profile
+```
+
+The output must be new and cannot contain or be inside an input. Every trial uses
+a separate process/output. `RESULT.json` records requested/effective workers,
+overlapping stage/validation/map-compression times, parent/worker decode/hash/
+commit counters, sampled aggregate peak RSS, output bytes, implementation/input
+hashes and logical map/curve parity. Commit counts are not fsync counts; sampled
+RSS is not a hard memory ceiling. Header hashing is not separately instrumented.
+Input hashing warms the OS cache: these are warm-cache trials, not cold-I/O
+claims. Profiling and separate partial-resume trials are excluded from medians;
+completed-resume time and logical/retained-tile preservation are checked too.
+
+Use matched baseline/candidate environments with the **published pinned core**;
+`tests/test_core_distribution.py` checks its version and recorded source hashes.
+Run repetitions sequentially on the same filesystem, without competing
+benchmarks or cache drops. Default serial execution remains available. Real-data
+throughput/scaling is unqualified until representative immutable inputs and
+resource budgets are supplied; synthetic wins do not qualify production speedups.
+
+### Synthetic qualification (November 17, 2026)
+
+CLI v1.5.6 (`ff588ae7`) was compared with this branch using the same frozen
+task-1 benchmark instrumenter (`6a07be8`), published core 1.5.2, immutable tiny
+fixtures with 200 fibres, three sequential repetitions and warm OS caches.
+Times include prepare, fibre import and mandatory exports:
+
+| Input route | Baseline median | Candidate median | Reduction |
+|---|---:|---:|---:|
+| Local base-grid | 0.7516 s | 0.4695 s | 37.5% |
+| Local calibrated | 0.8389 s | 0.4580 s | 45.4% |
+
+All logical map/curve digests matched. Base-grid support loads fell 600→3,
+decodes 135→38 and commits 406→73. Calibrated support loads fell 800→4 and
+commits 328→48; its 25 decodes were unchanged.
+
+Separate extended trials requested workers 1/2/4/0 for both routes and checked
+partial/completed resume, retained-tile bytes/mtime, source immutability and
+profiling outside medians. **Every request admitted one worker** on this Mac
+because memory accounting was unknown. Timing differences between those requests
+are noise, not parallel scaling. Real 2/4-process correctness, order, cancellation
+and mutation checks passed under controlled admission on tiny test fixtures.
+
+The separate 1,000-block AFV benchmark also checked retained, excluded and
+scattered inputs against the frozen importer, with exact logical parity:
+
+| AFV case | Baseline median | Candidate median |
+|---|---:|---:|
+| Retained, fragmented support | 1.4637 s | 0.4672 s |
+| All excluded | 0.0497 s | 0.1988 s |
+| Scattered (one retained in twenty) | 0.1216 s | 0.2161 s |
+
+**Tiny standalone exclusion-heavy imports regress:** their new admission-module
+cold imports dominate (0.285 s of 0.351 s in a separate instrumented profile).
+This fixed startup cost is included, not hidden by warming imports. The measured
+whole-pipeline improvements do not promise faster execution for every workload.
+
+Software qualification: 2,466 tests passed, 61 skipped, with one existing
+multithreaded-fork deprecation warning. The installed macOS/Python 3.12 wheel
+passed 129 tests with 5 skips outside the checkout; package contents and pinned
+core source hashes were checked. Linux/container and Python 3.11 execution were
+not qualified locally. No production data, active job, release or deployment was
+changed.
+
+## Reproduce the serial AFV benchmark
 
 Freeze the old importer before testing, then install the candidate only in an
 isolated test environment. Never update or restart an active run/environment.
@@ -110,7 +221,7 @@ runs a separate extra candidate invocation, excluded from timing medians, and
 records top cumulative functions plus `PROFILE.pstats`. Cumulative call times
 can overlap; inspect the call graph before adding another optimization.
 
-## Measured results and limits
+## Historical durable-batching results and limits (November 11)
 
 Final measurements ran sequentially, with three alternating-order repetitions
 per workload and a separate profiled candidate invocation. Each comparison used
@@ -131,7 +242,8 @@ reported `synchronous=2`, `journal_mode=delete`; no durability relaxation was us
 The retained profile now places geometric/support clipping first: `_pieces`
 6.165 s cumulative, `supported` 4.594 s, `Tiles.load` 2.250 s, versus SQLite
 `execute` 0.222 s. These times overlap and profiling adds overhead. No further
-geometry, query or cache optimization was applied without separate evidence.
+geometry, query or cache optimization was applied in that historical comparison;
+the local pipeline optimizations above are separate.
 
 Runtime: Python 3.12.15, NumPy 2.4.6, SQLite 3.54.1, Linux x86_64/glibc 2.39,
 overlayfs with 4,096-byte filesystem blocks. The host is shared and OS caches

@@ -82,7 +82,7 @@ def test_offline_catalog_is_cached_and_never_fetches(tmp_path,monkeypatch):
 
 
 @pytest.mark.parametrize('option,value',[
-    ('stride',0),('stride',-1),('stride',9),('field_chunk',3),('chunk',129),
+    ('stride',0),('stride',-1),('stride',9),('import_workers',-1),('import_workers',True),('field_chunk',3),('chunk',129),
     ('rtol',float('nan')),('sweeps',0),('seed_stride',0),('fibre_weight',-1),
     ('chart_faces',8193),('threads',0),('levels',[float('inf')]),('levels',[1.,1.]),('field_spacing_um',0),
 ])

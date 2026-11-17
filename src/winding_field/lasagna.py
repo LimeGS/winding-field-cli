@@ -7,7 +7,7 @@ from pathlib import Path
 import shutil
 import sqlite3
 import subprocess
-from contextlib import ExitStack,closing
+from contextlib import ExitStack,closing,nullcontext
 
 import numpy as np
 
@@ -134,7 +134,7 @@ def _validate_work(root):
         raise ValueError('Lasagna output is unsealed; use a new output')
 
 
-def validate_retained(run,config):
+def validate_retained(run,config,*,volume=None):
     if config.get('lasagna_input'):
         from .lasagna_input import streamed
         if streamed(config):
@@ -143,17 +143,16 @@ def validate_retained(run,config):
             if not retained_import(run):return
             identity=json.loads((Path(run)/'lasagna-import/IDENTITY.json').read_bytes())
             source=identity['binding']['ct_selected']
-            volume=open_volume(dict(config,source=source['source'],level=source['level']))
-            try:
-                with LasagnaInput(volume,run,config) as reader:
+            with closing(open_volume(dict(config,source=source['source'],level=source['level']))) if volume is None else nullcontext(volume) as current:
+                if current.identity!=source:raise ValueError('Lasagna CT source identity changed')
+                with LasagnaInput(current,run,config) as reader:
                     reader.validate_used()
                     receipt=Path(run)/'LASAGNA.json'
                     if receipt.exists() and json.loads(receipt.read_bytes())['identity']!=reader.identity:
                         raise ValueError('external Lasagna receipt changed')
-            finally:volume.close()
             return
         from .lasagna_input import validate_retained as validate_input
-        return validate_input(run,config)
+        return validate_input(run,config,volume=volume)
     root=Path(run)/'lasagna-source'
     if not root.exists(): return
     identity=json.loads((root/'IDENTITY.json').read_bytes())
