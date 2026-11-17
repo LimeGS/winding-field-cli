@@ -14,6 +14,15 @@ accelerator only if the core's FP64 vector norm works. The concrete device is
 saved before execution; explicit devices and resumed runs are not reselected.
 MPS builds without FP64 support are skipped. There is no fallback after starting.
 
+**Flags or config files:** all public commands accept `--cli-config FILE`
+in JSON or YAML (`.yaml`/`.yml`),
+using underscore option names. Explicit flags win over file values, then defaults.
+Native recipe options such as `--config` remain supported but are optional when
+their settings are supplied by flags. Scientific input arrays, hashes and frame
+declarations are still required; requests/checkpoints are generated automatically.
+See the [complete flag/config mappings](docs/CLI-FLAGS.md) and
+[flag-first Paris4 example](docs/PREPARED.md#flag-first-paris4-example).
+
 Lasagna output reduction defaults to **cos 2×, grad_mag/nx/ny 4× per axis**.
 Use `--lasagna-cos-downsample`, `--lasagna-grad-mag-downsample`,
 `--lasagna-nx-downsample`, `--lasagna-ny-downsample` with 1, 2, 4 or 8
@@ -228,6 +237,30 @@ winding-field resume "$RUN" --field-sweeps 8
 This extends the checkpoint budget without changing the original configuration
 or discarding progress. Repeating the target adds nothing; lower targets and
 changes to published fields are rejected. Verification still gates publication.
+
+### Opt-in automatic field convergence
+
+Legacy commands above keep their current operators and limits. For a **new**
+automatic field, stop the initial workflow at `--until fibres`, then:
+
+```bash
+winding-field field-converge runs/prepared-inputs --output runs/field-auto \
+  --max-sweeps 32 --global-rtol 1e-6
+# After interruption, remove runs/field-auto/STOP if present, then:
+winding-field field-converge runs/field-auto --resume
+# Only if that automatic generation exhausted its budget:
+winding-field field-converge runs/field-auto --output runs/field-auto-next \
+  --max-sweeps 64
+```
+
+This field-only command privately copies inputs without repeating preparation or
+fibres, fixes the global constraint rows at inception, and checks the **stored**
+field after complete sweeps. It stops on global convergence, finite total budget,
+stagnation or interruption; it never starts meshes/flattening automatically.
+Numerical convergence is not physical-sheet validation.
+
+Existing legacy fields, including PHerc0483A, are **not migrated** or extended by
+this command. See [criterion, safety, limits and examples](docs/FIELD-CONVERGENCE.md).
 
 </details>
 

@@ -15,6 +15,26 @@ output directory:
 CT images and optional XYZ TIFFs are different products. Missing CT does not
 necessarily mean missing geometry; always inspect masks and coverage.
 
+## Flag-first external mesh export
+
+Native recipe files remain supported, but are no longer required. On Linux:
+
+```bash
+winding-field export-sheets --mesh-bundle runs/paris4-flags-W-60 \
+  --source /data/paris4-original-ct.zarr --voxel-um 9.6 --level 0 \
+  --flattening-solver lscm --scope sheet \
+  --output-frame-id 'PHercParis4/20260411134726:L2' \
+  --output-origin-xyz-um 0 0 0 --output-voxel-um 9.6 \
+  --pitch-um 19.2 --memory-gib 6 --output exports/paris4-W-60
+```
+
+Replace CT path/level with the **actual calibrated dataset**, not the field's
+coarse Zarr. The pitch/memory above are an explicit example, not measured
+full-scroll settings or the user's production flattening recipe. Reuse your
+approved values. LSCM needs no native Flatboi; SLIM still requires its pinned
+binary and Linux admission. Complete mappings, automatic values and file/flag
+precedence are in [CLI-FLAGS](CLI-FLAGS.md).
+
 ## Export from a saved run
 
 After the README's `run --until field`, export without creating configuration files:
@@ -47,8 +67,9 @@ hashes and source receipts in `EXPORT.json`. Repeat the identical command with
 silently regenerated. Use a fresh output for changed settings. The output must
 be separate from the source run, not inside or above it.
 
-To override output coordinates, pitch or memory admission, supply an explicit
-`--flattening-config` using the original recipe's format below. Do not combine
+To override output coordinates, pitch or memory admission, supply output-frame
+flags, `--pitch NUMBER|auto`, `--memory-gib`, or optional `--flattening-config`
+using the original recipe's format below. Do not combine
 `--run` with `--source`, `--level`, `--voxel-um`, another input selector, patches,
 or the solver/scope matrix: saved inputs are authoritative. `--levels` retains
 the existing **raw field isovalue** contract, not automatic W recalibration.

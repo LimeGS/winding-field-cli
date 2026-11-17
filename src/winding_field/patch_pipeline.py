@@ -724,10 +724,11 @@ class PatchCT:
 
 def export_existing(args):
     import signal
-    if args.field_config:raise ValueError('patches requires --mesh-bundle; extract a mesh or join ranges first')
+    from .export_settings import field_request,flattening_request
+    if field_request(args):raise ValueError('patches requires --mesh-bundle; extract a mesh or join ranges first')
     if args.levels:raise ValueError('patch mesh identity already defines its levels; omit --levels')
     if args.resume:raise ValueError('patch export does not resume; use a fresh output (source meshes remain immutable)')
-    cfg=settings(json.loads(Path(args.flattening_config).read_bytes()));check_flatboi(cfg['app_run'],cfg['native_recipe'])
+    cfg=settings(flattening_request(args));check_flatboi(cfg['app_run'],cfg['native_recipe'])
     # Validate the wrapper before creating CT caches or output.
     with open_mesh(args.mesh_bundle):pass
     out=Path(args.output).expanduser().resolve();source=Path(args.mesh_bundle).expanduser().resolve()

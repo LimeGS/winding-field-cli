@@ -11,6 +11,7 @@ from . import __version__
 from .io import Volume,resolve_source
 
 TOOLS = {
+    'field-converge': ('field_convergence', 'opt-in global field convergence; legacy routes remain unchanged'),
     'constant-sheet': ('constant_sheet', 'prepare, flatten, validate and render exact constant-W sheets'),
     'sheet-atlas': ('sheet_atlas', 'package and query side-by-side constant-W CT sheets'),
     'surface-export': ('surface_export', 'export a level set, flatten and sample CT'),
@@ -143,6 +144,8 @@ def main(argv=None):
                 default=argparse.SUPPRESS,help=f'{name} prediction output reduction per axis (default: {default}); nx/ny must match; model input and CT unchanged')
         p.add_argument('--lasagna-input',help='local/HTTP/S3 Lasagna v2 manifest; skips surface inference; explicit physical geometry uses calibrated interpolation, otherwise binds to the selected CT base grid')
         p.add_argument('--lasagna-geometry',help='explicit Lasagna base-grid XYZ-to-world geometry JSON')
+        from .input_settings import import_arguments
+        import_arguments(p)
         p.add_argument('--threshold',type=float,help='classical predictor CT intensity threshold; default: calibrated Otsu; unused by learned predictors')
         p.add_argument('--invalid-value',type=float,help='acquisition fill value to exclude; zero remains valid unless declared')
         p.add_argument('--field-chunk',type=int,default=64,help='field solver block edge in field-grid samples (default: 64)'); p.add_argument('--sweeps',type=int,default=4,help='field solver sweep budget (default: 4); not global convergence')
@@ -153,14 +156,18 @@ def main(argv=None):
         p.add_argument('--seed-stride',type=int,default=8,help='fibre seed grid spacing in observation samples (default: 8)'); p.add_argument('--fibre-weight',type=float,default=1.,help='field solver fibre constraint weight (default: 1)')
         p.add_argument('--levels',nargs='+',type=float,help='raw field isovalues (W * sheet_step), e.g. --levels -31; not CT pyramid levels'); p.add_argument('--mesh-tile',type=int,default=64,help='mesh extraction tile edge in field-grid cells (default: 64)')
         p.add_argument('--chart-faces',type=int,default=1024,help='native/atlas local chart face budget (default: 1024); not original global flattening'); p.add_argument('--threads',type=int,default=4,help='PyTorch CPU thread count (default: 4); not a global worker limit')
-        p.add_argument('--no-previews',dest='previews',action='store_false',help='skip legacy atlas chart previews; retain final CT renders')
+        p.add_argument('--previews',action=argparse.BooleanOptionalAction,default=True,help='legacy atlas chart previews; final CT renders are retained')
         p.add_argument('--surface-output',choices=['native','atlas','tifxyz'],default='native',help='pipeline branch: native surfaces (default), legacy atlas, or experimental direct-field tifxyz; not an output file format')
         p.add_argument('--flattening-method',choices=['slim','default','original'],help='native SLIM (default for new native runs), default: legacy local mapping, original: global LSCM; independent of field resolution')
         p.add_argument('--flattening-config',help='original-mapping JSON: output_frame, optional pitch and memory_gib; requires --flattening-method original')
         p.add_argument('--coverage-target',type=float,default=1.,help='native mapped mesh-area fraction in (0,1] (default: 1); not observed CT coverage')
         p.add_argument('--surface-time-limit',dest='surface_time_limit_s',type=float,default=1800.,help='cumulative active seconds per native W (default: 1800)')
-        p.add_argument('--export-tifxyz',action='store_true',help='add mesh-derived XYZ TIFFs to native/original CT renders; not direct-field export')
+        p.add_argument('--export-tifxyz',action=argparse.BooleanOptionalAction,default=False,help='add mesh-derived XYZ TIFFs to native/original CT renders; not direct-field export')
         p.add_argument('--tifxyz-config',help='Linux-only direct-export JSON; requires --surface-output tifxyz; frozen by content')
+        from .export_settings import tifxyz_arguments,auto_float
+        tifxyz_arguments(p,prefix='tifxyz-',include_levels=False)
+        p.add_argument('--pitch',type=auto_float,default=argparse.SUPPRESS,help='original mapping WORLD pitch, or auto')
+        p.add_argument('--original-memory-gib',type=float,default=argparse.SUPPRESS)
         p.add_argument('--until',choices=['prepare','fibres','field','mesh','flatten','assemble','render','tifxyz','original'],
                        help='default: terminal stage of the selected branch')
     for command in ('resume','status','prepare','fibres','field','mesh','flatten','assemble','render'):
@@ -173,14 +180,26 @@ def main(argv=None):
             p.add_argument('--field-sweeps',type=int,help='absolute total sweep budget for an unpublished bounded field; retries do not add sweeps')
             p.add_argument('--extra-surface-seconds',type=float,default=0.,help='explicit extra native budget; original elapsed/target retained')
     p=sub.add_parser('tifxyz',help='experimental direct export of an existing field; Linux runtime',
-        description='Export XYZ directly from a saved field in an admitted Linux worker. This experimental route does not sample CT; it is separate from mesh-derived TIFFs. A new export requires --config.')
+        description='Export XYZ directly from a saved field in an admitted Linux worker. This experimental route does not sample CT; it is separate from mesh-derived TIFFs. Supply typed request flags or optional --config.')
     p.add_argument('field_run',help='existing run directory containing the field'); p.add_argument('--output',required=True,help='direct-field TIFXYZ export directory')
-    p.add_argument('--config',help='direct-field export request JSON; required for a new export'); p.add_argument('--resume',action='store_true',help='continue the saved export request in --output')
+    p.add_argument('--config',help='optional direct-field export request JSON; explicit request flags override'); p.add_argument('--resume',action='store_true',help='continue the saved export request in --output')
+    from .export_settings import tifxyz_arguments
+    tifxyz_arguments(p)
     p=sub.add_parser('verify-tifxyz',help='read-only verification in an admitted Linux worker',
         description='Verify a direct-field READY or PARTIAL publication in an admitted Linux worker. Rechecks geometry, coverage and file integrity; does not modify the export or establish physical sheet correctness.')
     p.add_argument('output',help='direct-field export directory, not a native/original/UVW TIFF directory')
     p=sub.add_parser('extract-range',help='extract a calibrated continuous W range')
-    p.add_argument('--config',required=True,help='immutable field/geometry/umbilicus recipe JSON')
+    p.add_argument('--config',help='optional immutable field/geometry/umbilicus recipe JSON')
+    from .cli_settings import field_arguments
+    from .export_settings import flattening_arguments,auto_float
+    field_arguments(p)
+    group=p.add_argument_group('range overrides',argument_default=argparse.SUPPRESS)
+    group.add_argument('--umbilicus-point',nargs=3,type=float,action='append',help='WORLD XYZ in increasing Z')
+    group.add_argument('--handedness',type=int,choices=(-1,1))
+    group.add_argument('--w-ref',type=float)
+    group.add_argument('--theta-ref',type=float)
+    group.add_argument('--samples-per-w',type=int)
+    group.add_argument('--max-edge-world',type=auto_float)
     p.add_argument('--w-range',nargs=2,required=True,metavar=('A','B'),help='exact decimal bounds on the global W lattice')
     p.add_argument('--output',required=True)
     p.add_argument('--resume',action='store_true')
@@ -189,20 +208,23 @@ def main(argv=None):
     p.add_argument('--output',required=True)
     p=sub.add_parser('export-sheets',help='LSCM/SLIM on patches or whole sheets; historical recipes also available',
         description='Export flattened CT from a field or mesh. The solver/scope matrix and historical patches require Linux; original mapping also supports macOS. Choose --flattening-solver and --scope together, or a historical --flattening-method. LSCM needs no Flatboi; SLIM requires the pinned binary and cgroup limits. Outputs remain diagnostic.')
-    inputs=p.add_mutually_exclusive_group(required=True)
+    inputs=p.add_mutually_exclusive_group()
     inputs.add_argument('--run',help='completed field run; infer saved inputs and original mapping defaults without manual JSON')
     inputs.add_argument('--field-config',help='field path/hash and geometry JSON; requires --levels; not supported by historical patches')
     inputs.add_argument('--mesh-bundle',help='immutable mesh bundle or verified RANGE wrapper; original mapping rejects continuous ranges')
+    field_arguments(p)
+    flattening_arguments(p)
     p.add_argument('--levels',nargs='+',type=float,help='raw field isovalues (W * sheet_step); required with --field-config, forbidden with --mesh-bundle')
     p.add_argument('--source',help='original CT Zarr; required except with --run')
     p.add_argument('--level',type=int,help='CT Zarr pyramid level (default: 0, or saved run level); not a winding W value');p.add_argument('--voxel-um',type=float,help='micrometre scale for CT geometry lacking units; not field/output spacing')
-    p.add_argument('--output',required=True,help='sheet export directory');p.add_argument('--flattening-config',help='JSON: output_frame and render settings; inferred with --run, required otherwise; explicit slim requires app_run')
+    p.add_argument('--output',required=True,help='sheet export directory');p.add_argument('--flattening-config',help='optional JSON: output_frame and render settings; explicit flags override; slim requires app_run')
     p.add_argument('--flattening-method',choices=['original','patches'],help='historical recipe; cannot combine with --flattening-solver/--scope')
     p.add_argument('--flattening-solver',choices=['lscm','slim'],help='explicit algorithm; requires --scope')
     p.add_argument('--scope',choices=['patches','sheet'],help='independent patches or whole connected sheets; requires --flattening-solver')
-    p.add_argument('--export-tifxyz',action='store_true',help='add mesh-derived float32 XYZ TIFFs and validity mask alongside CT renders');p.add_argument('--resume',action='store_true',help='repeat identical inputs/settings; unavailable for historical patches')
+    p.add_argument('--export-tifxyz',action=argparse.BooleanOptionalAction,default=False,help='add mesh-derived float32 XYZ TIFFs and validity mask alongside CT renders');p.add_argument('--resume',action='store_true',help='repeat identical inputs/settings; unavailable for historical patches')
     p=sub.add_parser('export-uvw',help='aligned diagnostic W band from one original global UV map')
-    p.add_argument('--field-config',required=True,help='SHA-bound field descriptor JSON')
+    p.add_argument('--field-config',help='optional SHA-bound field descriptor JSON')
+    field_arguments(p)
     p.add_argument('--reference-sheet',required=True,help='original/level-NNNN with independent publication ledger')
     p.add_argument('--levels',nargs='+',type=float,required=True,help='finite W targets; band must contain reference W')
     p.add_argument('--source',required=True,help='same physical CT source as reference')
@@ -227,7 +249,12 @@ def main(argv=None):
     p=sub.add_parser('models',help='download and verify a pinned checkpoint')
     p.add_argument('--path',help='checkpoint destination; default: model cache')
     p.add_argument('--prediction',choices=['qual-v2','sd2','lasagna'],default='qual-v2',help='checkpoint to download (default: qual-v2)')
-    args=parser.parse_args(argv)
+    from .cli_settings import parse_options
+    args=parse_options(parser,argv,paths=('source','output','run','local','cache','model_path','fibres',
+        'fibres_geometry','lasagna_model_path','lasagna_geometry','lasagna_input','lasagna_python','path',
+        'field_config','flattening_config','tifxyz_config','reference_sheet','mesh_bundle','config','field_run','inputs',
+        'fibres_source','lasagna_source','lasagna_ct_source',('lasagna_channel',2),('lasagna_metadata_pin',0)),
+        lexical_paths=('lasagna_python',))
     direct=False; native=False
     try:
         if args.command=='inspect':
@@ -248,24 +275,40 @@ def main(argv=None):
                         prediction=args.prediction,sha256=model_sha(args.prediction))
         elif args.command in ('run','plan'):
             from .workflow import run,plan,stage_path
-            from .config import validate_config,read_tifxyz_request
+            from .config import validate_config
+            from .export_settings import tifxyz_request,pop_tifxyz_options,output_frame_overrides
+            from .cli_settings import merge_explicit,read_settings
             from .util import digest
             config=vars(args).copy(); command=config.pop('command'); until=config.pop('until')
+            from .input_settings import import_requests,IMPORT_OPTIONS
+            declarations=import_requests(args)
+            for key in IMPORT_OPTIONS:config.pop(key,None)
+            config.update(declarations)
             config['device']=resolve_device(config['device'])
             if config['flattening_method'] is None:
                 config['flattening_method']='slim' if config['surface_output']=='native' else 'default'
             original=config.pop('flattening_config')
-            if original:
-                config['original_request']=json.loads(Path(original).read_bytes())
+            original_flags={key:config.pop(flag) for flag,key in
+                            (('pitch','pitch'),('original_memory_gib','memory_gib')) if flag in config}
             if config['flattening_method']=='original':
                 from .original_pipeline import settings
-                settings(config.get('original_request'))
-            elif original:
+                if any(name in config for name in ('output_frame','output_shape_zyx','output_source_identity_sha256')):
+                    raise ValueError('direct TIFXYZ frame selection/shape/source pin is not an original-mapping setting')
+                frame=output_frame_overrides(args)
+                if frame:original_flags['output_frame']=frame
+                config['original_request']=settings(merge_explicit(read_settings(original) if original else {},original_flags))
+            elif original or original_flags:
                 raise ValueError('--flattening-config requires --flattening-method original')
             request=config.pop('tifxyz_config')
-            if request:
-                config['tifxyz_request']=read_tifxyz_request(request)
+            has_tifxyz=any(name.startswith('tifxyz_') for name in config) or request is not None
+            if config['surface_output']=='tifxyz':
+                config['tifxyz_request']=tifxyz_request(args,path=request,prefix='tifxyz-')
                 config['tifxyz_request_sha256']=digest(config['tifxyz_request'])
+            elif has_tifxyz:
+                raise ValueError('--tifxyz settings require --surface-output tifxyz')
+            elif config['flattening_method']!='original' and any(name.startswith('output_') for name in config):
+                raise ValueError('output frame flags require original mapping or direct TIFXYZ')
+            pop_tifxyz_options(config,prefix='tifxyz-')
             direct=config['surface_output']=='tifxyz' and command=='run'
             native=config['surface_output']=='native' and config['flattening_method']!='original' and command=='run'
             validate_config(config)
@@ -275,9 +318,9 @@ def main(argv=None):
                 raise ValueError('--until '+until+' is incompatible with the selected surface output')
             config['output']=str(Path(config['output']).expanduser().absolute())
             for key in ('local','cache','model_path','fibres','fibres_geometry','lasagna_model_path','lasagna_geometry'):
-                if config.get(key):
+                if config.get(key) and not isinstance(config[key],dict):
                     config[key]=str(Path(config[key]).expanduser().resolve())
-            if config.get('lasagna_input'):
+            if config.get('lasagna_input') and not isinstance(config['lasagna_input'],dict):
                 from .lasagna_stream import location
                 config['lasagna_input']=location(config['lasagna_input'])
             if config.get('lasagna_python'):
@@ -302,6 +345,9 @@ def main(argv=None):
             result=plan(config) if command=='plan' else run(config,until=until)
         elif args.command=='export-uvw':
             from .uvw_pipeline import export_existing
+            from .export_settings import field_request
+            from .cli_settings import field_overrides
+            if field_overrides(args):args.resolved_field=field_request(args)
             interrupted=False
             def handle_uvw(signum,frame):
                 nonlocal interrupted
@@ -312,14 +358,15 @@ def main(argv=None):
                 for sig,handler in previous.items():signal.signal(sig,handler)
         elif args.command=='extract-range':
             from .range_surface import extract_range
-            result=extract_range(json.loads(Path(args.config).read_bytes()),args.w_range,args.output,resume=args.resume)
+            from .export_settings import range_request
+            result=extract_range(range_request(args),args.w_range,args.output,resume=args.resume)
         elif args.command=='join-ranges':
             from .range_surface import join_ranges
             result=join_ranges(args.inputs,args.output)
         elif args.command=='export-sheets':
             if not args.run:
-                if not args.source or not args.flattening_config:
-                    raise ValueError('--source and --flattening-config are required without --run')
+                if not args.source:
+                    raise ValueError('--source is required without --run')
                 if args.level is None:args.level=0
             if args.run:
                 from .run_sheet_export import export_run as export_existing
@@ -333,10 +380,24 @@ def main(argv=None):
                 from .original_pipeline import export_existing
             else:
                 raise ValueError('flattening selection required: --flattening-solver with --scope, or historical --flattening-method')
+            from .export_settings import field_request,flattening_request
+            from .cli_settings import field_overrides
+            if (args.run or args.mesh_bundle) and field_overrides(args):
+                raise ValueError('saved run/mesh sources cannot combine with field overrides')
+            args.resolved_field=field_request(args)
+            if not args.run:
+                args.resolved_flattening=flattening_request(args)
+                if (args.resolved_field is None)==(args.mesh_bundle is None):
+                    raise ValueError('exactly one field or mesh source required')
+                if args.resolved_field is not None:
+                    from .surface_sources import FieldSource
+                    with FieldSource(args.resolved_field['field'],args.resolved_field['geometry']) as source:
+                        source.validate(hashes=True)
             result=export_existing(args)
         elif args.command in ('tifxyz','verify-tifxyz'):
             from .tifxyz import _path,export_field,verify_export
-            from .config import read_tifxyz_request,tifxyz_settings
+            from .config import tifxyz_settings
+            from .export_settings import tifxyz_request
             direct=True
             out=_path(Path(args.output).expanduser())
             interrupted=False
@@ -354,7 +415,7 @@ def main(argv=None):
                     source=_path(Path(args.field_run).expanduser())
                     if out==source or source in out.parents:
                         raise ValueError('standalone output must be outside the read-only field run')
-                    request=read_tifxyz_request(args.config) if args.config else None
+                    request=tifxyz_request(args)
                     settings=tifxyz_settings(out,request,resume=args.resume)
                     result=export_field(source,out,settings,resume=args.resume,stop=stop)
             finally:

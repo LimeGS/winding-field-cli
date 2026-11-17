@@ -251,7 +251,8 @@ def main(argv=None):
     build.add_argument('--output',type=Path,required=True);build.add_argument('--disk-reserve-gib',type=float,default=8)
     query=sub.add_parser('query');query.add_argument('atlas',type=Path);query.add_argument('x',type=int);query.add_argument('y',type=int)
     verify=sub.add_parser('verify');verify.add_argument('--atlas',type=Path,required=True)
-    args=parser.parse_args(argv)
+    from .cli_settings import parse_options
+    args=parse_options(parser,argv)
     if args.command=='build':
         result=build_atlas(args.sheets,args.output,reserve_gib=args.disk_reserve_gib)
         print(json.dumps(dict(status=result['status'],shape_yx=result['shape_yx'],sheets=len(result['sheets']))))

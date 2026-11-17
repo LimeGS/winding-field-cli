@@ -798,7 +798,7 @@ def _preview(path, values, valid, window=None):
 def main(argv=None):
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--field", type=Path, required=True)
-    p.add_argument("--metadata", type=Path, required=True)
+    p.add_argument("--metadata", type=Path)
     p.add_argument("--level", type=float, required=True, help="actual RAW field isovalue, no automatic selection")
     p.add_argument("--seed-xyz", "--seedXYZ", type=float, nargs=3)
     p.add_argument("--output", type=Path, required=True, help="new directory, parent must exist")
@@ -814,14 +814,28 @@ def main(argv=None):
     p.add_argument("--ct-support", type=Path, help="optional bool ZYX CT-support .npy")
     p.add_argument("--pitch", type=float, required=True, help="UV grid pitch in WORLD units")
     p.add_argument("--depth-offsets", nargs="+", type=float, default=[0.0], help="normal offsets in WORLD units")
-    args = p.parse_args(argv)
-    if bool(args.ct) != bool(args.ct_metadata) or (args.ct_support and not args.ct):
-        p.error("--ct and --ct-metadata are required together; --ct-support needs CT")
+    from .tool_settings import metadata_arguments,metadata_request,ct_request,materialize_metadata,check_sources
+    from .cli_settings import parse_options
+    metadata_arguments(p,ct=True,ownership=False)
+    args = parse_options(p,argv)
+    if (args.ct_metadata and not args.ct) or (args.ct_support and not args.ct):
+        p.error("CT metadata/support needs --ct")
     if args.app_run_sha256 and not args.app_run:
         p.error("--app-run-sha256 requires --app-run")
+    try:
+        meta=metadata_request(args)
+        cm=ct_request(args) if args.ct else None
+        if args.ct:
+            shape=np.load(args.ct,mmap_mode='r',allow_pickle=False).shape
+            _metadata(cm,shape)
+    except (ValueError,OSError,KeyError,TypeError) as error:
+        print(f"surface input error: {error}",file=sys.stderr)
+        return 2
     args.output.mkdir(exist_ok=False)
+    materialize_metadata(args,args.output,meta,cm)
     receipt = dict(
         schema="winding.surface-export.v1",
+        request_sources=getattr(args,'_request_sources',{}),
         status="FAILED",
         argv=list(sys.argv[1:] if argv is None else argv),
         source_sha256=_sha(__file__),
@@ -904,6 +918,7 @@ def main(argv=None):
                 }
         if receipt["inputs_sha256"] != {str(path): _sha(path) for path in paths if path is not None}:
             raise ValueError("input bytes changed during export")
+        check_sources(args)
         receipt["status"], code = "EXPORTED_UNCERTIFIED", 0
     except (ValueError, OSError, RuntimeError, KeyError, TypeError, MemoryError) as error:
         receipt["error"] = f"{type(error).__name__}: {error}"

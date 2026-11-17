@@ -5,6 +5,14 @@ target winding density, with Qual V2 supplying fibres/splines. `--fibres` replac
 fibre inference/tracing with an external AFV. Explicit `--prediction sd2` also uses
 Lasagna; `--prediction classical` without an AFV uses the offline local baseline.
 
+Imported manifests/physical geometry can be supplied by named flags instead of
+authored JSON: `--fibres-source`, `--fibres-origin-xyz-um`,
+`--fibres-spacing-xyz-um`; Lasagna uses repeated
+`--lasagna-channel GROUP CHANNEL ZARR SCALEDOWN` and `--lasagna-crop` plus its
+frame/encoding declarations. [All input mappings](CLI-FLAGS.md#afvlasagna-input-declarations)
+also work through `--cli-config`, with explicit flags winning over file values.
+Actual prediction/AFV data, source pins and validity ledgers remain mandatory.
+
 ## One-time runtime setup
 
 The CLI/core retain Python 3.11/3.12. Pinned Villa Lasagna requires Python 3.14,
