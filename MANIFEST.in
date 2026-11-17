@@ -19,3 +19,4 @@ include tools/bench_flattening.py tools/flattening_ct.py tools/flattening_metric
 include tools/install.sh
 include tools/install-runtime.sh tools/ubuntu-packages.txt
 recursive-include docker *.in *.txt
+include tools/bench_local_imports.py
