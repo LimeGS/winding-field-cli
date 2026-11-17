@@ -111,3 +111,34 @@ def test_lasagna_export_batches_complete_files(tmp_path,monkeypatch):
     assert len(writes)<=3
     with sqlite3.connect(root/'exports.sqlite') as db:
         assert db.execute('SELECT count(*) FROM files').fetchone()[0]==21
+
+
+def test_worker_pin_capture_includes_cache_hits_and_rejects_conflicting_parent_pins(tmp_path):
+    source=write_ct(tmp_path/'ct',np.ones((4,4,4),np.uint8),chunk=4)
+    with closing(Volume(source,cache=tmp_path/'cache',decoded_cache_bytes=1<<20)) as child:
+        child.bind_ledger(tmp_path/'child.sqlite')
+        with child.verified_chunks():
+            with child.capture_pins() as first:child.read([0]*3,[4]*3)
+            with child.capture_pins() as second:child.read([0]*3,[4]*3)
+            assert first==second and list(first)==['0/0.0.0']
+        with closing(Volume(source,cache=tmp_path/'parent-cache')) as parent:
+            parent.bind_ledger(tmp_path/'parent.sqlite')
+            parent.merge_pins(first);parent.validate_used()
+            with pytest.raises(ValueError,match='changed'):parent.merge_pins({'0/0.0.0':'0'*64})
+            for key in ('../escape','0/1.0.0','0/0.0.-1'):
+                with pytest.raises(ValueError):parent.merge_pins({key:'0'*64})
+
+
+def test_pin_capture_is_bounded_and_does_not_weaken_metadata_checks(tmp_path):
+    from winding_field.io import PinBudgetExceeded
+    import json
+    source=write_ct(tmp_path/'ct',np.ones((4,4,4),np.uint8),chunk=4)
+    with closing(Volume(source,cache=tmp_path/'cache')) as volume:
+        volume.bind_ledger(tmp_path/'source.sqlite')
+        with pytest.raises(PinBudgetExceeded):
+            with volume.capture_pins(dict(remaining=1)):volume.read([0]*3,[4]*3)
+        with pytest.raises(ValueError,match='metadata'):
+            with volume.verified_chunks():
+                volume.read([0]*3,[4]*3)
+                path=source/'0/.zarray';data=json.loads(path.read_bytes());data['order']='F'
+                path.write_text(json.dumps(data))
