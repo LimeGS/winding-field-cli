@@ -378,9 +378,22 @@ def _copy(root,source,files,reserve):
                 if existing is not None:
                     with os.fdopen(existing,'rb') as stream:
                         info=os.fstat(stream.fileno())
-                        if (not stat.S_ISREG(info.st_mode) or info.st_nlink!=1 or info.st_size!=entry['bytes']
+                        if (not stat.S_ISREG(info.st_mode) or info.st_size!=entry['bytes']
                                 or hashlib.file_digest(stream,'sha256').hexdigest()!=entry['sha256']):
                             raise ValueError('retained admission copy differs')
+                        if info.st_nlink!=1:
+                            aliases=[]
+                            for candidate in os.listdir(staging):
+                                if re.fullmatch(r'\.copy-[0-9a-f]{32}',candidate):
+                                    other=os.stat(candidate,dir_fd=staging,follow_symlinks=False)
+                                    if (other.st_dev,other.st_ino)==(info.st_dev,info.st_ino):aliases.append(candidate)
+                            if info.st_nlink!=1+len(aliases):
+                                raise ValueError('admission copy has an external writable alias')
+                            # Recover only our exact staging inode after a link/unlink crash.
+                            for candidate in aliases:os.unlink(candidate,dir_fd=staging)
+                            os.fsync(staging)
+                            if os.fstat(stream.fileno()).st_nlink!=1:
+                                raise ValueError('admission copy alias changed')
                     continue
                 if shutil.disk_usage(root).free<reserve+entry['bytes']+65536:
                     raise OSError('insufficient space for private convergence copy and reserve')
