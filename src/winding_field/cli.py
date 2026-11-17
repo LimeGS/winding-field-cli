@@ -180,7 +180,17 @@ def main(argv=None):
         description='Verify a direct-field READY or PARTIAL publication in an admitted Linux worker. Rechecks geometry, coverage and file integrity; does not modify the export or establish physical sheet correctness.')
     p.add_argument('output',help='direct-field export directory, not a native/original/UVW TIFF directory')
     p=sub.add_parser('extract-range',help='extract a calibrated continuous W range')
-    p.add_argument('--config',required=True,help='immutable field/geometry/umbilicus recipe JSON')
+    p.add_argument('--config',help='optional immutable field/geometry/umbilicus recipe JSON')
+    from .cli_settings import field_arguments
+    from .export_settings import flattening_arguments,auto_float
+    field_arguments(p)
+    group=p.add_argument_group('range overrides',argument_default=argparse.SUPPRESS)
+    group.add_argument('--umbilicus-point',nargs=3,type=float,action='append',help='WORLD XYZ in increasing Z')
+    group.add_argument('--handedness',type=int,choices=(-1,1))
+    group.add_argument('--w-ref',type=float)
+    group.add_argument('--theta-ref',type=float)
+    group.add_argument('--samples-per-w',type=int)
+    group.add_argument('--max-edge-world',type=auto_float)
     p.add_argument('--w-range',nargs=2,required=True,metavar=('A','B'),help='exact decimal bounds on the global W lattice')
     p.add_argument('--output',required=True)
     p.add_argument('--resume',action='store_true')
@@ -189,10 +199,12 @@ def main(argv=None):
     p.add_argument('--output',required=True)
     p=sub.add_parser('export-sheets',help='LSCM/SLIM on patches or whole sheets; historical recipes also available',
         description='Export flattened CT from a field or mesh. The solver/scope matrix and historical patches require Linux; original mapping also supports macOS. Choose --flattening-solver and --scope together, or a historical --flattening-method. LSCM needs no Flatboi; SLIM requires the pinned binary and cgroup limits. Outputs remain diagnostic.')
-    inputs=p.add_mutually_exclusive_group(required=True)
+    inputs=p.add_mutually_exclusive_group()
     inputs.add_argument('--run',help='completed field run; infer saved inputs and original mapping defaults without manual JSON')
     inputs.add_argument('--field-config',help='field path/hash and geometry JSON; requires --levels; not supported by historical patches')
     inputs.add_argument('--mesh-bundle',help='immutable mesh bundle or verified RANGE wrapper; original mapping rejects continuous ranges')
+    field_arguments(p)
+    flattening_arguments(p)
     p.add_argument('--levels',nargs='+',type=float,help='raw field isovalues (W * sheet_step); required with --field-config, forbidden with --mesh-bundle')
     p.add_argument('--source',help='original CT Zarr; required except with --run')
     p.add_argument('--level',type=int,help='CT Zarr pyramid level (default: 0, or saved run level); not a winding W value');p.add_argument('--voxel-um',type=float,help='micrometre scale for CT geometry lacking units; not field/output spacing')
@@ -200,9 +212,10 @@ def main(argv=None):
     p.add_argument('--flattening-method',choices=['original','patches'],help='historical recipe; cannot combine with --flattening-solver/--scope')
     p.add_argument('--flattening-solver',choices=['lscm','slim'],help='explicit algorithm; requires --scope')
     p.add_argument('--scope',choices=['patches','sheet'],help='independent patches or whole connected sheets; requires --flattening-solver')
-    p.add_argument('--export-tifxyz',action='store_true',help='add mesh-derived float32 XYZ TIFFs and validity mask alongside CT renders');p.add_argument('--resume',action='store_true',help='repeat identical inputs/settings; unavailable for historical patches')
+    p.add_argument('--export-tifxyz',action=argparse.BooleanOptionalAction,default=False,help='add mesh-derived float32 XYZ TIFFs and validity mask alongside CT renders');p.add_argument('--resume',action='store_true',help='repeat identical inputs/settings; unavailable for historical patches')
     p=sub.add_parser('export-uvw',help='aligned diagnostic W band from one original global UV map')
-    p.add_argument('--field-config',required=True,help='SHA-bound field descriptor JSON')
+    p.add_argument('--field-config',help='optional SHA-bound field descriptor JSON')
+    field_arguments(p)
     p.add_argument('--reference-sheet',required=True,help='original/level-NNNN with independent publication ledger')
     p.add_argument('--levels',nargs='+',type=float,required=True,help='finite W targets; band must contain reference W')
     p.add_argument('--source',required=True,help='same physical CT source as reference')
@@ -227,7 +240,10 @@ def main(argv=None):
     p=sub.add_parser('models',help='download and verify a pinned checkpoint')
     p.add_argument('--path',help='checkpoint destination; default: model cache')
     p.add_argument('--prediction',choices=['qual-v2','sd2','lasagna'],default='qual-v2',help='checkpoint to download (default: qual-v2)')
-    args=parser.parse_args(argv)
+    from .cli_settings import parse_options
+    args=parse_options(parser,argv,paths=('source','output','run','local','cache','model_path','fibres',
+        'fibres_geometry','lasagna_model_path','lasagna_geometry','lasagna_input','lasagna_python','path',
+        'field_config','flattening_config','tifxyz_config','reference_sheet','mesh_bundle','config','field_run','inputs'))
     direct=False; native=False
     try:
         if args.command=='inspect':
@@ -302,6 +318,9 @@ def main(argv=None):
             result=plan(config) if command=='plan' else run(config,until=until)
         elif args.command=='export-uvw':
             from .uvw_pipeline import export_existing
+            from .export_settings import field_request
+            from .cli_settings import field_overrides
+            if field_overrides(args):args.resolved_field=field_request(args)
             interrupted=False
             def handle_uvw(signum,frame):
                 nonlocal interrupted
@@ -312,14 +331,15 @@ def main(argv=None):
                 for sig,handler in previous.items():signal.signal(sig,handler)
         elif args.command=='extract-range':
             from .range_surface import extract_range
-            result=extract_range(json.loads(Path(args.config).read_bytes()),args.w_range,args.output,resume=args.resume)
+            from .export_settings import range_request
+            result=extract_range(range_request(args),args.w_range,args.output,resume=args.resume)
         elif args.command=='join-ranges':
             from .range_surface import join_ranges
             result=join_ranges(args.inputs,args.output)
         elif args.command=='export-sheets':
             if not args.run:
-                if not args.source or not args.flattening_config:
-                    raise ValueError('--source and --flattening-config are required without --run')
+                if not args.source:
+                    raise ValueError('--source is required without --run')
                 if args.level is None:args.level=0
             if args.run:
                 from .run_sheet_export import export_run as export_existing
@@ -333,6 +353,19 @@ def main(argv=None):
                 from .original_pipeline import export_existing
             else:
                 raise ValueError('flattening selection required: --flattening-solver with --scope, or historical --flattening-method')
+            from .export_settings import field_request,flattening_request
+            from .cli_settings import field_overrides
+            if (args.run or args.mesh_bundle) and field_overrides(args):
+                raise ValueError('saved run/mesh sources cannot combine with field overrides')
+            args.resolved_field=field_request(args)
+            if not args.run:
+                args.resolved_flattening=flattening_request(args)
+                if (args.resolved_field is None)==(args.mesh_bundle is None):
+                    raise ValueError('exactly one field or mesh source required')
+                if args.resolved_field is not None:
+                    from .surface_sources import FieldSource
+                    with FieldSource(args.resolved_field['field'],args.resolved_field['geometry']) as source:
+                        source.validate(hashes=True)
             result=export_existing(args)
         elif args.command in ('tifxyz','verify-tifxyz'):
             from .tifxyz import _path,export_field,verify_export

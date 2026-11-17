@@ -246,8 +246,9 @@ def export_existing(args,*,run_export=None,volume=None):
     from .io import Volume
     from .workflow import implementation_sha
     out=Path(args.output).expanduser().resolve()
-    request=run_export['settings'] if run_export else settings(json.loads(Path(args.flattening_config).read_bytes()))
-    descriptor=run_export['field'] if run_export else json.loads(Path(args.field_config).read_bytes()) if args.field_config else None
+    from .export_settings import field_request,flattening_request
+    request=run_export['settings'] if run_export else settings(flattening_request(args))
+    descriptor=run_export['field'] if run_export else field_request(args)
     if descriptor is not None and not args.levels:raise ValueError('--levels required with --field-config')
     if args.mesh_bundle and args.levels:raise ValueError('mesh bundle already binds its levels; omit --levels')
     mesh=Path(args.mesh_bundle).expanduser().resolve() if args.mesh_bundle else out/'meshes'

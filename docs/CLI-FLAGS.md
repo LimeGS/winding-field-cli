@@ -138,3 +138,44 @@ generated serial recipe through `REQUEST.json` or a parallel recipe through
 `LEVELS.json`. Preserve both the output and its sibling request. Parallel
 collections keep full recipe bindings. Native legacy recipe invocations remain
 supported without translation.
+
+### Export, range and UVW mappings
+
+`export-sheets` accepts either a saved `--run`, an immutable `--mesh-bundle`,
+or the field descriptor/geometry flags above (optionally merged over
+`--field-config`). Direct field export also requires raw `--levels`. Mesh/run
+bindings cannot be silently replaced with field geometry flags.
+
+`--flattening-config` is optional. Its leaves map directly as follows; the
+existing selected-mode validator rejects flags not supported by that mode.
+
+| Settings | Flags / units |
+|---|---|
+| `output_frame.id`, `.origin_xyz_um`, `.voxel_um` | `--output-frame-id`, `--output-origin-xyz-um X Y Z`, `--output-voxel-um`; µm |
+| Original `pitch`, `memory_gib` | `--pitch NUMBER\|auto` (WORLD units), `--memory-gib` (GiB) |
+| Matrix/patch sampling and budgets | `--pitch-um`, `--tile-size`, `--memory-gib`, `--process-tree-gib`, `--disk-reserve-gib`; µm, pixels, GiB |
+| Cache and readers | `--cache-dir`, `--cache-mib`, `--cache-gib`, `--ct-workers`, `--raster-workers` |
+| Patch domains | `--max-patch-faces`, `--max-charts`; historical patches also `--max-depth`, `--timeout-seconds`, `--workers` |
+| Whole-sheet reference | repeated `--centerline-point X Y Z`, `--reference-z`; WORLD coordinates |
+| Native backend | `--app-run`, `--native-recipe`, historical `--native-cpus CPU...` / `--auto-native-cpus` |
+| Historical reuse binding | `--reuse-export`, `--reuse-identity-sha256`; both required together; clear both with `--no-reuse-export --no-reuse-identity` |
+
+`--flattening-solver lscm|slim --scope patches|sheet` remains distinct from
+historical `--flattening-method original|patches`. Native requirements, resource
+guards and Linux admission do not change. `--pitch` is not `--pitch-um`.
+CT still uses `--source`, `--voxel-um`, `--level` (pyramid index); no field/CT
+unit is inferred from the other. Existing `--run` uses its saved CT binding,
+while output-frame flags may override its original-mapping defaults.
+
+`extract-range` accepts optional native `--config` plus field/geometry flags,
+repeated `--umbilicus-point X Y Z`, `--handedness -1|1`, `--w-ref`,
+`--theta-ref`, `--samples-per-w`, `--max-edge-world NUMBER|auto`.
+`--w-range A B` preserves exact decimal text on the established W lattice;
+it is not the scalar mesh `--levels` option. `join-ranges` still takes actual
+range artifacts, not a recipe.
+
+`export-uvw` accepts field/geometry flags in place of `--field-config`. Its
+reference-sheet artifact, CT binding, levels, canvas samples, workers and
+cache MiB retain their established meanings and validation. The same settings
+are available through `--cli-config`; all known file paths use that file's
+directory and explicit flag paths use the current directory.

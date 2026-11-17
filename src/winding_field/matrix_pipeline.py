@@ -31,15 +31,16 @@ def verify_level(root,identity,ct):
 
 def export_existing(args):
     from .workflow import implementation_sha
-    cfg=settings(_json(Path(args.flattening_config)),args.flattening_solver,args.scope)
+    from .export_settings import field_request,flattening_request
+    cfg=settings(flattening_request(args),args.flattening_solver,args.scope)
     if args.mesh_bundle and args.levels:raise ValueError('mesh bundle already binds levels; omit --levels')
-    if args.field_config and not args.levels:raise ValueError('--levels required with --field-config')
+    descriptor=field_request(args)
+    if descriptor is not None and not args.levels:raise ValueError('--levels required with a field source')
     out=Path(args.output).expanduser().absolute()
     if any(q.is_symlink() for q in (out,*out.parents)) or (out/'.lock').is_symlink():raise ValueError('matrix output symlink refused')
     out=out.resolve()
     mesh=Path(args.mesh_bundle).expanduser().resolve() if args.mesh_bundle else out/'meshes'
     if args.mesh_bundle and (out==mesh or out in mesh.parents or mesh in out.parents):raise ValueError('matrix output must be separate from source mesh')
-    descriptor=_json(Path(args.field_config)) if args.field_config else None
     native=None
     if cfg['flattening_solver']=='slim':
         from .flatboi_checkpoint import require_cgroup
