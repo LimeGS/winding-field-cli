@@ -262,7 +262,13 @@ def export_existing(args,*,stop=None):
     if (not isinstance(levels,(list,tuple)) or not 1<=len(levels)<=16 or not all(type(w) in (int,float) and math.isfinite(w) for w in levels)
         or len(set(levels))!=len(levels)):raise ValueError('1..16 distinct finite W levels required')
     if type(args.canvas_samples) is not int or not 2<=args.canvas_samples<=1024:raise ValueError('canvas-samples must be 2..1024')
-    descriptor,descriptor_record=read_metadata(Path(args.field_config))
+    from .export_settings import field_request
+    inline=getattr(args,'resolved_field',None) is not None
+    if inline:
+        descriptor=field_request(args);descriptor_record=dict(sha256=digest(descriptor))
+    else:
+        if not getattr(args,'field_config',None):raise ValueError('descriptor requires field and geometry objects')
+        descriptor,descriptor_record=read_metadata(Path(args.field_config))
     if not all(isinstance(descriptor.get(key),dict) for key in ('field','geometry')):
         raise ValueError('descriptor requires field and geometry objects')
     out=Path(args.output).expanduser().resolve();reference_root=Path(args.reference_sheet).expanduser().resolve().parent
@@ -302,7 +308,12 @@ def export_existing(args,*,stop=None):
                     for key, in db.execute('SELECT key FROM batches').fetchall():_checkpoint(out,db,key,None,volume)
                     def guard():
                         if guard.stop():raise InterruptedError('UVW export paused')
-                        if read_metadata(Path(args.field_config))[1]!=descriptor_record:raise ValueError('field descriptor changed')
+                        current=(dict(sha256=digest(field_request(args))) if inline
+                                 else read_metadata(Path(args.field_config))[1])
+                        if current!=descriptor_record:raise ValueError('field descriptor changed')
+                        if inline and getattr(args,'field_config_record',None) is not None:
+                            if read_metadata(Path(args.field_config))[1]!=args.field_config_record:
+                                raise ValueError('field descriptor changed')
                         field.validate()
                     guard.stop=lambda:(stop and stop()) or (out/'STOP').exists()
                     records=[]
