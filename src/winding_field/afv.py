@@ -109,6 +109,11 @@ def source_identity(path,geometry_path,source):
 
 
 def _pieces(points,maps,stop=None):
+    from .afv_clip import pieces
+    yield from pieces(points,maps,stop)
+
+
+def _scalar_pieces(points,maps,stop=None):
     """Split at exact voxel-cell boundaries: a sparse edge cannot jump a narrow gap."""
     @lru_cache(maxsize=8)
     def tile(key): return maps.load(key,('support',))['support']
