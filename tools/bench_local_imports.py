@@ -33,7 +33,9 @@ def _inputs(config, base):
     for group in manifest['groups'].values():
         path=group['zarr']
         if '://' in path:raise ValueError('benchmark requires local prediction arrays')
-        paths.append((Path(config['lasagna_input']).parent/path).resolve())
+        channel=(Path(config['lasagna_input']).parent/path).resolve()
+        paths.append(channel)
+        if (channel.parent/'.zattrs').is_file():paths.append(channel.parent/'.zattrs')
     if manifest.get('provenance'):
         paths.append((Path(config['lasagna_input']).parent/manifest['provenance']).resolve())
     return paths

@@ -238,11 +238,11 @@ def plan(config,volume=None,stages=()):
             volume.close()
 
 
-def _validate_products(root,state,stop=None,volume=None):
+def _validate_products(root,state,stop=None,volume=None,*,verified_fibres=None):
     from .artifacts import Tiles
     from .lasagna import validate_retained as validate_lasagna
     from .afv import validate_retained as validate_afv
-    validate_lasagna(root,state.get('config',{}))
+    validate_lasagna(root,state.get('config',{}),volume=volume)
     bounded=state.get('config',{}).get('bounded_preparation',False)
     if bounded and not state.get('config',{}).get('lasagna_input') and (root/'PREPARED.json').exists():
         from .bounded_pipeline import runtime_identity,checkpoint
@@ -250,7 +250,7 @@ def _validate_products(root,state,stop=None,volume=None):
         if meta['producer_identity']['runtime']!=runtime_identity(state['config'].get('lasagna_python')):
             raise ValueError('bounded Lasagna runtime changed')
         checkpoint(state['config'].get('lasagna_model_path'),state['config'].get('offline',False),prediction='lasagna')
-    if state.get('config',{}).get('fibres'): validate_afv(root,state['config'])
+    if state.get('config',{}).get('fibres'): validate_afv(root,state['config'],verified_source=verified_fibres)
     if state['stages']:
         with sqlite3.connect((root/'products.sqlite').resolve().as_uri()+'?mode=ro',uri=True) as db:
             for name,sha in db.execute('SELECT path,sha FROM exports'):
@@ -442,7 +442,7 @@ def run(config,resume=False,until=None,extra_surface_seconds=0,field_sweeps=None
             state.update(status=result['status'],tifxyz_result=result,updated=time.time())
             atomic_json(root/'RUN.json',state)
             return state
-        volume=None
+        volume=None;fibres_input=None
         try:
             if not resume:state['implementation_sha256']=implementation_sha()
             import torch
@@ -465,7 +465,7 @@ def run(config,resume=False,until=None,extra_surface_seconds=0,field_sweeps=None
                 state['fibres_input']=fibres_input
             volume.bind_ledger(root/'source.sqlite')
             if resume:
-                volume.validate_used(); result=_validate_products(root,dict(state,config=config),stop,volume)
+                volume.validate_used(); result=_validate_products(root,dict(state,config=config),stop,volume,verified_fibres=fibres_input)
                 if result is not None:
                     if terminal=='surfaces':
                         state['native_result']=result
@@ -508,7 +508,10 @@ def run(config,resume=False,until=None,extra_surface_seconds=0,field_sweeps=None
                         if config.get('bounded_preparation'):
                             from .bounded_pipeline import prepare as bounded_prepare
                             result=bounded_prepare(volume,root,config,stop)
-                        else:result=prepare(volume,root,config,stop)
+                        else:
+                            imported=estimate['lasagna_input']
+                            verified=imported if imported and 'path' in imported else None
+                            result=prepare(volume,root,config,stop,verified_lasagna=verified)
                         if result['status']=='PREPARED' and not config.get('bounded_preparation'):
                             if export_lasagna(root,stop) is None:
                                 result=dict(status='PAUSED')
@@ -516,7 +519,7 @@ def run(config,resume=False,until=None,extra_surface_seconds=0,field_sweeps=None
                         if config.get('bounded_preparation'):
                             from .bounded_pipeline import fibres as bounded_fibres
                             result=bounded_fibres(volume,root,config,stop)
-                        else:result=trace(root,config,stop)
+                        else:result=trace(root,config,stop,verified_source=fibres_input)
                         if result['status']=='FIBRES_READY':
                             sha=export_afv(root,stop)
                             if sha is None:
@@ -562,6 +565,8 @@ def run(config,resume=False,until=None,extra_surface_seconds=0,field_sweeps=None
                     print(f'[{stage}] ready ({state["stages"][stage]["seconds"]:.2f}s)',file=sys.stderr,flush=True)
                 if stage==until:
                     break
+            if config.get('fibres') and fibres_input!=source_identity(config['fibres'],config.get('fibres_geometry'),volume.identity):
+                raise ValueError('external AFV input changed during run')
             state.update(status='COMPLETE' if terminal in state['stages'] else 'PAUSED',updated=time.time(),io=volume.stats())
             if terminal=='tifxyz' and terminal in state['stages']:
                 state['coverage_complete']=state['stages'][terminal]['coverage_complete']
