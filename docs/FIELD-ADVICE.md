@@ -87,3 +87,38 @@ and cannot supply a precise cost ratio. The report shows historical verifier
 cost / recent complete measured sweep median only when both are available.
 External paired measurements include **all** diagnostics and persistence.
 No GPU, real-volume overhead or calibrated physical accuracy is claimed.
+
+## Tiny CPU measurement (2026-11-17)
+
+Five paired fresh-store executions after warming both paths, alternating pair
+order: 441 nodes (`7×7×9`), 12 blocks, halo 2, three sweeps, float64, local
+`rtol=1e-7`, one CPU thread. Both paths used identical settings and produced
+identical scientific payload hashes, sweep records and 36 observation loads.
+This ordinary core route has no global verification; none was added.
+
+| Pair | Off (ms) | On (ms) | Added (ms) |
+|---|---:|---:|---:|
+| 1 | 202.475 | 297.875 | 95.400 |
+| 2 | 206.954 | 291.639 | 84.684 |
+| 3 | 209.161 | 280.963 | 71.802 |
+| 4 | 190.025 | 288.918 | 98.893 |
+| 5 | 189.545 | 277.384 | 87.838 |
+
+Off/on medians: **202.475 / 288.918 ms**. Median *paired* overhead:
+**87.838 ms / 46.34%**, range **71.802–98.893 ms**. This is substantial relative
+overhead on a very small workload, not evidence of negligible cost.
+
+The frozen plan had 39 points. Across all three closures it decoded 36 payload
+chunks/reads, 5,754 decoded payload bytes and 26,897 encoded payload bytes
+(manifest reads/inventory checks are additional and included in elapsed time).
+Diagnostic atomic-publication time was 27.1–29.3 ms per execution; serialization,
+reads and all journal/sample/timing-receipt fsyncs are included in total elapsed
+time. All measured sweep intervals were complete, with no pause/restart.
+
+Environment: macOS arm64, Python 3.12.10, NumPy 2.4.6, PyTorch 2.6.0.
+Isolated development core `1.5.3.dev0`, core commit `bc88881`;
+`block_solver.py` SHA256:
+`6beefb0f70ddafbec6e4dc313ef53b7a9c80e50911acae4fc35ea1f0aa7db406`.
+Local plan workspace retains `measure_overhead.py`, `overhead.json` and the
+uninstalled development wheel. No real-volume, cold-process, CUDA or physical
+accuracy conclusion follows from this experiment.
