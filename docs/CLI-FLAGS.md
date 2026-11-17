@@ -79,3 +79,31 @@ As each family is implemented, its exhaustive leaf-to-flag table and maximal
 parity fixture complete this inventory. Newly accepted validator fields must
 receive either a typed flag or an explicit scientific-artifact disposition,
 never a hidden requirement for another handwritten JSON file.
+
+### Prepared build/resume/verify mappings
+
+| Native setting | Flag | Type / units |
+|---|---|---|
+| `frame`, `voxel_um` | `--field-frame`, `--field-voxel-um` | frame string, µm |
+| `grid.origin_xyz`, `.spacing_xyz`, `.shape_zyx` | `--grid-origin-xyz`, `--grid-spacing-xyz`, `--grid-shape-zyx` | 3 WORLD coordinates, 3 WORLD spacings, 3 ZYX integer node counts |
+| `sheet_step`, `calibration` | `--sheet-step`, `--calibration` | raw field units/sheet, provenance string |
+| `observations.target/weights/observed` | `--target/--weights/--observed` and each `--NAME-sha256` | local array path and lowercase SHA256 |
+| `fixed`, `constraints`, `order` | `--fixed/--constraints/--order` and each `--NAME-sha256` | local NPY/NPZ data path and SHA256 |
+| `solver.*` | `--device`, `--dtype`, `--rtol`, `--maxiter`, `--preconditioner` | existing solver types/defaults; preconditioner stays Jacobi |
+| `execution.*` | `--chunk`, `--halo`, `--sweeps`, `--cache-bytes`, `--read-workers`, `--constraint-cache-bytes`, `--prepared-cache-bytes`, `--max-bytes`, `--reserve-bytes` | integer node counts, counts or bytes as named |
+| `gpu.*` | `--gpu-index`, `--gpu-uuid`, `--gpu-lock-path`, `--gpu-min-free-bytes`, `--gpu-deadline` | index, explicit UUID, local lock path, bytes, epoch seconds |
+| `source_identity` | repeated `--source-identity KEY JSON_VALUE` | strict JSON values; duplicate keys reject |
+
+The fixed schema is `winding-field-run-v1`. Native `--config` remains optional;
+`--cli-config` may supply every option using the flag's underscore destination.
+Explicit paths use the caller's CWD, file paths use that file's directory.
+CPU/GPU lease checks and all SHA checks remain mandatory.
+
+CLI requests are saved as immutable, output-bound `OUTPUT.request-SHA256.json`
+siblings, not inside the solver/service-owned directories. Preserve these files
+alongside the run. Plain `resume --output OUTPUT` and `verify --output OUTPUT`
+read the recipe pinned by RUN; verify never creates a recipe. Missing/changed
+saved recipes and changed science reject before writes. Existing cache/reader/
+resource-only continuation remains allowed; its effective recipe is another
+immutable sibling. Historical source-file hashes stay in `request_sources`;
+the original handwritten file is not needed to resume a saved CLI request.

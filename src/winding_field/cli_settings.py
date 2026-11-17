@@ -1,9 +1,12 @@
 """Explicit CLI/config resolution; scientific schemas remain with their validators."""
 import argparse
 from copy import deepcopy
+import hashlib
 import math
+import os
 from pathlib import Path
 import sys
+from tempfile import NamedTemporaryFile
 
 from .tifxyz_contract import parse_json
 from .util import digest
@@ -79,7 +82,7 @@ def _value(action,value):
     return item(value)
 
 
-def parse_options(parser,argv=None,*,paths=()):
+def parse_options(parser,argv=None,*,paths=(),sources=None):
     """Use typed argparse defaults, not JSON-to-argv translation or a new schema."""
     tokens=list(sys.argv[1:] if argv is None else argv)
     _config_arguments(parser)
@@ -106,7 +109,10 @@ def parse_options(parser,argv=None,*,paths=()):
     snapshots=[];groups=[]
     try:
         source=Path(selected.file).expanduser().resolve()
-        settings=read_settings(source)
+        raw=source.read_bytes()
+        settings=parse_json(raw.decode())
+        if not isinstance(settings,dict):raise ValueError('settings must be a JSON object')
+        if sources is not None:sources[str(source)]=hashlib.sha256(raw).hexdigest()
         if set(settings)-set(actions):raise ValueError('unknown settings: '+', '.join(sorted(set(settings)-set(actions))))
         for name,value in settings.items():
             action=actions[name];value=_value(action,value)
@@ -139,3 +145,35 @@ def parse_options(parser,argv=None,*,paths=()):
         for action,default,required,nargs in snapshots:
             action.default=default;action.required=required;action.nargs=nargs
         for group,required in groups:group.required=required
+
+
+def request_snapshot(output: Path, request: dict, *, sources=None):
+    """Bind immutable sibling recipes without occupying a solver-owned directory."""
+    import json
+    output=Path(output).resolve()
+    envelope=dict(schema='winding-field-cli-request-v1',output=str(output),request=request,sources=sources or {})
+    raw=(json.dumps(envelope,sort_keys=True,allow_nan=False,indent=2)+'\n').encode()
+    path=output.with_name(output.name+'.request-'+hashlib.sha256(raw).hexdigest()+'.json')
+    return path,raw
+
+
+def persist_request(output: Path, request: dict, *, resume: bool, sources=None) -> Path:
+    path,raw=request_snapshot(output,request,sources=sources)
+    if path.exists():
+        if path.read_bytes()!=raw:raise ValueError('saved request changed')
+        return path
+    if resume:raise ValueError('saved request is missing')
+    # Publish a complete fsynced inode exclusively; never overwrite another run's recipe.
+    with NamedTemporaryFile(dir=path.parent,prefix='.'+path.name,delete=False) as stream:
+        temporary=Path(stream.name)
+        try:
+            stream.write(raw);stream.flush();os.fsync(stream.fileno())
+            try:os.link(temporary,path)
+            except FileExistsError:
+                if path.read_bytes()!=raw:raise ValueError('saved request changed')
+        finally:
+            temporary.unlink()
+    fd=os.open(path.parent,os.O_RDONLY)
+    try:os.fsync(fd)
+    finally:os.close(fd)
+    return path
