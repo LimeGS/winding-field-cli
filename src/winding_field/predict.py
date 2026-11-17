@@ -64,7 +64,11 @@ def observations(ct,spacing_xyz,*,threshold=None,presence=None,tangents=None,val
 def prepare(volume,run,config,stop=None):
     from contextlib import ExitStack
     with ExitStack() as stack:
-        return _prepare(volume,run,config,stop,stack)
+        if config.get('lasagna_input') and not volume.remote and volume._ledger is not None:
+            stack.enter_context(volume.verified_chunks())
+        result=_prepare(volume,run,config,stop,stack)
+    if result['status']=='PREPARED':atomic_json(Path(run)/'PREPARED.json',result)
+    return result
 
 
 def _prepare(volume,run,config,stop,stack):
@@ -220,6 +224,5 @@ def _prepare(volume,run,config,stop,stack):
               method_note=(('imported' if config.get('lasagna_input') else 'official')+' Lasagna surfaces with '+method+' fibres')
                           if surface else 'classical CT threshold/structure-tensor baseline')
     if config.get('lasagna_input'):meta['surface_origin']='external'
-    atomic_json(run/'PREPARED.json',meta)
     maps.close()
     return meta

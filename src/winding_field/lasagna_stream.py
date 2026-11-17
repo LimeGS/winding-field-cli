@@ -115,7 +115,9 @@ class LasagnaInput:
                 product=Volume(source,voxel_um=1.,cache=config.get('cache',volume.cache),
                     cache_bytes=config.get('cache_bytes',volume.limit),offline=config.get('offline',False),
                     reserve_bytes=config.get('reserve_bytes',volume.reserve),stream_policy=self.stream_policy,
-                    metadata_pins=self.metadata_pins)
+                    metadata_pins=self.metadata_pins,
+                    decoded_cache_bytes=(config.get('_import_cache_bytes',256<<20)//6
+                                         if not volume.remote and not source.startswith(('http://','https://')) else 0))
                 self.stack.callback(product.close)
                 expected=group.get('metadata_sha256')
                 if expected is not None and expected!=digest([attrs,direct,product.metadata]):
@@ -129,6 +131,7 @@ class LasagnaInput:
                     raise ValueError('Lasagna channel geometry/uint8/zero-fill mismatch: '+name)
                 product.bind_ledger(self.root/(name+'.sqlite'))
                 self.products[name]=product
+                if product._decoded_limit:self.stack.enter_context(product.verified_chunks())
             self.identity=dict(kind='external-lasagna-v2',manifest=self.source,documents=self.documents,
                 encoding=manifest,provenance=provenance,channels={n:p.identity for n,p in self.products.items()},
                 binding=dict(kind='manifest-ct-source' if explicit is not None else 'user-selected-ct-base-grid',

@@ -181,6 +181,8 @@ def import_fibres(run,config,stop=None):
     validate_retained(run,config)
     if (run/'FIBRES.json').exists(): return json.loads((run/'FIBRES.json').read_bytes())
     maps=Tiles(run/'maps'); src=_open(config['fibres']); db=sqlite3.connect(root/'fibres.sqlite')
+    from .afv_clip import SupportTiles
+    support=SupportTiles(maps,cache_bytes=64<<20)
     pending=processed=commits=0; committed=None
     batch_started=last_commit_utc=last_update=None
 
@@ -251,7 +253,7 @@ def import_fibres(run,config,stop=None):
                 checksum=hashlib.sha256(digest([family,annotation]).encode())
                 if not old and not db.in_transaction:
                     db.execute('BEGIN'); batch_started=time.monotonic()
-                for piece in _pieces(local,maps,stop):
+                for piece in _pieces(local,support,stop):
                     world=piece*meta['spacing_xyz']+meta['origin_xyz']
                     buffer=io.BytesIO(); np.save(buffer,world,allow_pickle=False)
                     box=tuple(float(v) for pair in zip(world.min(0),world.max(0)) for v in pair)
@@ -287,6 +289,7 @@ def import_fibres(run,config,stop=None):
         progress('VALIDATING',force=True)
         if source!=source_identity(config['fibres'],config.get('fibres_geometry'),meta['source']):
             raise ValueError('external AFV source changed during import')
+        if maps.identity()!=meta['tiles_sha256']:raise ValueError('AFV import maps changed during import')
         count=db.execute('SELECT count(*) FROM curves').fetchone()[0]
         kept=db.execute('SELECT count(DISTINCT source_id) FROM curves').fetchone()[0]
     except InterruptedError:
@@ -298,7 +301,7 @@ def import_fibres(run,config,stop=None):
         with suppress(OSError): progress('FAILED',force=True)
         raise
     finally:
-        maps.close(); src.close(); db.close()
+        support.close(); maps.close(); src.close(); db.close()
     result=dict(status='FIBRES_READY',method='external-afv',spatial_index=True,count=count,
         input_count=source['input_count'],imported_sources=kept,excluded_sources=source['input_count']-kept,
         exclusion_reason='outside ROI or unsupported surface',identity=identity,sha256=file_sha(root/'fibres.sqlite'),

@@ -140,7 +140,8 @@ def _open_products(stack,identity,root,*,required):
     for name,channel in identity['input']['channels'].items():
         ledger=root/(name+'.sqlite')
         if required and not ledger.is_file(): raise ValueError('missing Lasagna input ledger: '+name)
-        product=stack.enter_context(closing(Volume(channel['path'],voxel_um=1.,cache=root/'reader-cache',offline=True)))
+        product=stack.enter_context(closing(Volume(channel['path'],voxel_um=1.,cache=root/'reader-cache',offline=True,
+                                                  decoded_cache_bytes=(256<<20)//6)))
         if product.identity!=channel['identity']: raise ValueError('Lasagna channel metadata changed: '+name)
         product.bind_ledger(ledger); product.validate_used()
         products[name]=product
@@ -235,6 +236,7 @@ def prepare(volume,run,config,geometry,stop=None):
     root.mkdir(parents=True,exist_ok=True); bind(root/'IDENTITY.json',identity)
     with ExitStack() as stack:
         products=_open_products(stack,identity,root,required=(root/'maps/TILES.json').exists())
+        for product in products.values():stack.enter_context(product.verified_chunks())
         maps=stack.enter_context(closing(Tiles(root/'maps',shape=geometry['shape_zyx'],chunk=CHUNK,identity=identity)))
         stack.callback(lambda:atomic_json(root/'WORK.json',_inventory(root)))
         for key in maps.keys():
