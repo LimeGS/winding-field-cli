@@ -276,6 +276,17 @@ def _rss(process):
         return None
 
 
+def _signal_worker(process,sig):
+    try:
+        os.killpg(process.pid,sig)
+    except ProcessLookupError:
+        pass
+    except PermissionError:
+        # macOS can report EPERM when the owned worker has just become a zombie.
+        if process.poll() is None:
+            raise
+
+
 def _supervise(command,root,seconds,stop=None,token=None,prior=0.,level=0):
     root=Path(root); token=token or uuid.uuid4().hex
     start=time.time(); reason=None; request_at=None; peak=0
@@ -318,19 +329,13 @@ def _supervise(command,root,seconds,stop=None,token=None,prior=0.,level=0):
                         reason='RSS_LIMIT'
                     if reason:
                         request_at=now
-                        try:
-                            os.killpg(process.pid,signal.SIGTERM)
-                        except ProcessLookupError:
-                            pass
+                        _signal_worker(process,signal.SIGTERM)
                 elif now-request_at>2:
-                    try:
-                        os.killpg(process.pid,signal.SIGKILL)
-                    except ProcessLookupError:
-                        pass
+                    _signal_worker(process,signal.SIGKILL)
                 time.sleep(.1)
         finally:
             if process.poll() is None:
-                os.killpg(process.pid,signal.SIGKILL)
+                _signal_worker(process,signal.SIGKILL)
             process.wait()
     current=_read(root/'CURRENT.json',{})
     if reason:

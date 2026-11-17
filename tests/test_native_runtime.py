@@ -1,5 +1,7 @@
 import json
 import os
+import signal
+import subprocess
 import sys
 import time
 
@@ -84,6 +86,74 @@ with Journal(Path(sys.argv[1])/"level-0000",{"source":"fixed"}) as store:
     assert time.monotonic()-began<10
     with Journal(root/'level-0000',{'source':'fixed'}) as store:
         np.testing.assert_array_equal(store.load_arrays('saved.npz')['points'],[[1,2,3]])
+
+
+@pytest.mark.parametrize('phase',['stop','escalation','cleanup'])
+def test_supervisor_tolerates_worker_exit_before_signal(tmp_path,monkeypatch,phase):
+    from winding_field import native_pipeline as native
+    root=tmp_path/'surfaces';root.mkdir()
+    ready=root/'ready'; exit_request=root/'exit'
+    command=[sys.executable,'-B','-c',
+             'import pathlib,signal,sys,time; signal.signal(signal.SIGTERM,signal.SIG_IGN); '
+             'r=pathlib.Path(sys.argv[1]); '
+             '(r/"ready").touch()\n'
+             'while not (r/"exit").exists(): time.sleep(.001)',
+             str(root)]
+    killpg=os.killpg
+    raced=[]
+    def exit_before_signal(pid,sig):
+        if phase=='escalation' and sig==signal.SIGTERM:
+            return killpg(pid,sig)
+        exit_request.touch()
+        deadline=time.monotonic()+5
+        while True:
+            state=subprocess.check_output(['ps','-o','stat=','-p',str(pid)],text=True).strip()
+            if state.startswith('Z'):
+                break
+            assert time.monotonic()<deadline
+            time.sleep(.001)
+        try:
+            killpg(pid,sig)
+        except (PermissionError,ProcessLookupError):
+            pass
+        raced.append(pid)
+        # macOS reports EPERM for this zombie; inject it on other hosts too.
+        raise PermissionError(1,'Operation not permitted')
+    monkeypatch.setattr(native.os,'killpg',exit_before_signal)
+    def stop():
+        if ready.exists():
+            if phase=='cleanup':
+                raise ValueError('stop callback failed')
+            return True
+        return False
+    if phase=='cleanup':
+        with pytest.raises(ValueError,match='stop callback failed'):
+            native._supervise(command,root,seconds=30,stop=stop)
+    else:
+        result=native._supervise(command,root,seconds=30,stop=stop)
+        assert result['status']=='PAUSED'
+        assert result['reason']=='STOP'
+        assert result['supervision']['pid']==raced[0]
+    with pytest.raises(ChildProcessError):
+        os.waitpid(raced[0],os.WNOHANG)
+
+
+@pytest.mark.parametrize('sig',[signal.SIGTERM,signal.SIGKILL])
+@pytest.mark.parametrize('exited',[False,True])
+@pytest.mark.parametrize('error',[PermissionError,ProcessLookupError])
+def test_worker_signal_handles_exit_without_hiding_live_permission_error(monkeypatch,sig,exited,error):
+    from types import SimpleNamespace
+    from winding_field import native_pipeline as native
+    process=SimpleNamespace(pid=123, poll=lambda:0 if exited else None)
+    def denied(pid,received):
+        assert (pid,received)==(123,sig)
+        raise error()
+    monkeypatch.setattr(native.os,'killpg',denied)
+    if exited or error is ProcessLookupError:
+        native._signal_worker(process,sig)
+    else:
+        with pytest.raises(PermissionError):
+            native._signal_worker(process,sig)
 
 
 def test_time_budget_is_cumulative_and_extension_does_not_relabel_speed(tmp_path):
