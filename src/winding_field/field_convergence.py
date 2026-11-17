@@ -14,6 +14,7 @@ import shutil
 import signal
 import stat
 import sys
+import time
 
 import numpy as np
 
@@ -26,7 +27,7 @@ from .util import digest,file_sha
 
 DEFAULTS=dict(field_chunk=64,rtol=1e-6,maxiter=2000,fibre_weight=1.,device='cpu',threads=4,
               reserve_bytes=1<<30,bounded_bytes=12<<30,prepared_cache_bytes=0,constraint_cache_bytes=0)
-CONFIG_KEYS=set(DEFAULTS)|{'field_spacing_um'}
+CONFIG_KEYS=set(DEFAULTS)|{'field_spacing_um','field_advice'}
 
 
 def policy(max_sweeps,global_rtol=1e-6):
@@ -121,6 +122,7 @@ class Controller:
         checkpoint=Path(root)/'CHECKPOINT.json'
         count=math.prod((n-1)//chunk+1 for n in shape)
         records=self.state['records']
+        advisor=options.get('observer')
 
         def boundary():
             if stop and stop():
@@ -144,6 +146,8 @@ class Controller:
                     raise ValueError('missing convergence sweep verification')
                 sha=file_sha(checkpoint)
                 descriptor=dict(kind='chunks',path=str(checkpoint.resolve()),sha256=sha,support_policy='stored')
+                regions=[] if advisor is not None else None
+                verification_started=time.perf_counter() if advisor is not None else None
                 with FieldSource(descriptor,geometry,cache_bytes=64<<20) as source:
                     offset=source._load('0-0-0',tuple(min(chunk,n) for n in shape))[1]
                     def read(lo,hi):
@@ -151,9 +155,13 @@ class Controller:
                         if not present.all():raise ValueError('complete stored field required')
                         return values
                     result=global_residual.verify(shape,chunk,geometry['spacing_xyz'],read,load,
-                        constraints=provider,rtol=self.policy['global_rtol'],stop=stop,gauge_offset=offset)
+                        constraints=provider,rtol=self.policy['global_rtol'],stop=stop,gauge_offset=offset,
+                        **(dict(regions=regions) if advisor is not None else {}))
                     source.validate(hashes=True)
                 if self.validate:self.validate()
+                if advisor is not None:
+                    from .field_advice import record_verification
+                    record_verification(advisor,sha,result,verification_started,sweep=sweep,regions=regions)
                 if result['status']=='PAUSED':
                     self.reason='PAUSED';return True
                 if not all(math.isfinite(result[k]) for k in ('residual_l2','rhs_l2','fixed_storage_max_error')):
@@ -168,6 +176,9 @@ class Controller:
             return self.reason is not None
 
         solver=solve_blocks(root,shape,chunk,identity,load,resume=True,stop=boundary,**options)
+        if advisor is not None:
+            from .field_advice import finish
+            finish(advisor)
         # Pin verification through publication, including the core's callback-free last sweep.
         saved=_read(checkpoint)
         with BlockStore(root,shape,chunk,saved['identity'],resume=True,
@@ -538,6 +549,7 @@ def main(argv=None):
     parser.add_argument('--max-sweeps',type=int,help='required for new generation; absolute total including inherited sweeps')
     parser.add_argument('--global-rtol',type=float,help='global stored-field normal-equation tolerance (new default: 1e-6)')
     group=parser.add_argument_group('new field overrides (otherwise inherited from source)',argument_default=argparse.SUPPRESS)
+    group.add_argument('--field-advice',action='store_true',help='consultative-only diagnostics; requires observer-capable development core')
     for name,kind in (('field_chunk',int),('field_spacing_um',float),('rtol',float),('maxiter',int),
                       ('fibre_weight',float),('device',str),('threads',int),('reserve_bytes',int),
                       ('bounded_bytes',int),('prepared_cache_bytes',int),('constraint_cache_bytes',int)):

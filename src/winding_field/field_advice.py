@@ -1,6 +1,7 @@
 """Consultative-only progress evidence; no solver or verification authority."""
 
 import itertools
+import inspect
 import json
 import math
 import os
@@ -8,6 +9,7 @@ from pathlib import Path
 import stat
 import time
 import warnings
+import uuid
 
 import numpy as np
 
@@ -18,6 +20,39 @@ from .util import digest
 QUOTA_BYTES=4<<20
 MAX_POINTS=128
 MAX_CHUNKS=64
+
+
+def require_observer():
+    import block_solver
+    if ('observer' not in inspect.signature(block_solver.solve_blocks).parameters
+            or not hasattr(block_solver,'AdvisoryIntegrityError')):
+        raise ValueError('field advice requires a development core with observer hooks; published core 1.5.2 is unsupported')
+
+
+def observer_options(enabled,root,geometry,*,reserve_bytes=0):
+    if type(enabled) is not bool:raise ValueError('field_advice must be boolean')
+    if not enabled:return {}
+    require_observer()
+    return dict(observer=Advice(root,geometry,reserve_bytes=reserve_bytes))
+
+
+def record_verification(observer,sha,result,started,*,sweep,regions=None):
+    if observer is None:return
+    try:
+        elapsed=time.perf_counter()-started
+        observer.finish()
+        observer.record_verification(sha,dict(result,regions=regions,
+            regions_scope='at most the first 64 owned cores; omitted/missing entries unavailable'),elapsed,
+                                     sweep=sweep,complete=result.get('status')!='PAUSED')
+    except Exception as error:
+        warnings.warn('field advice verification unavailable: '+str(error),RuntimeWarning,stacklevel=2)
+
+
+def finish(observer):
+    if observer is not None:
+        try:observer.finish()
+        except Exception as error:
+            warnings.warn('field advice timing unavailable: '+str(error),RuntimeWarning,stacklevel=2)
 
 
 def _finite(value):
@@ -46,6 +81,7 @@ class Advice:
         self.reserve_bytes=reserve_bytes
         self.identity=None
         self.write_s=0.
+        self.timings=[]
 
     def _write(self,name,data,*,pending_bytes=0,reserve_bytes=0):
         envelope=dict(data=data,sha256=digest(data))
@@ -66,6 +102,7 @@ class Advice:
             finally:self.write_s+=time.perf_counter()-started
 
     def restore(self,snapshot):
+        self.identity=None
         geometry=self.geometry or snapshot['manifest']['identity']['source_identity'].get('geometry')
         if geometry is None:raise ValueError('explicit sampling geometry required')
         self.geometry=geometry
@@ -73,7 +110,6 @@ class Advice:
         if (self.path/'IDENTITY.json').exists():
             if _read(self.path/'IDENTITY.json')!=identity:raise ValueError('incompatible diagnostic history')
         else:self._write('IDENTITY.json',identity)
-        self.identity=identity
         plan=_read(self.path/'PLAN.json') if (self.path/'PLAN.json').exists() else None
         for record in self.records():
             if (record.get('schema')!='field-advice-closure-v1' or
@@ -81,13 +117,17 @@ class Advice:
                     record.get('complete') and (record.get('plan')!=plan or record.get('plan_sha256')!=digest(plan))):
                 raise ValueError('incompatible diagnostic closure history')
         journal=self.path/'JOURNAL.json'
-        if not journal.exists():return None
-        saved=_read(journal)
+        saved=_read(journal) if journal.exists() else dict(current=None,pending=None)
         if set(saved)!={'current','pending'}:raise ValueError('invalid diagnostic journal')
-        for slot in saved.values():
-            if slot is not None and slot['checkpoint_sha256']==snapshot['checkpoint_sha256']:
-                return slot['metrics']
-        return None
+        matched=next((s['metrics'] for s in saved.values() if s is not None and
+                      s['checkpoint_sha256']==snapshot['checkpoint_sha256']),None)
+        if matched is not None:
+            from block_solver import _restore_advice
+            progress=snapshot['manifest']['progress']
+            _restore_advice(matched,progress['sweep'],progress['next_block'],snapshot['scientific_sha256'])
+        timings=_read(self.path/'TIMING.json') if (self.path/'TIMING.json').exists() else []
+        self.identity=identity;self.timings=timings
+        return matched
 
     def prepare(self,transaction,metrics):
         if self.identity is None:raise ValueError('diagnostic identity not restored')
@@ -133,14 +173,23 @@ class Advice:
             persistence_before_record_s=self.write_s-write_before,
             timing_scope='active intervals; final record fsync tail unavailable after restart')
         self._write(name,record)
+        self.timings=(self.timings+[dict(checkpoint_sha256=sha,sweep=metrics['sweep'],
+            sweep_s=metrics['active_wall_s']+time.perf_counter()-started,
+            control_s=metrics['control_s']+time.perf_counter()-started,
+            timing_complete=metrics['timing_complete'],includes_closure_record_fsync=True)])[-3:]
+
+    def finish(self):
+        if self.timings:
+            path=self.path/'TIMING.json'
+            if not path.exists() or _read(path)!=self.timings:self._write('TIMING.json',self.timings)
 
     def record_verification(self,checkpoint_sha256,result,elapsed_s,*,sweep,complete=True):
         if self.identity is None:raise ValueError('diagnostic identity not restored')
         row=dict(result,checkpoint_sha256=checkpoint_sha256,
                  scientific_sha256=self.identity['scientific_sha256'],sweep=sweep,
                  elapsed_s=elapsed_s,timing_complete=complete,measured_epoch=time.time())
-        name='verification-'+checkpoint_sha256+'.json'
-        if not (self.path/name).exists():self._write(name,row)
+        name='verification-'+checkpoint_sha256+'-'+uuid.uuid4().hex+'.json'
+        self._write(name,row)
 
 
 def make_plan(snapshot,geometry):
@@ -220,7 +269,7 @@ def sample(snapshot,geometry,plan):
     finally:
         if source is not None:source.close()
     result=[]
-    spacing=np.asarray(geometry['spacing_xyz'])[::-1]
+    spacing=np.asarray(geometry['spacing_xyz'])[::-1]*geometry['voxel_um']
     for point in plan['points']:
         ij=np.asarray(point['zyx']);centre=values[tuple(ij)]
         row=dict(centre,node=point['node'],gradient_h=None,gradient_2h=None,gradient_error=None,
@@ -341,3 +390,75 @@ def recommend(records,verification,availability):
         result.update(recommendation='POSIBLE_ESTANCAMIENTO',reason='resolved noncontraction on the same required observed IDs')
     else:result['reason']='encoding-resolution intervals overlap; trend ambiguous'
     return result
+
+
+def report(source):
+    source=Path(source).absolute()
+    root=source if (source/'CHECKPOINT.json').exists() else source/'field'
+    sink=Advice(root)
+    result=dict(recommendation='DATOS_INSUFICIENTES',reason='diagnostics unavailable',actions=[],
+                physical_usefulness='precisión útil no calibrada',measured={},estimated=dict(
+                local_normal_displacement=None,remaining_error=None),
+                unknown=['remaining error','whole-volume stability','physical sufficiency'],
+                current_closure_recorded=False,equivalent_global_verifier_available=False,cost_ratio=None)
+    try:
+        identity=_read(sink.path/'IDENTITY.json')
+        records=sink.records()
+        verification=sorted((_read(p) for p in sink.path.glob('verification-*.json')),
+                            key=lambda r:(r['sweep'],r['measured_epoch']))
+        from .util import file_sha
+        sha=file_sha(root/'CHECKPOINT.json')
+        available=bool((root.parent/'CONVERGENCE.json').exists() or (root/'RUN.json').exists() or
+            (root.parent/'PREPARED.json').exists() and
+            json.loads((root.parent/'PREPARED.json').read_bytes()).get('bounded_preparation'))
+        result.update(recommend(records,verification,available))
+        result['equivalent_global_verifier_available']=available
+        latest=records[-1] if records else None
+        result['current_closure_recorded']=bool(latest and latest['checkpoint_sha256']==sha)
+        if not result['current_closure_recorded']:
+            result.update(recommendation='DATOS_INSUFICIENTES',reason='current scientific checkpoint has no closure record')
+        recent=records[-3:]
+        comparisons=[compare(a,b) for a,b in zip(recent,recent[1:]) if a.get('complete') and b.get('complete')
+                     and all(a.get(k)==b.get(k) for k in ('scientific_sha256','plan_sha256'))]
+        estimates=[]
+        for comparison in comparisons:
+            points=[]
+            for row in comparison['points']:
+                points.append(dict(node=row['node'],normal_displacement=row.pop('normal_displacement'),
+                                   reason=row.pop('displacement_exclusion')))
+            estimates.append(dict(points=points,valid_count=sum(p['normal_displacement'] is not None for p in points)))
+        if estimates:
+            last=estimates[-1];values=[p['normal_displacement'] for p in last['points'] if p['normal_displacement'] is not None]
+            last.update(p50_um=float(np.percentile(values,50)) if values else None,
+                        p95_um=float(np.percentile(values,95)) if values else None,
+                        excluded_count=len(last['points'])-len(values),
+                        scope='first-order local estimate; not remaining error or a bound')
+            result['estimated']['local_normal_displacement']=last
+        result['measured']=dict(scientific_sha256=identity['scientific_sha256'],
+            latest_closure=latest,global_verification=verification,
+            comparisons=comparisons)
+        timings=_read(sink.path/'TIMING.json') if (sink.path/'TIMING.json').exists() else []
+        complete=bool(timings and all(t.get('timing_complete') and t.get('sweep_s',0)>0 for t in timings))
+        timed=next((v for v in reversed(verification) if v.get('timing_complete')),None)
+        result['measured']['timing']=dict(recent_sweeps=timings,includes_closure_record_fsync=complete)
+        if complete and timed:
+            duration=float(np.median([t['sweep_s'] for t in timings]))
+            result['cost_ratio']=timed['elapsed_s']/duration
+            result['measured']['timing'].update(sweep_median_s=duration,
+                sweep_range_s=[min(t['sweep_s'] for t in timings),max(t['sweep_s'] for t in timings)],
+                verification_age_sweeps=latest['sweep']-timed['sweep'])
+        result['timing_scope']='active sweeps including closure record fsync; stop callbacks excluded; timing receipt own fsync excluded'
+    except (OSError,ValueError,KeyError,TypeError,IndexError) as error:
+        result.update(recommendation='DATOS_INSUFICIENTES',reason='diagnostics unavailable: '+str(error))
+    return result
+
+
+def main(argv=None):
+    import argparse
+    from .cli_settings import parse_options
+    parser=argparse.ArgumentParser(prog='winding-field field-advice',
+        description='Read-only consultative evidence. No solves, checks, stops or added sweeps.')
+    parser.add_argument('source',help='run directory or prepared field root')
+    args=parse_options(parser,argv,paths=('source',))
+    print(json.dumps(report(args.source),indent=2,sort_keys=True,allow_nan=False))
+    return 0

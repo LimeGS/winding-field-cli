@@ -27,10 +27,10 @@ def event(root,sweep=1):
                 candidates=[dict(node=220,rank='a')]))
 
 
-def stored(root,*,shift=0.,support=True):
+def stored(root,*,shift=0.,support=True,geometry=GEOMETRY):
     shape=GEOMETRY['shape_zyx'];chunk=4
     z,y,x=np.indices(shape);phi=x*2.+y*6.+z*15.+shift
-    identity=dict(geometry=GEOMETRY,boundary='natural-zero-gauge')
+    identity=dict(geometry=geometry,boundary='natural-zero-gauge')
     with BlockStore(root,shape,chunk,identity,resume=root.exists(),reserve_bytes=0) as store:
         for key in itertools.product(range(2),range(2),range(3)):
             lo=np.array(key)*chunk;hi=np.minimum(lo+chunk,shape)
@@ -53,7 +53,9 @@ def test_journal_selects_only_the_exact_scientific_side_of_a_crash(tmp_path):
     state2=dict(state,next_block=13)
     sink.prepare(second,state2)
     assert advice.Advice(root,GEOMETRY).restore(committed)==state
-    assert advice.Advice(root,GEOMETRY).restore(dict(snapshot,checkpoint_sha256='c'*64))==state2
+    next_snapshot=deepcopy(snapshot);next_snapshot['checkpoint_sha256']='c'*64
+    next_snapshot['manifest']['progress']['next_block']=13
+    assert advice.Advice(root,GEOMETRY).restore(next_snapshot)==state2
     assert sink.path.parent==root.parent and root not in sink.path.parents
 
 
@@ -200,8 +202,57 @@ def test_incompatible_closure_history_is_preserved_and_rejected(tmp_path):
     path=next(sink.path.glob('closure-*.json'))
     advice._publish(path,dict(data=record,sha256=advice.digest(record)))
     before=path.read_bytes()
-    with pytest.raises(ValueError):advice.Advice(root,GEOMETRY).restore(snapshot)
+    rejected=advice.Advice(root,GEOMETRY)
+    with pytest.raises(ValueError):rejected.restore(snapshot)
+    with pytest.raises(ValueError):
+        rejected.record_verification(snapshot['checkpoint_sha256'],dict(residual_l2=2.),1.,sweep=1)
     assert path.read_bytes()==before
+
+
+def test_cost_ratio_uses_complete_sweep_delivery_and_existing_verifier_only(tmp_path):
+    root=tmp_path/'field';stored(root);snapshot=event(root)
+    sink=advice.Advice(root,GEOMETRY);sink.restore(snapshot);sink.complete(snapshot)
+    sink.finish()
+    sink.record_verification(snapshot['checkpoint_sha256'],dict(global_converged=False,residual_l2=2.),
+                             .5,sweep=1)
+    result=advice.report(root)
+    assert 0<result['cost_ratio']<=.5/1.1
+    assert result['measured']['timing']['includes_closure_record_fsync']
+    timing=advice._read(sink.path/'TIMING.json')
+    timing[-1]['timing_complete']=False
+    advice._publish(sink.path/'TIMING.json',dict(data=timing,sha256=advice.digest(timing)))
+    assert advice.report(root)['cost_ratio'] is None
+
+
+def test_interrupted_verification_does_not_hide_a_later_actual_measurement(tmp_path):
+    root=tmp_path/'field';stored(root);snapshot=event(root)
+    sink=advice.Advice(root,GEOMETRY);sink.restore(snapshot);sink.complete(snapshot)
+    sha=snapshot['checkpoint_sha256']
+    sink.record_verification(sha,dict(status='PAUSED',global_converged=False),.5,sweep=1,complete=False)
+    sink.record_verification(sha,dict(status='VERIFIED',global_converged=True,residual_l2=0.),1.,sweep=1)
+    measured=advice.report(root)['measured']['global_verification']
+    assert len(measured)==2 and measured[-1]['global_converged']
+
+
+def test_report_keeps_local_estimates_separate_from_measured_changes(tmp_path):
+    root=tmp_path/'field';stored(root)
+    sink=advice.Advice(root,GEOMETRY);snapshot=event(root)
+    sink.restore(snapshot);sink.complete(snapshot)
+    stored(root,shift=1.);sink.complete(event(root,2))
+    result=advice.report(root)
+    estimate=result['estimated']['local_normal_displacement']
+    assert estimate['valid_count']>0 and estimate['p95_um']==0.
+    assert 'normal_displacement' not in result['measured']['comparisons'][-1]['points'][0]
+
+
+def test_gradient_uses_physical_micrometres_not_only_world_grid_spacing(tmp_path):
+    geometry=dict(GEOMETRY,voxel_um=2.)
+    root=tmp_path/'field';stored(root,geometry=geometry)
+    sink=advice.Advice(root,geometry);snapshot=event(root)
+    sink.restore(snapshot);sink.complete(snapshot)
+    centre=next(s for s in sink.records()[0]['samples'] if s['gradient_2h'] is not None)
+    np.testing.assert_allclose(centre['gradient_h'],[.5,1.,1.5])
+    assert centre['radius_um']==8.
 
 
 @pytest.mark.parametrize('gradient,error,radius,reason',[

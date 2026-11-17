@@ -84,6 +84,7 @@ def lasagna_downsamples(config):
 
 
 def validate_config(config):
+    if type(config.get('field_advice',False)) is not bool:raise ValueError('field_advice must be boolean')
     if config.get('preconditioner','jacobi')!='jacobi':
         raise ValueError("block workflows require preconditioner='jacobi'")
     lasagna_downsamples(config)

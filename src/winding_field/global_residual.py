@@ -10,7 +10,7 @@ from block_solver import _observations
 from field_solver import _FieldOperator
 
 
-def verify(shape,chunk,spacing,read,observations,*,fixed=None,constraints=None,rtol=1e-6,stop=None,gauge_offset=None):
+def verify(shape,chunk,spacing,read,observations,*,fixed=None,constraints=None,rtol=1e-6,stop=None,gauge_offset=None,regions=None):
     """Verify the stored field, including full exterior constraint groups.
 
     ``constraints(lo,hi,read_nodes)`` must restrict the SAME global rows used by
@@ -75,8 +75,16 @@ def verify(shape,chunk,spacing,read,observations,*,fixed=None,constraints=None,r
             vectors.append(residual[inner])
         free=np.isnan(pinned[inner]);count=int(free.sum());free_nodes+=count
         observed_nodes+=int(np.asarray(observed)[inner].sum())
-        residual_norm=math.hypot(residual_norm,float(np.linalg.norm(vectors[0][free])))
-        rhs_norm=math.hypot(rhs_norm,float(np.linalg.norm(vectors[1][free])))
+        local_residual=float(np.linalg.norm(vectors[0][free]))
+        local_rhs=float(np.linalg.norm(vectors[1][free]))
+        residual_norm=math.hypot(residual_norm,local_residual)
+        rhs_norm=math.hypot(rhs_norm,local_rhs)
+        if regions is not None and len(regions)<64:
+            try:
+                regions.append(dict(core_zyx=list(key),residual_l2=local_residual,rhs_l2=local_rhs,
+                                    free_nodes=count,observed_nodes=int(np.asarray(observed)[inner].sum())))
+            except Exception:
+                regions.clear();regions=None  # Optional allocation must not invalidate measured global norms.
         fixed_error=max(fixed_error,float(np.max(abs(phi[inner][~free]-pinned[inner][~free]),initial=0)))
         stored_pinned=pinned[inner].copy()
         if gauge_offset is not None and np.all(core==0):stored_pinned[0,0,0]=encoded_gauge
