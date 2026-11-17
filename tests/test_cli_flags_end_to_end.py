@@ -131,6 +131,53 @@ def test_flag_mesh_interrupted_after_admission_resumes_saved_request_from_other_
     assert pin==(file_sha(recipe),recipe.stat().st_mtime_ns)
 
 
+def test_surface_snapshot_uses_same_canonical_output_on_resume(tmp_path):
+    from test_surface_workflow import prepared
+    _,config=prepared(tmp_path)
+    parent=tmp_path/'parent';parent.mkdir()
+    output=parent/'..'/'mesh'
+    assert main(['prepared','mesh',*surface_flags(tmp_path,config),'--output',str(output)])==0
+    assert main(['prepared','mesh','--resume','--output',str(output)])==0
+    assert json.loads((output/'MESH.json').read_bytes())['status']=='MESH_READY'
+
+
+@pytest.mark.parametrize('family',['field','surface'])
+def test_prepared_native_defaults_validate_after_explicit_overrides(tmp_path,monkeypatch,family):
+    base=tmp_path/'recipe base';base.mkdir()
+    if family=='field':
+        from test_field_workflow import prepared
+        path,config=prepared(base)
+        config['solver']['rtol']=0
+        overrides=['--rtol','1e-8'];action='build'
+    else:
+        from test_surface_workflow import prepared
+        path,config=prepared(base)
+        del config['levels']
+        overrides=['--levels','1.5'];action='mesh'
+    atomic_json(path,config);pin=file_sha(path)
+    elsewhere=tmp_path/'elsewhere';elsewhere.mkdir();monkeypatch.chdir(elsewhere)
+    output=tmp_path/'output'
+    assert main(['prepared',action,'--config',str(path),*overrides,'--output',str(output)])==0
+    assert file_sha(path)==pin
+    if family=='field':
+        saved=json.loads((output/'RUN.json').read_bytes())
+        assert saved['request_sources']=={str(path):pin}
+    else:
+        assert json.loads((output/'MESH.json').read_bytes())['levels'][0]['level']==1.5
+
+
+def test_max_bytes_auto_clears_inherited_prepared_memory_limit(tmp_path):
+    from test_field_workflow import prepared
+    path,config=prepared(tmp_path)
+    config['execution']['max_bytes']=1
+    atomic_json(path,config)
+    assert main(['prepared','build','--config',str(path),'--max-bytes','auto',
+                 '--output',str(tmp_path/'field')])==0
+    saved=json.loads((tmp_path/'field/RUN.json').read_bytes())
+    request=json.loads(Path(saved['config_path']).read_bytes())['request']
+    assert request['execution']['max_bytes'] is None
+
+
 @pytest.mark.skipif(sys.platform!='linux',reason='whole-sheet LSCM process-tree resource guard requires Linux')
 def test_prepared_mesh_to_whole_sheet_lscm_ct_xyz_without_user_json(tmp_path):
     from test_flattening_matrix import source_bundle,request

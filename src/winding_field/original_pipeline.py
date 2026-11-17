@@ -29,7 +29,7 @@ def settings(request):
     if (not isinstance(frame.get('id'),str) or not frame['id'] or origin.shape!=(3,)
             or not np.isfinite(origin).all() or type(unit) not in (int,float)
             or not math.isfinite(unit) or unit<=0):
-        raise ValueError('original output frame requires id, finite origin_xyz_um and positive voxel_um')
+        raise ValueError('original output_frame requires id, finite origin_xyz_um and positive voxel_um')
     result=dict(output_frame=frame,pitch=request.get('pitch'),memory_gib=request.get('memory_gib',4.))
     for key in ('pitch','memory_gib'):
         value=result[key]

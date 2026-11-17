@@ -234,3 +234,26 @@ def test_probe_rejects_conflicting_ct_declarations_before_output(surface_case,fl
         '--metadata',str(root/'field.npy.json'),'--work',str(root/'probe'),'--output',str(root/'export'),
         '--app-run',str(native_fixture(root)),*flags])==2
     assert not (root/'probe').exists() and not (root/'export').exists()
+
+
+def test_human_patch_atlas_does_not_require_unused_frozen_seed(tmp_path):
+    import tifffile
+    root=tmp_path
+    field=root/'field.npy';np.save(field,np.indices((40,40,40))[2].astype('f4'))
+    meta=dict(frame='test',voxel_um=9.6,origin_xyz=[0,0,0],spacing_xyz=[1,1,1],
+              shape_zyx=[40,40,40],field_sha256=file_sha(field))
+    metadata=root/'metadata.json';atomic_json(metadata,meta)
+    ct=root/'ct.npy';np.save(ct,np.full((40,40,40),100,'u1'))
+    ct_meta=root/'ct-meta.json';atomic_json(ct_meta,meta)
+    patch=root/'patch';patch.mkdir();atomic_json(patch/'meta.json',dict(format='tifxyz',frame='test',voxel_um=9.6))
+    z,y=np.mgrid[16.:25.,16.:25.]
+    for axis,values in zip('xyz',(np.full(y.shape,20.),y,z)):tifffile.imwrite(patch/(axis+'.tif'),values)
+    inputs=dict(ct=str(ct),ct_sha256=file_sha(ct),ct_metadata=str(ct_meta),ct_metadata_sha256=file_sha(ct_meta),
+        field_sha256=file_sha(field),metadata_sha256=file_sha(metadata),
+        render=dict(mesh_step=1,pitch_world=2,depth_offsets_world=[0]))
+    path=root/'inputs.json';atomic_json(path,inputs)
+    assert main(['surface-atlas','--field',str(field),'--metadata',str(metadata),
+        '--inputs',str(path),'--patch',str(patch),'--patch-frame','test',
+        '--patch-voxel-um','9.6','--app-run',str(native_fixture(root)),'--output',str(root/'atlas'),
+        '--max-depth','0','--max-charts','1','--budget-seconds','30'])==0
+    assert json.loads((root/'atlas/result.json').read_bytes())['human_seed'] is True

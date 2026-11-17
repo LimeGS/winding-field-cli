@@ -23,10 +23,12 @@ def request_sha256(request: dict) -> str:
     return digest(request)
 
 
-def read_settings(path) -> dict:
+def read_settings(path,*,sources=None) -> dict:
     from .tifxyz_contract import parse_json
-    result=parse_json(Path(path).read_text())
+    raw=Path(path).read_bytes()
+    result=parse_json(raw)
     if not isinstance(result,dict):raise ValueError('settings must be a JSON object')
+    if sources is not None:sources[str(Path(path).resolve())]=hashlib.sha256(raw).hexdigest()
     return result
 
 

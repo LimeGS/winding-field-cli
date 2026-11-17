@@ -8,11 +8,16 @@ from pathlib import Path
 from .cli_settings import merge_explicit
 
 
-def declaration(value,*,limit=1<<20):
+def declaration(value,*,limit=1<<20,remote=False):
     from .tifxyz_contract import parse_json
-    path=None if isinstance(value,dict) else Path(value).expanduser().resolve()
+    from .io import http_url,fetch
+    url=http_url(value) if remote and not isinstance(value,dict) else ''
+    url=url if url.startswith(('http://','https://')) else ''
+    path=None if isinstance(value,dict) else url or Path(value).expanduser().resolve()
     if path is None:
         raw=json.dumps(value,sort_keys=True,allow_nan=False,separators=(',',':')).encode()
+    elif url:
+        raw=fetch(url,limit=limit)[0]
     else:
         with path.open('rb') as stream:raw=stream.read(limit+1)
     if len(raw)>limit:raise ValueError('input declaration exceeds metadata budget')
@@ -84,7 +89,7 @@ def import_requests(args):
     if manifest_flags or other:
         native=values.get('lasagna_input');base={}
         if native:
-            base,pin,path=declaration(native)
+            base,pin,path=declaration(native,remote=True)
             if path is not None:pins[str(path)]=pin
             for group in base.get('groups',{}).values():
                 if 'zarr' in group:group['zarr']=location(group['zarr'],str(path) if path else None)
@@ -130,5 +135,10 @@ def import_requests(args):
 
 def check_recipe_sources(config):
     from .util import file_sha
+    from .io import fetch
     for path,pin in config.get('input_recipe_sources',{}).items():
-        if file_sha(path)!=pin:raise ValueError('input recipe source changed: '+path)
+        # Offline continuation uses the frozen declaration; channel metadata/byte ledgers still validate.
+        if config.get('offline') and path.startswith(('http://','https://')):continue
+        actual=(hashlib.sha256(fetch(path,limit=1<<20)[0]).hexdigest()
+                if path.startswith(('http://','https://')) else file_sha(path))
+        if actual!=pin:raise ValueError('input recipe source changed: '+path)

@@ -468,6 +468,13 @@ _EXECUTION_FLAGS = {name: int for name in (
 _GPU_FLAGS = {"index": int, "uuid": str, "lock_path": Path, "min_free_bytes": int, "deadline": float}
 
 
+def _auto_bytes(value):
+    if value=="auto":return None
+    if isinstance(value,bool) or isinstance(value,float) and not value.is_integer():
+        raise ValueError("max_bytes must be an integer or auto")
+    return int(value)
+
+
 def _request_flags(parser):
     group = parser.add_argument_group("prepared request overrides (flags > recipe > defaults)",
                                       argument_default=argparse.SUPPRESS)
@@ -485,7 +492,8 @@ def _request_flags(parser):
                                help="remove the optional artifact from the effective request")
     for fields, prefix in ((_SOLVER_FLAGS, ""), (_EXECUTION_FLAGS, ""), (_GPU_FLAGS, "gpu-")):
         for name, value_type in fields.items():
-            group.add_argument("--"+prefix+name.replace("_", "-"), type=value_type)
+            group.add_argument("--"+prefix+name.replace("_", "-"),
+                               type=_auto_bytes if name=="max_bytes" else value_type)
     group.add_argument("--source-identity", nargs=2, action="append", metavar=("KEY", "JSON_VALUE"))
 
 
@@ -513,15 +521,25 @@ def _effective_request(args, sources):
     base = {}
     provenance = dict(sources)
     if path is not None:
-        loaded = load_run_config(path)
-        document = read_settings(path)
+        document = read_settings(path,sources=provenance)
         if document.get("schema") == "winding-field-cli-request-v1":
+            loaded = load_run_config(path)
             if document["output"] != str(output):
                 raise ValueError("saved request belongs to another output")
+            provenance.pop(str(Path(path).resolve()))
             provenance.update(loaded.get("request_sources", {}))
+            base = {k: v for k, v in loaded.items() if k not in ("config_path", "config_sha256", "request_sources")}
         else:
-            provenance[str(Path(path).resolve())] = loaded["config_sha256"]
-        base = {k: v for k, v in loaded.items() if k not in ("config_path", "config_sha256", "request_sources")}
+            base=deepcopy(document)
+            entries=list(base.get("observations",{}).values()) if isinstance(base.get("observations"),dict) else []
+            entries.extend(base.get(name) for name in ("fixed","constraints","order"))
+            entries.append(base.get("gpu"))
+            for entry in entries:
+                if not isinstance(entry,dict):continue
+                for key in ("path","lock_path"):
+                    value=entry.get(key)
+                    if isinstance(value,str) and value and not urlsplit(value).scheme:
+                        entry[key]=str((Path(path).resolve().parent/value).resolve())
     values = vars(args)
     overrides = {}
     for flag, name in (("field_frame", "frame"), ("field_voxel_um", "voxel_um"),
@@ -571,7 +589,7 @@ def _effective_request(args, sources):
     for source, pin in sources.items():
         if _sha(source) != pin:raise ValueError("request source changed")
     if args.config is not None and document.get("schema") != "winding-field-cli-request-v1":
-        if _sha(args.config) != loaded["config_sha256"]:raise ValueError("request source changed")
+        if _sha(args.config) != provenance[str(args.config.resolve())]:raise ValueError("request source changed")
     check_resources(output.parent, reserve_bytes=config["execution"]["reserve_bytes"])
     persist_request(output, config, resume=saved.exists(), sources=provenance)
     return saved

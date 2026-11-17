@@ -185,7 +185,7 @@ def atlas_inputs(args,meta):
         inputs.update(field_sha256=meta['field_sha256'],metadata_sha256=metadata_identity(args,meta))
     for flag,key in (('inputs_field_sha256','field_sha256'),('inputs_metadata_sha256','metadata_sha256')):
         if flag in vars(args):inputs[key]=vars(args)[flag]
-    for name in ('ct','seed'):
+    for name in ('ct',) if args.patch is not None else ('ct','seed'):
         if file_sha(inputs[name])!=inputs.get(name+'_sha256'):raise ValueError('frozen input hash mismatch: '+name)
     default=None
     if inputs.get('ct_metadata'):

@@ -110,6 +110,8 @@ the original handwritten file is not needed to resume a saved CLI request.
 `--no-fixed`, `--no-constraints`, `--no-order` explicitly remove optional
 prepared artifacts inherited from a native recipe. The corresponding CLI-config
 values may be `null`; an artifact pin cannot be supplied alongside its clear flag.
+`--max-bytes auto` clears an inherited optional prepared-memory limit (`null` in
+config mode); it does not disable disk reserves or other resource admission.
 
 ### Prepared mesh/surfaces/render mappings
 
@@ -249,6 +251,10 @@ density because channel grids are downsampled. All source/channel metadata pins,
 support/crop checks, input ledgers and final revalidation remain active. Mixed
 file+flag inputs preserve raw recipe hashes in `input_recipe_sources`; changing
 one during a run or before continuation fails rather than relabeling provenance.
+HTTP/S3 manifests may also be combined with typed overrides; relative channel and
+provenance locations retain the remote URL base and the original raw manifest pin.
+Online continuation revalidates that pin. Offline continuation reuses the frozen
+declaration and still checks cached channel metadata and consumed-byte ledgers.
 
 All leaves are also available through `--cli-config`. Channel rows use typed
 `[group, channel, path, integer_scaledown]` arrays; the path element uses the
