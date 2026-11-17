@@ -12,6 +12,8 @@ import json
 import math
 import os
 import sys
+import time
+import warnings
 from collections.abc import Callable, Sequence
 from contextlib import ExitStack
 from copy import deepcopy
@@ -171,6 +173,7 @@ def validate_run_config(mapping: dict, *, base: Path) -> dict[str, Any]:
                 "prepared_cache_bytes",
                 "max_bytes",
                 "reserve_bytes",
+                "field_advice",
             },
             "execution",
         )
@@ -186,6 +189,8 @@ def validate_run_config(mapping: dict, *, base: Path) -> dict[str, Any]:
             execution[name] = _integer(execution.get(name, default), name, minimum)
         if execution.get("max_bytes") is not None:
             _integer(execution["max_bytes"], "max_bytes")
+        if type(execution.get("field_advice",False)) is not bool:
+            raise ValueError("field_advice must be boolean")
         if not execution["halo"] and any(n > execution["chunk"] for n in shape):
             raise ValueError("multiple cores require positive halo")
         gpu = config.get("gpu")
@@ -356,6 +361,10 @@ def run_field(
     if type(resume) is not bool or type(prefetch) is not bool:
         raise ValueError("resume/prefetch must be boolean")
     options, metadata, sources = _prepare_run(config)
+    from .field_advice import observer_options
+    geometry=dict(config["grid"],frame=config["frame"],voxel_um=config["voxel_um"],sheet_step=config["sheet_step"])
+    options.update(observer_options(config["execution"].get("field_advice",False),output,geometry,
+                                    reserve_bytes=options["reserve_bytes"]))
     from block_solver import solve_blocks
     from field_prefetch import ObservationPrefetch
     from field_runtime import GpuLease
@@ -394,6 +403,8 @@ def run_field(
                 options["load_observations"], options["shape"], max_bytes=math.prod(window) * 17 + 1024**2
             )
         result=solve_blocks(output, **options, resume=resume, stop=stop, admit=admission, prefetch=client)
+        from .field_advice import finish
+        finish(options.get('observer'))
         result["effective_threads"]=metadata["effective_threads"]
         return result
 
@@ -411,6 +422,9 @@ def verify_field(config_path,output):
         raise ValueError('verification problem differs from checkpoint')
     geometry=dict(config['grid'],frame=config['frame'],voxel_um=config['voxel_um'],sheet_step=config['sheet_step'])
     descriptor=dict(kind='chunks',path=str(checkpoint),sha256=checkpoint_sha,support_policy='stored')
+    enabled=config['execution'].get('field_advice',False)
+    regions=[] if enabled else None
+    started=time.perf_counter() if enabled else None
     with FieldSource(descriptor,geometry,cache_bytes=options['cache_bytes']) as source:
         def read(lo,hi):
             value,stored=source.read(lo,hi)
@@ -421,11 +435,23 @@ def verify_field(config_path,output):
         if options['fixed'] is None:
             gauge_offset=source._load('0-0-0',tuple(min(options['chunk'],n) for n in options['shape']))[1]
         result=verify(options['shape'],options['chunk'],options['spacing_xyz'],read,
-                      options['load_observations'],fixed=options['fixed'],
-                      constraints=None if rows is None else rows.restrict,rtol=options['rtol'],gauge_offset=gauge_offset)
+                       options['load_observations'],fixed=options['fixed'],
+                       constraints=None if rows is None else rows.restrict,rtol=options['rtol'],gauge_offset=gauge_offset,
+                       **(dict(regions=regions) if enabled else {}))
         source.validate(hashes=True)
     if _sha(checkpoint)!=checkpoint_sha:raise ValueError('checkpoint changed during verification')
     result.update(checkpoint_sha256=checkpoint_sha,config_sha256=config['config_sha256'])
+    if enabled:
+        from .field_advice import Advice,record_verification
+        observer=Advice(checkpoint.parent,geometry,reserve_bytes=options['reserve_bytes'])
+        scientific={k:v for k,v in saved['identity'].items() if k!='sweeps'}
+        try:
+            observer.restore(dict(manifest=saved,checkpoint_sha256=checkpoint_sha,
+                scientific_sha256=hashlib.sha256(json.dumps(scientific,sort_keys=True,allow_nan=False).encode()).hexdigest()))
+            record_verification(observer,checkpoint_sha,result,started,
+                                sweep=len(saved['progress']['completed_sweeps']),regions=regions)
+        except Exception as error:
+            warnings.warn('field advice verification unavailable: '+str(error),RuntimeWarning,stacklevel=2)
     return result
 
 
@@ -484,6 +510,7 @@ def _request_flags(parser):
         group.add_argument("--grid-"+name.replace("_", "-"), type=value_type, nargs=3)
     group.add_argument("--sheet-step", type=float, help="raw field units per sheet")
     group.add_argument("--calibration", help="explicit calibration provenance")
+    group.add_argument("--field-advice",action="store_true",help="consultative diagnostics only; no implicit verification")
     for name in ("target", "weights", "observed", "fixed", "constraints", "order"):
         group.add_argument("--"+name, type=Path)
         group.add_argument("--"+name+"-sha256")
@@ -553,6 +580,7 @@ def _effective_request(args, sources):
                 value = values[prefix+field]
                 if isinstance(value, Path):value = str(value.resolve())
                 overrides.setdefault(name, {})[field] = value
+    if "field_advice" in values:overrides.setdefault("execution",{})["field_advice"]=values["field_advice"]
     for name in ("target", "weights", "observed", "fixed", "constraints", "order"):
         if name in values and values[name] is None:
             if name not in ("fixed","constraints","order") or name+"_sha256" in values:
