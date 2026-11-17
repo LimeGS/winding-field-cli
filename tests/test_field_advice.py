@@ -255,6 +255,64 @@ def test_gradient_uses_physical_micrometres_not_only_world_grid_spacing(tmp_path
     assert centre['radius_um']==8.
 
 
+def test_rechecking_one_checkpoint_is_not_a_measured_global_stagnation_trend():
+    current=dict(checkpoint_sha256='3'*64,scientific_sha256='a'*64,
+                 global_converged=False,residual_l2=2.,timing_complete=True)
+    result=advice.recommend(history(),[current,dict(current)],True)
+    assert result['recommendation']=='SEGUIR_CALCULANDO'
+    assert len(result['global_measurements'])==2
+
+
+def test_global_trend_uses_latest_complete_measurement_per_distinct_checkpoint():
+    previous=dict(checkpoint_sha256='2'*64,scientific_sha256='a'*64,
+                  global_converged=False,residual_l2=10.,timing_complete=True)
+    current=dict(previous,checkpoint_sha256='3'*64,residual_l2=2.)
+    interrupted=dict(current,status='PAUSED',residual_l2=12.,timing_complete=False)
+    assert advice.recommend(history(),[previous,current,interrupted],True)['recommendation']=='SEGUIR_CALCULANDO'
+
+
+def test_budget_metadata_republication_is_not_another_global_progress_closure():
+    current=dict(checkpoint_sha256='3'*64,scientific_sha256='a'*64,sweep=3,
+                 global_converged=False,residual_l2=2.,timing_complete=True)
+    same_sweep=dict(current,checkpoint_sha256='2'*64)
+    assert advice.recommend(history(),[same_sweep,current],True)['recommendation']=='SEGUIR_CALCULANDO'
+
+
+@pytest.mark.parametrize('breakage',['identity','metrics','metric_number','negative_gradient','schema','plan','samples','verification','timing'])
+def test_report_rejects_malformed_or_incompatible_history_without_writes(tmp_path,breakage):
+    root=tmp_path/'field';stored(root);sink=advice.Advice(root,GEOMETRY)
+    snapshot=event(root);sink.restore(snapshot)
+    for sweep in range(1,4):
+        stored(root,shift=float(sweep));sink.complete(event(root,sweep))
+    sink.finish()
+    if breakage in ('identity','metrics','metric_number','negative_gradient','schema','plan','samples'):
+        path=next(sink.path.glob('closure-*.json'));record=advice._read(path)
+        if breakage=='identity':record['scientific_sha256']='b'*64
+        if breakage=='metrics':record['metrics']=[]
+        if breakage=='metric_number':record['metrics']['observed_max_update']=-1.
+        if breakage=='negative_gradient':record['samples'][0]['gradient_error']=-1.
+        if breakage=='schema':record['schema']='unknown'
+        if breakage=='plan':record['plan']['required_ids'].append(99999)
+        if breakage=='samples':record['samples']=[]
+        advice._publish(path,dict(data=record,sha256=advice.digest(record)))
+    elif breakage=='verification':
+        sink.record_verification(snapshot['checkpoint_sha256'],dict(global_converged=False,residual_l2=2.),1.,sweep=1)
+        path=next(sink.path.glob('verification-*.json'));record=advice._read(path)
+        record['scientific_sha256']='b'*64
+        advice._publish(path,dict(data=record,sha256=advice.digest(record)))
+    else:
+        path=sink.path/'TIMING.json'
+        advice._publish(path,dict(data=[[]],sha256=advice.digest([[]])))
+    before={str(p):p.read_bytes() for p in sink.path.iterdir()}
+    result=advice.report(root)
+    assert result['recommendation']=='DATOS_INSUFICIENTES'
+    assert 'diagnostics unavailable' in result['reason']
+    assert result['cost_ratio'] is None
+    assert before=={str(p):p.read_bytes() for p in sink.path.iterdir()}
+    rejected=advice.Advice(root,GEOMETRY)
+    with pytest.raises(ValueError):rejected.restore(event(root,3))
+
+
 @pytest.mark.parametrize('gradient,error,radius,reason',[
     ([1.,2.,3.],0.,1.,None),
     ([0.,0.,0.],0.,1.,'insufficient resolved gradient'),

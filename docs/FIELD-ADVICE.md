@@ -98,27 +98,29 @@ This ordinary core route has no global verification; none was added.
 
 | Pair | Off (ms) | On (ms) | Added (ms) |
 |---|---:|---:|---:|
-| 1 | 202.475 | 297.875 | 95.400 |
-| 2 | 206.954 | 291.639 | 84.684 |
-| 3 | 209.161 | 280.963 | 71.802 |
-| 4 | 190.025 | 288.918 | 98.893 |
-| 5 | 189.545 | 277.384 | 87.838 |
+| 1 | 180.976 | 256.164 | 75.188 |
+| 2 | 174.900 | 244.476 | 69.575 |
+| 3 | 172.281 | 243.858 | 71.577 |
+| 4 | 174.351 | 242.862 | 68.511 |
+| 5 | 168.093 | 237.822 | 69.730 |
 
-Off/on medians: **202.475 / 288.918 ms**. Median *paired* overhead:
-**87.838 ms / 46.34%**, range **71.802–98.893 ms**. This is substantial relative
+Off/on medians: **174.351 / 243.858 ms**. Median *paired* overhead:
+**69.730 ms / 41.48%**, range **68.511–75.188 ms**. This is substantial relative
 overhead on a very small workload, not evidence of negligible cost.
 
 The frozen plan had 39 points. Across all three closures it decoded 36 payload
 chunks/reads, 5,754 decoded payload bytes and 26,897 encoded payload bytes
 (manifest reads/inventory checks are additional and included in elapsed time).
-Diagnostic atomic-publication time was 27.1–29.3 ms per execution; serialization,
+Diagnostic atomic-publication time was 22.9–25.4 ms per execution; serialization,
 reads and all journal/sample/timing-receipt fsyncs are included in total elapsed
 time. All measured sweep intervals were complete, with no pause/restart.
 
 Environment: macOS arm64, Python 3.12.10, NumPy 2.4.6, PyTorch 2.6.0.
-Isolated development core `1.5.3.dev0`, core commit `bc88881`;
+Remeasured against the final review fixes; the earlier receipt is retained
+separately, not used to infer a performance improvement.
+Isolated development core `1.5.3.dev0`, core commit `44102c7`;
 `block_solver.py` SHA256:
-`6beefb0f70ddafbec6e4dc313ef53b7a9c80e50911acae4fc35ea1f0aa7db406`.
+`f1b0bbb9d1d509ca7967802b5ae2898b4abec086cf9a14803ad40fadec9dcbaf`.
 Local plan workspace retains `measure_overhead.py`, `overhead.json` and the
 uninstalled development wheel. No real-volume, cold-process, CUDA or physical
 accuracy conclusion follows from this experiment.
