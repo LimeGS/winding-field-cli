@@ -90,10 +90,9 @@ def source_identity(path,geometry_path,source):
         embedded=dict(source=original['source'],origin_xyz_um=frame['origin_xyz_um'],spacing_xyz_um=frame['spacing_xyz_um'])
     explicit=None; descriptor_sha=None
     if geometry_path:
-        geometry_path=Path(geometry_path).expanduser().resolve()
-        if geometry_path.stat().st_size>65536: raise ValueError('AFV geometry descriptor too large')
-        raw=geometry_path.read_bytes(); descriptor_sha=hashlib.sha256(raw).hexdigest()
-        explicit=json.loads(raw)
+        from .input_settings import declaration,declaration_location
+        explicit,descriptor_sha,_=declaration(geometry_path,limit=65536)
+        geometry_path=declaration_location(geometry_path)
         if not isinstance(explicit,dict) or set(explicit)!={'source','origin_xyz_um','spacing_xyz_um'}:
             raise ValueError('AFV geometry requires source, origin_xyz_um and spacing_xyz_um')
     geometry=embedded or explicit
@@ -105,7 +104,7 @@ def source_identity(path,geometry_path,source):
         if value.shape!=(3,) or not np.isfinite(value).all() or (name=='spacing_xyz_um' and (value<=0).any()):
             raise ValueError('invalid AFV geometry '+name)
     if file_sha(path)!=sha: raise ValueError('AFV source changed during validation')
-    return dict(path=str(path),sha256=sha,geometry_path=str(geometry_path) if geometry_path else None,
+    return dict(path=str(path),sha256=sha,geometry_path=geometry_path if geometry_path else None,
         geometry_sha256=descriptor_sha,**geometry,input_count=header['fiber_count'],block_count=header['block_count'])
 
 
@@ -166,8 +165,11 @@ def _scalar_pieces(points,maps,stop=None):
 
 def _checked_source(config,source,verified_source):
     """Only reuse a freshly checked result supplied by this invocation's caller."""
+    from .input_settings import check_recipe_sources
+    check_recipe_sources(config)
     if verified_source is None:return source_identity(config['fibres'],config.get('fibres_geometry'),source)
-    geometry=str(Path(config['fibres_geometry']).expanduser().resolve()) if config.get('fibres_geometry') else None
+    from .input_settings import declaration_location
+    geometry=declaration_location(config.get('fibres_geometry'))
     if (not isinstance(verified_source,dict)
             or verified_source.get('path')!=str(Path(config['fibres']).expanduser().resolve())
             or verified_source.get('geometry_path')!=geometry
@@ -249,7 +251,7 @@ def import_fibres(run,config,stop=None,*,verified_source=None):
     root=run/'fibres'; root.mkdir(exist_ok=True); bind(root/'IMPORT.json',identity)
     validate_retained(run,config,verified_source=source)
     if (run/'FIBRES.json').exists():
-        if source!=source_identity(config['fibres'],config.get('fibres_geometry'),meta['source']):
+        if source!=_checked_source(config,meta['source'],None):
             raise ValueError('external AFV source changed during import')
         return json.loads((run/'FIBRES.json').read_bytes())
     maps=Tiles(run/'maps'); src=_open(config['fibres']); db=sqlite3.connect(root/'fibres.sqlite')
@@ -349,7 +351,7 @@ def import_fibres(run,config,stop=None,*,verified_source=None):
         commit_batch()
         if stop and stop(): raise InterruptedError('AFV import paused')
         progress('VALIDATING',force=True)
-        if source!=source_identity(config['fibres'],config.get('fibres_geometry'),meta['source']):
+        if source!=_checked_source(config,meta['source'],None):
             raise ValueError('external AFV source changed during import')
         if maps.identity()!=meta['tiles_sha256']:raise ValueError('AFV import maps changed during import')
         count=db.execute('SELECT count(*) FROM curves').fetchone()[0]

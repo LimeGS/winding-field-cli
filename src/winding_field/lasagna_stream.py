@@ -6,6 +6,7 @@ import itertools
 import json
 from pathlib import Path
 import shutil
+from copy import deepcopy
 from urllib.parse import urljoin
 
 import numpy as np
@@ -42,16 +43,20 @@ class LasagnaInput:
     stream_contract_version=2
 
     def __init__(self,volume,run,config):
+        from .input_settings import check_recipe_sources
+        check_recipe_sources(config)
         self.volume=volume; self.config=config; self.products={}; self.stack=ExitStack()
         self.root=Path(run)/'lasagna-import'; self.root.mkdir(parents=True,exist_ok=True)
-        self.source=location(config['lasagna_input']); self.documents={};self.stream_policy=False;self.metadata_pins={}
+        self.inline=deepcopy(config['lasagna_input']) if isinstance(config['lasagna_input'],dict) else None
+        self.source=None if self.inline is not None else location(config['lasagna_input'])
+        self.documents={};self.stream_policy=False;self.metadata_pins={}
         try:
             retained_import(run)
             seal=self.root/'CHUNKS.json'
             if seal.exists():
                 for name,sha in json.loads(seal.read_bytes()).items():
                     if file_sha(self.root/name)!=sha:raise ValueError('Lasagna input ledger changed: '+name)
-            manifest=self.document(self.source)
+            manifest=deepcopy(self.inline) if self.inline is not None else self.document(self.source)
             if not isinstance(manifest,dict) or manifest.get('version')!=2:
                 raise ValueError('external Lasagna requires a v2 manifest')
             if any(k in manifest for k in ('original_ct','world_origin_xyz_um','world_spacing_xyz_um')):
@@ -260,6 +265,10 @@ class LasagnaInput:
 
     def close(self):
         self.stack.close()
+        from .input_settings import check_recipe_sources
+        check_recipe_sources(self.config)
+        if self.inline is not None and self.config['lasagna_input']!=self.inline:
+            raise ValueError('Lasagna inline declaration changed during import')
         for source,record in self.documents.items():
             if not source.startswith(('http://','https://')):
                 path=Path(source);sha=file_sha(path) if path.is_file() else None

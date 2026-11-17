@@ -94,6 +94,8 @@ def _input_chunk_axes(config,lo,hi,chunks):
 
 def plan(config,volume=None,stages=()):
     validate_config(config)
+    from .input_settings import check_recipe_sources
+    check_recipe_sources(config)
     own=volume is None
     volume=open_volume(config) if own else volume
     try:
@@ -373,6 +375,8 @@ def _tifxyz_ready(out,result,request_sha,coverage_policy='strict'):
 
 def run(config,resume=False,until=None,extra_surface_seconds=0,field_sweeps=None,offline=False):
     validate_config(config)
+    from .input_settings import check_recipe_sources
+    check_recipe_sources(config)
     if type(offline) is not bool or offline and not resume:
         raise ValueError('offline transport override requires a resumed run')
     if field_sweeps is not None and (type(field_sweeps) is not int or field_sweeps<1
@@ -565,6 +569,7 @@ def run(config,resume=False,until=None,extra_surface_seconds=0,field_sweeps=None
                     print(f'[{stage}] ready ({state["stages"][stage]["seconds"]:.2f}s)',file=sys.stderr,flush=True)
                 if stage==until:
                     break
+            check_recipe_sources(config)
             if config.get('fibres') and fibres_input!=source_identity(config['fibres'],config.get('fibres_geometry'),volume.identity):
                 raise ValueError('external AFV input changed during run')
             state.update(status='COMPLETE' if terminal in state['stages'] else 'PAUSED',updated=time.time(),io=volume.stats())
