@@ -209,7 +209,7 @@ def test_prepared_mesh_to_whole_sheet_lscm_ct_xyz_without_user_json(tmp_path):
                   shape_zyx=[7]*3,sheet_step=1.)
     descriptor=dict(field=dict(kind='npy',path=str(source),sha256=file_sha(source)),
                     geometry=geometry,levels=[3.5])
-    mesh=tmp_path/'mesh'
+    mesh=tmp_path/'prepared-mesh'
     assert main(['prepared','mesh',*surface_flags(tmp_path,descriptor),'--output',str(mesh)])==0
     settings=tmp_path/'flattening.json';atomic_json(settings,request(tmp_path))
     common=['export-sheets','--mesh-bundle',str(mesh),'--source',str(ct),'--voxel-um','9.6',
@@ -228,3 +228,18 @@ def test_prepared_mesh_to_whole_sheet_lscm_ct_xyz_without_user_json(tmp_path):
     assert before==pins(actual)
     assert main([*common,*flags,'--level','1','--output',str(actual),'--resume'])==1
     assert before==pins(actual)
+
+
+def test_whole_sheet_fixture_reaches_export_with_a_fresh_prepared_mesh(tmp_path,monkeypatch):
+    """Run the actual mesh stage even on hosts without the Linux export guard."""
+    real_main=main
+    class ExportReached(Exception):pass
+    def mesh_then_export(argv):
+        if argv[0]=='export-sheets':
+            mesh=Path(argv[argv.index('--mesh-bundle')+1])
+            assert (mesh/'MESH.json').is_file()
+            raise ExportReached
+        return real_main(argv)
+    monkeypatch.setitem(globals(),'main',mesh_then_export)
+    with pytest.raises(ExportReached):
+        test_prepared_mesh_to_whole_sheet_lscm_ct_xyz_without_user_json(tmp_path)
