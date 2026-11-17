@@ -125,6 +125,9 @@ def _worker(config, output, workers, profiled):
     if set(state['stages'])!={'prepare','fibres'}:raise ValueError('benchmark pipeline did not complete')
     if profiler:profiler.dump_stats(output/'PROFILE.pstats')
     receipt=json.loads((output/'FIBRES.json').read_bytes())
+    status=json.loads((output/'fibres/STATUS.json').read_bytes())
+    metrics['execution']=status.get('execution',dict(workers=1))
+    metrics['worker_support_loads']=metrics['execution'].get('worker_support_loads',0)
     metrics.update(seconds=time.perf_counter()-start,pid=os.getpid(),workers=workers,profiled=profiled,
         peak_rss_bytes=peak[0] or resource.getrusage(resource.RUSAGE_SELF).ru_maxrss*(1 if sys.platform=='darwin' else 1024),
         curves=receipt['count'],logical_sha256=_logical(output),

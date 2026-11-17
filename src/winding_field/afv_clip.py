@@ -12,7 +12,7 @@ class SupportTiles:
     def __init__(self,maps,*,cache_bytes):
         if type(cache_bytes) is not int or cache_bytes<0:raise ValueError('invalid support cache budget')
         self.maps=maps;self.shape=maps.shape;self.chunk=maps.chunk
-        self.limit=cache_bytes;self.bytes=0;self.cache=OrderedDict()
+        self.limit=cache_bytes;self.bytes=0;self.cache=OrderedDict();self.loads=0
 
     def load(self,key,names=('support',)):
         if names!=('support',):raise ValueError('support cache only reads support')
@@ -20,6 +20,7 @@ class SupportTiles:
         if key in self.cache:
             self.cache.move_to_end(key);return self.cache[key]
         data=self.maps.load(key,names)
+        self.loads+=1
         for array in data.values():array.flags.writeable=False
         charge=512+sum(a.nbytes for a in data.values())
         if charge<=self.limit:

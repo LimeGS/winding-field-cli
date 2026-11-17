@@ -13,23 +13,25 @@ from .util import atomic_bytes, atomic_json, digest, file_sha
 
 
 class Tiles:
-    def __init__(self,root,shape=None,chunk=None,identity=None):
+    def __init__(self,root,shape=None,chunk=None,identity=None,*,readonly=False):
         self.root=Path(root)
-        self.root.mkdir(parents=True,exist_ok=True)
+        if not readonly:self.root.mkdir(parents=True,exist_ok=True)
         path=self.root/'TILES.json'
         if path.exists():
             self.meta=json.loads(path.read_bytes())
             if shape is not None and self.meta != dict(shape=list(shape),chunk=chunk,identity=identity):
                 raise ValueError('tile identity changed')
         else:
+            if readonly:raise FileNotFoundError('missing read-only tile metadata')
             if shape is None or len(shape)!=3 or any(int(n)!=n or n<1 for n in shape) or not isinstance(chunk,int) or chunk<1:
                 raise ValueError('invalid tile geometry')
             self.meta=dict(shape=list(shape),chunk=chunk,identity=identity)
             atomic_json(path,self.meta)
         self.shape=tuple(self.meta['shape']); self.chunk=self.meta['chunk']
-        self.db=sqlite3.connect(self.root/'tiles.sqlite')
-        self.db.execute('CREATE TABLE IF NOT EXISTS tiles (key TEXT PRIMARY KEY, sha TEXT, info TEXT)')
-        self.db.commit()
+        self.db=sqlite3.connect((self.root/'tiles.sqlite').resolve().as_uri()+'?mode=ro',uri=True) if readonly else sqlite3.connect(self.root/'tiles.sqlite')
+        if not readonly:
+            self.db.execute('CREATE TABLE IF NOT EXISTS tiles (key TEXT PRIMARY KEY, sha TEXT, info TEXT)')
+            self.db.commit()
 
     def keys(self):
         return itertools.product(*(range((n-1)//self.chunk+1) for n in self.shape))
