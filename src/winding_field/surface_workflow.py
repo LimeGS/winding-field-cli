@@ -3,6 +3,7 @@
 import argparse
 import colorsys
 import fcntl
+import hashlib
 import json
 import math
 import os
@@ -30,12 +31,14 @@ def _keys(value, allowed):
         raise ValueError("unknown/invalid surface configuration fields")
 
 
-def _json(path):
+def _json(path,*,sources=None):
     with Path(path).open("rb") as stream:
         raw = stream.read(1024**2 + 1)
     if len(raw) > 1024**2:
         raise ValueError("surface config exceeds1MiB")
-    return json.loads(raw, object_pairs_hook=_object, parse_constant=_invalid)
+    result=json.loads(raw, object_pairs_hook=_object, parse_constant=_invalid)
+    if sources is not None:sources[str(Path(path).resolve())]=hashlib.sha256(raw).hexdigest()
+    return result
 
 
 def _artifact(value, base):
@@ -350,7 +353,7 @@ def _render_overrides(args):
 
 def _surface_recipe(args,sources):
     from .cli_settings import field_overrides,merge_explicit,persist_request
-    output=args.output.absolute()
+    output=args.output.resolve()
     path=args.config
     reference=None
     if args.resume:
@@ -374,14 +377,25 @@ def _surface_recipe(args,sources):
     if render:overrides["render"]=render
     base={};provenance=dict(sources)
     if path is not None:
-        loaded=load_surface_config(path)
-        document=_json(path)
+        document=_json(path,sources=provenance)
         if document.get("schema")=="winding-field-cli-request-v1":
+            loaded=load_surface_config(path)
             if document["output"]!=str(output):raise ValueError("saved request belongs to another output")
+            provenance.pop(str(path.resolve()))
             provenance.update(loaded.get("request_sources",{}))
-        else:provenance[str(path.resolve())]=loaded["config_sha256"]
-        base={k:v for k,v in loaded.items() if k not in ("config_path","config_sha256","request_sources")}
-        if not overrides:return path
+            base={k:v for k,v in loaded.items() if k not in ("config_path","config_sha256","request_sources")}
+        else:
+            base=deepcopy(document)
+            entries=[base.get("field"),base.get("mesh")]
+            if isinstance(base.get("field"),dict):entries.append(base["field"].get("mask"))
+            for entry in entries:
+                if not isinstance(entry,dict):continue
+                value=entry.get("path")
+                if isinstance(value,str) and value and "://" not in value:
+                    entry["path"]=str((path.resolve().parent/value).absolute())
+        if not overrides:
+            load_surface_config(path)
+            return path
     config=validate_surface_config(merge_explicit({"schema":"winding-surfaces-v1",**base},overrides),base=Path.cwd())
     if reference is not None:
         previous=load_surface_config(reference["config_path"])
@@ -401,6 +415,8 @@ def _surface_recipe(args,sources):
     check_resources(output.parent,reserve_bytes=config["execution"]["reserve_bytes"])
     for source,pin in sources.items():
         if sha(source)!=pin:raise ValueError("surface request source changed")
+    if path is not None and document.get("schema")!="winding-field-cli-request-v1":
+        if sha(path)!=provenance[str(path.resolve())]:raise ValueError("surface request source changed")
     return persist_request(output,config,resume=False,sources=provenance)
 
 

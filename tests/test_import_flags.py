@@ -255,3 +255,28 @@ def test_changed_original_import_recipe_rejects_plan_before_output(tmp_path):
     path.write_bytes(path.read_bytes()+b' ')
     with pytest.raises(ValueError,match='recipe.*changed'):plan(config)
     assert not (tmp_path/'run').exists()
+
+
+def test_remote_lasagna_manifest_overrides_keep_url_base_and_raw_pin(tmp_path,monkeypatch):
+    from winding_field import io
+    from winding_field.input_settings import check_recipe_sources
+    import hashlib
+    url='https://example.org/data/manifest.json'
+    raw=json.dumps(dict(version=2,grad_mag_factor=1.,groups={
+        'cos':dict(zarr='cos/0',scaledown=0,channels=['cos'])})).encode()
+    current=raw
+    def fetch(source,**kwargs):
+        assert source==url
+        return current,{}
+    monkeypatch.setattr(io,'fetch',fetch)
+    result=parse_imports(['--lasagna-input',url,'--lasagna-grad-mag-factor','.5'])
+    assert result['lasagna_input']['groups']['cos']['zarr']=='https://example.org/data/cos/0'
+    assert result['lasagna_input']['grad_mag_factor']==.5
+    assert result['input_recipe_sources']=={url:hashlib.sha256(raw).hexdigest()}
+    check_recipe_sources(result)
+    current=raw+b' '
+    with pytest.raises(ValueError,match='recipe.*changed'):check_recipe_sources(result)
+    result['offline']=True
+    def forbidden(*a,**kw):pytest.fail('offline continuation fetched a remote recipe')
+    monkeypatch.setattr(io,'fetch',forbidden)
+    check_recipe_sources(result)
