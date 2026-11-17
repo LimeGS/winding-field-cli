@@ -8,6 +8,7 @@ import io
 import itertools
 import json
 import math
+import os
 from pathlib import Path
 import shutil
 import sqlite3
@@ -177,11 +178,60 @@ def validate_retained(run,config):
             raise ValueError('imported AFV payload or inventory changed')
 
 
+def _source_blocks(src,source,meta,stop):
+    family_column='family' if 'family' in {r[1] for r in src.execute('PRAGMA table_info(fibers)')} else "'unknown'"
+    total=0
+    for fid,family,count,annotation in src.execute(f'SELECT id,{family_column},point_count,annotation FROM fibers ORDER BY id'):
+        if type(count) is not int or count<2 or not isinstance(annotation,str) or len(annotation)>1048576:
+            raise ValueError('invalid AFV fibre metadata')
+        note=json.loads(annotation);family=family or 'unknown';cursor=0;previous=None
+        classification=note.get('hv_classification') if isinstance(note,dict) else None
+        tag=classification.get('manual_tag') if isinstance(classification,dict) else None
+        if family=='unknown' and tag in ('V','H'):family=tag
+        for first,raw in src.execute('SELECT first_segment,points FROM blocks WHERE fiber_id=? ORDER BY first_segment',(fid,)):
+            if stop and stop():raise InterruptedError('AFV import paused')
+            if first!=cursor or len(raw)%24 or not 2<=len(raw)//24<=257:
+                raise ValueError('invalid or discontinuous AFV block')
+            points=np.frombuffer(raw,dtype='<f8').reshape(-1,3)
+            if not np.isfinite(points).all() or (previous is not None and not np.array_equal(previous,points[0])):
+                raise ValueError('nonfinite or discontinuous AFV block points')
+            previous=points[-1];cursor+=len(points)-1;total+=1
+            world=points*source['spacing_xyz_um']+source['origin_xyz_um']
+            if not np.isfinite(world).all():raise ValueError('nonfinite AFV world coordinates')
+            yield fid,family,first,annotation,(world-meta['origin_xyz'])/meta['spacing_xyz']
+        if cursor+1!=count:raise ValueError('AFV block point inventory mismatch')
+    if total!=source['block_count']:raise ValueError('AFV block inventory changed')
+
+
+_WORKER_SUPPORT=None
+
+
+def _clip_initialize(path,cache_bytes):
+    from .afv_clip import SupportTiles
+    global _WORKER_SUPPORT
+    _WORKER_SUPPORT=SupportTiles(Tiles(path,readonly=True),cache_bytes=cache_bytes)
+
+
+def _clip_worker(job):
+    from .import_parallel import RESULT_BYTES,worker_stopped
+    before=_WORKER_SUPPORT.loads;fragments=[];charge=0
+    for piece in _pieces(job[-1],_WORKER_SUPPORT,worker_stopped):
+        charge+=piece.nbytes
+        if charge>RESULT_BYTES:
+            fragments=None;break
+        fragments.append(piece)
+    return job,fragments,dict(pid=os.getpid(),support_loads=_WORKER_SUPPORT.loads-before)
+
+
 def import_fibres(run,config,stop=None):
     started=time.monotonic()
     run=Path(run); meta=json.loads((run/'PREPARED.json').read_bytes())
     source=source_identity(config['fibres'],config.get('fibres_geometry'),meta['source'])
     identity=dict(input=source,maps=meta['tiles_sha256'],origin=meta['origin_xyz'],spacing=meta['spacing_xyz'])
+    from .import_parallel import limits,local_inputs,ordered_map
+    execution=limits(config.get('import_workers',1) if local_inputs(config) else 1,
+                     output=run,reserve_bytes=config.get('reserve_bytes',0),worker_bytes=356<<20)
+    execution.update(worker_pids=[],worker_support_loads=0,streaming_replays=0)
     root=run/'fibres'; root.mkdir(exist_ok=True); bind(root/'IMPORT.json',identity)
     validate_retained(run,config)
     if (run/'FIBRES.json').exists(): return json.loads((run/'FIBRES.json').read_bytes())
@@ -201,7 +251,7 @@ def import_fibres(run,config,stop=None):
             identity_sha256=digest(identity),blocks_total=source['block_count'],blocks_processed=processed,
             blocks_committed=committed,blocks_pending=pending,commits_this_invocation=commits,
             elapsed_s=elapsed,blocks_per_second=processed/elapsed if elapsed else 0.,
-            last_batch_committed_utc=last_commit_utc,updated_utc=time.time()))
+            last_batch_committed_utc=last_commit_utc,updated_utc=time.time(),execution=execution))
         last_update=now
 
     def commit_batch():
@@ -232,33 +282,24 @@ def import_fibres(run,config,stop=None):
                         and type(stamp) in (int,float) and math.isfinite(stamp)):
                     last_commit_utc=stamp
         progress('IMPORTING',force=True)
-        family_column='family' if 'family' in {r[1] for r in src.execute('PRAGMA table_info(fibers)')} else "'unknown'"
-        total_blocks=0
-        for fid,family,count,annotation in src.execute(f'SELECT id,{family_column},point_count,annotation FROM fibers ORDER BY id'):
-            if type(count) is not int or count<2 or not isinstance(annotation,str) or len(annotation)>1048576:
-                raise ValueError('invalid AFV fibre metadata')
-            note=json.loads(annotation); family=family or 'unknown'; cursor=0; previous=None
-            classification=note.get('hv_classification') if isinstance(note,dict) else None
-            tag=classification.get('manual_tag') if isinstance(classification,dict) else None
-            if family=='unknown' and tag in ('V','H'): family=tag
-            for first,raw in src.execute('SELECT first_segment,points FROM blocks WHERE fiber_id=? ORDER BY first_segment',(fid,)):
-                if stop and stop():
-                    raise InterruptedError('AFV import paused')
-                if first!=cursor or len(raw)%24 or not 2<=len(raw)//24<=257:
-                    raise ValueError('invalid or discontinuous AFV block')
-                points=np.frombuffer(raw,dtype='<f8').reshape(-1,3)
-                if not np.isfinite(points).all() or (previous is not None and not np.array_equal(previous,points[0])):
-                    raise ValueError('nonfinite or discontinuous AFV block points')
-                previous=points[-1]; cursor+=len(points)-1; total_blocks+=1
-                world=points*source['spacing_xyz_um']+source['origin_xyz_um']
-                if not np.isfinite(world).all(): raise ValueError('nonfinite AFV world coordinates')
-                local=(world-meta['origin_xyz'])/meta['spacing_xyz']
+        jobs=_source_blocks(src,source,meta,stop)
+        computed=(ordered_map(_clip_worker,jobs,workers=execution['workers'],max_inflight=execution['max_inflight'],
+                    initializer=_clip_initialize,initargs=(str(run/'maps'),(64<<20)//execution['workers']),stop=stop)
+                  if execution['workers']>1 else ((job,None,None) for job in jobs))
+        with closing(computed):
+            for job,fragments,stats in computed:
+                fid,family,first,annotation,local=job
+                if stats:
+                    if stats['pid'] not in execution['worker_pids']:execution['worker_pids'].append(stats['pid'])
+                    execution['worker_support_loads']+=stats['support_loads']
+                    execution['streaming_replays']+=int(fragments is None)
                 old=db.execute('SELECT sha FROM done WHERE fid=? AND block=?',(fid,first)).fetchone()
                 rows=db.execute('SELECT id,points,family,annotation FROM curves WHERE source_id=? AND source_block=? ORDER BY id',(fid,first)) if old else None
                 checksum=hashlib.sha256(digest([family,annotation]).encode())
                 if not old and not db.in_transaction:
                     db.execute('BEGIN'); batch_started=time.monotonic()
-                for piece in _pieces(local,support,stop):
+                for piece in (_pieces(local,support,stop) if fragments is None else fragments):
+                    if stop and stop():raise InterruptedError('AFV import paused')
                     world=piece*meta['spacing_xyz']+meta['origin_xyz']
                     buffer=io.BytesIO(); np.save(buffer,world,allow_pickle=False)
                     box=tuple(float(v) for pair in zip(world.min(0),world.max(0)) for v in pair)
@@ -286,8 +327,7 @@ def import_fibres(run,config,stop=None):
                 if pending and (pending>=_BATCH_BLOCKS or time.monotonic()-batch_started>=_BATCH_SECONDS):
                     commit_batch()
                 progress('IMPORTING')
-            if cursor+1!=count: raise ValueError('AFV block point inventory mismatch')
-        if total_blocks!=source['block_count'] or db.execute('SELECT count(*) FROM done').fetchone()[0]!=total_blocks:
+        if processed!=source['block_count'] or db.execute('SELECT count(*) FROM done').fetchone()[0]!=processed:
             raise ValueError('imported AFV inventory changed')
         commit_batch()
         if stop and stop(): raise InterruptedError('AFV import paused')
