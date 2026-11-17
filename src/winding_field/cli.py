@@ -11,6 +11,7 @@ from . import __version__
 from .io import Volume,resolve_source
 
 TOOLS = {
+    'field-converge': ('field_convergence', 'opt-in global field convergence; legacy routes remain unchanged'),
     'constant-sheet': ('constant_sheet', 'prepare, flatten, validate and render exact constant-W sheets'),
     'sheet-atlas': ('sheet_atlas', 'package and query side-by-side constant-W CT sheets'),
     'surface-export': ('surface_export', 'export a level set, flatten and sample CT'),

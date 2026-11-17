@@ -111,7 +111,7 @@ def spline_samples(points,low,high,step):
             yield np.linspace(a,b,max(1,int(np.ceil(length/step)))+1)
 
 
-def solve(run,config,stop=None,*,sweep_target=None):
+def solve(run,config,stop=None,*,sweep_target=None,convergence=None):
     budget=config.get('prepared_cache_bytes',0)
     if type(budget) is not int or budget<0:
         raise ValueError('prepared_cache_bytes must be a nonnegative integer')
@@ -120,7 +120,7 @@ def solve(run,config,stop=None,*,sweep_target=None):
     run=Path(run); meta=json.loads((run/'PREPARED.json').read_bytes())
     fibres=json.loads((run/'FIBRES.json').read_bytes())
     bounded=meta.get('bounded_preparation',False)
-    maps=Tiles(run/('coarse/maps' if bounded else 'maps'))
+    maps=Tiles(run/('coarse/maps' if bounded else 'maps'),readonly=convergence is not None)
     if maps.identity()!=meta['tiles_sha256'] or file_sha(run/'fibres/fibres.sqlite')!=fibres['sha256']:
         raise ValueError('prepared maps or fibres changed')
     cal=meta['calibration'] if bounded else calibration(maps,meta)
@@ -133,7 +133,7 @@ def solve(run,config,stop=None,*,sweep_target=None):
     identity=dict(maps=meta['tiles_sha256'],fibres=fibres['sha256'],geometry=geometry,calibration=cal,
                    fibre_weight=config.get('fibre_weight',1.),algorithm='physical-trilinear-prior-v2')
     pair_provider=None
-    if bounded:
+    if bounded or convergence is not None:
         from .bounded_constraints import build,PairCatalog
         status=build(run/'pairs',run/'fibres/fibres.sqlite',fibres['sha256'],geometry,
                      weight=identity['fibre_weight'],quota_bytes=config.get('bounded_bytes',12<<30)//8,
@@ -141,9 +141,12 @@ def solve(run,config,stop=None,*,sweep_target=None):
         if status=='PAUSED':maps.close();return dict(status='PAUSED')
         pair_provider=PairCatalog(run/'pairs',geometry,cache_bytes=config.get('constraint_cache_bytes',0))
         identity.update(algorithm='global-arclength-pairs-coarse-prior-v1',pairs=file_sha(run/'pairs/PAIRS.json'))
+        if convergence is not None:
+            identity.update(algorithm='global-arclength-pairs-coarse-prior-v1' if bounded else
+                            'global-arclength-pairs-full-prior-v1',mode='automatic-convergence-v1')
     root=run/'field'
     from .field_budget import effective_budget,extend
-    sweeps=effective_budget(root,config.get('sweeps',4)) if bounded else config.get('sweeps',4)
+    sweeps=effective_budget(root,config.get('sweeps',4)) if bounded or convergence is not None else config.get('sweeps',4)
     if sweep_target is not None and (not bounded or type(sweep_target) is not int or sweep_target<sweeps):
         raise ValueError('invalid bounded field sweep target')
     options=dict(origin_xyz=geometry['origin_xyz'],spacing_xyz=geometry['spacing_xyz'],
@@ -209,7 +212,7 @@ def solve(run,config,stop=None,*,sweep_target=None):
         return result
 
     constraints.prepared_key=lambda lo,hi:fibres['sha256']
-    options['constraints']=pair_provider if bounded else constraints
+    options['constraints']=pair_provider if pair_provider is not None else constraints
     try:
         checkpoint=root/'CHECKPOINT.json'
         if not checkpoint.exists():
@@ -239,6 +242,8 @@ def solve(run,config,stop=None,*,sweep_target=None):
                 # A fresh resume has not initialized the CUDA allocator through inference.
                 torch.empty(0,device=device)
                 torch.cuda.reset_peak_memory_stats(device)
+        if convergence is not None:
+            return convergence.solve(root,shape,chunk,identity,load,geometry,cal,pair_provider,options,stop)
         result=solve_blocks(root,shape,chunk,identity,load,resume=True,stop=stop,**options)
         if result['status']=='SWEEP_BUDGET_REACHED' and sweep_target is not None and sweep_target>sweeps:
             options['sweeps']=extend(root,sweep_target,config.get('sweeps',4),

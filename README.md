@@ -238,6 +238,30 @@ This extends the checkpoint budget without changing the original configuration
 or discarding progress. Repeating the target adds nothing; lower targets and
 changes to published fields are rejected. Verification still gates publication.
 
+### Opt-in automatic field convergence
+
+Legacy commands above keep their current operators and limits. For a **new**
+automatic field, stop the initial workflow at `--until fibres`, then:
+
+```bash
+winding-field field-converge runs/prepared-inputs --output runs/field-auto \
+  --max-sweeps 32 --global-rtol 1e-6
+# After interruption, remove runs/field-auto/STOP if present, then:
+winding-field field-converge runs/field-auto --resume
+# Only if that automatic generation exhausted its budget:
+winding-field field-converge runs/field-auto --output runs/field-auto-next \
+  --max-sweeps 64
+```
+
+This field-only command privately copies inputs without repeating preparation or
+fibres, fixes the global constraint rows at inception, and checks the **stored**
+field after complete sweeps. It stops on global convergence, finite total budget,
+stagnation or interruption; it never starts meshes/flattening automatically.
+Numerical convergence is not physical-sheet validation.
+
+Existing legacy fields, including PHerc0483A, are **not migrated** or extended by
+this command. See [criterion, safety, limits and examples](docs/FIELD-CONVERGENCE.md).
+
 </details>
 
 <details>
