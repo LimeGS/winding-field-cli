@@ -177,3 +177,36 @@ def persist_request(output: Path, request: dict, *, resume: bool, sources=None) 
     try:os.fsync(fd)
     finally:os.close(fd)
     return path
+
+
+def field_arguments(parser):
+    """Shared field descriptor and WORLD geometry, deliberately separate from CT."""
+    group=parser.add_argument_group('field source and WORLD geometry',argument_default=argparse.SUPPRESS)
+    for name in ('kind','url','sha256','complete_sha256','support_policy'):
+        group.add_argument('--field-'+name.replace('_','-'))
+    for name in ('path','mask'):
+        group.add_argument('--field-'+name,type=Path)
+    group.add_argument('--field-mask-sha256')
+    group.add_argument('--field-frame')
+    group.add_argument('--field-voxel-um',type=float,help='field voxel calibration in micrometres, not CT sampling')
+    for name,value_type in (('origin_xyz',float),('spacing_xyz',float),('shape_zyx',int)):
+        group.add_argument('--field-'+name.replace('_','-'),type=value_type,nargs=3,
+                           help='WORLD XYZ origin/spacing or integer ZYX node counts')
+    group.add_argument('--sheet-step',type=float,help='raw field units per sheet')
+    group.add_argument('--calibration')
+
+
+def field_overrides(args):
+    values=vars(args);result={}
+    for name in ('kind','path','url','sha256','complete_sha256','support_policy'):
+        if 'field_'+name in values:
+            value=values['field_'+name]
+            result.setdefault('field',{})[name]=str(value.resolve()) if isinstance(value,Path) else value
+    mask={}
+    if 'field_mask' in values:mask['path']=str(args.field_mask.resolve())
+    if 'field_mask_sha256' in values:mask['sha256']=args.field_mask_sha256
+    if mask:result.setdefault('field',{})['mask']=mask
+    for name in ('frame','voxel_um','origin_xyz','spacing_xyz','shape_zyx','sheet_step','calibration'):
+        flag=name if name in ('sheet_step','calibration') else 'field_'+name
+        if flag in values:result.setdefault('geometry',{})[name]=values[flag]
+    return result
