@@ -171,13 +171,14 @@ def solve(run,config,stop=None,*,sweep_target=None):
             rows=static_rows[key]
             row_count+=0 if rows is None else rows.matrix.shape[0]
             return rows
+        block_origin=np.asarray(geometry['origin_xyz'])+lo[::-1]*geometry['spacing_xyz']
+        block_shape=hi-lo
+        block_upper=block_origin+(block_shape[::-1]-1)*geometry['spacing_xyz']
         a=[]; b=[]
         if meta['prediction']=='qual-v2' or fibres.get('spatial_index'):
-            low=np.asarray(geometry['origin_xyz'])+lo[::-1]*geometry['spacing_xyz']
-            high=np.asarray(geometry['origin_xyz'])+(hi-1)[::-1]*geometry['spacing_xyz']
             rows=db.execute('SELECT c.points FROM curve_bounds b JOIN curves c ON c.id=b.id '
                             'WHERE b.max_x>=? AND b.min_x<=? AND b.max_y>=? AND b.min_y<=? '
-                            'AND b.max_z>=? AND b.min_z<=? ORDER BY c.id',tuple(v for pair in zip(low,high) for v in pair))
+                            'AND b.max_z>=? AND b.min_z<=? ORDER BY c.id',tuple(v for pair in zip(block_origin,block_upper) for v in pair))
         else:
             axes=map_axes(meta,geometry,lo,hi)
             keys=itertools.product(*(range(int(axis[0])//maps.chunk,int(axis[-1])//maps.chunk+1) for axis in axes))
@@ -185,14 +186,13 @@ def solve(run,config,stop=None,*,sweep_target=None):
         for (raw,) in rows:
             points=np.load(io.BytesIO(raw),allow_pickle=False)
             if meta['prediction']=='qual-v2' or fibres.get('spatial_index'):
-                for sampled in spline_samples(points,low,high,min(geometry['spacing_xyz'])):
+                for sampled in spline_samples(points,block_origin,block_upper,min(geometry['spacing_xyz'])):
                     a.extend(sampled[:-1]); b.extend(sampled[1:])
                 continue
             points=points[::3]
             if len(points)<2:
                 continue
-            grid=(points-geometry['origin_xyz'])/geometry['spacing_xyz']
-            inside=((grid>=lo[::-1]) & (grid<=(hi-1)[::-1])).all(1)
+            inside=((points>=block_origin) & (points<=block_upper)).all(1)
             valid=inside[:-1]&inside[1:]
             a.extend(points[:-1][valid]); b.extend(points[1:][valid])
         if not a:
@@ -201,7 +201,7 @@ def solve(run,config,stop=None,*,sweep_target=None):
             return None
         row_count+=len(a)
         result=pair_constraints(np.array(a),np.array(b),
-                np.array(geometry['origin_xyz'])+lo[::-1]*geometry['spacing_xyz'],geometry['spacing_xyz'],tuple(hi-lo),
+                block_origin,geometry['spacing_xyz'],tuple(block_shape),
                 weight=identity['fibre_weight'])
         charge=4096+result.targets.nbytes+sum(a.nbytes for a in result._structural_arrays())
         if charge<=config.get('constraint_cache_bytes',0)-static_bytes:
