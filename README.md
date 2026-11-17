@@ -14,6 +14,14 @@ accelerator only if the core's FP64 vector norm works. The concrete device is
 saved before execution; explicit devices and resumed runs are not reselected.
 MPS builds without FP64 support are skipped. There is no fallback after starting.
 
+**Flags or config files:** all public commands accept `--cli-config FILE`
+using underscore option names. Explicit flags win over file values, then defaults.
+Native recipe options such as `--config` remain supported but are optional when
+their settings are supplied by flags. Scientific input arrays, hashes and frame
+declarations are still required; requests/checkpoints are generated automatically.
+See the [complete flag/config mappings](docs/CLI-FLAGS.md) and
+[flag-first Paris4 example](docs/PREPARED.md#flag-first-paris4-example).
+
 Lasagna output reduction defaults to **cos 2×, grad_mag/nx/ny 4× per axis**.
 Use `--lasagna-cos-downsample`, `--lasagna-grad-mag-downsample`,
 `--lasagna-nx-downsample`, `--lasagna-ny-downsample` with 1, 2, 4 or 8

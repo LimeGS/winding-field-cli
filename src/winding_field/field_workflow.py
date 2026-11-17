@@ -480,6 +480,9 @@ def _request_flags(parser):
     for name in ("target", "weights", "observed", "fixed", "constraints", "order"):
         group.add_argument("--"+name, type=Path)
         group.add_argument("--"+name+"-sha256")
+        if name in ("fixed","constraints","order"):
+            group.add_argument("--no-"+name,dest=name,action="store_const",const=None,
+                               help="remove the optional artifact from the effective request")
     for fields, prefix in ((_SOLVER_FLAGS, ""), (_EXECUTION_FLAGS, ""), (_GPU_FLAGS, "gpu-")):
         for name, value_type in fields.items():
             group.add_argument("--"+prefix+name.replace("_", "-"), type=value_type)
@@ -533,6 +536,11 @@ def _effective_request(args, sources):
                 if isinstance(value, Path):value = str(value.resolve())
                 overrides.setdefault(name, {})[field] = value
     for name in ("target", "weights", "observed", "fixed", "constraints", "order"):
+        if name in values and values[name] is None:
+            if name not in ("fixed","constraints","order") or name+"_sha256" in values:
+                raise ValueError("missing/conflicting artifact: "+name)
+            base.pop(name,None)
+            continue
         entry = {}
         if name in values:entry["path"] = str(values[name].resolve())
         if name+"_sha256" in values:entry["sha256"] = values[name+"_sha256"]

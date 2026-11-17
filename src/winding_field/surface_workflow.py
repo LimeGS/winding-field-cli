@@ -335,8 +335,9 @@ def _surface_flags(parser):
     for name in ("width","height","triangle_batch","reserve_bytes"):
         group.add_argument("--render-"+name.replace("_","-"),type=int)
     group.add_argument("--render-levels",type=float,nargs="+",help="raw field isovalues to render")
-    group.add_argument("--render-view",nargs=3,action="append",metavar=("NAME","AZIMUTH","ELEVATION"),
-                       help="named view; azimuth/elevation in degrees; replaces file views")
+    view=group.add_argument("--render-view",nargs=3,action="append",metavar=("NAME","AZIMUTH","ELEVATION"),
+                            help="named view; azimuth/elevation in degrees; replaces file views")
+    view.element_types=(str,float,float)
 
 
 def _render_overrides(args):
