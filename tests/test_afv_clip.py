@@ -50,3 +50,47 @@ def test_cached_support_cannot_hide_mid_import_map_mutation(tmp_path,monkeypatch
     with pytest.raises(ValueError,match='maps changed'):
         afv.import_fibres(tmp_path/'run',config)
     assert not (tmp_path/'run/FIBRES.json').exists()
+
+
+@pytest.mark.parametrize('points',[
+    [[0,2,3],[23,2,3]],[[23,2,3],[0,2,3]],[[2,2,3],[2,2,3],[20,2,3]],
+    [[-2,2,3],[8,2,3],[25,2,3]],[[0,0,0],[7,7,7]],[[0,0,0],[0,0,7]],
+    [[2,2,3],[7,2,3],[12,2,3],[20,2,3]],[[12,2,3],[12,6,3]],
+])
+def test_vector_clipping_preserves_scalar_fragments_exactly(tmp_path,points):
+    from winding_field.afv_clip import pieces,SupportTiles
+    tool().generated_input(tmp_path/'run',1,1)
+    with closing(Tiles(tmp_path/'run/maps')) as maps:
+        cache=SupportTiles(maps,cache_bytes=1<<20)
+        expected=list(afv._scalar_pieces(np.asarray(points,float),maps))
+        actual=list(pieces(np.asarray(points,float),cache))
+        assert len(actual)==len(expected)
+        for a,b in zip(actual,expected):np.testing.assert_array_equal(a,b)
+
+
+def test_random_vector_clipping_keeps_order_vertices_and_subvoxel_gaps(tmp_path):
+    from winding_field.afv_clip import pieces,SupportTiles
+    tool().generated_input(tmp_path/'run',1,1)
+    rng=np.random.default_rng(52)
+    with closing(Tiles(tmp_path/'run/maps')) as maps:
+        for key in maps.keys():
+            support=rng.random((8,8,8))>.1
+            maps.write(key,dict(support=support))
+        cache=SupportTiles(maps,cache_bytes=1<<20)
+        for _ in range(40):
+            points=rng.uniform([-2,-2,-2],[26,10,10],(12,3))
+            expected=list(afv._scalar_pieces(points,maps));actual=list(pieces(points,cache))
+            assert len(actual)==len(expected)
+            for a,b in zip(actual,expected):np.testing.assert_array_equal(a,b)
+
+
+def test_vector_clipping_streams_pathological_intervals_and_cancels(tmp_path,monkeypatch):
+    from winding_field import afv_clip
+    tool().generated_input(tmp_path/'run',1,1)
+    with closing(Tiles(tmp_path/'run/maps')) as maps:
+        points=np.array([[0.,2.,3.],[23.,2.,3.]])
+        expected=list(afv._scalar_pieces(points,maps))
+        monkeypatch.setattr(afv_clip,'MAX_INTERVALS',2)
+        actual=list(afv_clip.pieces(points,maps))
+        for a,b in zip(actual,expected):np.testing.assert_array_equal(a,b)
+        with pytest.raises(InterruptedError):list(afv_clip.pieces(points,maps,stop=lambda:True))
