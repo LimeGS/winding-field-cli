@@ -31,6 +31,15 @@ def read_settings(path) -> dict:
 
 
 def _config_arguments(parser):
+    for action in list(parser._actions):
+        if isinstance(action,(argparse._StoreTrueAction,argparse._StoreFalseAction)):
+            for option in action.option_strings:
+                if not option.startswith('--'):continue
+                inverse='--'+option[5:] if option.startswith('--no-') else '--no-'+option[2:]
+                if inverse not in parser._option_string_actions:
+                    parser.add_argument(inverse,dest=action.dest,default=argparse.SUPPRESS,
+                        action='store_false' if action.const else 'store_true',
+                        help='explicit '+str(not action.const).lower()+' override for '+action.dest)
     if '--cli-config' not in parser._option_string_actions:
         names=['--cli-config']
         if '--config' not in parser._option_string_actions:names.append('--config')
@@ -49,6 +58,19 @@ def _selected(parser,tokens):
         if not tokens or tokens[0] not in sub.choices:break
         parser=sub.choices[tokens[0]];parents.append(parser);tokens=tokens[1:]
     return parents
+
+
+def _remainder(parser,tokens):
+    if not any(a.nargs==argparse.REMAINDER for a in parser._actions):return tokens,[]
+    index=0
+    while index<len(tokens):
+        token=tokens[index]
+        action=parser._option_string_actions.get(token.split('=',1)[0])
+        if token=='--' or action is None:return tokens[:index],tokens[index:]
+        count=0 if '=' in token or action.nargs==0 else 1 if action.nargs in (None,'?') else action.nargs
+        if not isinstance(count,int):raise ValueError('variable wrapper options before command remainder are unsupported')
+        index+=1+count
+    return tokens,[]
 
 
 def _value(action,value):
@@ -86,23 +108,28 @@ def parse_options(parser,argv=None,*,paths=(),lexical_paths=(),sources=None):
     """Use typed argparse defaults, not JSON-to-argv translation or a new schema."""
     tokens=list(sys.argv[1:] if argv is None else argv)
     _config_arguments(parser)
+    tokens,suffix=_remainder(parser,tokens)
     reader=argparse.ArgumentParser(add_help=False)
     reader.add_argument('--cli-config')
     _,remaining=reader.parse_known_args(tokens)
     parents=_selected(parser,remaining);active=parents[-1]
     explicit={t.split('=',1)[0] for t in remaining[:remaining.index('--') if '--' in remaining else len(remaining)]}
+    constants={}
     for p in parents:
         for action in p._actions:
             if isinstance(action,argparse.BooleanOptionalAction) and len(explicit.intersection(action.option_strings))>1:
                 parser.error('contradictory flags for '+action.dest)
+            if isinstance(action,(argparse._StoreTrueAction,argparse._StoreFalseAction)) and explicit.intersection(action.option_strings):
+                constants.setdefault(action.dest,set()).add(action.const)
+    if any(len(values)>1 for values in constants.values()):parser.error('contradictory boolean flags')
     aliases=['--cli-config']
     if active._option_string_actions.get('--config') is active._option_string_actions.get('--cli-config'):
         aliases.append('--config')
     reader=argparse.ArgumentParser(add_help=False)
     reader.add_argument(*aliases,dest='file')
     selected,remaining=reader.parse_known_args(tokens)
-    if selected.file is None:return parser.parse_args(tokens)
-    if '--help' in tokens or '-h' in tokens:return parser.parse_args(tokens)
+    if selected.file is None:return parser.parse_args([*tokens,*suffix])
+    if '--help' in tokens or '-h' in tokens:return parser.parse_args([*tokens,*suffix])
     actions={}
     for p in parents:
         for a in p._actions:
@@ -141,7 +168,11 @@ def parse_options(parser,argv=None,*,paths=(),lexical_paths=(),sources=None):
             for group in p._mutually_exclusive_groups:
                 groups.append((group,group.required))
                 if any(a.dest in settings for a in group._group_actions):group.required=False
-        args=parser.parse_args(remaining)
+        args=parser.parse_args([*remaining,*suffix])
+        if not suffix:
+            for name,action in actions.items():
+                if action.nargs==argparse.REMAINDER and name in settings and getattr(args,name)==[]:
+                    setattr(args,name,deepcopy(action.default))
         for group,required in groups:
             present={a.dest for a in group._group_actions if getattr(args,a.dest,None) is not None}
             if len(present)>1 or (required and not present):
@@ -187,14 +218,16 @@ def persist_request(output: Path, request: dict, *, resume: bool, sources=None) 
     return path
 
 
-def field_arguments(parser):
+def field_arguments(parser,*,descriptor=True):
     """Shared field descriptor and WORLD geometry, deliberately separate from CT."""
     group=parser.add_argument_group('field source and WORLD geometry',argument_default=argparse.SUPPRESS)
-    for name in ('kind','url','sha256','complete_sha256','support_policy'):
-        group.add_argument('--field-'+name.replace('_','-'))
-    for name in ('path','mask'):
-        group.add_argument('--field-'+name,type=Path)
-    group.add_argument('--field-mask-sha256')
+    if descriptor:
+        for name in ('kind','url','sha256','complete_sha256','support_policy'):
+            group.add_argument('--field-'+name.replace('_','-'))
+        for name in ('path','mask'):
+            group.add_argument('--field-'+name,type=Path)
+        group.add_argument('--field-mask-sha256')
+    else:group.add_argument('--field-sha256')
     group.add_argument('--field-frame')
     group.add_argument('--field-voxel-um',type=float,help='field voxel calibration in micrometres, not CT sampling')
     for name,value_type in (('origin_xyz',float),('spacing_xyz',float),('shape_zyx',int)):
