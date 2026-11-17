@@ -179,9 +179,9 @@ def main(argv=None):
             p.add_argument('--field-sweeps',type=int,help='absolute total sweep budget for an unpublished bounded field; retries do not add sweeps')
             p.add_argument('--extra-surface-seconds',type=float,default=0.,help='explicit extra native budget; original elapsed/target retained')
     p=sub.add_parser('tifxyz',help='experimental direct export of an existing field; Linux runtime',
-        description='Export XYZ directly from a saved field in an admitted Linux worker. This experimental route does not sample CT; it is separate from mesh-derived TIFFs. A new export requires --config.')
+        description='Export XYZ directly from a saved field in an admitted Linux worker. This experimental route does not sample CT; it is separate from mesh-derived TIFFs. Supply typed request flags or optional --config.')
     p.add_argument('field_run',help='existing run directory containing the field'); p.add_argument('--output',required=True,help='direct-field TIFXYZ export directory')
-    p.add_argument('--config',help='direct-field export request JSON; required for a new export'); p.add_argument('--resume',action='store_true',help='continue the saved export request in --output')
+    p.add_argument('--config',help='optional direct-field export request JSON; explicit request flags override'); p.add_argument('--resume',action='store_true',help='continue the saved export request in --output')
     from .export_settings import tifxyz_arguments
     tifxyz_arguments(p)
     p=sub.add_parser('verify-tifxyz',help='read-only verification in an admitted Linux worker',
@@ -216,7 +216,7 @@ def main(argv=None):
     p.add_argument('--levels',nargs='+',type=float,help='raw field isovalues (W * sheet_step); required with --field-config, forbidden with --mesh-bundle')
     p.add_argument('--source',help='original CT Zarr; required except with --run')
     p.add_argument('--level',type=int,help='CT Zarr pyramid level (default: 0, or saved run level); not a winding W value');p.add_argument('--voxel-um',type=float,help='micrometre scale for CT geometry lacking units; not field/output spacing')
-    p.add_argument('--output',required=True,help='sheet export directory');p.add_argument('--flattening-config',help='JSON: output_frame and render settings; inferred with --run, required otherwise; explicit slim requires app_run')
+    p.add_argument('--output',required=True,help='sheet export directory');p.add_argument('--flattening-config',help='optional JSON: output_frame and render settings; explicit flags override; slim requires app_run')
     p.add_argument('--flattening-method',choices=['original','patches'],help='historical recipe; cannot combine with --flattening-solver/--scope')
     p.add_argument('--flattening-solver',choices=['lscm','slim'],help='explicit algorithm; requires --scope')
     p.add_argument('--scope',choices=['patches','sheet'],help='independent patches or whole connected sheets; requires --flattening-solver')

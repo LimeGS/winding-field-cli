@@ -4,6 +4,12 @@ The CLI reads local or public HTTP/S3 **3D Zarr v2** data without loading the
 whole scan into RAM. Start with a small ROI, inspect `plan`, then run with the
 same options. Zarr v3 and unsupported codecs are rejected.
 
+All settings also accept typed `--cli-config` defaults; paths in that file are
+relative to its directory, explicit flag paths to the invocation directory.
+Native recipe files can be mixed with named overrides; see [CLI-FLAGS](CLI-FLAGS.md).
+CT `--level` is a pyramid index and `--voxel-um` a calibration, not raw field
+`--levels` or output-frame voxel size. Resume keeps existing source/byte pins.
+
 ## Choose access and inspect usage
 
 ```bash

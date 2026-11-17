@@ -75,8 +75,8 @@ The corresponding family tests must compare maximal file and flag requests.
 | Explicit TIFXYZ frame | `id`, `origin_xyz_um`, `voxel_um`, `shape_zyx`, `source_identity_sha256` | Full frame/pin required together; selected-source mode stays available |
 | AFV/Lasagna declarations | Accepted source-identity geometry and manifest leaves in current validators | Per-source geometry, repeated typed channel/crop declarations, encoding and validity; hash-bound arrays remain data |
 
-As each family is implemented, its exhaustive leaf-to-flag table and maximal
-parity fixture complete this inventory. Newly accepted validator fields must
+The family leaf-to-flag tables and maximal parity fixtures cover this inventory.
+Newly accepted validator fields must
 receive either a typed flag or an explicit scientific-artifact disposition,
 never a hidden requirement for another handwritten JSON file.
 
@@ -107,6 +107,9 @@ saved recipes and changed science reject before writes. Existing cache/reader/
 resource-only continuation remains allowed; its effective recipe is another
 immutable sibling. Historical source-file hashes stay in `request_sources`;
 the original handwritten file is not needed to resume a saved CLI request.
+`--no-fixed`, `--no-constraints`, `--no-order` explicitly remove optional
+prepared artifacts inherited from a native recipe. The corresponding CLI-config
+values may be `null`; an artifact pin cannot be supplied alongside its clear flag.
 
 ### Prepared mesh/surfaces/render mappings
 

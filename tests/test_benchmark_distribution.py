@@ -30,3 +30,7 @@ def test_sdist_contains_flattening_tools_with_their_tests(tmp_path):
         assert f'tools/{tool}.py' in names
     for test in ('benchmark', 'ct', 'metrics', 'review'):
         assert f'tests/test_flattening_{test}.py' in names
+    for module in ('cli_settings','export_settings','input_settings','tool_settings'):
+        assert f'src/winding_field/{module}.py' in names
+    for name in ('docs/CLI-FLAGS.md','examples/paris4-cli.json','tests/test_cli_flags_end_to_end.py'):
+        assert name in names
