@@ -95,6 +95,7 @@ import_workers: 1 # Opciones: entero >= 0; 1 serial, 0 auto admitido, >1 importa
 # ── Solver de campo ──────────────────────────────────────────────────────────
 field_chunk: 64 # Opciones: entero 4..256, borde de bloque en muestras de campo.
 sweeps: 4 # Opciones: entero >=1; presupuesto de barridos, NO garantía de convergencia.
+# field_advice: true # Opciones: true|false; diagnóstico consultivo opt-in; requiere core de desarrollo con observer; no cambia barridos, parada ni verificaciones.
 prepared_cache_bytes: 0 # Opciones: entero >=0 en bytes de workspaces retenidos; 0 desactiva; no es tope de memoria pico.
 constraint_cache_bytes: 0 # Opciones: entero >=0 en bytes de restricciones retenidas; 0 desactiva.
 maxiter: 2000 # Opciones: entero >=1, iteraciones máximas por solve local.

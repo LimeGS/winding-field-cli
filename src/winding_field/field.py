@@ -4,6 +4,7 @@ import io
 import itertools
 import json
 import math
+import time
 from pathlib import Path
 import sqlite3
 from tempfile import TemporaryDirectory
@@ -112,6 +113,9 @@ def spline_samples(points,low,high,step):
 
 
 def solve(run,config,stop=None,*,sweep_target=None,convergence=None):
+    from .field_advice import observer_options,require_observer,record_verification,finish
+    if type(config.get('field_advice',False)) is not bool:raise ValueError('field_advice must be boolean')
+    if config.get('field_advice'):require_observer()
     budget=config.get('prepared_cache_bytes',0)
     if type(budget) is not int or budget<0:
         raise ValueError('prepared_cache_bytes must be a nonnegative integer')
@@ -243,13 +247,18 @@ def solve(run,config,stop=None,*,sweep_target=None,convergence=None):
                 torch.empty(0,device=device)
                 torch.cuda.reset_peak_memory_stats(device)
         if convergence is not None:
+            options.update(observer_options(config.get('field_advice',False),root,geometry,
+                                            reserve_bytes=options['reserve_bytes']))
             return convergence.solve(root,shape,chunk,identity,load,geometry,cal,pair_provider,options,stop)
+        options.update(observer_options(config.get('field_advice',False),root,geometry,
+                                        reserve_bytes=options['reserve_bytes']))
         result=solve_blocks(root,shape,chunk,identity,load,resume=True,stop=stop,**options)
         if result['status']=='SWEEP_BUDGET_REACHED' and sweep_target is not None and sweep_target>sweeps:
             options['sweeps']=extend(root,sweep_target,config.get('sweeps',4),
                                    reserve_bytes=options['reserve_bytes'],max_bytes=options.get('max_bytes'))
             result=solve_blocks(root,shape,chunk,identity,load,resume=True,stop=stop,**options)
         result['effective_threads']=torch.get_num_threads()
+        finish(options.get('observer'))
         if result['status']!='SWEEP_BUDGET_REACHED':
             return dict(status='PAUSED',solver=result)
         receipt=dict(status='FIELD_READY',geometry=geometry,checkpoint_sha256=file_sha(checkpoint),
@@ -265,6 +274,8 @@ def solve(run,config,stop=None,*,sweep_target=None,convergence=None):
                                peak_reserved_bytes=torch.cuda.max_memory_reserved(device),
                                gpu_name=torch.cuda.get_device_name(device))
             descriptor=dict(kind='chunks',path=str(checkpoint.resolve()),sha256=receipt['checkpoint_sha256'],support_policy='stored')
+            advisor=options.get('observer');regions=[] if advisor is not None else None
+            verification_started=time.perf_counter() if advisor is not None else None
             with FieldSource(descriptor,geometry,cache_bytes=64<<20) as source:
                 # Decode the hash-bound gauge chunk through the same verified reader.
                 gauge_offset=source._load('0-0-0',tuple(min(chunk,n) for n in shape))[1]
@@ -273,9 +284,12 @@ def solve(run,config,stop=None,*,sweep_target=None,convergence=None):
                     if not present.all():raise ValueError('global verification requires complete stored field')
                     return value
                 verification=verify(shape,chunk,geometry['spacing_xyz'],read,load,
-                                    constraints=pair_provider,rtol=options['rtol'],stop=stop,gauge_offset=gauge_offset)
+                                    constraints=pair_provider,rtol=options['rtol'],stop=stop,gauge_offset=gauge_offset,
+                                    **(dict(regions=regions) if advisor is not None else {}))
                 source.validate(hashes=True)
             verification.update(checkpoint_sha256=receipt['checkpoint_sha256'],solver_backend=backend)
+            record_verification(advisor,receipt['checkpoint_sha256'],verification,verification_started,
+                                sweep=len(result['completed_sweeps']),regions=regions)
             atomic_json(run/'GLOBAL_RESIDUAL.json',verification)
             if not verification['global_converged']:
                 return dict(status='PAUSED',solver=result,verification=verification,

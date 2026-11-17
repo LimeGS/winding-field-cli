@@ -262,6 +262,21 @@ Numerical convergence is not physical-sheet validation.
 Existing legacy fields, including PHerc0483A, are **not migrated** or extended by
 this command. See [criterion, safety, limits and examples](docs/FIELD-CONVERGENCE.md).
 
+### Consultative field progress (development opt-in)
+
+With an explicitly qualified **observer-capable development core**, add
+`--field-advice` to a new `run`/`field-converge`/`prepared build` request, then:
+
+```bash
+winding-field field-advice runs/my-run
+# Prepared field roots are also accepted:
+winding-field field-advice runs/prepared-field
+```
+
+The report never runs a solver or verification, stops work or adds sweeps.
+Published core **1.5.2 does not support this opt-in**; the stable dependency pin
+is deliberately unchanged. See [scope, recovery and interpretation](docs/FIELD-ADVICE.md).
+
 </details>
 
 <details>
