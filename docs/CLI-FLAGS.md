@@ -65,6 +65,7 @@ The corresponding family tests must compare maximal file and flag requests.
 |---|---|---|
 | `run`, `plan` | `cli.py`, `config.py` | Every existing option; nested original mapping and direct-TIFXYZ requests; imported input geometry and manifest settings |
 | `resume`, `prepare`, `fibres`, `field`, `mesh`, `flatten`, `assemble`, `render`, `status` | `cli.py`, `workflow.py` | Run path; existing offline, sweep and explicit extra-time controls only; config mode must not make frozen scientific settings mutable |
+| `field-converge` | `field_convergence.py` | Prepared source or automatic generation, fresh output/resume, total sweep limit, separate global tolerance and inherited field overrides; no legacy migration |
 | `prepared build/resume/verify` | `field_workflow.load_run_config` | Frame/voxel/grid/sheet/calibration; target, weights, observed, fixed, constraints and order artifacts+SHA; solver; execution; GPU lease; source identity |
 | `prepared mesh/surfaces` | `surface_workflow.load_surface_config` | Field or mesh descriptor; field geometry; raw levels; extraction execution; render settings; parallel levels; resume |
 | `prepared render` | `surface_workflow._render_settings` | Mesh path, output, dimensions, views, triangle batch, levels, reserve |
@@ -87,6 +88,14 @@ The corresponding family tests must compare maximal file and flag requests.
 | `inspect`, `doctor`, `models`, `demo` | `cli.py` | All existing positionals/options and typed config entry; inspection/doctor retain existing side-effect contracts |
 
 ### Closed schema leaves and units
+
+`field-converge` accepts JSON/YAML `--cli-config` (`--config` alias), with keys
+`source`, `output`, `resume`, `max_sweeps`, `global_rtol` and the field overrides
+`field_chunk`, `field_spacing_um`, `rtol`, `maxiter`, `fibre_weight`, `device`,
+`threads`, `reserve_bytes`, `bounded_bytes`, `prepared_cache_bytes`,
+`constraint_cache_bytes`. Explicit flags override file defaults. On resume every
+provided value must equal the saved setting; omission reuses it. See
+[automatic convergence](FIELD-CONVERGENCE.md) for units, defaults and limits.
 
 | Settings object | Accepted leaves to cover | Mapping/type contract |
 |---|---|---|
