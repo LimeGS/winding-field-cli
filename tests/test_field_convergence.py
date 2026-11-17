@@ -603,3 +603,62 @@ def test_core_resource_errors_are_not_reported_as_numerical_failure(tmp_path,mon
     monkeypatch.setattr(fc,'solve_blocks',fail)
     with pytest.raises(type(error)):fc.converge(source,out,max_sweeps=1)
     assert fc._checked(out/'CONVERGENCE_ERROR.json')['reason']=='RESOURCE_ERROR'
+
+
+def test_copy_crash_after_exclusive_link_recovers_its_own_temporary_alias(tmp_path):
+    import os
+    from pathlib import Path
+    import subprocess
+    import sys
+    import winding_field
+    from winding_field.field_convergence import converge
+    source=workflow_source(tmp_path/'source');out=tmp_path/'auto';before=snapshot(source)
+    script="""
+import os,sys
+from winding_field import field_convergence as fc
+original=fc.os.link
+def die(*args,**kwargs):
+    original(*args,**kwargs)
+    os._exit(78)
+fc.os.link=die
+fc.converge(sys.argv[1],sys.argv[2],max_sweeps=1)
+"""
+    env=dict(os.environ,PYTHONPATH=os.pathsep.join([str(Path(winding_field.__file__).parent.parent),
+                                                   os.environ.get('PYTHONPATH','')]))
+    child=subprocess.run([sys.executable,'-c',script,str(source),str(out)],env=env,
+                         capture_output=True,text=True,timeout=30)
+    assert child.returncode==78,child.stderr
+    assert converge(out,resume=True)['reason']=='SWEEP_LIMIT'
+    assert (out/'PREPARED.json').stat().st_nlink==1 and snapshot(source)==before
+
+
+def test_pending_admission_does_not_adopt_external_hardlinks(tmp_path,monkeypatch):
+    import os
+    from winding_field import field_convergence as fc
+    source=workflow_source(tmp_path/'source');out=tmp_path/'auto'
+    original=fc._copy
+    monkeypatch.setattr(fc,'_copy',lambda *a,**k:(_ for _ in ()).throw(OSError('interrupted')))
+    with pytest.raises(OSError):fc.converge(source,out,max_sweeps=1)
+    os.link(source/'PREPARED.json',out/'PREPARED.json')
+    before=snapshot(source)
+    monkeypatch.setattr(fc,'_copy',original)
+    with pytest.raises(ValueError,match='alias'):fc.converge(out,resume=True)
+    assert snapshot(source)==before
+
+
+def test_field_publication_itself_holds_the_core_writer_lease(tmp_path,monkeypatch):
+    from winding_field import field_convergence as fc
+    from field_store import BlockStore
+    source=workflow_source(tmp_path/'source',constant=True);out=tmp_path/'auto'
+    original=fc._publish;checked=[]
+    def publish(path,data):
+        if path.name=='FIELD.json':
+            saved=fc._read(out/'field/CHECKPOINT.json')
+            with pytest.raises(RuntimeError,match='writer'):
+                with BlockStore(out/'field',saved['shape'],saved['chunk'],saved['identity'],resume=True,
+                                reserve_bytes=0):pass
+            checked.append(True)
+        return original(path,data)
+    monkeypatch.setattr(fc,'_publish',publish)
+    assert fc.converge(source,out,max_sweeps=1)['reason']=='VERIFIED_CONVERGED'
+    assert checked
