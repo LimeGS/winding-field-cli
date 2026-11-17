@@ -164,3 +164,30 @@ def test_optional_regions_are_bounded_and_allocation_failure_keeps_global_result
     regions=Unavailable() if unavailable else []
     assert global_residual.verify(shape,2,[1.,2.,3.],read,observations,regions=regions)==plain
     assert len(regions)==(0 if unavailable else 64)
+
+
+def test_automatic_resume_delivers_committed_closure_before_terminal_stop(tmp_path,monkeypatch):
+    from test_field_convergence import workflow_source
+    from winding_field.field_convergence import converge
+    source=workflow_source(tmp_path/'source');root=tmp_path/'automatic'
+    complete=field_advice.Advice.complete;verify=global_residual.verify;checks=[]
+    class Crash(BaseException):pass
+    def crash(observer,snapshot):raise Crash('after scientific commit, before closure delivery')
+    def counted(*args,**kwargs):
+        checks.append(1);return verify(*args,**kwargs)
+    monkeypatch.setattr(global_residual,'verify',counted)
+    monkeypatch.setattr(field_advice.Advice,'complete',crash)
+    with pytest.raises(Crash):
+        converge(source,root,max_sweeps=1,global_rtol=1e-12,config=dict(field_advice=True))
+    checkpoint=(root/'field/CHECKPOINT.json').read_bytes()
+    assert len(json.loads(checkpoint)['progress']['completed_sweeps'])==1
+    assert len(checks)==1
+    monkeypatch.setattr(field_advice.Advice,'complete',complete)
+    result=converge(root,resume=True)
+    assert result['reason']=='SWEEP_LIMIT' and len(checks)==2
+    assert (root/'field/CHECKPOINT.json').read_bytes()==checkpoint
+    sink=field_advice.Advice(root/'field')
+    assert [r['sweep'] for r in sink.records()]==[1]
+    assert sink.records()[0]['metrics']['observed_count']==81
+    assert converge(root,resume=True)['reason']=='SWEEP_LIMIT'
+    assert len(checks)==2 and len(sink.records())==1

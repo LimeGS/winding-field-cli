@@ -6,6 +6,7 @@ import json
 import math
 import os
 from pathlib import Path
+import re
 import stat
 import time
 import warnings
@@ -59,6 +60,93 @@ def _finite(value):
     return type(value) in (int,float) and math.isfinite(value)
 
 
+def _validate_history(identity,plan,records,verification,timings):
+    """Validate diagnostic data without touching scientific files or changing history."""
+    def sha(value):
+        return isinstance(value,str) and re.fullmatch('[0-9a-f]{64}',value) is not None
+    if (not isinstance(identity,dict) or identity.get('schema')!='field-advice-v1'
+            or not sha(identity.get('scientific_sha256')) or not isinstance(identity.get('geometry'),dict)):
+        raise ValueError('invalid diagnostic identity')
+    scientific=identity['scientific_sha256'];shape=identity['geometry'].get('shape_zyx')
+    if not isinstance(shape,list) or len(shape)!=3 or any(type(n) is not int or n<1 for n in shape):
+        raise ValueError('invalid diagnostic geometry')
+    nodes=set()
+    if plan is not None:
+        if (not isinstance(plan,dict) or plan.get('version')!='deterministic-strata-v1'
+                or not isinstance(plan.get('points'),list) or len(plan['points'])>MAX_POINTS
+                or not isinstance(plan.get('required_ids'),list) or type(plan.get('multiblock')) is not bool):
+            raise ValueError('invalid diagnostic plan')
+        for point in plan['points']:
+            if (not isinstance(point,dict) or type(point.get('node')) is not int
+                    or not 0<=point['node']<math.prod(shape) or point['node'] in nodes
+                    or not isinstance(point.get('reasons'),list) or not point['reasons']
+                    or not all(isinstance(reason,str) for reason in point['reasons'])
+                    or not isinstance(point.get('stratum'),str)):
+                raise ValueError('invalid diagnostic point')
+            nodes.add(point['node'])
+        required=plan['required_ids']
+        if any(type(n) is not int or n not in nodes for n in required) or len(set(required))!=len(required):
+            raise ValueError('invalid required diagnostic IDs')
+    closures={}
+    for record in records:
+        if (not isinstance(record,dict) or record.get('schema')!='field-advice-closure-v1'
+                or record.get('scientific_sha256')!=scientific or not sha(record.get('checkpoint_sha256'))
+                or type(record.get('sweep')) is not int or record['sweep']<1
+                or type(record.get('complete')) is not bool or not isinstance(record.get('metrics'),dict)):
+            raise ValueError('incompatible diagnostic closure history')
+        metrics=record['metrics']
+        if (metrics.get('schema')!='field-observer-v1' or metrics.get('scientific_sha256')!=scientific
+                or metrics.get('sweep')!=record['sweep'] or metrics.get('complete') is not record['complete']
+                or type(metrics.get('observed_count')) is not int or metrics['observed_count']<0
+                or type(metrics.get('timing_complete')) is not bool
+                or any(metrics.get(k) is not None and (not _finite(metrics[k]) or metrics[k]<0)
+                       for k in ('observed_max_update','observed_rms_update','active_wall_s'))
+                or any(not _finite(metrics.get(k)) or metrics[k]<0 for k in ('observed_sum_sq','work_s','control_s'))):
+            raise ValueError('invalid diagnostic metrics')
+        closures[record['checkpoint_sha256']]=record
+        if not record['complete']:continue
+        if plan is None or record.get('plan')!=plan or record.get('plan_sha256')!=digest(plan):
+            raise ValueError('incompatible diagnostic sampling plan')
+        samples=record.get('samples')
+        if not isinstance(samples,list) or len(samples)!=len(nodes):
+            raise ValueError('incomplete diagnostic sample inventory')
+        sample_ids=set()
+        for row in [*samples,record.get('reference')]:
+            if (not isinstance(row,dict) or type(row.get('observed')) is not bool
+                    or any(row.get(k) is not None and not _finite(row[k]) for k in ('phi','error'))
+                    or row.get('error') is not None and row['error']<0):
+                raise ValueError('invalid diagnostic sample')
+        for row in samples:
+            if type(row.get('node')) is not int or row['node'] not in nodes or row['node'] in sample_ids:
+                raise ValueError('incompatible diagnostic sample IDs')
+            sample_ids.add(row['node'])
+            for name in ('gradient_h','gradient_2h'):
+                value=row.get(name)
+                if value is not None and (not isinstance(value,list) or len(value)!=3 or not all(map(_finite,value))):
+                    raise ValueError('invalid diagnostic gradient')
+            if (row.get('gradient_error') is not None and (not _finite(row['gradient_error']) or row['gradient_error']<0)
+                    or not _finite(row.get('radius_um')) or row['radius_um']<=0):
+                raise ValueError('invalid diagnostic gradient uncertainty or radius')
+    for row in verification:
+        if (not isinstance(row,dict) or row.get('scientific_sha256')!=scientific
+                or not sha(row.get('checkpoint_sha256')) or type(row.get('sweep')) is not int or row['sweep']<0
+                or type(row.get('timing_complete')) is not bool
+                or any(not _finite(row.get(k)) or row[k]<0 for k in ('elapsed_s','measured_epoch'))
+                or row['timing_complete'] and row.get('status')!='PAUSED' and (
+                    type(row.get('global_converged')) is not bool or not _finite(row.get('residual_l2'))
+                    or row['residual_l2']<0)):
+            raise ValueError('incompatible diagnostic verification')
+    if not isinstance(timings,list) or len(timings)>3:raise ValueError('invalid diagnostic timings')
+    for row in timings:
+        if (not isinstance(row,dict) or not sha(row.get('checkpoint_sha256')) or row['checkpoint_sha256'] not in closures
+                or row.get('sweep')!=closures[row['checkpoint_sha256']]['sweep']
+                or type(row.get('timing_complete')) is not bool
+                or type(row.get('includes_closure_record_fsync')) is not bool
+                or not _finite(row.get('sweep_s')) or row['sweep_s']<0
+                or not _finite(row.get('control_s')) or row['control_s']<0):
+            raise ValueError('invalid diagnostic timing interval')
+
+
 def _read(path):
     with _directory(path.parent) as directory:
         fd=os.open(path.name,os.O_RDONLY|os.O_NOFOLLOW|os.O_NONBLOCK,dir_fd=directory)
@@ -110,12 +198,7 @@ class Advice:
         if (self.path/'IDENTITY.json').exists():
             if _read(self.path/'IDENTITY.json')!=identity:raise ValueError('incompatible diagnostic history')
         else:self._write('IDENTITY.json',identity)
-        plan=_read(self.path/'PLAN.json') if (self.path/'PLAN.json').exists() else None
-        for record in self.records():
-            if (record.get('schema')!='field-advice-closure-v1' or
-                    record.get('scientific_sha256')!=identity['scientific_sha256'] or
-                    record.get('complete') and (record.get('plan')!=plan or record.get('plan_sha256')!=digest(plan))):
-                raise ValueError('incompatible diagnostic closure history')
+        _,_,timings=self.history(identity)
         journal=self.path/'JOURNAL.json'
         saved=_read(journal) if journal.exists() else dict(current=None,pending=None)
         if set(saved)!={'current','pending'}:raise ValueError('invalid diagnostic journal')
@@ -125,7 +208,6 @@ class Advice:
             from block_solver import _restore_advice
             progress=snapshot['manifest']['progress']
             _restore_advice(matched,progress['sweep'],progress['next_block'],snapshot['scientific_sha256'])
-        timings=_read(self.path/'TIMING.json') if (self.path/'TIMING.json').exists() else []
         self.identity=identity;self.timings=timings
         return matched
 
@@ -141,6 +223,15 @@ class Advice:
 
     def records(self):
         return sorted((_read(p) for p in self.path.glob('closure-*.json')),key=lambda r:r['sweep'])
+
+    def history(self,identity):
+        plan=_read(self.path/'PLAN.json') if (self.path/'PLAN.json').exists() else None
+        records=[_read(p) for p in self.path.glob('closure-*.json')]
+        verification=[_read(p) for p in self.path.glob('verification-*.json')]
+        timings=_read(self.path/'TIMING.json') if (self.path/'TIMING.json').exists() else []
+        _validate_history(identity,plan,records,verification,timings)
+        return (sorted(records,key=lambda r:r['sweep']),
+                sorted(verification,key=lambda r:(r['sweep'],r['measured_epoch'])),timings)
 
     def complete(self,snapshot):
         if self.identity is None:raise ValueError('diagnostic identity not restored')
@@ -370,8 +461,16 @@ def recommend(records,verification,availability):
             lower=_rms([max(d-e,0.) for d,e in zip(changes,errors)]),
             upper=_rms([d+e for d,e in zip(changes,errors)]),count=len(required)))
     current=window[-1]['checkpoint_sha256'];scientific=first['scientific_sha256']
-    actual=[v for v in verification if v.get('scientific_sha256')==scientific and
-            _finite(v.get('residual_l2')) and type(v.get('global_converged')) is bool]
+    distinct={}
+    for row in verification:
+        if (row.get('scientific_sha256')==scientific and row.get('timing_complete',True)
+                and row.get('status')!='PAUSED' and _finite(row.get('residual_l2'))
+                and type(row.get('global_converged')) is bool):
+            sha=row['checkpoint_sha256']
+            closure=row.get('sweep',sha)
+            distinct.pop(closure,None)
+            distinct[closure]=row
+    actual=list(distinct.values())
     latest=next((v for v in reversed(actual) if v['checkpoint_sha256']==current),None)
     a,b=result['intervals']
     if latest and latest['global_converged']:
@@ -403,9 +502,7 @@ def report(source):
                 current_closure_recorded=False,equivalent_global_verifier_available=False,cost_ratio=None)
     try:
         identity=_read(sink.path/'IDENTITY.json')
-        records=sink.records()
-        verification=sorted((_read(p) for p in sink.path.glob('verification-*.json')),
-                            key=lambda r:(r['sweep'],r['measured_epoch']))
+        records,verification,timings=sink.history(identity)
         from .util import file_sha
         sha=file_sha(root/'CHECKPOINT.json')
         available=bool((root.parent/'CONVERGENCE.json').exists() or (root/'RUN.json').exists() or
@@ -437,7 +534,6 @@ def report(source):
         result['measured']=dict(scientific_sha256=identity['scientific_sha256'],
             latest_closure=latest,global_verification=verification,
             comparisons=comparisons)
-        timings=_read(sink.path/'TIMING.json') if (sink.path/'TIMING.json').exists() else []
         complete=bool(timings and all(t.get('timing_complete') and t.get('sweep_s',0)>0 for t in timings))
         timed=next((v for v in reversed(verification) if v.get('timing_complete')),None)
         result['measured']['timing']=dict(recent_sweeps=timings,includes_closure_record_fsync=complete)
