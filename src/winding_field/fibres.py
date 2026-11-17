@@ -47,10 +47,10 @@ def streamlines(presence,tangents,support,*,seeds,origin_xyz,spacing_xyz,thresho
     return curves
 
 
-def trace(run,config,stop=None):
+def trace(run,config,stop=None,*,verified_source=None):
     if config.get('fibres'):
         from .afv import import_fibres
-        return import_fibres(run,config,stop)
+        return import_fibres(run,config,stop,verified_source=verified_source)
     run=Path(run)
     prepared=json.loads((run/'PREPARED.json').read_bytes())
     if prepared['prediction']=='qual-v2':

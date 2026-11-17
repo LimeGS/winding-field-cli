@@ -124,6 +124,10 @@ def bounds(lo, hi, shape):
     return lo.astype(np.int64), hi.astype(np.int64)
 
 
+class PinBudgetExceeded(RuntimeError):
+    """A compute worker must replay this read in the streaming parent."""
+
+
 class Volume:
     def __init__(self, source, *, local=None, cache=None, cache_bytes=2 << 30,
                  offline=False, voxel_um=None, level=0, reserve_bytes=0, decoded_cache_bytes=0,
@@ -142,6 +146,8 @@ class Volume:
         self._decoded=OrderedDict();self._decoded_bytes=0;self._decoded_limit=decoded_cache_bytes
         self._decoded_lock=threading.RLock()
         self._verified_sampling=False
+        self._batching=False;self._pending_chunks=0;self._batch_started=0.
+        self._pin_capture=None
         self.reserve=reserve_bytes
         self.source = http_url(source)
         self.remote = self.source.startswith(('https://', 'http://'))
@@ -152,7 +158,7 @@ class Volume:
         self.cache.mkdir(parents=True, exist_ok=True)
         self.limit, self.offline = cache_bytes, offline
         self._stats = dict(local_hits=0, cache_hits=0, downloads=0, downloaded_bytes=0)
-        self._stats.update(decoded_hits=0,decodes=0,decoded_evictions=0)
+        self._stats.update(decoded_hits=0,decodes=0,decoded_evictions=0,hashed_bytes=0,chunk_commits=0)
         self._verified_local = {}
         self._ledger = None
         self.db = None
@@ -297,7 +303,7 @@ class Volume:
 
     def bind_ledger(self, path):
         """Pin every consumed encoded chunk; changed bytes cannot enter a resumed run."""
-        if self._verified_sampling:raise ValueError('cannot switch ledger during verified sampling')
+        if self._verified_sampling or self._batching:raise ValueError('cannot switch ledger during verified sampling/batch')
         for key,(array,_,pin) in list(self._decoded.items()):
             if pin is None:
                 del self._decoded[key];self._decoded_bytes-=array.nbytes+512
@@ -309,6 +315,7 @@ class Volume:
     def _record(self, key, data):
         if self._ledger is not None:
             sha = digest('authoritative-zarr-fill') if data is None else hashlib.sha256(data).hexdigest()
+            self._stats['hashed_bytes']+=0 if data is None else len(data)
             self._record_sha(key,sha)
         return data
 
@@ -316,11 +323,67 @@ class Volume:
         with self._transport_lock:
             old=self._ledger.execute('SELECT sha FROM chunks WHERE key=?',(key,)).fetchone()
             if old and old[0]!=sha:raise ValueError('source chunk changed: '+key)
+            if self._pin_capture is not None:
+                pins,budget=self._pin_capture
+                if key not in pins:
+                    charge=len(key)+len(sha)+128
+                    if charge>budget['remaining']:raise PinBudgetExceeded('worker source-pin budget exceeded')
+                    budget['remaining']-=charge;pins[key]=sha
             if old is None:
-                self._ledger.execute('INSERT INTO chunks VALUES (?,?)',(key,sha));self._ledger.commit()
+                self._ledger.execute('INSERT INTO chunks VALUES (?,?)',(key,sha))
+                if not self._pending_chunks:self._batch_started=time.monotonic()
+                self._pending_chunks+=1
+                if not self._batching or self._pending_chunks>=128 or time.monotonic()-self._batch_started>=2:
+                    self._flush_chunks()
+
+    def _flush_chunks(self):
+        if self._pending_chunks:
+            self._ledger.commit();self._pending_chunks=0;self._stats['chunk_commits']+=1
 
     @contextmanager
-    def verified_chunks(self):
+    def capture_pins(self,budget=None):
+        if self._ledger is None or self._pin_capture is not None:raise ValueError('pin capture requires a ledger and non-nested scope')
+        budget=dict(remaining=16<<20) if budget is None else budget
+        if type(budget.get('remaining')) is not int or budget['remaining']<0:raise ValueError('invalid pin budget')
+        pins={};self._pin_capture=(pins,budget)
+        try:yield pins
+        finally:self._pin_capture=None
+
+    def merge_pins(self,pins):
+        prefix=self.array_path+'/' if self.array_path else ''
+        separator=self.metadata.get('dimension_separator','.')
+        if not isinstance(pins,dict):raise ValueError('invalid worker source pins')
+        charge=0
+        for key,sha in pins.items():
+            if (not isinstance(key,str) or not key.startswith(prefix) or not isinstance(sha,str)
+                    or len(sha)!=64 or any(c not in '0123456789abcdef' for c in sha)):
+                raise ValueError('invalid worker source pin')
+            parts=key[len(prefix):].split(separator)
+            if (len(parts)!=3 or any(not p.isascii() or not p.isdecimal() for p in parts)
+                    or any(int(p)>=(n+c-1)//c for p,n,c in zip(parts,self.shape,self.chunks))):
+                raise ValueError('worker source pin outside chunk grid')
+            charge+=len(key)+len(sha)+128
+            if charge>16<<20:raise ValueError('worker source pins exceed bounded result budget')
+        with self.chunk_batch():
+            for key,sha in pins.items():self._record_sha(key,sha)
+
+    @contextmanager
+    def chunk_batch(self):
+        """Bounded durable source pins; flush before publishing the consuming tile."""
+        if self._ledger is None or self._batching:raise ValueError('chunk batch requires a ledger and non-nested scope')
+        self._batching=True
+        try:
+            yield
+            with self._transport_lock:self._flush_chunks()
+        except BaseException:
+            with self._transport_lock:
+                self._ledger.rollback();self._pending_chunks=0
+                self._decoded.clear();self._decoded_bytes=0
+            raise
+        finally:self._batching=False
+
+    @contextmanager
+    def verified_chunks(self,*,pins=None):
         """Reuse immutable decoded snapshots; hash all consumed bytes before accepting results.
 
         Results must not be published until this scope exits successfully. Remote
@@ -329,17 +392,28 @@ class Volume:
         with self._decoded_lock:
             if self._ledger is None or self._verified_sampling:
                 raise ValueError('verified sampling requires a ledger and a non-nested scope')
+            if pins is not None and (self._pin_capture is None or self._pin_capture[0] is not pins):
+                raise ValueError('scoped verification requires the active captured pins')
             self._verified_sampling=True
         # Native readers invoke chunk callbacks on another thread; do not lock across yield.
         try:
             yield
-            self.validate_used(fresh=False)
+            if pins is None:self.validate_used(fresh=False)
+            else:
+                for key in pins:self._chunk_bytes(key)
+            if not self.remote:self.validate_metadata()
         except BaseException:
             with self._decoded_lock:
                 self._decoded.clear();self._decoded_bytes=0
             raise
         finally:
             with self._decoded_lock:self._verified_sampling=False
+
+    def validate_metadata(self):
+        attrs=self._metadata('.zattrs',optional=True)
+        metadata=self._metadata(self.array_path+'/.zarray' if self.array_path else '.zarray')
+        if digest([attrs,metadata])!=self.identity['metadata_sha256']:
+            raise ValueError('source metadata changed during verified sampling')
 
     def validate_used(self,*,fresh=True):
         """Check ledger-bound encoded bytes, bypassing decoded RAM.

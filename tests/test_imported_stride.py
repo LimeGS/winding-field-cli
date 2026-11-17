@@ -106,8 +106,8 @@ def test_imported_stride_pipeline_172_8um(tmp_path,monkeypatch,stride,physical):
     from winding_field import predict
     first=root/'maps/0_0_0.npz'
     prepare=predict.prepare
-    def pause(volume,run,config,stop=None):
-        return prepare(volume,run,config,stop=lambda:first.exists() or (stop and stop()))
+    def pause(volume,run,config,stop=None,**kwargs):
+        return prepare(volume,run,config,stop=lambda:first.exists() or (stop and stop()),**kwargs)
     monkeypatch.setattr(predict,'prepare',pause)
     assert workflow.run(config,until='mesh')['status']=='PAUSED'
     monkeypatch.setattr(predict,'prepare',prepare)

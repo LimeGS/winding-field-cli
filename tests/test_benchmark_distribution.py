@@ -25,7 +25,8 @@ def test_sdist_contains_flattening_tools_with_their_tests(tmp_path):
     assert result.returncode == 0, result.stdout + result.stderr
     with tarfile.open(next((tmp_path / 'dist').glob('*.tar.gz'))) as archive:
         names = {name.split('/', 1)[1] for name in archive.getnames() if '/' in name}
-    for tool in ('bench_flattening', 'flattening_ct', 'flattening_metrics', 'flattening_review'):
+    for tool in ('bench_flattening', 'flattening_ct', 'flattening_metrics', 'flattening_review',
+                 'bench_local_imports', 'bench_afv_import'):
         assert f'tools/{tool}.py' in names
     for test in ('benchmark', 'ct', 'metrics', 'review'):
         assert f'tests/test_flattening_{test}.py' in names
