@@ -62,17 +62,17 @@ def observations(ct,spacing_xyz,*,threshold=None,presence=None,tangents=None,val
                 support=support,presence=presence.astype(np.float32),tangents=tangents.astype(np.float32))
 
 
-def prepare(volume,run,config,stop=None):
+def prepare(volume,run,config,stop=None,*,verified_lasagna=None):
     from contextlib import ExitStack
     with ExitStack() as stack:
         if config.get('lasagna_input') and not volume.remote and volume._ledger is not None:
             stack.enter_context(volume.verified_chunks())
-        result=_prepare(volume,run,config,stop,stack)
+        result=_prepare(volume,run,config,stop,stack,verified_lasagna)
     if result['status']=='PREPARED':atomic_json(Path(run)/'PREPARED.json',result)
     return result
 
 
-def _prepare(volume,run,config,stop,stack):
+def _prepare(volume,run,config,stop,stack,verified_lasagna=None):
     validate_config(config)
     run=Path(run); run.mkdir(parents=True,exist_ok=True)
     lo,hi=bounds(config.get('roi_lo',[0,0,0]),config.get('roi_hi',list(volume.shape)),volume.shape)
@@ -104,8 +104,7 @@ def _prepare(volume,run,config,stop,stack):
             imported=stack.enter_context(LasagnaInput(volume,run,config))
             imported.validate_used()
         elif config.get('lasagna_input') and not (run/'lasagna-source/maps/TILES.json').exists():
-            imported=stack.enter_context(CalibratedLasagnaInput(volume,run,config,geometry))
-            imported.validate_used()
+            imported=stack.enter_context(CalibratedLasagnaInput(volume,run,config,geometry,verified_source=verified_lasagna))
         ready=lasagna.prepare(volume,run,config,geometry,stop,reader=imported)
         if ready['status']=='PAUSED': return ready
     threshold=config.get('threshold')

@@ -164,11 +164,23 @@ def _scalar_pieces(points,maps,stop=None):
     if len(piece)>1: yield np.asarray(piece)
 
 
-def validate_retained(run,config):
+def _checked_source(config,source,verified_source):
+    """Only reuse a freshly checked result supplied by this invocation's caller."""
+    if verified_source is None:return source_identity(config['fibres'],config.get('fibres_geometry'),source)
+    geometry=str(Path(config['fibres_geometry']).expanduser().resolve()) if config.get('fibres_geometry') else None
+    if (not isinstance(verified_source,dict)
+            or verified_source.get('path')!=str(Path(config['fibres']).expanduser().resolve())
+            or verified_source.get('geometry_path')!=geometry
+            or http_url(verified_source.get('source',''))!=source['source']):
+        raise ValueError('verified AFV input context changed')
+    return verified_source
+
+
+def validate_retained(run,config,*,verified_source=None):
     run=Path(run); root=run/'fibres'; binding=root/'IMPORT.json'
     if not binding.exists(): return
     meta=json.loads((run/'PREPARED.json').read_bytes()); identity=json.loads(binding.read_bytes())
-    if identity['input']!=source_identity(config['fibres'],config.get('fibres_geometry'),meta['source']):
+    if identity['input']!=_checked_source(config,meta['source'],verified_source):
         raise ValueError('external AFV input identity changed')
     if identity['maps']!=meta['tiles_sha256']: raise ValueError('AFV import maps changed')
     receipt=run/'FIBRES.json'
@@ -223,18 +235,21 @@ def _clip_worker(job):
     return job,fragments,dict(pid=os.getpid(),support_loads=_WORKER_SUPPORT.loads-before)
 
 
-def import_fibres(run,config,stop=None):
+def import_fibres(run,config,stop=None,*,verified_source=None):
     started=time.monotonic()
     run=Path(run); meta=json.loads((run/'PREPARED.json').read_bytes())
-    source=source_identity(config['fibres'],config.get('fibres_geometry'),meta['source'])
+    source=_checked_source(config,meta['source'],verified_source)
     identity=dict(input=source,maps=meta['tiles_sha256'],origin=meta['origin_xyz'],spacing=meta['spacing_xyz'])
     from .import_parallel import limits,local_inputs,ordered_map
     execution=limits(config.get('import_workers',1) if local_inputs(config) else 1,
                      output=run,reserve_bytes=config.get('reserve_bytes',0),worker_bytes=356<<20)
     execution.update(worker_pids=[],worker_support_loads=0,streaming_replays=0)
     root=run/'fibres'; root.mkdir(exist_ok=True); bind(root/'IMPORT.json',identity)
-    validate_retained(run,config)
-    if (run/'FIBRES.json').exists(): return json.loads((run/'FIBRES.json').read_bytes())
+    validate_retained(run,config,verified_source=source)
+    if (run/'FIBRES.json').exists():
+        if source!=source_identity(config['fibres'],config.get('fibres_geometry'),meta['source']):
+            raise ValueError('external AFV source changed during import')
+        return json.loads((run/'FIBRES.json').read_bytes())
     maps=Tiles(run/'maps'); src=_open(config['fibres']); db=sqlite3.connect(root/'fibres.sqlite')
     from .afv_clip import SupportTiles
     support=SupportTiles(maps,cache_bytes=64<<20)

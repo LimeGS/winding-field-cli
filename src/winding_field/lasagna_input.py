@@ -153,7 +153,7 @@ def _inventory(root):
     return {str(p.relative_to(root)):file_sha(p) for p in paths if p.is_file()}
 
 
-def validate_retained(run,config):
+def validate_retained(run,config,*,volume=None):
     run=Path(run); root=run/'lasagna-source'
     if not root.exists():
         if (run/'LASAGNA.json').exists(): raise ValueError('missing Lasagna input directory')
@@ -165,8 +165,8 @@ def validate_retained(run,config):
         receipt=run/'LASAGNA.json'
         if receipt.exists() and json.loads(receipt.read_bytes())['identity']!=identity:
             raise ValueError('external Lasagna receipt changed')
-        with closing(open_volume(config)) as volume:
-            with CalibratedLasagnaInput(volume,run,config,identity['geometry']) as reader:reader.validate_used()
+        with closing(open_volume(config)) if volume is None else nullcontext(volume) as current:
+            with CalibratedLasagnaInput(current,run,config,identity['geometry']):pass
         return
     seal=root/'WORK.json'; inventory=_inventory(root)
     if seal.exists():
@@ -299,12 +299,18 @@ def read_observations(run,geometry,lo,hi):
 
 class CalibratedLasagnaInput:
     """Read calibrated source observations directly; never duplicate map payloads."""
-    def __init__(self,volume,run,config,geometry):
+    def __init__(self,volume,run,config,geometry,*,verified_source=None):
         self.volume=volume;self.config=config;self.geometry=json.loads(json.dumps(geometry))
         self.root=Path(run)/'lasagna-source';self.stack=ExitStack();self.closed=False
         try:
-            source=source_identity(config['lasagna_input'],config.get('lasagna_geometry'),
-                                   volume.identity,geometry,volume.cache)
+            source=verified_source
+            if source is None:
+                source=source_identity(config['lasagna_input'],config.get('lasagna_geometry'),
+                                       volume.identity,geometry,volume.cache)
+            elif (not isinstance(source,dict) or source.get('path')!=str(_local(config['lasagna_input']))
+                    or source.get('geometry_path')!=(str(_local(config['lasagna_geometry'])) if config.get('lasagna_geometry') else None)
+                    or source.get('frame',{}).get('source')!=_source(volume.identity['source'])):
+                raise ValueError('verified Lasagna input context changed')
             self.manifest=source['manifest']
             self.identity=dict(kind='external-lasagna-physical-direct-v1',source=volume.identity,
                                geometry=self.geometry,input=source,invalid_value=config.get('invalid_value'))
