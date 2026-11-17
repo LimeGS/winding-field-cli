@@ -11,6 +11,7 @@ from . import __version__
 from .io import Volume,resolve_source
 
 TOOLS = {
+    'field-advice': ('field_advice', 'read-only consultative field progress; never triggers scientific work'),
     'field-converge': ('field_convergence', 'opt-in global field convergence; legacy routes remain unchanged'),
     'constant-sheet': ('constant_sheet', 'prepare, flatten, validate and render exact constant-W sheets'),
     'sheet-atlas': ('sheet_atlas', 'package and query side-by-side constant-W CT sheets'),
@@ -149,6 +150,7 @@ def main(argv=None):
         p.add_argument('--threshold',type=float,help='classical predictor CT intensity threshold; default: calibrated Otsu; unused by learned predictors')
         p.add_argument('--invalid-value',type=float,help='acquisition fill value to exclude; zero remains valid unless declared')
         p.add_argument('--field-chunk',type=int,default=64,help='field solver block edge in field-grid samples (default: 64)'); p.add_argument('--sweeps',type=int,default=4,help='field solver sweep budget (default: 4); not global convergence')
+        p.add_argument('--field-advice',action='store_true',default=argparse.SUPPRESS,help='opt-in consultative diagnostics only; requires observer-capable development core')
         p.add_argument('--prepared-cache-bytes',type=int,default=0,help='retained field CPU/device workspaces; 0 disables (not a peak-memory cap)')
         p.add_argument('--constraint-cache-bytes',type=int,default=0,help='retained static fibre restrictions; 0 disables')
         p.add_argument('--maxiter',type=int,default=2000,help='iteration limit per local field solve (default: 2000)'); p.add_argument('--rtol',type=float,default=1e-6,help='relative tolerance of local field solves (default: 1e-6)')
