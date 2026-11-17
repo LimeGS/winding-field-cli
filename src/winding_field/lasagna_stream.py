@@ -131,7 +131,8 @@ class LasagnaInput:
                     raise ValueError('Lasagna channel geometry/uint8/zero-fill mismatch: '+name)
                 product.bind_ledger(self.root/(name+'.sqlite'))
                 self.products[name]=product
-                if product._decoded_limit:self.stack.enter_context(product.verified_chunks())
+                if product._decoded_limit and not config.get('_import_worker'):
+                    self.stack.enter_context(product.verified_chunks())
             self.identity=dict(kind='external-lasagna-v2',manifest=self.source,documents=self.documents,
                 encoding=manifest,provenance=provenance,channels={n:p.identity for n,p in self.products.items()},
                 binding=dict(kind='manifest-ct-source' if explicit is not None else 'user-selected-ct-base-grid',
@@ -259,7 +260,13 @@ class LasagnaInput:
 
     def close(self):
         self.stack.close()
-        atomic_json(self.root/'CHUNKS.json',{name+'.sqlite':file_sha(self.root/(name+'.sqlite')) for name in self.products})
+        for source,record in self.documents.items():
+            if not source.startswith(('http://','https://')):
+                path=Path(source);sha=file_sha(path) if path.is_file() else None
+                if sha!=record['sha256']:raise ValueError('Lasagna input metadata changed during import')
+        path=self.root/'CHUNKS.json'
+        inventory={name+'.sqlite':file_sha(self.root/(name+'.sqlite')) for name in self.products}
+        if not path.exists() or json.loads(path.read_bytes())!=inventory:atomic_json(path,inventory)
 
     def __enter__(self):return self
 

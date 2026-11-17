@@ -100,6 +100,7 @@ def ordered_map(fn,jobs,*,workers,max_inflight,initializer=None,initargs=(),stop
         # Python3.11/3.12 expose no public terminate-workers API.
         processes=list((pool._processes or {}).values())
         manager=pool._executor_manager_thread
+        result_queue=pool._result_queue
         pool.shutdown(wait=False,cancel_futures=True)
         deadline=time.monotonic()+5
         for process in processes:process.join(max(0.,deadline-time.monotonic()))
@@ -109,3 +110,9 @@ def ordered_map(fn,jobs,*,workers,max_inflight,initializer=None,initargs=(),stop
             process.join(.5)
             if process.is_alive():process.kill();process.join()
         if manager is not None:manager.join(1.)
+        if result_queue is not None:result_queue.close()
+        # Exception tracebacks can retain this generator; release spawn semaphores
+        # here rather than leaving their finalizers to a later resource-tracker call.
+        pool._initargs=()
+        event=pool=manager=result_queue=None
+        processes.clear()

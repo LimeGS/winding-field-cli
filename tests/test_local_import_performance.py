@@ -101,3 +101,89 @@ def test_cached_prediction_mutation_is_rejected_before_prepared_publication(tmp_
         with pytest.raises(ValueError,match='changed'):
             predict.prepare(volume,tmp_path/'run',config)
     assert not (tmp_path/'run/PREPARED.json').exists()
+
+
+@pytest.mark.parametrize('embedded',[False,True])
+def test_direct_calibrated_import_avoids_second_map_copy(tmp_path,embedded):
+    from contextlib import closing
+    from winding_field import lasagna_input
+    volume,geometry,config=source_case(tmp_path,embedded=embedded)
+    try:
+        lasagna_input.prepare(volume,tmp_path/'reference',config,geometry)
+        reference=lasagna_input.read_observations(tmp_path/'reference',geometry,[0]*3,[4]*3)
+        with lasagna_input.CalibratedLasagnaInput(volume,tmp_path/'direct',config,geometry) as reader:
+            data=reader.read(geometry,[0]*3,[4]*3)
+            assert reader.identity['kind']=='external-lasagna-physical-direct-v1'
+            for name in reference:np.testing.assert_array_equal(data[name],reference[name])
+        assert not (tmp_path/'direct/lasagna-source/maps').exists()
+        assert (tmp_path/'direct/lasagna-source/WORK.json').is_file()
+        (tmp_path/'direct/lasagna-source/nx.sqlite').unlink()
+        with pytest.raises((ValueError,FileNotFoundError)):
+            lasagna_input.CalibratedLasagnaInput(volume,tmp_path/'direct',config,geometry)
+        assert not (tmp_path/'direct/lasagna-source/nx.sqlite').exists()
+    finally:volume.close()
+
+
+@pytest.mark.parametrize('physical',[False,True])
+@pytest.mark.parametrize('workers',[2,4])
+def test_parallel_local_imports_match_serial_maps_and_fibres(tmp_path,monkeypatch,physical,workers):
+    from contextlib import closing
+    from test_import_parallel import resources
+    from test_afv_batching import inventory
+    from winding_field import workflow
+    from winding_field.artifacts import Tiles
+    path=local_case(tmp_path/'input',physical=physical,count=12)
+    config=json.loads(path.read_bytes());resources(monkeypatch)
+    workflow.run(dict(config,output=str(tmp_path/'serial'),import_workers=1),until='fibres')
+    workflow.run(dict(config,output=str(tmp_path/'parallel'),import_workers=workers),until='fibres')
+    assert inventory(tmp_path/'serial')==inventory(tmp_path/'parallel')
+    with closing(Tiles(tmp_path/'serial/maps')) as a,closing(Tiles(tmp_path/'parallel/maps')) as b:
+        for key in a.keys():
+            left,right=a.load(key),b.load(key)
+            for name in left:np.testing.assert_array_equal(left[name],right[name])
+    root=tmp_path/'parallel'/('lasagna-source' if physical else 'lasagna-import')
+    stats=json.loads((root/'PERFORMANCE.json').read_bytes())
+    assert stats['workers']==workers and stats['worker_pids']
+    assert not (tmp_path/'parallel/lasagna-source/maps').exists()
+    assert not list((tmp_path/'parallel').glob('.import-workers-*'))
+
+
+@pytest.mark.parametrize('physical',[False,True])
+@pytest.mark.parametrize('mutation',[False,True])
+def test_parallel_prepare_stop_or_mutation_never_certifies_partial_inputs(tmp_path,monkeypatch,physical,mutation):
+    from test_import_parallel import resources
+    from winding_field import workflow
+    from winding_field.artifacts import Tiles
+    import multiprocessing as mp
+    import sqlite3
+    config=json.loads(local_case(tmp_path/'input',physical=physical).read_bytes())
+    config.update(output=str(tmp_path/'run'),import_workers=2);resources(monkeypatch)
+    run=tmp_path/'run';original=Tiles.write;first=run/'maps/0_0_0.npz';interrupted=False
+    previous={p.pid for p in mp.active_children()}
+    def write(self,*args,**kwargs):
+        nonlocal interrupted
+        result=original(self,*args,**kwargs)
+        if self.root==run/'maps' and not interrupted:
+            interrupted=True
+            if mutation:
+                root=run/('lasagna-source' if physical else 'lasagna-import')
+                with sqlite3.connect(root/'nx.sqlite') as db:
+                    key=db.execute('SELECT key FROM chunks ORDER BY key LIMIT 1').fetchone()[0]
+                manifest=json.loads(Path(config['lasagna_input']).read_bytes())
+                channel=Path(config['lasagna_input']).parent/manifest['groups']['nx']['zarr']
+                (channel/key).write_bytes(bytes(64))
+            else:(run/'STOP').touch()
+        return result
+    with monkeypatch.context() as patch:
+        patch.setattr(Tiles,'write',write)
+        if mutation:
+            with pytest.raises(ValueError,match='changed'):workflow.run(config,until='prepare')
+        else:assert workflow.run(config,until='prepare')['status']=='PAUSED'
+    assert not (run/'PREPARED.json').exists()
+    assert not list(run.glob('.import-workers-*'))
+    assert {p.pid for p in mp.active_children()}<=previous
+    if not mutation:
+        before=(file_sha(first),first.stat().st_mtime_ns)
+        (run/'STOP').unlink()
+        assert 'prepare' in workflow.run(config,resume=True,until='prepare')['stages']
+        assert before==(file_sha(first),first.stat().st_mtime_ns)

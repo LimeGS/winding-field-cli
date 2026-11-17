@@ -11,7 +11,7 @@ import numpy as np
 
 from common import decode_lasagna_normals
 from .artifacts import Tiles
-from .io import Volume, http_url
+from .io import Volume, http_url, bounds
 from .lasagna import CHUNK, physical_observations
 from .splines import bind
 from .util import atomic_json, file_sha
@@ -135,13 +135,13 @@ def source_identity(path,geometry_path,source,geometry,cache):
                 files=files,frame=frame,manifest=manifest,channels=channels)
 
 
-def _open_products(stack,identity,root,*,required):
+def _open_products(stack,identity,root,*,required,cache_bytes=256<<20):
     products={}
     for name,channel in identity['input']['channels'].items():
         ledger=root/(name+'.sqlite')
         if required and not ledger.is_file(): raise ValueError('missing Lasagna input ledger: '+name)
         product=stack.enter_context(closing(Volume(channel['path'],voxel_um=1.,cache=root/'reader-cache',offline=True,
-                                                  decoded_cache_bytes=(256<<20)//6)))
+                                                  decoded_cache_bytes=cache_bytes//6)))
         if product.identity!=channel['identity']: raise ValueError('Lasagna channel metadata changed: '+name)
         product.bind_ledger(ledger); product.validate_used()
         products[name]=product
@@ -160,6 +160,14 @@ def validate_retained(run,config):
         return
     if not (root/'IDENTITY.json').is_file(): raise ValueError('missing Lasagna input identity')
     identity=json.loads((root/'IDENTITY.json').read_bytes())
+    if identity.get('kind')=='external-lasagna-physical-direct-v1':
+        from .workflow import open_volume
+        receipt=run/'LASAGNA.json'
+        if receipt.exists() and json.loads(receipt.read_bytes())['identity']!=identity:
+            raise ValueError('external Lasagna receipt changed')
+        with closing(open_volume(config)) as volume:
+            with CalibratedLasagnaInput(volume,run,config,identity['geometry']) as reader:reader.validate_used()
+        return
     seal=root/'WORK.json'; inventory=_inventory(root)
     if seal.exists():
         if json.loads(seal.read_bytes())!=inventory: raise ValueError('Lasagna input inventory changed or missing')
@@ -287,3 +295,75 @@ def read_observations(run,geometry,lo,hi):
     if identity['geometry']!=geometry: raise ValueError('Lasagna observation geometry changed')
     with closing(Tiles(root/'maps',shape=geometry['shape_zyx'],chunk=CHUNK,identity=identity)) as maps:
         return maps.read_many(('density','normals','support','surface_phase','ct'),lo,hi)
+
+
+class CalibratedLasagnaInput:
+    """Read calibrated source observations directly; never duplicate map payloads."""
+    def __init__(self,volume,run,config,geometry):
+        self.volume=volume;self.config=config;self.geometry=json.loads(json.dumps(geometry))
+        self.root=Path(run)/'lasagna-source';self.stack=ExitStack();self.closed=False
+        try:
+            source=source_identity(config['lasagna_input'],config.get('lasagna_geometry'),
+                                   volume.identity,geometry,volume.cache)
+            self.manifest=source['manifest']
+            self.identity=dict(kind='external-lasagna-physical-direct-v1',source=volume.identity,
+                               geometry=self.geometry,input=source,invalid_value=config.get('invalid_value'))
+            seal=self.root/'WORK.json';inventory=_inventory(self.root)
+            retained=(self.root/'IDENTITY.json').exists()
+            if seal.exists():
+                if json.loads(seal.read_bytes())!=inventory:raise ValueError('Lasagna input inventory changed or missing')
+            elif retained and set(inventory)!={'IDENTITY.json'}:
+                raise ValueError('Lasagna input inventory is unsealed; use a new output')
+            elif not retained and any((Path(run)/name).exists() for name in ('maps','LASAGNA.json','PREPARED.json')):
+                raise ValueError('Lasagna input provenance missing for retained products')
+            self.root.mkdir(parents=True,exist_ok=True);bind(self.root/'IDENTITY.json',self.identity)
+            self.products=_open_products(self.stack,self.identity,self.root,required=seal.exists(),
+                                        cache_bytes=config.get('_import_cache_bytes',256<<20))
+            if not config.get('_import_worker'):
+                for product in self.products.values():self.stack.enter_context(product.verified_chunks())
+        except BaseException:
+            self.stack.close();raise
+
+    def read(self,geometry,lo,hi):
+        if geometry!=self.geometry:raise ValueError('Lasagna observation geometry changed')
+        lo,hi=bounds(lo,hi,geometry['shape_zyx'])
+        if np.prod(hi-lo,dtype=object)>128**3:raise ValueError('Lasagna read exceeds 128-cube sample budget')
+        with self.volume.chunk_batch() if self.volume._ledger is not None else nullcontext():
+            ct=self.volume.sample([geometry['roi_lo_zyx'][i]+np.arange(a,b)*geometry['stride']
+                                   for i,(a,b) in enumerate(zip(lo,hi))])
+        if not np.isfinite(ct).all():raise ValueError('finite CT required for Lasagna inputs')
+        source=self.identity['input'];frame=source['frame'];manifest=self.manifest
+        axes=[(geometry['origin_xyz'][2-i]+np.arange(a,b)*geometry['spacing_xyz'][2-i]-frame['origin_xyz_um'][2-i])
+              /frame['spacing_xyz_um'][2-i] for i,(a,b) in enumerate(zip(lo,hi))]
+        valid=np.ones(ct.shape,bool) if self.config.get('invalid_value') is None else ct!=self.config['invalid_value']
+        values={}
+        for names in (('grad_mag',),('nx','ny'),('cos',),('presence',)):
+            if names[0] not in self.products:continue
+            name='normals' if names==('nx','ny') else names[0]
+            values[name],support=_sample(self.products,axes,source['channels'][names[0]]['scaledown'],
+                                         names,manifest.get('crops',[]))
+            valid &= support
+        result=physical_observations(*(values[n] for n in ('grad_mag','normals','cos')),
+            input_spacing_xyz=frame['spacing_xyz_um'],encode_scale=manifest['grad_mag_encode_scale'],
+            grad_mag_factor=manifest['grad_mag_factor'],validity=valid)
+        result['ct']=ct
+        return result
+
+    def validate_used(self):
+        for product in self.products.values():product.validate_used(fresh=False)
+
+    def close(self):
+        if self.closed:return
+        self.closed=True
+        try:
+            if self.identity['input']!=source_identity(self.config['lasagna_input'],self.config.get('lasagna_geometry'),
+                    self.volume.identity,self.geometry,self.volume.cache):
+                raise ValueError('Lasagna input identity changed during import')
+        finally:
+            self.stack.close()
+        path=self.root/'WORK.json';inventory=_inventory(self.root)
+        if not path.exists() or json.loads(path.read_bytes())!=inventory:atomic_json(path,inventory)
+
+    def __enter__(self):return self
+
+    def __exit__(self,*exc):self.close()
