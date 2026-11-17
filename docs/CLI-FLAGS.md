@@ -107,3 +107,34 @@ saved recipes and changed science reject before writes. Existing cache/reader/
 resource-only continuation remains allowed; its effective recipe is another
 immutable sibling. Historical source-file hashes stay in `request_sources`;
 the original handwritten file is not needed to resume a saved CLI request.
+
+### Prepared mesh/surfaces/render mappings
+
+Field descriptors use `--field-kind`, `--field-path`/`--field-url`,
+`--field-sha256`, `--field-complete-sha256`, `--field-support-policy`,
+`--field-mask` and `--field-mask-sha256`. NPY sources accept masks; only chunk/
+remote sources accept their existing stored/observed policies. Imported mesh
+data uses `--mesh PATH --mesh-sha256 SHA256`, exclusive with a field source.
+
+Geometry uses `--field-frame`, `--field-voxel-um`, `--field-origin-xyz`,
+`--field-spacing-xyz`, `--field-shape-zyx`, `--sheet-step`, `--calibration`.
+Origins/spacings are WORLD XYZ triples, shape is integer ZYX. `--levels` is
+always raw phi, never winding W; W−60 in the checked Paris4 setup is
+`--levels -71.54987931251526 --sheet-step 1.192497988541921`, not `--levels -60`.
+The 9.6 µm frame voxel calibration is not multiplied into those WORLD vectors.
+
+Execution leaves map to `--tile` (cells per axis, ≤256), `--level-batch`,
+`--cache-bytes`, `--reserve-bytes`, `--mesh-bytes`. Rendering uses
+`--render-width`, `--render-height`, `--render-triangle-batch`,
+`--render-reserve-bytes`, `--render-levels`, and repeated
+`--render-view NAME AZIMUTH ELEVATION` (degrees). View flags replace the whole
+file view list. Combined surfaces retain the existing execution reserve policy;
+standalone render uses its own render reserve. Standalone `render --mesh BUNDLE`
+needs no field geometry or full surface recipe.
+
+`--parallel-levels` uses the same generated sibling recipe and existing digest-
+bound per-level worker protocol. Plain `--resume --output OUTPUT` locates a
+generated serial recipe through `REQUEST.json` or a parallel recipe through
+`LEVELS.json`. Preserve both the output and its sibling request. Parallel
+collections keep full recipe bindings. Native legacy recipe invocations remain
+supported without translation.

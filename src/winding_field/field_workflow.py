@@ -495,6 +495,9 @@ def _effective_request(args, sources):
     retained = None
     if args.action != "build":
         retained = read_settings(output/"RUN.json") if (output/"RUN.json").exists() else {}
+        if retained.get("config_path") and Path(retained["config_path"]).name.startswith(output.name+".request-"):
+            if _sha(retained["config_path"]) != retained["config_sha256"]:
+                raise ValueError("saved request changed")
     elif output.exists() and (args.supervised or any(p.name != ".supervisor.lock" for p in output.iterdir())):
         raise ValueError("build requires a new output directory")
     path = args.config
