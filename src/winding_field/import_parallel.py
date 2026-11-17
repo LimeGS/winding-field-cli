@@ -16,8 +16,12 @@ RESULT_BYTES=16<<20
 
 
 def local_inputs(config):
-    return not any(str(config.get(k) or '').startswith(('http://','https://','s3://'))
-                   for k in ('source','lasagna_input'))
+    manifest=config.get('lasagna_input')
+    inputs=[config.get('source'),manifest]
+    if isinstance(manifest,dict):
+        inputs.extend(g.get('zarr') for g in manifest.get('groups',{}).values())
+        inputs.append(manifest.get('provenance'))
+    return not any(str(value or '').startswith(('http://','https://','s3://')) for value in inputs)
 
 
 def limits(requested,*,output,reserve_bytes,worker_bytes):

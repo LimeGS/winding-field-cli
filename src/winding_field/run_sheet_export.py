@@ -43,8 +43,9 @@ def export_run(args):
                               sha256=field.get('checkpoint_sha256'),support_policy='observed'),geometry=geometry)
     with FieldSource(descriptor['field'],geometry) as reader:
         reader.validate(hashes=True)
-    request=settings(json.loads(Path(args.flattening_config).read_bytes()) if args.flattening_config else
-                     dict(output_frame=dict(id=geometry['frame'],voxel_um=1.,origin_xyz_um=[0.,0.,0.])))
+    from .export_settings import flattening_request
+    request=settings(flattening_request(args,dict(output_frame=dict(
+        id=geometry['frame'],voxel_um=1.,origin_xyz_um=[0.,0.,0.]))))
     ledger=root/'source.sqlite';ledger_sha=file_sha(ledger)
     # A saved cache inside the source run must not turn this read-only export into a writer there.
     if config.get('cache'):

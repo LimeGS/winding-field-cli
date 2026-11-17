@@ -12,14 +12,17 @@ from patch_check import evaluate_patch, load_patch, sha256
 def main(argv=None):
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--field", type=Path, required=True)
-    p.add_argument("--metadata", type=Path, required=True)
+    p.add_argument("--metadata", type=Path)
     p.add_argument("--patch", type=Path, nargs="+", required=True)
     p.add_argument("--patch-frame", required=True)
     p.add_argument("--output", type=Path, required=True)
     p.add_argument("--step", type=float, help="fixed baseline step for a paired comparison")
     p.add_argument("--margin", type=int, default=8)
-    args = p.parse_args(argv)
-    meta = json.loads(args.metadata.read_text())
+    from .tool_settings import metadata_arguments,metadata_request,check_sources
+    from .cli_settings import parse_options
+    metadata_arguments(p,support=False,ownership=False)
+    args = parse_options(p,argv)
+    meta = metadata_request(args,world_units=False)
     if meta["frame"] != args.patch_frame:
         raise ValueError("patch/field coordinate frames differ")
     field = np.load(args.field, mmap_mode="r").astype(np.float32)
@@ -30,6 +33,7 @@ def main(argv=None):
         field=str(args.field), field_sha256=sha256(args.field), metadata=meta,
         step_used=step, patches=[],
         limitation="Same-sheet constancy and local jumps, not proof against collapse or merges.",
+        request_sources=getattr(args,'_request_sources',{}),
     )
     for patch in args.patch:
         pm, xyz = load_patch(patch)
@@ -55,6 +59,7 @@ def main(argv=None):
             fig.savefig(args.output.with_name(args.output.stem + "_" + pm["uuid"] + ".png"), dpi=140)
         finally:
             plt.close(fig)
+    check_sources(args)
     args.output.write_text(json.dumps(output, indent=2, allow_nan=False) + "\n")
     print(json.dumps(output, indent=2, allow_nan=False))
     return 0

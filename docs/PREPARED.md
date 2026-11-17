@@ -12,6 +12,36 @@ For raw CT and model inference, use [the main pipeline](../README.md) instead.
 The CLI owns these workflows and calls the installed `winding-field` numerical
 library. Install them together using [the installation guide](../README.md).
 
+Every recipe setting also has a typed flag; recipes are optional. See
+[all mappings and precedence](CLI-FLAGS.md). Keep generated
+`OUTPUT.request-SHA256.json` siblings with their outputs: CLI resume/verify and
+parallel/supervised workers use these immutable, output-bound snapshots.
+
+## Flag-first Paris4 example
+
+Equivalent to the pinned native example below, with no authored config:
+
+```bash
+winding-field prepared mesh \
+  --field-kind zarr-v2 \
+  --field-url 'https://huggingface.co/datasets/LimeGS/winding-field-PHerc.Paris.4-307.2um/resolve/6753c9812ec8c455401da69b4e758769e565e39f/field.json' \
+  --field-sha256 8f148279de9fc0bc9a877c84e3209a7d0bda8d17cd9d7175820ce075512835be \
+  --field-complete-sha256 57df0ad0358b3f6963b165fd155f91b22da2d37f3d8b996e6a018afd7dc133e9 \
+  --field-support-policy stored \
+  --field-frame 'PHercParis4/20260411134726:L2' --field-voxel-um 9.6 \
+  --field-origin-xyz 0 0 0 --field-spacing-xyz 32 32 32 \
+  --field-shape-zyx 593 256 256 --sheet-step 1.192497988541921 \
+  --levels -71.54987931251526 --tile 128 --cache-bytes 67108864 \
+  --output runs/paris4-flags-W-60
+winding-field prepared mesh --resume --output runs/paris4-flags-W-60
+```
+
+This is a real remote input, not a tiny demo; network/resource admission applies.
+The same options are in [paris4-cli.json](../examples/paris4-cli.json):
+`winding-field prepared mesh --cli-config examples/paris4-cli.json --output runs/paris4-from-config`.
+W−60 is raw phi **−71.54987931251526**, not `--levels -60`.
+9.6 µm calibrates WORLD units; do not multiply the spacing by 9.6 again.
+
 ## Read a remote Zarr v2 field
 
 The [PHerc. Paris. 4 example](../examples/paris4-remote.json) reads the published

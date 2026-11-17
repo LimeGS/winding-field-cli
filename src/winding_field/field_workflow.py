@@ -85,8 +85,25 @@ def load_run_config(path: str | Path) -> dict[str, Any]:
     """Validate a prepared run; paths belong to its JSON, not the caller CWD."""
     path = Path(path).resolve()
     raw = path.read_bytes()
+    config = json.loads(raw, object_pairs_hook=_object, parse_constant=_invalid)
+    if not isinstance(config, dict):
+        raise ValueError("run configuration must be an object")
+    sources = {}
+    if config.get("schema") == "winding-field-cli-request-v1":
+        _keys(config, {"schema", "output", "request", "sources"}, "saved request")
+        sources = config["sources"]
+        config = config["request"]
+    config = validate_run_config(config, base=path.parent)
+    config.update(config_path=str(path), config_sha256=hashlib.sha256(raw).hexdigest())
+    if sources:
+        config["request_sources"] = sources
+    return config
+
+
+def validate_run_config(mapping: dict, *, base: Path) -> dict[str, Any]:
+    """Normalize an independent request through the existing prepared validator."""
     try:
-        config = json.loads(raw, object_pairs_hook=_object, parse_constant=_invalid)
+        config = deepcopy(mapping)
         _keys(
             config,
             {
@@ -129,10 +146,10 @@ def load_run_config(path: str | Path) -> dict[str, Any]:
         _keys(observations, {"target", "weights", "observed"}, "observations")
         if set(observations) != {"target", "weights", "observed"}:
             raise ValueError("target/weights/observed inputs required")
-        config["observations"] = {k: _artifact(v, path.parent) for k, v in observations.items()}
+        config["observations"] = {k: _artifact(v, base) for k, v in observations.items()}
         for name in ("fixed", "constraints", "order"):
             if name in config:
-                config[name] = _artifact(config[name], path.parent)
+                config[name] = _artifact(config[name], base)
         solver = {"device": "cpu", "dtype": "float64", "rtol": 1e-5, "maxiter": 4000, **config.get("solver", {})}
         _keys(solver, {"device", "dtype", "rtol", "maxiter", "preconditioner"}, "solver")
         if solver.pop("preconditioner", "jacobi") != "jacobi":
@@ -177,7 +194,7 @@ def load_run_config(path: str | Path) -> dict[str, Any]:
                 raise ValueError("CUDA construction requires an explicit GPU lease")
             _keys(gpu, {"index", "uuid", "lock_path", "min_free_bytes", "deadline"}, "GPU")
             gpu = dict(gpu)
-            gpu["lock_path"] = str((path.parent / gpu["lock_path"]).resolve())
+            gpu["lock_path"] = str((base / gpu["lock_path"]).resolve())
             from field_runtime import GpuLease
 
             GpuLease(**gpu)
@@ -188,9 +205,7 @@ def load_run_config(path: str | Path) -> dict[str, Any]:
         if not isinstance(extra, dict):
             raise ValueError("source_identity must be an object")
         json.dumps(extra, allow_nan=False)
-        config.update(
-            solver=solver, execution=execution, config_path=str(path), config_sha256=hashlib.sha256(raw).hexdigest()
-        )
+        config.update(solver=solver, execution=execution)
         return config
     except (KeyError, TypeError, OverflowError, ValueError) as error:
         raise ValueError("invalid run configuration: " + str(error)) from error
@@ -296,6 +311,8 @@ def _prepare_run(config: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]
         config_sha256=config["config_sha256"],
         effective_threads=torch.get_num_threads(),
     )
+    if config.get("request_sources"):
+        metadata["request_sources"] = config["request_sources"]
     options = dict(
         shape=shape,
         chunk=chunk,
@@ -385,7 +402,7 @@ def verify_field(config_path,output):
     """Read-only global numerical verification bound to the prepared problem."""
     from .global_residual import verify
     from .surface_sources import FieldSource
-    config=load_run_config(config_path)
+    config=load_run_config(config_path) if not isinstance(config_path,dict) else config_path
     options,metadata,_=_prepare_run(config)
     checkpoint=Path(output).resolve()/'CHECKPOINT.json'
     checkpoint_sha=_sha(checkpoint)
@@ -444,6 +461,140 @@ def _supervised(config_path: Path, output: Path, *, resume: bool, prefetch: bool
     )
 
 
+_SOLVER_FLAGS = {"device": str, "dtype": str, "rtol": float, "maxiter": int, "preconditioner": str}
+_EXECUTION_FLAGS = {name: int for name in (
+    "chunk", "halo", "sweeps", "cache_bytes", "read_workers", "constraint_cache_bytes",
+    "prepared_cache_bytes", "max_bytes", "reserve_bytes")}
+_GPU_FLAGS = {"index": int, "uuid": str, "lock_path": Path, "min_free_bytes": int, "deadline": float}
+
+
+def _auto_bytes(value):
+    if value=="auto":return None
+    if isinstance(value,bool) or isinstance(value,float) and not value.is_integer():
+        raise ValueError("max_bytes must be an integer or auto")
+    return int(value)
+
+
+def _request_flags(parser):
+    group = parser.add_argument_group("prepared request overrides (flags > recipe > defaults)",
+                                      argument_default=argparse.SUPPRESS)
+    group.add_argument("--field-frame")
+    group.add_argument("--field-voxel-um", type=float, help="field frame voxel calibration in micrometres")
+    for name, value_type in (("origin_xyz", float), ("spacing_xyz", float), ("shape_zyx", int)):
+        group.add_argument("--grid-"+name.replace("_", "-"), type=value_type, nargs=3)
+    group.add_argument("--sheet-step", type=float, help="raw field units per sheet")
+    group.add_argument("--calibration", help="explicit calibration provenance")
+    for name in ("target", "weights", "observed", "fixed", "constraints", "order"):
+        group.add_argument("--"+name, type=Path)
+        group.add_argument("--"+name+"-sha256")
+        if name in ("fixed","constraints","order"):
+            group.add_argument("--no-"+name,dest=name,action="store_const",const=None,
+                               help="remove the optional artifact from the effective request")
+    for fields, prefix in ((_SOLVER_FLAGS, ""), (_EXECUTION_FLAGS, ""), (_GPU_FLAGS, "gpu-")):
+        for name, value_type in fields.items():
+            group.add_argument("--"+prefix+name.replace("_", "-"),
+                               type=_auto_bytes if name=="max_bytes" else value_type)
+    group.add_argument("--source-identity", nargs=2, action="append", metavar=("KEY", "JSON_VALUE"))
+
+
+def _effective_request(args, sources):
+    from .cli_settings import merge_explicit, persist_request, request_snapshot, read_settings
+    from .tifxyz_contract import parse_json
+    from field_runtime import check_resources
+
+    output = args.output.resolve()
+    retained = None
+    if args.action != "build":
+        retained = read_settings(output/"RUN.json") if (output/"RUN.json").exists() else {}
+        if retained.get("config_path") and Path(retained["config_path"]).name.startswith(output.name+".request-"):
+            if _sha(retained["config_path"]) != retained["config_sha256"]:
+                raise ValueError("saved request changed")
+    elif output.exists() and (args.supervised or any(p.name != ".supervisor.lock" for p in output.iterdir())):
+        raise ValueError("build requires a new output directory")
+    path = args.config
+    if path is None and retained is not None:
+        if not retained.get("config_path"):
+            raise ValueError("resume/verify without --config requires retained RUN request metadata")
+        path = Path(retained["config_path"])
+        if _sha(path) != retained["config_sha256"]:
+            raise ValueError("saved request changed")
+    base = {}
+    provenance = dict(sources)
+    if path is not None:
+        document = read_settings(path,sources=provenance)
+        if document.get("schema") == "winding-field-cli-request-v1":
+            loaded = load_run_config(path)
+            if document["output"] != str(output):
+                raise ValueError("saved request belongs to another output")
+            provenance.pop(str(Path(path).resolve()))
+            provenance.update(loaded.get("request_sources", {}))
+            base = {k: v for k, v in loaded.items() if k not in ("config_path", "config_sha256", "request_sources")}
+        else:
+            base=deepcopy(document)
+            entries=list(base.get("observations",{}).values()) if isinstance(base.get("observations"),dict) else []
+            entries.extend(base.get(name) for name in ("fixed","constraints","order"))
+            entries.append(base.get("gpu"))
+            for entry in entries:
+                if not isinstance(entry,dict):continue
+                for key in ("path","lock_path"):
+                    value=entry.get(key)
+                    if isinstance(value,str) and value and not urlsplit(value).scheme:
+                        entry[key]=str((Path(path).resolve().parent/value).resolve())
+    values = vars(args)
+    overrides = {}
+    for flag, name in (("field_frame", "frame"), ("field_voxel_um", "voxel_um"),
+                       ("sheet_step", "sheet_step"), ("calibration", "calibration")):
+        if flag in values:overrides[name] = values[flag]
+    for prefix, name in (("grid_", "grid"), ("gpu_", "gpu"), ("", "solver"), ("", "execution")):
+        fields = (("origin_xyz", "spacing_xyz", "shape_zyx") if name == "grid" else
+                  _GPU_FLAGS if name == "gpu" else _SOLVER_FLAGS if name == "solver" else _EXECUTION_FLAGS)
+        for field in fields:
+            if prefix+field in values:
+                value = values[prefix+field]
+                if isinstance(value, Path):value = str(value.resolve())
+                overrides.setdefault(name, {})[field] = value
+    for name in ("target", "weights", "observed", "fixed", "constraints", "order"):
+        if name in values and values[name] is None:
+            if name not in ("fixed","constraints","order") or name+"_sha256" in values:
+                raise ValueError("missing/conflicting artifact: "+name)
+            base.pop(name,None)
+            continue
+        entry = {}
+        if name in values:entry["path"] = str(values[name].resolve())
+        if name+"_sha256" in values:entry["sha256"] = values[name+"_sha256"]
+        if entry:
+            if name in ("target", "weights", "observed"):
+                overrides.setdefault("observations", {})[name] = entry
+            else:overrides[name] = entry
+    if "source_identity" in values:
+        extra = {}
+        for key, value in args.source_identity:
+            if key in extra:raise ValueError("duplicate source identity key: "+key)
+            extra[key] = parse_json(value)
+        overrides["source_identity"] = extra
+    config = validate_run_config(merge_explicit({"schema": "winding-field-run-v1", **base}, overrides),
+                                 base=Path.cwd())
+    saved, raw = request_snapshot(output, config, sources=provenance)
+    effective = dict(config, config_path=str(saved), config_sha256=hashlib.sha256(raw).hexdigest())
+    if provenance:effective["request_sources"] = provenance
+    _, metadata, _ = _prepare_run(effective)
+    if retained is not None:
+        checkpoint = read_settings(output/"CHECKPOINT.json")
+        if ((retained and retained.get("identity") != metadata["identity"]) or
+                checkpoint.get("identity", {}).get("source_identity") != metadata["identity"]):
+            raise ValueError("construction request differs from retained problem")
+    if args.action == "verify":
+        return effective
+    # Only live user-supplied files are admission inputs; retained sources are historical provenance.
+    for source, pin in sources.items():
+        if _sha(source) != pin:raise ValueError("request source changed")
+    if args.config is not None and document.get("schema") != "winding-field-cli-request-v1":
+        if _sha(args.config) != provenance[str(args.config.resolve())]:raise ValueError("request source changed")
+    check_resources(output.parent, reserve_bytes=config["execution"]["reserve_bytes"])
+    persist_request(output, config, resume=saved.exists(), sources=provenance)
+    return saved
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     tokens = list(sys.argv[1:] if argv is None else argv)
     if tokens and tokens[0] in {"mesh", "render", "surfaces"}:
@@ -452,24 +603,28 @@ def main(argv: Sequence[str] | None = None) -> int:
         return surface_main(tokens)
     parser = argparse.ArgumentParser(prog="winding-field prepared", description=__doc__)
     parser.add_argument("action", choices=("build", "resume", "verify", "mesh", "render", "surfaces"))
-    parser.add_argument("--config", type=Path, required=True)
+    parser.add_argument("--config", type=Path, help="optional native prepared-run recipe")
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--prefetch", action="store_true", help="one bounded CPU observation prefetch worker")
     parser.add_argument(
         "--supervised", action="store_true", help="owned worker, source binding and resource-only retries"
     )
-    args = parser.parse_args(argv)
+    _request_flags(parser)
+    from .cli_settings import parse_options
+    sources = {}
+    args = parse_options(parser, tokens, sources=sources)
     from field_runtime import ResourceUnavailable
 
     try:
+        config = _effective_request(args, sources)
         if args.action=='verify':
             if args.supervised or args.prefetch:raise ValueError('verify does not launch solver workers')
-            result=verify_field(args.config,args.output)
+            result=verify_field(config,args.output)
             print(json.dumps(result,allow_nan=False))
             return 0 if result['global_converged'] else 3
         if args.supervised:
-            return _supervised(args.config, args.output, resume=args.action == "resume", prefetch=args.prefetch)
-        result = run_field(args.config, args.output, resume=args.action == "resume", prefetch=args.prefetch)
+            return _supervised(config, args.output, resume=args.action == "resume", prefetch=args.prefetch)
+        result = run_field(config, args.output, resume=args.action == "resume", prefetch=args.prefetch)
     except ResourceUnavailable as error:
         print("resources unavailable: " + str(error), file=sys.stderr)
         return 75
