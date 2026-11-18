@@ -144,7 +144,9 @@ geometry/status, `fibres/fibres.afv`, and `lasagna-source/output/` predictions.
 For bounded preparation, add `--bounded-preparation` to both commands: recompute
 model windows, retain coarse observations and global fibre constraints, and gate
 field publication on global numerical verification. Requires `--field-spacing-um`,
-Qual V2, stride 1, no custom inputs, and ROI origins divisible by 4.
+stride 1, and either native Qual V2 or imported AFV (`--fibres` together with
+`--lasagna-input`). ROI origins must be divisible by 4 for native Qual V2; imported
+AFV may use any origin.
 Add `--fibre-downsample 4` to both commands for a 4× post-prediction fibre grid
 instead of the default 2× grid; ROI origins must then be divisible by 8. This uses
 about 8× fewer tracing voxels, not less native model inference or CT resolution,
@@ -475,7 +477,7 @@ inputs retain [calibrated interpolation](docs/LASAGNA-CALIBRATED.md).
 | --- | --- |
 | `--level` / `--levels` | CT pyramid level / raw field isovalues (`W × sheet_step`) |
 | `--stride` / `--field-spacing-um` | Observation sampling / independent solve-grid pitch; bounded preparation uses endpoint-aligned spacing |
-| `--lasagna-input FILE` / `--lasagna-geometry FILE` | Import local surface predictions / explicit base-grid calibration; omit `--bounded-preparation` |
+| `--lasagna-input FILE` / `--lasagna-geometry FILE` | Import local surface predictions / explicit base-grid calibration; combinable with `--bounded-preparation` when `--fibres` supplies the fibre set |
 | `--surface-output native\|atlas\|tifxyz` | Native default / legacy charts and gallery / experimental direct-field export |
 | `--flattening-method slim\|default` | Native local SLIM (new-run default) / historical local mapping |
 | `--flattening-method original --flattening-config FILE` | Global LSCM with explicit output frame; independent of field resolution |
