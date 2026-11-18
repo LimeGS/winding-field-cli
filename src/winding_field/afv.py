@@ -239,13 +239,15 @@ def _clip_worker(job):
     return job,fragments,dict(pid=os.getpid(),support_loads=_WORKER_SUPPORT.loads-before)
 
 
-def import_fibres(run,config,stop=None,*,verified_source=None):
+def import_fibres(run,config,stop=None,*,verified_source=None,maps=None):
     started=time.monotonic()
     run=Path(run); meta=json.loads((run/'PREPARED.json').read_bytes())
+    supplied=maps is not None
+    if supplied: meta=dict(meta,**meta['native_geometry'])
     source=_checked_source(config,meta['source'],verified_source)
     identity=dict(input=source,maps=meta['tiles_sha256'],origin=meta['origin_xyz'],spacing=meta['spacing_xyz'])
     from .import_parallel import limits,local_inputs,ordered_map
-    execution=limits(config.get('import_workers',1) if local_inputs(config) else 1,
+    execution=limits(config.get('import_workers',1) if (local_inputs(config) and not supplied) else 1,
                      output=run,reserve_bytes=config.get('reserve_bytes',0),worker_bytes=368<<20)
     execution.update(worker_pids=[],worker_support_loads=0,streaming_replays=0)
     root=run/'fibres'; root.mkdir(exist_ok=True); bind(root/'IMPORT.json',identity)
@@ -254,7 +256,7 @@ def import_fibres(run,config,stop=None,*,verified_source=None):
         if source!=_checked_source(config,meta['source'],None):
             raise ValueError('external AFV source changed during import')
         return json.loads((run/'FIBRES.json').read_bytes())
-    maps=Tiles(run/'maps'); src=_open(config['fibres']); db=sqlite3.connect(root/'fibres.sqlite')
+    maps=maps if supplied else Tiles(run/'maps'); src=_open(config['fibres']); db=sqlite3.connect(root/'fibres.sqlite')
     from .afv_clip import SupportTiles
     support=SupportTiles(maps,cache_bytes=64<<20)
     pending=processed=commits=0; committed=None
@@ -281,7 +283,10 @@ def import_fibres(run,config,stop=None,*,verified_source=None):
             pending=0; batch_started=None
 
     try:
-        if maps.identity()!=meta['tiles_sha256']: raise ValueError('AFV import maps changed')
+        if config.get('bounded_preparation'):
+            from .util import sqlite_quota
+            sqlite_quota(db,config.get('bounded_bytes',12<<30)//4)
+        if not supplied and maps.identity()!=meta['tiles_sha256']: raise ValueError('AFV import maps changed')
         db.executescript('CREATE TABLE IF NOT EXISTS done(fid INTEGER,block INTEGER,sha TEXT,PRIMARY KEY(fid,block));'
             'CREATE TABLE IF NOT EXISTS curves(id INTEGER PRIMARY KEY,tile TEXT,points BLOB,family TEXT,source_id INTEGER,source_block INTEGER,annotation TEXT);'
             'CREATE INDEX IF NOT EXISTS curves_source ON curves(source_id,source_block);'
@@ -331,6 +336,10 @@ def import_fibres(run,config,stop=None,*,verified_source=None):
                         if blob!=saved or label!=family or note!=annotation or bound is None or not np.allclose(bound,box,rtol=2e-7,atol=1e-6):
                             raise ValueError('imported AFV payload changed')
                     else:
+                        if config.get('bounded_preparation'):
+                            size=db.execute('PRAGMA page_count').fetchone()[0]*db.execute('PRAGMA page_size').fetchone()[0]
+                            if 2*(size+len(blob)+65536)>config.get('bounded_bytes',12<<30)//4:
+                                raise OSError('bounded AFV quota exhausted; block not committed')
                         if shutil.disk_usage(root).free<len(blob)+config.get('reserve_bytes',0)+65536:
                             raise OSError('insufficient space for AFV import and reserve')
                         cid=db.execute('INSERT INTO curves(tile,points,family,source_id,source_block,annotation) VALUES (?,?,?,?,?,?)',
@@ -353,7 +362,7 @@ def import_fibres(run,config,stop=None,*,verified_source=None):
         progress('VALIDATING',force=True)
         if source!=_checked_source(config,meta['source'],None):
             raise ValueError('external AFV source changed during import')
-        if maps.identity()!=meta['tiles_sha256']:raise ValueError('AFV import maps changed during import')
+        if not supplied and maps.identity()!=meta['tiles_sha256']:raise ValueError('AFV import maps changed during import')
         count=db.execute('SELECT count(*) FROM curves').fetchone()[0]
         kept=db.execute('SELECT count(DISTINCT source_id) FROM curves').fetchone()[0]
     except InterruptedError:
@@ -365,7 +374,9 @@ def import_fibres(run,config,stop=None,*,verified_source=None):
         with suppress(OSError): progress('FAILED',force=True)
         raise
     finally:
-        support.close(); maps.close(); src.close(); db.close()
+        support.close()
+        if not supplied: maps.close()
+        src.close(); db.close()
     result=dict(status='FIBRES_READY',method='external-afv',spatial_index=True,count=count,
         input_count=source['input_count'],imported_sources=kept,excluded_sources=source['input_count']-kept,
         exclusion_reason='outside ROI or unsupported surface',identity=identity,sha256=file_sha(root/'fibres.sqlite'),

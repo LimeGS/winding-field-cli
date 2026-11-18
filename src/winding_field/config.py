@@ -99,11 +99,13 @@ def validate_config(config):
     if config.get('bounded_preparation'):
         if config.get('lasagna_geometry'):
             raise ValueError('--bounded-preparation requires base-grid imports without --lasagna-geometry')
-        if config.get('prediction')!='qual-v2' or config.get('fibres') or config.get('stride',1)!=1:
-            raise ValueError('bounded preparation requires native Qual V2 with stride1 and no external fibres')
+        if (not config.get('fibres') and config.get('prediction')!='qual-v2') or config.get('stride',1)!=1:
+            raise ValueError('bounded preparation requires Qual V2 or imported AFV with stride1')
+        if config.get('fibres') and not config.get('lasagna_input'):
+            raise ValueError('bounded imported AFV requires imported Lasagna')
         if config.get('field_spacing_um') is None:
             raise ValueError('bounded preparation requires --field-spacing-um')
-        if any(v%(2*factor) for v in config.get('roi_lo',[0,0,0])):
+        if not config.get('fibres') and any(v%(2*factor) for v in config.get('roi_lo',[0,0,0])):
             raise ValueError(f'bounded ROI origin must be a multiple of{2*factor} to preserve global seed parity')
         budget=config.get('bounded_bytes',12<<30)
         if type(budget) is not int or budget<16<<20:raise ValueError('bounded allowance must be at least16MiB')
