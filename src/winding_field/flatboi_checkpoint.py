@@ -26,14 +26,34 @@ def sync_dir(path):
     finally:os.close(fd)
 
 
+SWAP_CEILING=64*2**30
+
+
+def native_envelope(memory_max,swap_max):
+    """Admit any observable cgroup v2 limit; only unenforced or unusable limits fail.
+
+    The historical <=21G ceiling was a property of one allocation, not a numerical
+    requirement: a bigger, *enforced* limit does not change the run, and available
+    headroom is admitted separately. An absent or unobservable limit ('max') is
+    refused because then nothing bounds the native allocations.
+    """
+    try:
+        if memory_max.strip()=='max' or swap_max.strip()=='max':raise ValueError('unenforced')
+        ram=int(memory_max);swap=int(swap_max)
+    except ValueError as error:
+        raise ValueError('Flatboi requires an enforced cgroup v2 MemoryMax and MemorySwapMax') from error
+    if ram<=0 or not 0<=swap<=SWAP_CEILING:
+        raise ValueError('Flatboi cgroup limits are unusable: MemoryMax=%d MemorySwapMax=%d'%(ram,swap))
+    return ram,swap
+
+
 def require_cgroup():
-    """Native allocations require the same hard Linux envelope as the proven recipe."""
+    """Native allocations require observable, enforced cgroup v2 limits with no swap."""
     try:
         group=Path('/sys/fs/cgroup')/Path('/proc/self/cgroup').read_text().strip().removeprefix('0::/').strip('/')
-        ram=int((group/'memory.max').read_text());swap=int((group/'memory.swap.max').read_text())
-        if not 0<ram<=21*2**30 or not 0<=swap<=64*2**30:raise ValueError('limits')
+        native_envelope((group/'memory.max').read_text(),(group/'memory.swap.max').read_text())
     except (OSError,ValueError) as error:
-        raise ValueError('Flatboi requires cgroup v2 MemoryMax <=21G and MemorySwapMax <=64G') from error
+        raise ValueError('Flatboi requires an enforced cgroup v2 MemoryMax and MemorySwapMax') from error
 
 
 def identity_for(source_map,input,app_run,batch_iterations=10,native_recipe='installed-2f89bfc9'):

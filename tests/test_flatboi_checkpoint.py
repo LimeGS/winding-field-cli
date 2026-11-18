@@ -114,3 +114,18 @@ def test_native_run_binds_preparation_and_import_rejects_symlink_ancestor(tmp_pa
     assert not (target/'new').exists()
     atomic_json(prep,dict(centerline=[[1,0,0],[1,0,1]]))
     with pytest.raises(ValueError,match='identity'):r.run(args)
+
+
+def test_native_envelope_accepts_a_large_enforced_limit():
+    from winding_field import flatboi_checkpoint as native
+    # A 1.43 TiB container limit is admissible: size alone is not a numerical requirement.
+    assert native.native_envelope('1533428105216\n', '0\n') == (1533428105216, 0)
+    assert native.native_envelope(str(10 * 2**30) + '\n', '0\n') == (10 * 2**30, 0)
+
+
+def test_native_envelope_refuses_unenforced_or_unusable_limits():
+    from winding_field import flatboi_checkpoint as native
+    for memory, swap in (('max\n', '0\n'), ('10737418240\n', 'max\n'), ('0\n', '0\n'),
+                         ('10737418240\n', str(native.SWAP_CEILING + 1) + '\n')):
+        with pytest.raises(ValueError, match='cgroup'):
+            native.native_envelope(memory, swap)
