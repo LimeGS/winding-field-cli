@@ -20,6 +20,10 @@ Both defaults are **zero**. Prepared workflows use the same names in `execution`
 - Constraint cache: static pair selection, indices and coefficients. The bounded
   pair catalog refreshes exterior targets on every visit. The legacy local-pair
   route retains only rows whose targets are independent of exterior field values.
+- Observation cache (`--observation-cache-bytes`, default zero): immutable
+  per-block prior observations (target, weights, support) across sweeps.
+- Field-store cache (`--field-cache-bytes`, default 64 MiB): decoded checkpoint
+  chunks read for halos. See [CPU field preparation](FIELD_CPU_PERFORMANCE.md).
 - First-fit retention avoids repeated eviction when only a subset fits. Caches
   are process-local, excluded from checkpoint products and released on exit.
 - These are additional retained-storage budgets, **not peak-memory limits**. Keep

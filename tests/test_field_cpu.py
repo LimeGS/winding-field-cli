@@ -375,3 +375,66 @@ def test_cli_and_config_cache_profiles_match(tmp_path,monkeypatch):
         assert main([*flags,'--cli-config',str(settings)])==0
     assert received[0::2]==received[1::2]
     assert [profile['constraint_cache_bytes'] for profile in received[0::2]]==[64<<20,0,16<<20]
+
+
+@pytest.mark.parametrize('constraint_budget',[0,1<<20])
+def test_pool_skips_boxes_with_retained_observations_and_rows(tmp_path,monkeypatch,constraint_budget):
+    from winding_field import field_cpu
+    monkeypatch.setattr(field_cpu,'headroom_bytes',lambda:8<<30)
+    reference=prepared_run(tmp_path/'reference',shape=(6,6,32),variable=True)
+    field.solve(reference,dict(sweeps=3,field_chunk=8))
+    run=prepared_run(tmp_path/'run',shape=(6,6,32),variable=True)
+    result=field.solve(run,dict(sweeps=3,field_chunk=8,constraint_cache_bytes=constraint_budget,
+                                observation_cache_bytes=1<<20,field_cpu_workers=2,
+                                field_cpu_buffer_bytes=16<<20))
+    digests=[]
+    for root in (reference,run):
+        cp=json.loads((root/'field/CHECKPOINT.json').read_bytes())
+        digests.append([v['sha256'] for _,v in sorted(cp['chunks'].items())])
+    assert digests[0]==digests[1]
+    pool=result['field_cpu_stats'];observed=result['observation_cache_stats']
+    if constraint_budget:
+        # Only the first sweep reaches workers; later sweeps reuse both static inputs.
+        assert pool['completed']==pool['submitted']==4
+        assert observed['hits']==8 and observed['misses']==4
+    else:
+        # Rows are rebuilt each sweep, so workers still run and observations are never served stale.
+        assert pool['completed']==12 and pool['skipped']==0
+        assert observed['hits']==0 and observed['misses']==12 and observed['peak_entries']==4
+
+
+def test_cli_and_config_new_cache_flags_match(tmp_path,monkeypatch):
+    from winding_field.cli import main
+    from winding_field import workflow
+    from winding_field.util import atomic_json
+    received=[]
+    monkeypatch.setattr(workflow,'plan',lambda config:received.append(config.copy()) or {})
+    flags=['plan','--source',str(tmp_path/'ct'),'--output',str(tmp_path/'out'),'--device','cpu']
+    assert main(flags)==0
+    assert 'observation_cache_bytes' not in received[0] and 'field_cache_bytes' not in received[0]
+    assert main([*flags,'--observation-cache-bytes',str(8<<30),'--field-cache-bytes',str(1<<30)])==0
+    settings=tmp_path/'config.json'
+    atomic_json(settings,dict(observation_cache_bytes=8<<30,field_cache_bytes=1<<30))
+    assert main([*flags,'--cli-config',str(settings)])==0
+    assert received[1]==received[2]
+    assert received[1]['observation_cache_bytes']==8<<30 and received[1]['field_cache_bytes']==1<<30
+
+
+def test_pool_lookahead_skips_retained_box_after_uncached_boxes(tmp_path,monkeypatch):
+    from winding_field import field_cpu
+    monkeypatch.setattr(field_cpu,'headroom_bytes',lambda:8<<30)
+    reference=prepared_run(tmp_path/'reference',shape=(6,6,32),variable=True)
+    field.solve(reference,dict(sweeps=3,field_chunk=8))
+    run=prepared_run(tmp_path/'run',shape=(6,6,32),variable=True)
+    # Boxes are 360/432/432/360 nodes: first-fit retains boxes 0 and 3 only.
+    result=field.solve(run,dict(sweeps=3,field_chunk=8,constraint_cache_bytes=1<<20,
+                                observation_cache_bytes=2*(4096+360*17),field_cpu_workers=2,
+                                field_cpu_buffer_bytes=16<<20))
+    digests=[]
+    for root in (reference,run):
+        cp=json.loads((root/'field/CHECKPOINT.json').read_bytes())
+        digests.append([v['sha256'] for _,v in sorted(cp['chunks'].items())])
+    assert digests[0]==digests[1]
+    pool=result['field_cpu_stats'];observed=result['observation_cache_stats']
+    assert observed['peak_entries']==2 and observed['hits']==4 and observed['misses']==8
+    assert pool['skipped']==2 and pool['completed']==pool['submitted']==8

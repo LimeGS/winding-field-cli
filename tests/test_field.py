@@ -421,3 +421,83 @@ def test_qual_segments_constrain_every_intersected_small_block(tmp_path,monkeypa
     monkeypatch.setattr(field,'solve_blocks',check_blocks)
     with pytest.raises(Checked):
         field.solve(run,dict(field_spacing_um=3.,field_chunk=4,sweeps=1))
+
+
+def _checkpoint_digests(run):
+    checkpoint=json.loads((run/'field/CHECKPOINT.json').read_bytes())
+    return [record['sha256'] for _,record in sorted(checkpoint['chunks'].items())]
+
+
+@pytest.mark.parametrize('budget',[0,16384,1<<20])
+def test_observation_cache_preserves_checkpoint_bytes_and_skips_reloads(tmp_path,monkeypatch,budget):
+    from winding_field import field
+    original=field.sample_prior;calls=[]
+    def counted(*args,**kwargs):
+        calls.append(tuple(map(int,(*args[4],*args[5]))))
+        return original(*args,**kwargs)
+    monkeypatch.setattr(field,'sample_prior',counted)
+    results={}
+    for name,observation_budget in (('reference',0),('candidate',budget)):
+        calls.clear();run=prepared_run(tmp_path/name)
+        receipt=field.solve(run,dict(sweeps=3,field_chunk=8,constraint_cache_bytes=1<<20,
+                                     observation_cache_bytes=observation_budget))
+        with field.open_field(run) as source:values=source.read([0]*3,[6,6,24])
+        results[name]=(receipt,list(calls),_checkpoint_digests(run),values)
+    reference,candidate=results['reference'],results['candidate']
+    assert candidate[2]==reference[2]
+    for a,b in zip(candidate[3],reference[3]):np.testing.assert_array_equal(a,b)
+    assert candidate[0]['fibre_constraint_rows']==reference[0]['fibre_constraint_rows']
+    def solver(name):
+        progress=json.loads((tmp_path/name/'field/CHECKPOINT.json').read_bytes())['progress']
+        return {k:v for k,v in progress['solver'].items() if k!='elapsed_s'},progress['completed_sweeps']
+    assert solver('candidate')==solver('reference')
+    stats=candidate[0]['observation_cache_stats']
+    assert stats['budget']==budget and stats['hits']+stats['misses']==9
+    assert stats['peak_bytes']<=budget and stats['entries']==stats['retained_bytes']==0
+    assert json.loads((tmp_path/'candidate/FIELD.json').read_bytes())['observation_cache_stats']==stats
+    # Three initialization cores are never retained; every solver miss reads the prior once.
+    assert len(candidate[1])==3+stats['misses'] and len(reference[1])==3+9
+    if budget==0:
+        assert stats['hits']==0 and stats['peak_entries']==0 and stats['denied_entries']==0
+    elif budget==16384:
+        assert stats['peak_entries']==1 and stats['hits']==2 and stats['denied_entries']==6
+    else:
+        assert stats['hits']==6 and stats['misses']==3 and stats['peak_entries']==3
+
+
+@pytest.mark.parametrize('name',['observation_cache_bytes','field_cache_bytes'])
+@pytest.mark.parametrize('budget',[True,-1,1.5])
+def test_new_cache_budgets_reject_invalid_values_before_io(tmp_path,name,budget):
+    from winding_field.config import validate_config
+    from winding_field.field import solve
+    with pytest.raises(ValueError,match=name):
+        solve(tmp_path/'missing',{name:budget})
+    with pytest.raises(ValueError,match=name):
+        validate_config({name:budget})
+    assert not (tmp_path/'missing').exists()
+
+
+def test_field_cache_budget_changes_reads_not_checkpoint(tmp_path):
+    from winding_field import field
+    results={}
+    for budget in (0,64<<20,1<<30):
+        run=prepared_run(tmp_path/str(budget),shape=(6,6,32))
+        receipt=field.solve(run,dict(sweeps=3,field_chunk=8,field_cache_bytes=budget))
+        results[budget]=(_checkpoint_digests(run),receipt['solver']['cache_stats'])
+    assert results[0][0]==results[64<<20][0]==results[1<<30][0]
+    assert results[0][1]['hits']==0 and results[0][1]['peak_cache_bytes']==0
+    assert results[1<<30][1]['hits']>0 and results[1<<30][1]['loads']<results[0][1]['loads']
+
+
+def test_observation_cache_arrays_are_sealed(tmp_path,monkeypatch):
+    from winding_field import field
+    import block_solver
+    seen=[];original=block_solver._observations
+    def record(value,shape):
+        seen.append(value);return original(value,shape)
+    monkeypatch.setattr(block_solver,'_observations',record)
+    run=prepared_run(tmp_path/'run')
+    field.solve(run,dict(sweeps=2,field_chunk=8,observation_cache_bytes=1<<20))
+    assert len(seen)==6
+    assert all(not array.flags.writeable for value in seen for array in value[:3])
+    assert seen[0][0] is seen[3][0]
