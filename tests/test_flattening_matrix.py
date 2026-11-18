@@ -282,3 +282,72 @@ def test_native_checkpoint_interrupt_resumes_without_rewriting_prior_batch(tmp_p
     mapped=m.build_map(v,f,out,cfg)
     assert file_sha(prior)==sha
     assert mapped['report']['domains'][0]['solver']['checkpoint']['iterations']==200
+
+
+def uv_args(tmp_path, mesh, out, stages, ct=None):
+    from winding_field.util import atomic_json
+    config=tmp_path/f'config-{stages}.json'
+    atomic_json(config,request(tmp_path))
+    args=['export-sheets','--mesh-bundle',str(mesh),'--flattening-solver','lscm','--scope','sheet',
+          '--flattening-config',str(config),'--stages',stages,'--output',str(out)]
+    if ct is not None:args += ['--source',str(ct),'--voxel-um','9.6']
+    return args
+
+
+@pytest.mark.skipif(sys.platform!='linux',reason='Linux process-tree resource guard')
+def test_uv_stage_publishes_without_opening_ct(tmp_path):
+    from winding_field.cli import main
+    from winding_field import matrix_pipeline as pipeline
+    mesh,_=source_bundle(tmp_path)
+    out=tmp_path/'uv-only'
+    def forbidden(*args,**kwargs):raise AssertionError('UV publication must not open the CT')
+    pipeline.PatchCT=forbidden if hasattr(pipeline,'PatchCT') else None
+    import winding_field.patch_pipeline as patch
+    original=patch.PatchCT;patch.PatchCT=forbidden
+    try:
+        assert main(uv_args(tmp_path,mesh,out,'uv'))==0
+    finally:patch.PatchCT=original
+    assert (out/'level-0000/LEVEL-UV.json').exists() and (out/'level-0000/map.npz').exists()
+    assert not (out/'ct').exists() and not (out/'level-0000/LEVEL.json').exists()
+    receipt=json.loads((out/'UV-MATRIX.json').read_text())
+    assert receipt['status']=='UV_READY_DIAGNOSTIC' and receipt['levels']
+    record=json.loads((out/'level-0000/LEVEL-UV.json').read_text())
+    assert record['map_sha256']==file_sha(out/'level-0000/map.npz')
+    assert record['identity']['ct_source'] is None and record['published_by']=='uv'
+
+
+@pytest.mark.skipif(sys.platform!='linux',reason='Linux process-tree resource guard')
+def test_ct_stage_consumes_published_uv_without_solving(tmp_path,monkeypatch):
+    from winding_field.cli import main
+    from winding_field import matrix_pipeline as pipeline
+    mesh,ct=source_bundle(tmp_path);out=tmp_path/'split'
+    assert main(uv_args(tmp_path,mesh,out,'uv'))==0
+    before=file_sha(out/'level-0000/map.npz')
+    def forbidden(*args,**kwargs):raise AssertionError('CT stage must not solve the UV')
+    monkeypatch.setattr(pipeline,'build_map',forbidden)
+    assert main(uv_args(tmp_path,mesh,out,'ct',ct))==0
+    assert file_sha(out/'level-0000/map.npz')==before
+    record=json.loads((out/'level-0000/LEVEL.json').read_text())
+    assert record['rendering']['CT_observed_pixels']>0
+    assert record['mapping']['flattening_solver']=='lscm'
+
+
+@pytest.mark.skipif(sys.platform!='linux',reason='Linux process-tree resource guard')
+def test_ct_stage_requires_published_uv_and_rejects_tampering(tmp_path,capsys):
+    from winding_field.cli import main
+    mesh,ct=source_bundle(tmp_path)
+    assert main(uv_args(tmp_path,mesh,tmp_path/'missing','ct',ct))!=0
+    assert 'UV' in capsys.readouterr().err
+    out=tmp_path/'tampered'
+    assert main(uv_args(tmp_path,mesh,out,'uv'))==0
+    (out/'level-0000/map.npz').write_bytes((out/'level-0000/map.npz').read_bytes()+b'x')
+    assert main(uv_args(tmp_path,mesh,out,'ct',ct))!=0
+    assert 'map' in capsys.readouterr().err or 'UV' in capsys.readouterr().err
+
+
+@pytest.mark.skipif(sys.platform!='linux',reason='Linux process-tree resource guard')
+def test_uv_stage_rejects_ct_inputs(tmp_path,capsys):
+    from winding_field.cli import main
+    mesh,ct=source_bundle(tmp_path)
+    assert main(uv_args(tmp_path,mesh,tmp_path/'bad','uv',ct))!=0
+    assert 'CT' in capsys.readouterr().err
