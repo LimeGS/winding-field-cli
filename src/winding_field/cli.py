@@ -322,7 +322,7 @@ def main(argv=None):
                 if progress.is_file():
                     result=dict(state,native_progress=json.loads(progress.read_bytes()))
             else:
-                result=run(state['config'],resume=True,until=None if args.command=='resume' else args.command,
+                result=run(state['config'],resume=True,until=('fibres' if state.get('preparation_only') else None) if args.command=='resume' else args.command,
                            extra_surface_seconds=getattr(args,'extra_surface_seconds',0.),
                            field_sweeps=getattr(args,'field_sweeps',None),offline=args.offline)
         print(json.dumps(result,indent=2,allow_nan=False))

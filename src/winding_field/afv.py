@@ -167,16 +167,23 @@ def validate_retained(run,config):
             raise ValueError('imported AFV payload or inventory changed')
 
 
-def import_fibres(run,config,stop=None):
+def import_fibres(run,config,stop=None,*,maps=None):
     run=Path(run); meta=json.loads((run/'PREPARED.json').read_bytes())
+    supplied_maps=maps is not None
+    if supplied_maps:
+        meta=dict(meta,**meta['native_geometry'])
     source=source_identity(config['fibres'],config.get('fibres_geometry'),meta['source'])
     identity=dict(input=source,maps=meta['tiles_sha256'],origin=meta['origin_xyz'],spacing=meta['spacing_xyz'])
     root=run/'fibres'; root.mkdir(exist_ok=True); bind(root/'IMPORT.json',identity)
     validate_retained(run,config)
     if (run/'FIBRES.json').exists(): return json.loads((run/'FIBRES.json').read_bytes())
-    maps=Tiles(run/'maps'); src=_open(config['fibres']); db=sqlite3.connect(root/'fibres.sqlite')
+    maps=maps if supplied_maps else Tiles(run/'maps')
+    src=_open(config['fibres']); db=sqlite3.connect(root/'fibres.sqlite')
     try:
-        if maps.identity()!=meta['tiles_sha256']: raise ValueError('AFV import maps changed')
+        if config.get('bounded_preparation'):
+            from .util import sqlite_quota
+            sqlite_quota(db,config.get('bounded_bytes',12<<30)//4)
+        if not supplied_maps and maps.identity()!=meta['tiles_sha256']: raise ValueError('AFV import maps changed')
         db.executescript('CREATE TABLE IF NOT EXISTS done(fid INTEGER,block INTEGER,sha TEXT,PRIMARY KEY(fid,block));'
             'CREATE TABLE IF NOT EXISTS curves(id INTEGER PRIMARY KEY,tile TEXT,points BLOB,family TEXT,source_id INTEGER,source_block INTEGER,annotation TEXT);'
             'CREATE INDEX IF NOT EXISTS curves_source ON curves(source_id,source_block);'
@@ -222,6 +229,10 @@ def import_fibres(run,config,stop=None):
                         if blob!=saved or label!=family or note!=annotation or bound is None or not np.allclose(bound,box,rtol=2e-7,atol=1e-6):
                             raise ValueError('imported AFV payload changed')
                     else:
+                        if config.get('bounded_preparation'):
+                            size=db.execute('PRAGMA page_count').fetchone()[0]*db.execute('PRAGMA page_size').fetchone()[0]
+                            if 2*(size+len(blob)+65536)>config.get('bounded_bytes',12<<30)//4:
+                                raise OSError('bounded AFV quota exhausted; block not committed')
                         if shutil.disk_usage(root).free<len(blob)+config.get('reserve_bytes',0)+65536:
                             raise OSError('insufficient space for AFV import and reserve')
                         cid=db.execute('INSERT INTO curves(tile,points,family,source_id,source_block,annotation) VALUES (?,?,?,?,?,?)',

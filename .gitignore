@@ -13,3 +13,4 @@ dist/
 runs/
 .cache/
 .coverage
+.superpowers/
