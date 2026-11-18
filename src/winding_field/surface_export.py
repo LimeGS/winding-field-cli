@@ -115,9 +115,11 @@ def mesh_geometry(vertices_xyz, faces, bounds_xyz=None):
         or f.max() >= len(v)
     ):
         return {**r, "status": "FAIL", "reason": "invalid vertices or face indices"}
-    tri = v[f]
-    area2 = np.linalg.norm(np.cross(tri[:, 1] - tri[:, 0], tri[:, 2] - tri[:, 0]), axis=1)
-    degenerate = int((area2 <= 1e-12).sum())
+    degenerate = 0
+    for first in range(0,len(f),8192):
+        tri=v[f[first:first+8192]]
+        area2=np.linalg.norm(np.cross(tri[:,1]-tri[:,0],tri[:,2]-tri[:,0]),axis=1)
+        degenerate+=int((area2<=1e-12).sum())
     duplicate = len(f) - len(np.unique(np.sort(f, axis=1), axis=0))
     edges = np.concatenate([f[:, [0, 1]], f[:, [1, 2]], f[:, [2, 0]]])
     _, inverse, counts = np.unique(np.sort(edges, axis=1), axis=0, return_inverse=True, return_counts=True)
@@ -373,7 +375,7 @@ def read_flatboi_uv(path, vertices_xyz, faces, *, vertex_atol=1e-6):
     v, f = np.asarray(vertices_xyz, float), np.asarray(faces)
     if not np.isfinite(vertex_atol) or vertex_atol < 0 or mesh_geometry(v, f)["basic_status"] != "PASS":
         raise ValueError("invalid original mesh or vertex_atol")
-    positions, texcoords, obj_faces, texture_faces = [], [], [], []
+    from .native_patches import admit_memory
 
     def index(token, count):
         value = int(token)
@@ -382,6 +384,20 @@ def read_flatboi_uv(path, vertices_xyz, faces, *, vertex_atol=1e-6):
         return value - 1 if value > 0 else count + value
 
     with open(path) as stream:
+        before=os.fstat(stream.fileno())
+        counts=dict(v=0,vt=0,f=0)
+        for line in stream:
+            parts=line.split('#',1)[0].split(None,1)
+            if parts and parts[0] in counts:counts[parts[0]]+=1
+        if counts['v']!=len(v) or counts['f']!=len(f):
+            raise ValueError('OBJ vertex/face counts disagree with original mesh')
+        admit_memory(counts['v']*(3+1+2)*8+counts['vt']*2*8+counts['f']*(6*8+3),
+                     phase='native OBJ binding arrays')
+        positions=np.empty((counts['v'],3));textures=np.empty((counts['vt'],2))
+        of=np.empty((counts['f'],3),np.int64);tf=np.empty_like(of)
+        missing=np.empty(of.shape,bool)
+        seen=dict(v=0,vt=0,f=0)
+        stream.seek(0)
         for line_number, line in enumerate(stream, 1):
             parts = line.split("#", 1)[0].split()
             if not parts:
@@ -391,25 +407,29 @@ def read_flatboi_uv(path, vertices_xyz, faces, *, vertex_atol=1e-6):
                 if kind == "v":
                     if len(values) != 3:
                         raise ValueError("only XYZ vertex records are supported")
-                    positions.append([float(x) for x in values])
+                    positions[seen['v']]=[float(x) for x in values]
+                    seen['v']+=1
                 elif kind == "vt":
                     if len(values) not in (2, 3) or (len(values) == 3 and float(values[2]) != 0):
                         raise ValueError("expected two-dimensional vt (optional zero third coordinate)")
-                    texcoords.append([float(x) for x in values[:2]])
+                    textures[seen['vt']]=[float(x) for x in values[:2]]
+                    seen['vt']+=1
                 elif kind == "f":
                     if len(values) != 3:
                         raise ValueError("only triangular OBJ faces are supported")
                     corners = [x.split("/") for x in values]
                     if any(len(x) > 3 or not x[0] for x in corners):
                         raise ValueError("unsupported OBJ face syntax")
-                    obj_faces.append([index(x[0], len(positions)) for x in corners])
-                    texture_faces.append(
-                        [index(x[1], len(texcoords)) if len(x) > 1 and x[1] else None for x in corners]
-                    )
+                    row=seen['f']
+                    of[row]=[index(x[0],seen['v']) for x in corners]
+                    missing[row]=[len(x)<2 or not x[1] for x in corners]
+                    tf[row]=[index(x[1],seen['vt']) if len(x)>1 and x[1] else -1 for x in corners]
+                    seen['f']+=1
             except (ValueError, IndexError) as error:
                 raise ValueError(f"OBJ line {line_number}: {error}") from error
-    positions, textures = np.asarray(positions, float), np.asarray(texcoords, float)
-    of = np.asarray(obj_faces, dtype=np.int64)
+        after=os.fstat(stream.fileno())
+        if seen!=counts or any(getattr(before,k)!=getattr(after,k) for k in ('st_size','st_mtime_ns','st_ctime_ns')):
+            raise ValueError('OBJ changed while reading')
     if (
         positions.shape != v.shape
         or not np.isfinite(positions).all()
@@ -421,22 +441,20 @@ def read_flatboi_uv(path, vertices_xyz, faces, *, vertex_atol=1e-6):
 
     def topology(a):
         rotations = np.take_along_axis(a, (np.argmin(a, axis=1)[:, None] + np.arange(3)) % 3, axis=1)
-        return sorted(map(tuple, rotations.tolist()))
+        return rotations[np.lexsort((rotations[:,2],rotations[:,1],rotations[:,0]))]
 
-    if topology(of) != topology(f):
+    if not np.array_equal(topology(of),topology(f)):
         raise ValueError("OBJ oriented topology differs from original mesh")
     if textures.ndim != 2 or textures.shape[1] != 2 or not len(textures) or not np.isfinite(textures).all():
         raise ValueError("OBJ is missing finite two-dimensional UVs")
-    missing = [i is None for row in texture_faces for i in row]
     exact_aliases = 0
-    if all(missing):
+    if missing.all():
         if len(textures) != len(v):
             raise ValueError("unindexed UVs require exactly one vt per vertex")
         uv, mode = textures.copy(), "vt_per_vertex"
     else:
-        if any(missing):
+        if missing.any():
             raise ValueError("mixed indexed/unindexed UVs are unsupported")
-        tf = np.asarray(texture_faces, dtype=np.int64)
         if tf.min() < 0 or tf.max() >= len(textures):
             raise ValueError("OBJ texture index out of bounds")
         bindings = np.full(len(v), -1, dtype=np.int64)

@@ -86,12 +86,12 @@ def prepare(source,output,w,centerline):
         levels=[x for x in reader.manifest['levels'] if math.isclose(x['level']/step,w,rel_tol=0,abs_tol=1e-10)]
         if len(levels)!=1:raise ValueError('exactly one matching normalized W level required')
         level=levels[0]['id']
-        out.mkdir(parents=True,exist_ok=False);resources=ResourceGuard(out,6.,8.)
+        out.mkdir(parents=True,exist_ok=False);resources=ResourceGuard(out,None,8.)
         def guard():
             resources()
             if (out/'STOP').exists():raise InterruptedError('preparation stopped')
             if time.monotonic()-start>1800:raise TimeoutError('preparation exceeded 30 minutes')
-        guard();v,f,vi,fi,*_=read_level(reader,level,memory_gib=6.)
+        guard();v,f,vi,fi,*_=read_level(reader,level,memory_gib=None)
         if not len(f):raise ValueError('empty constant-W mesh')
         _,labels=igl.facet_components(f)
         area=np.linalg.norm(np.cross(v[f[:,1]]-v[f[:,0]],v[f[:,2]]-v[f[:,0]]),axis=1)/2

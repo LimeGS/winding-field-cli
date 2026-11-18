@@ -159,14 +159,17 @@ def test_patch_calibration_is_per_original_component(bench, tmp_path):
     assert len(mapped['report']['calibration']) == 1
 
 
-def test_budget_does_not_silently_repartition_sheet(bench, tmp_path, monkeypatch):
-    src, _, _ = source_mesh(tmp_path / 'src', unit=1.)
+def test_patch_budget_does_not_repartition_sheet_scope(bench, tmp_path):
+    from test_flattening_matrix import geometry
+    src, _, f = source_mesh(tmp_path / 'src', unit=1., geometry=geometry())
     case = bench.load_case(src, tmp_path / 'case')
-    from winding_field import native_global
-    monkeypatch.setattr(native_global, 'MAX_FACES', 0)
-    with pytest.raises(ValueError, match='bounded'):
-        bench.prepare_domains(case, tmp_path / 'domains', 'sheet', lambda: None)
-    assert not (tmp_path / 'domains' / 'DOMAINS.json').exists()
+    domains = bench.prepare_domains(case, tmp_path / 'domains', 'sheet', lambda: None, max_patch_faces=1)
+    rows = []
+    for d in domains['domains']:
+        np.testing.assert_array_equal(d['parent'][d['faces']], f[d['source_face_rows']])
+        rows.extend(d['source_face_rows'])
+    np.testing.assert_array_equal(np.sort(rows), np.arange(len(f)))
+    assert len(domains['domains']) == 2
 
 
 def folded_grid():

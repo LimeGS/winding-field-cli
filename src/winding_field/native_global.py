@@ -6,9 +6,6 @@ from .flatten import cross2,iter_overlap_pairs
 from .native_mesh import _topology
 from .tifxyz_guide import _cut_flags,_sphere_seam,validate_map
 
-MAX_FACES=1_250_000
-MAX_VERTICES=750_000
-MAX_CUT_VERTICES=750_000
 MAX_NARROW_TESTS=20_000_000
 
 
@@ -17,14 +14,19 @@ def _check(check):
 
 
 def _input(vertices,faces,check):
+    from .native_patches import admit_memory
     _check(check)
     if (not isinstance(vertices,np.ndarray) or not isinstance(faces,np.ndarray)
         or vertices.ndim!=2 or vertices.shape[1:]!=(3,) or vertices.dtype!=np.float64
         or faces.ndim!=2 or faces.shape[1:]!=(3,) or faces.dtype.kind not in 'iu'
-        or not 0<len(vertices)<=MAX_VERTICES or not 0<len(faces)<=MAX_FACES):
-        raise ValueError('bounded float64 XYZ and integer triangles required')
-    if not np.isfinite(vertices).all() or faces.min()<0 or faces.max()>=len(vertices):
-        raise ValueError('invalid mesh coordinates or indices')
+        or not len(vertices) or not len(faces)):
+        raise ValueError('nonempty float64 XYZ and integer triangles required')
+    for first in range(0,len(vertices),8192):
+        _check(check)
+        if not np.isfinite(vertices[first:first+8192]).all():raise ValueError('invalid mesh coordinates')
+    if faces.min()<0 or faces.max()>=len(vertices):raise ValueError('invalid mesh indices')
+    # Face areas plus one block of gathered triangles, edges, cross products and norms.
+    admit_memory(len(faces)*8+min(len(faces),8192)*(9+6+3+1)*8,phase='source triangle validation')
     areas=np.empty(len(faces))
     for first in range(0,len(faces),8192):
         _check(check);v=vertices[faces[first:first+8192]]
@@ -35,8 +37,15 @@ def _input(vertices,faces,check):
 
 
 def _topology_report(v,f,areas,check):
+    from .native_patches import admit_memory
     import igl
     _check(check)
+    # Three directed edges/face; sorted/unique records, inverse/owner arrays and CSR.
+    index=np.dtype(np.int64).itemsize;edges=3*len(f)
+    arrays=dict(edge_records=edges*2*index*3,sort_inverse_owners=edges*index*4,
+                edge_counts_signs=edges*index*3,graph=edges*(index+1)*2+(len(f)+1)*index,
+                face_labels=len(f)*index*3,vertices=len(v))
+    admit_memory(sum(arrays.values()),phase='mesh topology')
     _,(edges,_,counts,signs),groups=_topology(np.arange(len(f)),f,areas)
     if (counts>2).any() or ((counts==2)&(signs!=0)).any():raise ValueError('nonmanifold or inconsistent edges')
     if len(np.unique(np.sort(f,axis=1),axis=0))!=len(f):raise ValueError('duplicate source faces')
@@ -51,7 +60,7 @@ def _topology_report(v,f,areas,check):
 def cut_component(vertices,faces,check=None):
     areas=_input(vertices,faces,check)
     import igl
-    f=faces.astype(np.int64)
+    f=faces.astype(np.int64,copy=False)
     original=_topology_report(vertices,f,areas,check)
     _check(check)
     if original['euler_characteristic']==1:
@@ -63,12 +72,18 @@ def cut_component(vertices,faces,check=None):
     _check(check);flags=_cut_flags(f,paths,len(vertices))
     # Splitting an edge can add at most its two endpoint copies.
     upper=len(vertices)+2*int(flags.sum())
-    if upper>MAX_CUT_VERTICES or max(upper*3*8,len(f)*3*4,upper*8)>64<<20:
-        raise ValueError('cut array bound exceeded before cut_mesh')
+    from .native_patches import admit_memory
+    # Measured W0/W1 (2026-11-18): cut peak retains 761-882 B/source face beyond
+    # read/caller arrays; freed phase blocks stay in the allocator, so the live-array
+    # checks below understate the cumulative ceiling by ~2x. 1 KiB/face adds 16%
+    # headroom over the worst observation; re-calibrate if seam/topology shapes differ.
+    admit_memory(len(f)*1024+upper*(3*8+8),phase='cut phase total')
+    admit_memory(upper*(3*8+8)+len(f)*3*8,phase='cut output arrays')
     _check(check);v,cf,parent=igl.cut_mesh(vertices,f,flags);_check(check)
-    if len(v)>MAX_CUT_VERTICES or len(cf)!=len(f) or not np.array_equal(v,vertices[parent]) or not np.array_equal(parent[cf],f):
-        raise ValueError('cut changed source correspondence or exceeded bounds')
-    cf=cf.astype(np.int32);parent=parent.astype(np.int64)
+    if len(cf)!=len(f) or not np.array_equal(v,vertices[parent]) or not np.array_equal(parent[cf],f):
+        raise ValueError('cut changed source correspondence')
+    cf=cf.astype(np.int32 if len(v)<=np.iinfo(np.int32).max else np.int64,copy=False)
+    parent=parent.astype(np.int64,copy=False)
     topology=_topology_report(v,cf,areas,check)
     if topology['euler_characteristic']!=1:raise ValueError('cut is not a disk')
     boundary=igl.boundary_loop(cf).astype(np.int64);_check(check)
@@ -82,7 +97,7 @@ def _disk(cut,check):
     import igl
     topology=_topology_report(v,f,areas,check)
     b=np.asarray(cut['boundary'])
-    if (len(v)>MAX_CUT_VERTICES or b.ndim!=1 or b.dtype.kind not in 'iu' or len(b)<3
+    if (b.ndim!=1 or b.dtype.kind not in 'iu' or len(b)<3
         or topology['euler_characteristic']!=1 or len(b)!=topology['boundary_edges']
         or not np.array_equal(b,igl.boundary_loop(f))):raise ValueError('invalid disk boundary')
     _check(check)
@@ -129,7 +144,8 @@ def _dirichlet(weights,boundary,target,check):
 
 
 def _weights(v,f,check):
-    n=len(f);rows=np.empty(6*n,np.int32);cols=np.empty(6*n,np.int32);values=np.empty(6*n)
+    index=np.int32 if len(v)<=np.iinfo(np.int32).max else np.int64
+    n=len(f);rows=np.empty(6*n,index);cols=np.empty(6*n,index);values=np.empty(6*n)
     for first in range(0,n,8192):
         _check(check);faces=f[first:first+8192];tri=v[faces]
         for i,j,k in ((0,1,2),(1,2,0),(2,0,1)):
@@ -156,7 +172,7 @@ def _weights(v,f,check):
 def mean_value_map(cut,check=None):
     v,f,b=_disk(cut,check)
     import igl
-    target=igl.map_vertices_to_circle(v,b.astype(np.int32));_check(check)
+    target=igl.map_vertices_to_circle(v,b.astype(np.int64,copy=False));_check(check)
     adjacency=igl.adjacency_matrix(f).astype(float);_check(check)
     uv,uniform=_dirichlet(adjacency,b,target,check);del adjacency
     t=uv[f];signed=cross2(t[:,1]-t[:,0],t[:,2]-t[:,0])
