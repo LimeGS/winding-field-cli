@@ -198,21 +198,6 @@ def test_failed_local_convergence_does_not_publish_field(tmp_path):
     assert not (run/'FIELD.json').exists()
 
 
-def test_continue_publishes_complete_approximate_field(tmp_path):
-    from winding_field.field import solve,open_field
-    run=prepared_run(tmp_path/'run',shape=(6,6,32),chunk=8,variable=True)
-    result=solve(run,dict(sweeps=2,field_chunk=8,maxiter=1,nonconvergence_policy='continue'))
-    assert result['status']=='FIELD_READY'
-    assert result['solver']['nonconverged_solves']>0
-    assert result['solver']['local_solves_converged'] is False
-    assert len(result['solver']['completed_sweeps'])==2
-    assert 'not converged' in result['numerical_status']
-    assert result['global_converged'] is False and result['physical_acceptance'] is False
-    with open_field(run) as source:
-        values,present=source.read([0]*3,[6,6,32])
-    assert present.all() and np.isfinite(values).all()
-
-
 @pytest.mark.parametrize('limit',[0,1])
 def test_field_initialization_stops_at_block_boundary_and_resumes(tmp_path,limit):
     from winding_field.field import solve
@@ -501,3 +486,18 @@ def test_observation_cache_arrays_are_sealed(tmp_path,monkeypatch):
     assert len(seen)==6
     assert all(not array.flags.writeable for value in seen for array in value[:3])
     assert seen[0][0] is seen[3][0]
+
+
+def test_continue_publishes_complete_approximate_field(tmp_path):
+    from winding_field.field import solve,open_field
+    run=prepared_run(tmp_path/'run',shape=(6,6,32),chunk=8,variable=True)
+    result=solve(run,dict(sweeps=2,field_chunk=8,maxiter=1,nonconvergence_policy='continue'))
+    assert result['status']=='FIELD_READY'
+    assert result['solver']['nonconverged_solves']>0
+    assert result['solver']['local_solves_converged'] is False
+    assert len(result['solver']['completed_sweeps'])==2
+    assert 'not converged' in result['numerical_status']
+    assert result['global_converged'] is False and result['physical_acceptance'] is False
+    with open_field(run) as source:
+        values,present=source.read([0]*3,[6,6,32])
+    assert present.all() and np.isfinite(values).all()

@@ -328,6 +328,8 @@ def main(argv=None):
             if until not in dict(stages) and not (config['surface_output']=='native' and until in ('mesh','flatten','assemble','render')):
                 raise ValueError('--until '+until+' is incompatible with the selected surface output')
             config['output']=str(Path(config['output']).expanduser().absolute())
+            if config.get('reuse_from'):
+                config['reuse_from']=str(Path(config['reuse_from']).expanduser().absolute())
             for key in ('local','cache','model_path','fibres','fibres_geometry','lasagna_model_path','lasagna_geometry'):
                 if config.get(key) and not isinstance(config[key],dict):
                     config[key]=str(Path(config[key]).expanduser().resolve())

@@ -8,55 +8,32 @@ import sqlite3
 import numpy as np
 import pytest
 
-from ct_fixture import write_ct
+from test_lasagna_input import source_case
 from test_splines import upstream_curves
 from winding_field import workflow
 from winding_field.util import atomic_json, file_sha
 
 
-def fixture(tmp_path, *, crops=None, source_to_base=1):
-    """External Lasagna v2 input over a tiny CT (moved here from test_lasagna_input)."""
-    ct=write_ct(tmp_path/'ct',np.full((9,10,11),33,np.uint8),spacing=(5.,10.,20.),origin=(100.,200.,300.),chunk=4)
-    root=tmp_path/'external'; root.mkdir()
-    groups={}
-    for name,value,level in [('grad_mag',100,2),('nx',255,2),('ny',128,2),('cos',255,1)]:
-        scale=2**level; shape=tuple((n+scale-1)//scale for n in (9,10,11))
-        folder=write_ct(root/(name+'.ome.zarr'),np.full(shape,value,np.uint8),chunk=4)
-        (folder/'0').rename(folder/str(level))
-        atomic_json(folder/'.zattrs',{'multiscales':[{'axes':[{'name':a,'unit':'pixel'} for a in 'zyx'],
-            'datasets':[{'path':str(level),'coordinateTransformations':[{'type':'scale','scale':[scale]*3}]}]}]})
-        groups[name]=dict(zarr=folder.name+'/'+str(level),scaledown=level,channels=[name])
-    manifest=dict(version=2,source_to_base=source_to_base,grad_mag_encode_scale=1000.,grad_mag_factor=1.,
-                  base_shape_zyx=[9,10,11],groups=groups,provenance='inference.json')
-    if crops is not None: manifest['crops']=crops
-    atomic_json(root/'input.lasagna.json',manifest)
-    atomic_json(root/'inference.json',dict(status='completed',repository=dict(revision='custom',dirty=True)))
-    config=dict(lasagna_input=str(root/'input.lasagna.json'),cache=str(tmp_path/'cache'),cache_bytes=1<<20,reserve_bytes=0,
-                invalid_value=0,prediction='classical',chunk=4,threshold=10,threads=1)
-    return ct,root,config
-
-
 @pytest.fixture
 def donor(tmp_path,monkeypatch):
-    ct,external,config=fixture(tmp_path)
+    volume,geometry,config=source_case(tmp_path,shape=(9,10,11),whole=True)
+    volume.close()
     afv=tmp_path/'external.afv'
     upstream_curves(afv,(9,10,11),[(1,np.array([[1.,2.,3.],[5.,2.,3.]]))])
-    geometry=tmp_path/'geometry.json'
-    atomic_json(geometry,dict(source=str(ct),origin_xyz_um=[100.,200.,300.],spacing_xyz_um=[5.,10.,20.]))
     root=tmp_path/'donor'
-    config.update(source=str(ct),output=str(root),fibres=str(afv),fibres_geometry=str(geometry),
-                  maxiter=2,sweeps=1,field_chunk=16)
+    config.update(output=str(root),fibres=str(afv),fibres_geometry=config['lasagna_geometry'],
+                  maxiter=2,sweeps=1,field_chunk=16,threads=1,previews=False)
     monkeypatch.setattr(workflow,'implementation_sha',lambda:'old-producer')
     state=workflow.run(config,until='fibres')
     state.update(status='FAILED',error='old field failure')
     atomic_json(root/'RUN.json',state)
     (root/'field').mkdir();(root/'field/old-checkpoint').write_text('must not copy')
     monkeypatch.setattr(workflow,'implementation_sha',lambda:'new-consumer')
-    return root,config,external
+    return root,config
 
 
 def request(donor,tmp_path):
-    root,config,_=donor
+    root,config=donor
     return dict(config,output=str(tmp_path/'retry'),reuse_from=str(root),reuse_from_sha256=file_sha(root/'RUN.json'))
 
 
@@ -70,7 +47,7 @@ def forbidden(*args,**kwargs):
 
 def test_field_retry_reuses_complete_stages(donor,tmp_path,monkeypatch):
     from winding_field import predict,fibres,exports
-    root,_,_=donor;before=snapshot(root)
+    root,_=donor;before=snapshot(root)
     monkeypatch.setattr(predict,'prepare',forbidden)
     monkeypatch.setattr(fibres,'trace',forbidden)
     monkeypatch.setattr(exports,'export_lasagna',forbidden)
@@ -101,7 +78,7 @@ def test_field_retry_reuses_complete_stages(donor,tmp_path,monkeypatch):
 ])
 def test_reuse_rejects_incomplete_incompatible_or_corrupt_source(donor,tmp_path,monkeypatch,change):
     from winding_field import predict,field
-    root,_,external=donor;config=request(donor,tmp_path)
+    root,_=donor;config=request(donor,tmp_path)
     state=json.loads((root/'RUN.json').read_bytes())
     if change.startswith('missing_'):state['stages'].pop(change.removeprefix('missing_'))
     elif change=='roi':config.update(roi_lo=[0,0,0],roi_hi=[8,10,11])
@@ -129,9 +106,9 @@ def test_reuse_rejects_incomplete_incompatible_or_corrupt_source(donor,tmp_path,
     elif change=='tile':next((root/'maps').glob('*.npz')).write_bytes(b'corrupt')
     elif change=='payload':(root/'fibres/fibres.sqlite').write_bytes(b'corrupt')
     elif change=='receipt':(root/'FIBRES.json').write_text('{}')
-    elif change=='manifest':(external/'input.lasagna.json').write_text('{}')
+    elif change=='manifest':Path(config['lasagna_input']).write_text('{}')
     elif change=='ct_chunk':(Path(config['source'])/'0/0.0.0').write_bytes(bytes(64))
-    elif change=='ledger':(root/'lasagna-import/CHUNKS.json').unlink()
+    elif change=='ledger':(root/'lasagna-source/WORK.json').unlink()
     elif change=='export':(root/'fibres/fibres.afv').write_bytes(b'corrupt')
     elif change=='export_escape':
         with sqlite3.connect(root/'products.sqlite') as db:
@@ -158,7 +135,7 @@ def test_reuse_rejects_incomplete_incompatible_or_corrupt_source(donor,tmp_path,
 
 
 def test_reuse_refuses_locked_donor(donor,tmp_path):
-    root,_,_=donor
+    root,_=donor
     with (root/'.run.lock').open('rb') as lock:
         fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
         with pytest.raises(BlockingIOError):workflow.run(request(donor,tmp_path),until='field')

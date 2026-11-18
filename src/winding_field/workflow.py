@@ -94,12 +94,12 @@ def _input_chunk_axes(config,lo,hi,chunks):
 
 def plan(config,volume=None,stages=()):
     validate_config(config)
-    from .input_settings import check_recipe_sources
-    check_recipe_sources(config)
     if config.get('reuse_from') or config.get('reuse_from_sha256'):
         from .reuse import validate_reuse_request
         if not config.get('reuse_from'):raise ValueError('reuse requires --reuse-from')
         validate_reuse_request(Path(config['reuse_from']),config,config.get('reuse_from_sha256'))
+    from .input_settings import check_recipe_sources
+    check_recipe_sources(config)
     own=volume is None
     volume=open_volume(config) if own else volume
     try:
@@ -137,7 +137,7 @@ def plan(config,volume=None,stages=()):
                     with LasagnaInput(volume,root,config) as reader:
                         lasagna_input=reader.identity
             else:
-                if config.get('bounded_preparation'):
+                if config.get('bounded_preparation') and not config.get('fibres'):
                     raise ValueError('bounded preparation cannot use calibrated physical-frame imports')
                 lasagna_input=source_identity(config['lasagna_input'],config.get('lasagna_geometry'),
                                               volume.identity,observations,volume.cache)
@@ -607,5 +607,10 @@ def run(config,resume=False,until=None,extra_surface_seconds=0,field_sweeps=None
         finally:
             if volume is not None:
                 volume.close()
+            if (config.get('bounded_preparation') and config.get('fibres') and not state.get('reuse')
+                    and state.get('status') in ('PAUSED','COMPLETE') and set(state.get('stages',{}))=={'prepare','fibres'}):
+                from .reuse import seal_prepared_asset
+                state['prepared_asset_sha256']=seal_prepared_asset(root)
+                atomic_json(root/'RUN.json',state)
             for sig,handler in previous.items():
                 signal.signal(sig,handler)

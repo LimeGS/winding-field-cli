@@ -18,6 +18,8 @@ source: "/data/scroll.zarr" # Opciones: ruta local Zarr v2 | URL HTTP/HTTPS | s3
 # scroll: "PHerc0175A" # Opciones: identificador del catálogo público; omitir si se usa source.
 # scan: "20250521115057" # Opciones: identificador real de scan del scroll; no inventar ni mezclar con source.
 output: "../runs/scroll-field" # Opciones: ruta local NUEVA para run; plan no la crea. Continuar con resume, no con run.
+# reuse_from: "../runs/imported-donor" # Opciones: run importado completo con RUN.json; requiere reuse_from_sha256 y salida nueva.
+# reuse_from_sha256: "0000000000000000000000000000000000000000000000000000000000000000" # Opciones: SHA256 hex de 64 del RUN.json donante; requerido con reuse_from.
 # local: "/data/mirror.zarr" # Opciones: ruta local a un espejo compatible de chunks CT | null/omitir.
 cache: "../cache/ct" # Opciones: ruta local de caché CT | null/omitir para la ubicación automática.
 cache_gib: 2.0 # Opciones: número finito >= 0, GiB de caché CT; 0 desactiva retención. No es RAM total.
@@ -35,6 +37,8 @@ bounded_preparation: false # Opciones: true | false; true requiere qual-v2, stri
 bounded_gib: 12.0 # Opciones: GiB finitos >= 0.015625 (16 MiB); productos/scratch bounded, excluye caché CT y reserva.
 fibre_downsample: 2 # Opciones: 2 | 4; 4 requiere bounded_preparation. ROI alineada a múltiplos de 2*fibre_downsample.
 chunk: 64 # Opciones: entero 4..128, borde de tile de observaciones en muestras; no un tamaño en µm.
+field_cpu_workers: 0 # Opciones: entero >= 0; 0 desactiva procesos CPU de preparación ordinaria.
+field_cpu_buffer_bytes: 0 # Opciones: entero >= 0 en bytes; requiere field_cpu_workers > 0.
 
 # ── Predictor de fibras y dispositivo ─────────────────────────────────────────
 prediction: qual-v2 # Opciones: classical | sd2 | qual-v2; classical es baseline local; los aprendidos usan superficies Lasagna.
@@ -52,8 +56,6 @@ threads: 4 # Opciones: entero >= 1; threads CPU PyTorch, no un límite global de
 # fibres_source: "/data/scroll.zarr" # Opciones: ruta/URL CT que identifica el marco físico AFV; debe coincidir con la fuente seleccionada.
 # fibres_origin_xyz_um: [0.0, 0.0, 0.0] # Opciones: 3 números finitos [X,Y,Z], origen físico AFV en µm; no inferir del ejemplo.
 # fibres_spacing_xyz_um: [9.6, 9.6, 9.6] # Opciones: 3 números finitos > 0 [X,Y,Z], espaciado físico AFV en µm.
-# reuse_from: "/runs/previo" # Opciones: ruta a un run previo con preparación y fibras AFV importadas completas | null/omitir; requiere output nuevo y reuse_from_sha256.
-# reuse_from_sha256: "0000000000000000000000000000000000000000000000000000000000000000" # Opciones: SHA256 del RUN.json del run fuente | null/omitir; obligatorio con reuse_from.
 import_workers: 1 # Opciones: entero >= 0; 1 serial, 0 auto admitido, >1 importación local paralela; publica el padre.
 
 # ── Generación oficial Lasagna (omitir al importar lasagna_input) ──────────────
@@ -102,8 +104,6 @@ prepared_cache_bytes: 0 # Opciones: entero >=0 en bytes de workspaces retenidos;
 constraint_cache_bytes: 0 # Opciones: entero >=0 en bytes de restricciones retenidas; 0 desactiva.
 # observation_cache_bytes: 4294967296 # Opciones: entero >=0 en bytes de observaciones por bloque retenidas entre barridos | null/omitir para 0 (desactivado); no es tope de RSS.
 # field_cache_bytes: 1073741824 # Opciones: entero >=0 en bytes de chunks decodificados del checkpoint | null/omitir para 64 MiB; no es tope de RSS.
-field_cpu_workers: 0 # Opciones: entero >=0 de procesos CPU de preparación; 0 desactiva; >0 requiere field_cpu_buffer_bytes > 0.
-field_cpu_buffer_bytes: 0 # Opciones: entero >=0 en bytes de buffer CPU/IPC; requiere field_cpu_workers > 0; no es tope de RAM ni RSS.
 maxiter: 2000 # Opciones: entero >=1, iteraciones máximas por solve local.
 rtol: 0.000001 # Opciones: número finito >0 de tolerancia relativa; default 1e-6.
 nonconvergence_policy: "fail" # Opciones: fail | continue; continue completa el presupuesto de barridos con bloques no convergidos (contados y marcados); las rupturas numéricas siempre fallan.
