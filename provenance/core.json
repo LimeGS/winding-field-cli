@@ -1,10 +1,10 @@
 {
   "origin": "https://github.com/LimeGS/winding-field",
   "distribution": "winding-field",
-  "version": "1.5.3",
-  "revision": "634be5a9e554e9a940823350c1dc9bba96602aa7",
-  "archive_sha256": "455d988727f57cfdf2af57f408a94daacd431534ba98f7ca0b39a07f4228b69b",
-  "changes": "Immutable stable 1.5.3 source: optional advisory transaction/sweep hooks with recovery and temporary-array lifetime fixes; Ruff/lint/type checks satisfied; scientific operators unchanged; no numerical core bundled in the CLI",
+  "version": "1.5.4",
+  "revision": "c0649e338d046e3f422fdb41466faa48e72dc761",
+  "archive_sha256": "2342d67bebbb07182c2bc870534000753e32b89fee8b39445c4c265d42e51707",
+  "changes": "Immutable stable 1.5.4 source: opt-in block-solver nonconvergence policy (continue commits maxiter-exhausted local solves, counts them in checkpointed progress and reports local_solves_converged; breakdowns always fail); default fail unchanged; scientific operators unchanged; no numerical core bundled in the CLI",
   "migrated_workflows": {
     "revision": "769ed1b1587fc2a275a66059e15a36b8fa7acc93",
     "changes": "moved to winding_field with tests, examples and wrappers; package imports, prepared command routing and module-based supervised launch",
@@ -33,7 +33,7 @@
   "source_sha256": {
     "field_store.py": "af121e72de8c589b3f3462948b429e3647dc3681b67d60dcb87d5900e3e7deef",
     "field_runtime.py": "c46acd41337f580ba73b68ce12c35f6997e4221f4f132b13bda62f7d286ad029",
-    "block_solver.py": "904f03f7a4cb1c446e918d1de7b71921d4a038b0e11eed23511141abaf6a04b4",
+    "block_solver.py": "d37d673f1f566f0e729b847639a725dd076c81410c31af72fff63ac70f644043",
     "field_solver.py": "6799619f5dd1b4a8d2853560892fa4df6f5191a135dd4e991ff7b855cc6f0a17",
     "field_prefetch.py": "3ac983503f5a41661302b0cdd2a0b8526e5a96e86c201e10a18081bd00cb84f8",
     "field_constraints.py": "71065fb4f0b5c03d689d2b5514c34a8551398dc5801e3def2d571152a162d84a",
