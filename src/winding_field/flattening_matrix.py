@@ -58,7 +58,7 @@ def solve(cut,output,cfg,guard):
         np.testing.assert_array_equal(data['world'],v);np.testing.assert_array_equal(data['faces'],f)
         initialization=record['initialization']
     else:
-        uv,initialization=mean_value_map(cut,guard)
+        uv,initialization=mean_value_map(cut,guard,diagnostics=output/'initialization')
         np.savez_compressed(initial,world=v,faces=f,uv=uv)
         with obj.open('w') as stream:
             np.savetxt(stream,v,fmt='v %.17g %.17g %.17g');np.savetxt(stream,uv,fmt='vt %.17g %.17g')

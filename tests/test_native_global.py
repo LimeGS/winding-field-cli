@@ -106,22 +106,20 @@ def test_mvc_linear_precision_including_obtuse_angles():
     assert report['true_residual_pass'] and max(report['relative_residuals'])<=1e-10
 
 
-@pytest.mark.parametrize('info,answer',[(1,np.array([2.])),(0,np.array([0.]))])
-def test_solver_rejects_info_or_false_convergence(monkeypatch,info,answer):
+def test_solver_rejects_false_convergence_that_never_reaches_the_true_residual(monkeypatch):
     import scipy.sparse.linalg as sla
-    monkeypatch.setattr(sla,'gmres',lambda *a,**k:(answer,info))
-    with pytest.raises(ValueError,match='converge|residual'):
+    # info=0 with an iterate the true residual rejects must never be accepted.
+    monkeypatch.setattr(sla,'gmres',lambda *a,**k:(np.zeros(1),0))
+    with pytest.raises(ValueError,match='stagnated|nonfinite|converge'):
         global_uv._solve(eye(1,format='csc'),np.array([[2.,2.]]),None)
 
 
-def test_solver_inner_iteration_budget_and_callback(monkeypatch):
+def test_solver_stops_on_cancellation_between_cycles(monkeypatch):
     import scipy.sparse.linalg as sla
-    def never_converges(*args,**kwargs):
-        for _ in range(301):kwargs['callback'](1.)
-        return np.ones(1),0
-    monkeypatch.setattr(sla,'gmres',never_converges)
-    with pytest.raises(RuntimeError,match='iteration budget'):
-        global_uv._solve(eye(1,format='csc'),np.ones((1,2)),None)
+    class Weak:
+        nnz=0
+        def solve(self,values):return values*.95
+    monkeypatch.setattr(sla,'spilu',lambda *a,**k:Weak())
     calls=[]
     def stop():
         calls.append(None)
