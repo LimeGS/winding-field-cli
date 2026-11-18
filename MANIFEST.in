@@ -8,6 +8,7 @@ prune .sdd
 prune docs/superpowers
 prune docs/verification
 recursive-include tests *.py
+include benchmarks/field_cpu.py
 include tools/vendor.py
 include examples/*.py
 include examples/*.json

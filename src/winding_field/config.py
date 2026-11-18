@@ -83,7 +83,17 @@ def lasagna_downsamples(config):
     return factors
 
 
+def validate_field_cpu(config,*,convergence=False):
+    workers=config.get('field_cpu_workers',0);budget=config.get('field_cpu_buffer_bytes',0)
+    if (type(workers) is not int or workers<0 or type(budget) is not int or budget<0
+            or bool(workers)!=bool(budget)):
+        raise ValueError('CPU workers require an explicit positive CPU buffer budget; both default to zero')
+    if workers and (convergence or config.get('bounded_preparation')):
+        raise ValueError('CPU preparation pool supports only ordinary static providers')
+
+
 def validate_config(config):
+    validate_field_cpu(config)
     if type(config.get('field_advice',False)) is not bool:raise ValueError('field_advice must be boolean')
     if config.get('preconditioner','jacobi')!='jacobi':
         raise ValueError("block workflows require preconditioner='jacobi'")
