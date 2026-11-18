@@ -1,4 +1,5 @@
 """Scheduling/cache optimizations must retain the expensive qualification gates."""
+import json
 from pathlib import Path
 import re
 import shlex
@@ -74,15 +75,22 @@ def test_test_image_build_uses_runner_dns_without_enabling_runtime_network():
 
 def test_full_suites_and_optional_gpu_checks_are_preserved_and_timed():
     package = workflow('tests.yml')['jobs']['installed-package']
-    assert package['strategy']['matrix']['include'] == [
+    assert matrix_for(package, 'push') == [
         {'os': 'ubuntu-latest', 'python': '3.11'}, {'os': 'macos-latest', 'python': '3.12'},
     ]
+    assert matrix_for(package, 'pull_request') == [{'os': 'ubuntu-latest', 'python': '3.11'}]
     package_commands = '\n'.join(step.get('run', '') for step in package['steps'])
     assert 'python -m pytest -q --durations=30 -o pythonpath=' in package_commands
     assert 'winding-field resume demo' in package_commands
     docker = workflow('docker.yml')
     commands = '\n'.join(step.get('run', '') for step in docker['jobs']['cpu']['steps'])
     assert '--durations=30 -o pythonpath=' in commands and '/tests' in commands
+    suite = next(step for step in docker['jobs']['cpu']['steps']
+                 if step.get('name') == 'Installed suite with official native checkpoint qualification')
+    assert suite['if'] == "github.event_name != 'pull_request'"
+    smoke = next(step for step in docker['jobs']['cpu']['steps']
+                 if step.get('name') == 'Installed non-root runtime and offline workflows')
+    assert 'if' not in smoke
     assert 'verify-runtime.py --variant cpu' in commands and 'smoke.py' in commands
     gpu = docker['jobs']['cuda']
     assert "github.event_name == 'workflow_dispatch' && inputs.cuda" == gpu['if']
@@ -93,9 +101,30 @@ def test_full_suites_and_optional_gpu_checks_are_preserved_and_timed():
                for step in gpu['steps'])
 
 
+def matrix_for(job, event):
+    expression = job['strategy']['matrix']['include']
+    match = re.fullmatch(r"\$\{\{ fromJSON\(github.event_name == 'pull_request' && '(.+?)' \|\| '(.+?)'\) \}\}", expression)
+    assert match, expression
+    return json.loads(match[1] if event == 'pull_request' else match[2])
+
+
+def test_pull_requests_reuse_vc_reader_and_main_resolves_the_real_wheel():
+    steps = workflow('tests.yml')['jobs']['installed-package']['steps']
+    full = [step for step in steps if 'python -m pip install dist/*.whl' in step.get('run', '')]
+    assert len(full) == 1 and full[0]['if'] == "github.event_name != 'pull_request'"
+    cache = next(step for step in steps if step.get('uses', '').startswith('actions/cache@'))
+    assert cache['if'] == "github.event_name == 'pull_request'"
+    assert '${{ steps.vc.outputs.key }}' in cache['with']['key'] and '${{ matrix.python }}' in cache['with']['key']
+    fast = next(step for step in steps if step.get('name') == 'Install wheel with cached vc-reader (pull requests)')
+    assert '--no-deps dist/*.whl' in fast['run'] and 'vc-reader-wheel' in fast['run']
+    assert any(step.get('run') == 'python -m pip check' for step in steps)
+    pytest_step = next(step['run'] for step in steps if step.get('run', '').startswith('python -m pytest'))
+    assert '-n auto --dist loadfile' in pytest_step
+
+
 def test_installed_sdist_checks_have_their_build_dependencies():
     steps = workflow('tests.yml')['jobs']['installed-package']['steps']
     setup = next(step['run'] for step in steps
                  if step.get('run', '').startswith('python -m pip install build '))
     packages = set(shlex.split(setup)[4:])
-    assert {'build', 'pytest', 'wheel'} <= packages
+    assert {'build', 'pytest', 'wheel', 'pytest-xdist', 'packaging'} <= packages
