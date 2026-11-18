@@ -81,9 +81,15 @@ def ct_memory(chunks,dtype,cfg):
     return reserved
 
 
-def check_flatboi(app_run,recipe='historical'):
+VENDORED_APP_RUN = Path(__file__).resolve().parent / '_native' / 'vc3d' / 'AppRun'
+
+
+def check_flatboi(app_run=None,recipe='historical'):
     if recipe not in NATIVE_RECIPES:raise ValueError('unknown native_recipe')
     expected=NATIVE_RECIPES[recipe]
+    if app_run is None:
+        if recipe!='installed-2f89bfc9':raise ValueError('Flatboi app_run is required for recipe '+recipe)
+        app_run=VENDORED_APP_RUN
     app=Path(app_run).expanduser().resolve();binary=app.parent/'usr/bin/flatboi'
     if not app.is_file() or file_sha(app)!=LAUNCHER_SHA:raise ValueError('historical Flatboi launcher SHA256 mismatch or unavailable: '+str(app))
     if not binary.is_file() or file_sha(binary)!=expected:raise ValueError(recipe+' Flatboi binary SHA256 mismatch or unavailable: '+str(binary))
