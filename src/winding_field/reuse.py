@@ -15,10 +15,18 @@ import time
 from .util import file_sha
 
 STAGES={'prepare':'PREPARED.json','fibres':'FIBRES.json'}
-DIRECTORIES=('maps','lasagna','lasagna-import','fibres')
 FILES=('PREPARED.json','LASAGNA.json','FIBRES.json','source.sqlite','products.sqlite')
-BOUNDED_DIRECTORIES=('coarse','lasagna-import','fibres')
 BOUNDED_FILES=('PREPARED.json','FIBRES.json','source.sqlite','products.sqlite')
+
+
+def _import_directory(root):
+    for name in ('lasagna-import','lasagna-source'):
+        if (root/name).is_dir():return name
+    raise ValueError('reuse product directory missing or unsafe: lasagna-import')
+
+
+def _directories(root,bounded=False):
+    return (('coarse',) if bounded else ('maps','lasagna'))+(_import_directory(root),'fibres')
 VARIABLE={'output','reuse_from','reuse_from_sha256','field_chunk','sweeps','maxiter','rtol','fibre_weight','nonconvergence_policy'}
 
 
@@ -30,7 +38,7 @@ def _regular(path):
 
 def prepared_inventory(root):
     files=[_regular(root/name) for name in BOUNDED_FILES]
-    for name in BOUNDED_DIRECTORIES:
+    for name in _directories(root,True):
         folder=root/name
         if folder.is_symlink() or not folder.is_dir():raise ValueError('unsafe prepared asset directory')
         for p in folder.rglob('*'):
@@ -97,7 +105,7 @@ def reuse_stages(source: Path,root: Path,config: dict,volume,expected_sha: str,s
             raise ValueError('reuse CT or preparation geometry changed')
         bounded=bool(state['config'].get('bounded_preparation'))
         files=[_regular(source/name) for name in (BOUNDED_FILES if bounded else FILES)]
-        for name in (BOUNDED_DIRECTORIES if bounded else DIRECTORIES):
+        for name in _directories(source,bounded):
             folder=source/name
             if folder.is_symlink() or not folder.is_dir():raise ValueError('reuse product directory missing or unsafe: '+name)
             for p in folder.rglob('*'):
@@ -177,13 +185,14 @@ def _validate_inventory(root,prepared,fibres,exports,volume):
         raise ValueError('incomplete reuse CT ledger')
     maps=json.loads((root/'maps/TILES.json').read_bytes())
     keys=['.'.join(map(str,key)) for key in itertools.product(*(range((n+maps['chunk']-1)//maps['chunk']) for n in maps['shape']))]
+    imported=_import_directory(root)
     expected={'fibres/fibres.afv':'fibres','LASAGNA.json':'prepare',
-              'lasagna/surfaces.lasagna.json':'prepare','lasagna-import/IDENTITY.json':'prepare'}
+              'lasagna/surfaces.lasagna.json':'prepare',imported+'/IDENTITY.json':'prepare'}
     for channel in ('presence','nx','ny','grad_mag','cos'):
         folder='lasagna/surface_'+channel+'.ome.zarr/'
         expected.update({folder+name:'prepare' for name in ('.zgroup','.zattrs','0/.zarray')})
         expected.update({folder+'0/'+key:'prepare' for key in keys})
-    expected.update({str(p.relative_to(root)):'prepare' for p in (root/'lasagna-import').glob('document-*.json')})
+    expected.update({str(p.relative_to(root)):'prepare' for p in (root/imported).glob('document-*.json')})
     inventory={name:stage for name,stage,_ in exports}
     if any(inventory.get(name)!=stage for name,stage in expected.items()):
         raise ValueError('incomplete reuse export inventory')

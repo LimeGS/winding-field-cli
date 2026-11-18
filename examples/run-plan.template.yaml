@@ -18,6 +18,8 @@ source: "/data/scroll.zarr" # Opciones: ruta local Zarr v2 | URL HTTP/HTTPS | s3
 # scroll: "PHerc0175A" # Opciones: identificador del catálogo público; omitir si se usa source.
 # scan: "20250521115057" # Opciones: identificador real de scan del scroll; no inventar ni mezclar con source.
 output: "../runs/scroll-field" # Opciones: ruta local NUEVA para run; plan no la crea. Continuar con resume, no con run.
+# reuse_from: "../runs/imported-donor" # Opciones: run importado completo con RUN.json; requiere reuse_from_sha256 y salida nueva.
+# reuse_from_sha256: "0000000000000000000000000000000000000000000000000000000000000000" # Opciones: SHA256 hex de 64 del RUN.json donante; requerido con reuse_from.
 # local: "/data/mirror.zarr" # Opciones: ruta local a un espejo compatible de chunks CT | null/omitir.
 cache: "../cache/ct" # Opciones: ruta local de caché CT | null/omitir para la ubicación automática.
 cache_gib: 2.0 # Opciones: número finito >= 0, GiB de caché CT; 0 desactiva retención. No es RAM total.
@@ -35,6 +37,8 @@ bounded_preparation: false # Opciones: true | false; true requiere qual-v2, stri
 bounded_gib: 12.0 # Opciones: GiB finitos >= 0.015625 (16 MiB); productos/scratch bounded, excluye caché CT y reserva.
 fibre_downsample: 2 # Opciones: 2 | 4; 4 requiere bounded_preparation. ROI alineada a múltiplos de 2*fibre_downsample.
 chunk: 64 # Opciones: entero 4..128, borde de tile de observaciones en muestras; no un tamaño en µm.
+field_cpu_workers: 0 # Opciones: entero >= 0; 0 desactiva procesos CPU de preparación ordinaria.
+field_cpu_buffer_bytes: 0 # Opciones: entero >= 0 en bytes; requiere field_cpu_workers > 0.
 
 # ── Predictor de fibras y dispositivo ─────────────────────────────────────────
 prediction: qual-v2 # Opciones: classical | sd2 | qual-v2; classical es baseline local; los aprendidos usan superficies Lasagna.
