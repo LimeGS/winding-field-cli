@@ -104,10 +104,9 @@ prepared_cache_bytes: 0 # Opciones: entero >=0 en bytes de workspaces retenidos;
 constraint_cache_bytes: 0 # Opciones: entero >=0 en bytes de restricciones retenidas; 0 desactiva.
 # observation_cache_bytes: 4294967296 # Opciones: entero >=0 en bytes de observaciones por bloque retenidas entre barridos | null/omitir para 0 (desactivado); no es tope de RSS.
 # field_cache_bytes: 1073741824 # Opciones: entero >=0 en bytes de chunks decodificados del checkpoint | null/omitir para 64 MiB; no es tope de RSS.
-field_cpu_workers: 0 # Opciones: entero >=0 de procesos CPU de preparación; 0 desactiva; >0 requiere field_cpu_buffer_bytes > 0.
-field_cpu_buffer_bytes: 0 # Opciones: entero >=0 en bytes de buffer CPU/IPC; requiere field_cpu_workers > 0; no es tope de RAM ni RSS.
 maxiter: 2000 # Opciones: entero >=1, iteraciones máximas por solve local.
 rtol: 0.000001 # Opciones: número finito >0 de tolerancia relativa; default 1e-6.
+nonconvergence_policy: "fail" # Opciones: fail | continue; continue completa el presupuesto de barridos con bloques no convergidos (contados y marcados); las rupturas numéricas siempre fallan.
 preconditioner: jacobi # Opciones: jacobi; spectral aparece en el parser pero ES RECHAZADO para workflows por bloques.
 seed_stride: 8 # Opciones: entero >=1; separación de semillas de fibras en muestras de observaciones.
 fibre_weight: 1.0 # Opciones: número finito >=0; peso de restricciones de fibras.

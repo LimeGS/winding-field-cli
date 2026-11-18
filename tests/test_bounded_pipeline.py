@@ -113,10 +113,37 @@ def coarse_field(tmp_path):
     (tmp_path/'FIBRES.json').write_text(json.dumps(dict(sha256=file_sha(tmp_path/'fibres/fibres.sqlite'))))
 
 
-def test_bounded_field_uses_retained_coarse_prior_and_existing_block_backend(tmp_path):
+@pytest.mark.parametrize('policy,outcome',[
+    ('fail','VERIFIED'),('continue','NONCONVERGED'),('fail','NONCONVERGED'),
+    ('continue','PAUSED'),('continue','bad-gauge'),('continue','nonfinite'),
+])
+def test_bounded_field_uses_retained_coarse_prior_and_existing_block_backend(tmp_path,monkeypatch,policy,outcome):
     from winding_field.field import solve
     coarse_field(tmp_path)
-    result=solve(tmp_path,dict(field_chunk=4,sweeps=2,device='cpu',rtol=1e-6,bounded_bytes=16<<20))
+    from winding_field import global_residual
+    verify=global_residual.verify
+    def verification(*args,**kwargs):
+        result=verify(*args,**kwargs)
+        if outcome=='PAUSED':return dict(status='PAUSED',global_converged=False)
+        if outcome!='VERIFIED':result.update(status='NONCONVERGED',global_converged=False,relative_residual=0.1,residual_l2=1.)
+        if outcome=='bad-gauge':result['fixed_storage_max_error']=1.
+        if outcome=='nonfinite':result['residual_l2']=float('inf')
+        return result
+    monkeypatch.setattr(global_residual,'verify',verification)
+    config=dict(field_chunk=4,sweeps=2,device='cpu',rtol=1e-6,bounded_bytes=16<<20,nonconvergence_policy=policy)
+    if outcome in ('bad-gauge','nonfinite'):
+        with pytest.raises(ValueError):solve(tmp_path,config)
+        assert not (tmp_path/'FIELD.json').exists()
+        return
+    result=solve(tmp_path,config)
+    if outcome=='PAUSED' or (policy=='fail' and outcome=='NONCONVERGED'):
+        assert result['status']=='PAUSED' and not (tmp_path/'FIELD.json').exists()
+        return
+    if outcome=='NONCONVERGED':
+        assert result['status']=='FIELD_READY' and result['global_converged'] is False
+        assert result['verification']['relative_residual']==0.1
+        assert (tmp_path/'FIELD.json').exists()
+        return
     assert result['status']=='FIELD_READY' and result['global_converged'] is True
     assert result['solver_backend']['device']=='cpu'
     assert result['solver_backend']['field_chunk']==4 and result['solver_backend']['dtype']=='float64'

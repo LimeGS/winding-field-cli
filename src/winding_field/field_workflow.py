@@ -153,9 +153,11 @@ def validate_run_config(mapping: dict, *, base: Path) -> dict[str, Any]:
             if name in config:
                 config[name] = _artifact(config[name], base)
         solver = {"device": "cpu", "dtype": "float64", "rtol": 1e-5, "maxiter": 4000, **config.get("solver", {})}
-        _keys(solver, {"device", "dtype", "rtol", "maxiter", "preconditioner"}, "solver")
+        _keys(solver, {"device", "dtype", "rtol", "maxiter", "preconditioner", "nonconvergence_policy"}, "solver")
         if solver.pop("preconditioner", "jacobi") != "jacobi":
             raise ValueError("prepared block workflows require preconditioner='jacobi'")
+        if solver.get("nonconvergence_policy", "fail") not in ("fail", "continue"):
+            raise ValueError("invalid nonconvergence_policy")
         if solver["dtype"] not in ("float32", "float64") or solver["device"] not in ("cpu", "cuda:0"):
             raise ValueError("solver requires float32/float64 and cpu or allocated cuda:0")
         positive(solver["rtol"], "rtol")
