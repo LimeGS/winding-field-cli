@@ -23,12 +23,9 @@ jobs:
     needs: preflight
     strategy:
       fail-fast: false
+      # Pull requests get one Linux leg for fast feedback; pushes to main keep the full matrix.
       matrix:
-        include:
-          - os: ubuntu-latest
-            python: '3.11'
-          - os: macos-latest
-            python: '3.12'
+        include: ${{ fromJSON(github.event_name == 'pull_request' && '[{"os":"ubuntu-latest","python":"3.11"}]' || '[{"os":"ubuntu-latest","python":"3.11"},{"os":"macos-latest","python":"3.12"}]') }}
     runs-on: ${{ matrix.os }}
     env:
       OMP_NUM_THREADS: '4'
@@ -40,7 +37,7 @@ jobs:
         with:
           python-version: ${{ matrix.python }}
           cache: pip
-      - run: python -m pip install build pytest wheel
+      - run: python -m pip install build pytest wheel pytest-xdist packaging
       - name: Native CT build dependencies (Linux)
         if: runner.os == 'Linux'
         run: |
@@ -59,10 +56,47 @@ jobs:
           CORE_REV=$(python -c "import json; print(json.load(open('provenance/core.json'))['revision'])")
           python -m pip install "winding-field @ https://github.com/LimeGS/winding-field/archive/$CORE_REV.tar.gz"
       - run: python -m build
-      - run: python -m pip install dist/*.whl "winding-field-cli[ct]" "matplotlib>=3.8,<4" "libigl==2.6.3" "tifffile>=2023.7"
+      # main resolves the wheel exactly as users install it; PRs reuse a cached vc-reader build.
+      - if: github.event_name != 'pull_request'
+        run: python -m pip install dist/*.whl "winding-field-cli[ct]" "matplotlib>=3.8,<4" "libigl==2.6.3" "tifffile>=2023.7"
+      - name: Pinned vc-reader requirement
+        if: github.event_name == 'pull_request'
+        id: vc
+        run: |
+          python - <<'EOF' >> "$GITHUB_OUTPUT"
+          import hashlib, tomllib
+          from packaging.requirements import Requirement
+          project = tomllib.load(open('pyproject.toml', 'rb'))['project']
+          (spec,) = [r for r in project['dependencies'] if Requirement(r).name == 'vc-reader']
+          print('spec=' + spec)
+          print('key=' + hashlib.sha256(spec.encode()).hexdigest()[:16])
+          EOF
+      - name: Cached vc-reader wheel
+        if: github.event_name == 'pull_request'
+        id: vc-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/vc-reader-wheel
+          key: vc-reader-${{ runner.os }}-${{ runner.arch }}-py${{ matrix.python }}-${{ steps.vc.outputs.key }}
+      - if: github.event_name == 'pull_request' && steps.vc-cache.outputs.cache-hit != 'true'
+        run: python -m pip wheel --no-deps --wheel-dir ~/vc-reader-wheel "${{ steps.vc.outputs.spec }}"
+      - name: Install wheel with cached vc-reader (pull requests)
+        if: github.event_name == 'pull_request'
+        run: |
+          python -m pip install ~/vc-reader-wheel/*.whl
+          python - <<'EOF' > "$RUNNER_TEMP/requirements.txt"
+          import tomllib
+          from packaging.requirements import Requirement
+          project = tomllib.load(open('pyproject.toml', 'rb'))['project']
+          for r in project['dependencies'] + project['optional-dependencies'].get('ct', []):
+              if Requirement(r).name not in ('vc-reader', 'winding-field'):
+                  print(r)
+          EOF
+          python -m pip install --no-deps dist/*.whl
+          python -m pip install -r "$RUNNER_TEMP/requirements.txt" "matplotlib>=3.8,<4" "libigl==2.6.3" "tifffile>=2023.7"
       - run: python -I -c "from vc_reader.reader import ObjectStore, ZarrReader, decode_chunk; from vc_reader import _reader; assert hasattr(_reader.DiskCache, 'write')"
       - run: python -m pip check
-      - run: python -m pytest -q --durations=30 -o pythonpath=
+      - run: python -m pytest -q --durations=30 -o pythonpath= -n auto --dist loadfile
       - name: Installed CLI outside checkout
         working-directory: ${{ runner.temp }}
         run: |
