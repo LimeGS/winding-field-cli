@@ -272,9 +272,40 @@ volume, CUDA, or eight/sixteen-worker scaling. Treat the choice as
 workload-specific evidence, not statistical significance or a universal
 optimum.
 
+## Stage 4: observation and field-store caches (opt-in)
+
+Two more retained budgets remove per-sweep rereads without changing the solved
+problem. Both are process-local and never checkpointed; the block checkpoint
+identity does not include them (the `run` workflow still pins its saved
+configuration on resume, as for every other flag).
+
+- `--observation-cache-bytes N` (`observation_cache_bytes`, default 0): first-fit
+  retention of the immutable per-block observations returned by the ordinary or
+  bounded loader (oriented target, weights and support, i.e. the `maps/` prior
+  read and orientation). Only the solver's halo-expanded boxes are admitted;
+  initialization cores and verification boxes are never retained. Retained
+  arrays are sealed read-only. Each entry costs its array bytes plus 4096.
+  Receipts expose `observation_cache_stats` (budget, hits, misses, peak
+  bytes/entries, denied insertions); entries and retained bytes are zero after
+  cleanup. With `field_cpu_workers`, a box is skipped by the pool only when both
+  its observations and its constraint rows are retained; otherwise workers run
+  as before and the retained observations are not reused for that box.
+- `--field-cache-bytes N` (`field_cache_bytes`, default 64 MiB, the previous
+  hardcoded value): decoded checkpoint-chunk cache of the block solver's store.
+  One decoded chunk costs `4*chunk**3 + ceil(chunk**3/8) + 512` bytes (about
+  1.08 MB for chunk 64), so a budget of `chunks * that` keeps the whole field and
+  avoids rereading, rehashing and inflating neighbour chunks on every halo read.
+  `solver.cache_stats` reports hits, loads and evictions.
+
+Both flags are omitted from the saved configuration unless given, so existing
+configurations are unchanged. Size them from the block count: for example a
+637-block chunk-64 run with halo 2 needs about 637 x 5.3 MB of observations and
+about 690 MB of decoded chunks.
+
 ## Choosing cache and pool settings
 
-All three settings default to zero (disabled). Choose them explicitly:
+The constraint, observation and pool settings default to zero (disabled); the
+field-store cache keeps its previous 64 MiB default. Choose them explicitly:
 
 - **Cache:** reserve memory for the solver, coordinator and prepared inputs
   first. `constraint_cache_bytes` limits retained static restriction bytes, not
@@ -284,6 +315,10 @@ All three settings default to zero (disabled). Choose them explicitly:
   not the full demand, so it cannot by itself prove the cache is large enough.
   Measure with a generous budget once, then size deliberately. If demand is
   unknown, state that it is unknown instead of enabling an unbounded cache.
+- **Observations / field store:** `observation_cache_bytes` removes the per-sweep
+  prior read once a box is retained; `field_cache_bytes` sizes the decoded chunk
+  cache (default 64 MiB). Check `observation_cache_stats` and
+  `solver.cache_stats` (`loads`, `evictions`) the same way as the constraint cache.
 - **Pool:** `field_cpu_workers` prepares immutable ordinary-provider CPU work
   only. Solves and checkpoint writes remain ordered and serial. Halo-expanded
   observation/constraint preparation can run in workers; live halo values are
