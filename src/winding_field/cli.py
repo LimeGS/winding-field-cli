@@ -223,7 +223,9 @@ def main(argv=None):
     p.add_argument('--flattening-method',choices=['original','patches'],help='historical recipe; cannot combine with --flattening-solver/--scope')
     p.add_argument('--flattening-solver',choices=['lscm','slim'],help='explicit algorithm; requires --scope')
     p.add_argument('--scope',choices=['patches','sheet'],help='independent patches or whole connected sheets; requires --flattening-solver')
-    p.add_argument('--export-tifxyz',action=argparse.BooleanOptionalAction,default=False,help='add mesh-derived float32 XYZ TIFFs and validity mask alongside CT renders');p.add_argument('--resume',action='store_true',help='repeat identical inputs/settings; unavailable for historical patches')
+    p.add_argument('--export-tifxyz',action=argparse.BooleanOptionalAction,default=False,help='add mesh-derived float32 XYZ TIFFs and validity mask alongside CT renders')
+    p.add_argument('--stages',choices=('all','uv','ct'),default='all',help='all: solve and render; uv: publish validated UV without opening the CT; ct: render a published UV without solving')
+    p.add_argument('--resume',action='store_true',help='repeat identical inputs/settings; unavailable for historical patches')
     p=sub.add_parser('export-uvw',help='aligned diagnostic W band from one original global UV map')
     p.add_argument('--field-config',help='optional SHA-bound field descriptor JSON')
     field_arguments(p)
@@ -366,10 +368,19 @@ def main(argv=None):
             from .range_surface import join_ranges
             result=join_ranges(args.inputs,args.output)
         elif args.command=='export-sheets':
+            stages=getattr(args,'stages','all')
+            if stages!='all' and args.run:
+                raise ValueError('--stages requires an explicit mesh bundle or field source')
+            if stages!='all' and args.flattening_method:
+                raise ValueError('--stages requires --flattening-solver and --scope')
             if not args.run:
-                if not args.source:
-                    raise ValueError('--source is required without --run')
-                if args.level is None:args.level=0
+                if stages=='uv':
+                    if args.source is not None or args.level is not None or args.voxel_um is not None:
+                        raise ValueError('UV-only publication must not depend on the CT: omit --source, --level and --voxel-um')
+                else:
+                    if not args.source:
+                        raise ValueError('--source is required without --run')
+                    if args.level is None:args.level=0
             if args.run:
                 from .run_sheet_export import export_run as export_existing
             elif args.flattening_solver is not None or args.scope is not None:
