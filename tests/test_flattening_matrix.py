@@ -351,3 +351,22 @@ def test_uv_stage_rejects_ct_inputs(tmp_path,capsys):
     mesh,ct=source_bundle(tmp_path)
     assert main(uv_args(tmp_path,mesh,tmp_path/'bad','uv',ct))!=0
     assert 'CT' in capsys.readouterr().err
+
+
+def test_render_contract_ignores_solver_and_runtime_identity():
+    """The CT stage must not need the native binary to agree on its identity."""
+    from winding_field import matrix_pipeline as pipeline
+    from winding_field.util import digest
+    identity=dict(schema='flattening-matrix-v1',settings=dict(flattening_solver='slim'),mesh='/m/mesh',
+                  mesh_sha256='a'*64,levels=None,ct_source=None,ct_level=None,ct_voxel_um=None,
+                  export_tifxyz=False,native=dict(binary_sha256='b'*64,launcher_sha256='c'*64),
+                  native_runtime=dict(kind='flatboi'),runtime=dict(numpy='2'),implementation_sha256='d'*64,
+                  field=None)
+    contract=pipeline.render_contract(identity)
+    assert 'native' not in contract and 'native_runtime' not in contract and 'runtime' not in contract
+    published=dict(identity,ct_source=None,ct_level=None,ct_voxel_um=None)
+    # A render host without the solver accepts the published UV, and a different
+    # settings/mesh contract is still rejected.
+    assert all(published.get(k)==v for k,v in contract.items())
+    assert not all(dict(published,mesh_sha256='e'*64).get(k)==v for k,v in contract.items())
+    assert digest(contract)!=digest(identity)

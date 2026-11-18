@@ -29,6 +29,13 @@ def verify_level(root,identity,ct):
     return record
 
 
+def render_contract(identity):
+    """Fields a CT-only render can verify without the solver or its runtime present."""
+    contract=dict(identity,ct_source=None,ct_level=None,ct_voxel_um=None)
+    for key in ('native','native_runtime','runtime'):contract.pop(key,None)
+    return contract
+
+
 def export_existing(args):
     from .workflow import implementation_sha
     from .export_settings import field_request,flattening_request
@@ -56,16 +63,19 @@ def export_existing(args):
                   export_tifxyz=args.export_tifxyz,native=native,implementation_sha256=implementation_sha(),
                   runtime={name:version(name) for name in ('numpy','scipy','libigl','Pillow')})
     # The UV phase must stand alone: its identity carries no CT fields so a later
-    # render can consume it on any host, without the CT or the solver present.
+    # render can consume it on any host, without the CT or the solver present. The
+    # solver/runtime fields stay in the published UV receipt, never in the render
+    # contract, so rendering does not need the native binary to agree on them.
     uv_identity=dict(identity,ct_source=None,ct_level=None,ct_voxel_um=None)
+    contract=render_contract(identity)
     uv_path=out/'UV-MATRIX.json'
     out.mkdir(exist_ok=args.resume or stages!='all')
     with (out/'.lock').open('a') as lock:
         fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
         if any(q.is_symlink() for q in out.rglob('*')):raise ValueError('matrix output symlink refused')
         if (out/'EXPORT.json').exists():
-            if _json(_path(out,'EXPORT.json'))!=uv_identity:raise ValueError('matrix resume identity changed')
-        else:atomic_json(out/'EXPORT.json',uv_identity)
+            if _json(_path(out,'EXPORT.json'))!=contract:raise ValueError('matrix resume identity changed')
+        else:atomic_json(out/'EXPORT.json',contract)
         resources=ResourceGuard(out,cfg['process_tree_gib'],cfg['disk_reserve_gib']);stopped=False
         def stop(*_):
             nonlocal stopped
@@ -149,7 +159,8 @@ def export_existing(args):
                         if stages=='ct':
                             # Render the published UV: no read_level, no solve, no native runtime.
                             uv_record=_json(_path(target,'LEVEL-UV.json'))
-                            if uv_record['identity']!=uv_identity:raise ValueError('published UV identity changed')
+                            if not all(uv_record['identity'].get(k)==v for k,v in contract.items()):
+                                raise ValueError('published UV identity changed')
                             _verified(target,'map.npz',uv_record['map_sha256'])
                             mapped=dict(_arrays(target/'map.npz'),report=uv_record['mapping'])
                         else:
