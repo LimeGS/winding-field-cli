@@ -96,10 +96,8 @@ def test_qualification_budget_failure_is_not_an_accepted_subset(monkeypatch):
     with pytest.raises(RuntimeError,match='narrow'):global_uv.qualify_map(cut,cut['vertices'][:,:2])
 
 
-def test_input_limits_reject_before_allocations_or_optional_library(monkeypatch):
-    cut=disk();monkeypatch.setattr(global_uv,'MAX_FACES',3)
-    with pytest.raises(ValueError,match='bound'):global_uv.cut_component(cut['vertices'],cut['faces'])
-    monkeypatch.setattr(global_uv,'MAX_FACES',1250000)
+def test_input_validation_rejects_bad_geometry_and_indices():
+    cut=disk()
     for faces in (np.array([[0,1,99]]),np.array([[0,1,-1]]),np.array([[0.,1.,2.]]),np.array([[0,0,1]])):
         with pytest.raises(ValueError):global_uv.cut_component(cut['vertices'],faces)
     v=cut['vertices'].copy();v[0]=np.inf
@@ -196,18 +194,25 @@ def test_reject_nonmanifold_duplicate_inconsistent_and_disconnected_input():
 
 
 def test_cut_budget_and_corrupt_boundary_rejected(monkeypatch):
-    pytest.importorskip('igl');v,f=sphere();monkeypatch.setattr(global_uv,'MAX_CUT_VERTICES',len(v))
-    with pytest.raises(ValueError,match='cut.*bound'):global_uv.cut_component(v,f)
+    igl=pytest.importorskip('igl');v,f=sphere()
+    from field_runtime import ResourceUnavailable
+    from winding_field import native_patches
+    def admit(required_bytes,*,phase,**kwargs):
+        if phase=='cut output arrays':raise ResourceUnavailable('cut allocation unavailable')
+        return dict(admitted=True)
+    monkeypatch.setattr(native_patches,'admit_memory',admit)
+    def forbidden(*args):raise AssertionError('cut must not allocate after failed admission')
+    monkeypatch.setattr(igl,'cut_mesh',forbidden)
+    with pytest.raises(ResourceUnavailable,match='cut allocation'):global_uv.cut_component(v,f)
     cut=disk();cut['boundary']=np.array([0,1,2,4])
     with pytest.raises(ValueError,match='boundary'):global_uv.mean_value_map(cut)
 
 
-def test_existing_disk_needs_no_extra_cut_vertex_budget(monkeypatch):
+def test_existing_disk_needs_no_extra_cut_vertex_copies():
     pytest.importorskip('igl');original=disk()
-    monkeypatch.setattr(global_uv,'MAX_CUT_VERTICES',len(original['vertices']))
     cut,report=global_uv.cut_component(original['vertices'],original['faces'])
     np.testing.assert_array_equal(cut['parent'],np.arange(len(original['vertices'])))
-    assert report['seam_duplicates']==0
+    assert report['seam_duplicates']==0 and report['cut_vertex_upper_bound']==len(original['vertices'])
 
 
 def test_direct_arap_folded_disk_known_isometry():

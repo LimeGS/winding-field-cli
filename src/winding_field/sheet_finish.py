@@ -69,7 +69,7 @@ def validate(prepared,native,output,centerline,reference_z,*,mesh_source=None):
     if state['status']=='IMPORTED_CHECKPOINT' and not latest['converged'] and latest['iterations']<200:
         raise ValueError('imported native checkpoint must finish before validation')
     if not math.isfinite(reference_z):raise ValueError('finite reference height required')
-    out.mkdir(parents=True,exist_ok=False);started=time.monotonic();resources=ResourceGuard(out,6.,8.)
+    out.mkdir(parents=True,exist_ok=False);started=time.monotonic();resources=ResourceGuard(out,None,8.)
     def guard():
         resources()
         if (out/'STOP').exists():raise InterruptedError('validation stopped')
@@ -78,7 +78,7 @@ def validate(prepared,native,output,centerline,reference_z,*,mesh_source=None):
     with MeshReader(mesh_source or receipt['source']) as reader:
         if reader.manifest_sha!=receipt['source_manifest_sha256']:raise ValueError('source mesh manifest differs')
         if reader.manifest!=_json(source/'MESH.json'):raise ValueError('copied source mesh differs')
-        v,f,vi,fi,*_=p.read_level(reader,receipt['level_index'],memory_gib=6.)
+        v,f,vi,fi,*_=p.read_level(reader,receipt['level_index'],memory_gib=None)
         rows=mapped['source_vertex_rows'];face_rows=mapped['source_face_rows']
         np.testing.assert_array_equal(mapped['world'],v[rows])
         np.testing.assert_array_equal(rows[mapped['faces']],f[face_rows])
@@ -145,11 +145,11 @@ def render(validated,output,config):
     if set(ctconfig)-{'source','voxel_um','level'} or not isinstance(ctconfig.get('source'),str) or not ctconfig['source']:
         raise ValueError('explicit CT source required')
     if type(ctconfig.get('level',0)) is not int or ctconfig.get('level',0)<0:raise ValueError('invalid CT level')
-    request=dict(memory_gib=6.,process_tree_gib=6.,raster_workers=2,ct_workers=4)
+    request=dict(memory_gib=None,process_tree_gib=None,raster_workers=2,ct_workers=4)
     request.update(config['settings']);cfg=p.settings(request)
     if cfg['tile_size']**2*33>128<<20:raise ValueError('tile mapping exceeds128MiB verification bound')
-    if cfg['pitch_um']!=19.2 or cfg['disk_reserve_gib']<8 or cfg['process_tree_gib']>6 or cfg['memory_gib']>6:
-        raise ValueError('constant-sheet requires19.2um/native-float64, <=6GiB memory and >=8GiB disk reserve')
+    if cfg['pitch_um']!=19.2 or cfg['disk_reserve_gib']<8:
+        raise ValueError('constant-sheet requires19.2um/native-float64 and >=8GiB disk reserve')
     if cfg['reuse_export'] is not None:raise ValueError('patch reuse is not a constant-sheet input')
     frame=cfg['output_frame'];mesh=_json(source/'MESH.json')
     if frame['origin_xyz_um']!=[0,0,0]:raise ValueError('constant-sheet global XYZ requires zero frame origin')
@@ -168,7 +168,7 @@ def render(validated,output,config):
     mapped=_arrays(source/'map.npz');uv=mapped['uv']
     wh=np.ceil(np.ptp(uv,axis=0)/(19.2/frame['voxel_um'])).astype(np.int64)+1;pixels=math.prod(map(int,wh))
     if pixels<=0 or pixels>MAX_PIXELS:raise ValueError('sheet exceeds atlas pixel bound')
-    out.mkdir(parents=True,exist_ok=False);started=time.monotonic();resources=ResourceGuard(out,6.,8.);stopped=False;ct=None
+    out.mkdir(parents=True,exist_ok=False);started=time.monotonic();resources=ResourceGuard(out,cfg['process_tree_gib'],cfg['disk_reserve_gib']);stopped=False;ct=None
     def stop(*_):
         nonlocal stopped
         stopped=True

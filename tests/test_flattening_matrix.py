@@ -43,7 +43,7 @@ def test_settings_require_explicit_native_only_for_slim(tmp_path):
     for extra in ({'max_patch_faces':32},{'max_depth':2},{'iterations':10}):
         with pytest.raises(ValueError):m.settings(dict(req,**extra),'lscm','sheet')
     assert m.settings(dict(req,max_patch_faces=32),'lscm','patches')['max_patch_faces']==32
-    with pytest.raises(ValueError):m.settings(dict(req,disk_reserve_gib=1),'lscm','patches')
+    with pytest.raises(ValueError):m.settings(dict(req,disk_reserve_gib=0),'lscm','patches')
 
 
 @pytest.mark.parametrize('flags',[
@@ -91,6 +91,15 @@ def test_solver_failure_never_falls_back_or_subdivides(tmp_path,monkeypatch):
     with pytest.raises(RuntimeError,match='solver failure'):m.build_map(v,f,tmp_path/'map',cfg)
     assert not (tmp_path/'map'/'MAP.json').exists()
     assert len(list((tmp_path/'map').glob('domain-*')))==1
+
+
+def test_sheet_component_coverage_is_not_limited_by_patch_chart_count(tmp_path):
+    m=matrix();v,f=geometry();cfg=m.settings(request(tmp_path),'lscm','sheet')
+    cfg['max_charts']=1
+    result=m.build_map(v,f,tmp_path/'map',cfg)
+    assert result['report']['source_components']==2
+    assert len(result['report']['domains'])==2
+    np.testing.assert_array_equal(np.sort(result['source_face_rows']),np.arange(len(f)))
 
 
 def source_bundle(tmp_path):

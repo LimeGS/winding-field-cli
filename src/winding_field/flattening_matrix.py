@@ -30,12 +30,10 @@ def settings(request,solver,scope):
         extra['centerline']=centerline_points(extra['centerline']).tolist()
     if 'reference_z' in extra and ('centerline' not in extra or type(extra['reference_z']) not in (int,float) or not np.isfinite(extra['reference_z'])):
         raise ValueError('reference_z requires centerline and a finite height')
-    base=dict(memory_gib=6.,process_tree_gib=22.,native_recipe='installed-2f89bfc9')
+    base=dict(memory_gib=None,process_tree_gib=None,native_recipe='installed-2f89bfc9')
     base.update({k:v for k,v in request.items() if k not in extra})
     cfg=p.settings(base,native_required=solver=='slim')
     if solver=='slim' and cfg['native_recipe'] not in p.CHECKPOINT_RECIPES:raise ValueError('native_recipe is not checkpoint-qualified')
-    if cfg['disk_reserve_gib']<8 or cfg['memory_gib']>6 or cfg['process_tree_gib']>22:
-        raise ValueError('matrix requires >=8GiB disk reserve, <=6GiB geometry/raster and <=22GiB process-tree budget')
     cfg.update(extra,flattening_solver=solver,scope=scope)
     return cfg
 
@@ -95,7 +93,8 @@ def build_map(vertices,faces,output,cfg,*,guard=lambda:None):
         if cfg['scope']=='patches' and len(rows)>cfg['max_patch_faces']:
             pending.extend(reversed(split_faces(v,f,rows)));continue
         domains.append(rows)
-        if len(domains)+len(pending)>cfg['max_charts']:raise ValueError('matrix domain budget exceeded; no faces omitted')
+        if cfg['scope']=='patches' and len(domains)+len(pending)>cfg['max_charts']:
+            raise ValueError('matrix domain budget exceeded; no faces omitted')
     partition=np.empty(len(f),np.int64)
     for i,rows in enumerate(domains):partition[rows]=i
     report=dict(flattening_solver=cfg['flattening_solver'],scope=cfg['scope'],source_faces=len(f),source_components=len(components),

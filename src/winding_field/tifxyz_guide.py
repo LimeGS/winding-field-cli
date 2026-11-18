@@ -49,9 +49,12 @@ def validate_map(m):
 def _cut_flags(f,paths,nv):
     pairs=[np.column_stack([p[:-1],p[1:]]) for p in paths if len(p)>1];flags=np.zeros(f.shape,bool)
     if not pairs:return flags
-    pairs=np.sort(np.concatenate(pairs).astype(np.int64),axis=1);keys=np.unique(pairs[:,0]*nv+pairs[:,1])
+    pairs=np.unique(np.sort(np.concatenate(pairs).astype(np.int64),axis=1),axis=0)
+    dtype=np.dtype([('a','i8'),('b','i8')])
+    keys=np.ascontiguousarray(pairs).view(dtype).ravel()
     for edge in range(3):
-        a,b=f[:,edge],f[:,(edge+1)%3];q=np.minimum(a,b)*nv+np.maximum(a,b)
+        q=np.sort(f[:,[edge,(edge+1)%3]].astype(np.int64),axis=1)
+        q=np.ascontiguousarray(q).view(dtype).ravel()
         index=np.searchsorted(keys,q);valid=index<len(keys);flags[valid,edge]=keys[index[valid]]==q[valid]
     return flags
 

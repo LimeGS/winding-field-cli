@@ -99,7 +99,8 @@ def export_existing(args):
             with p.open_mesh(mesh) as (reader,source_identity):
                 if mesh_sha is not None and reader.manifest_sha!=mesh_sha:raise ValueError('matrix source mesh changed')
                 frame=cfg['output_frame']
-                geometry_gib=cfg['memory_gib']-(p.raster_memory(cfg)+p.ct_memory(ct.chunks,ct.dtype,cfg))/2**30
+                buffers=p.raster_memory(cfg)+p.ct_memory(ct.chunks,ct.dtype,cfg)
+                geometry_gib=None if cfg['memory_gib'] is None else cfg['memory_gib']-buffers/2**30
                 for level,value in reader.db.execute('SELECT id,value FROM levels ORDER BY id'):
                     guard();target=out/f'level-{level:04d}'
                     if target.is_symlink():raise ValueError('matrix level symlink refused')
