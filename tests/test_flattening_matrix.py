@@ -43,7 +43,7 @@ def test_settings_require_explicit_native_only_for_slim(tmp_path):
     for extra in ({'max_patch_faces':32},{'max_depth':2},{'iterations':10}):
         with pytest.raises(ValueError):m.settings(dict(req,**extra),'lscm','sheet')
     assert m.settings(dict(req,max_patch_faces=32),'lscm','patches')['max_patch_faces']==32
-    with pytest.raises(ValueError):m.settings(dict(req,disk_reserve_gib=1),'lscm','patches')
+    with pytest.raises(ValueError):m.settings(dict(req,disk_reserve_gib=0),'lscm','patches')
 
 
 @pytest.mark.parametrize('flags',[
@@ -91,6 +91,28 @@ def test_solver_failure_never_falls_back_or_subdivides(tmp_path,monkeypatch):
     with pytest.raises(RuntimeError,match='solver failure'):m.build_map(v,f,tmp_path/'map',cfg)
     assert not (tmp_path/'map'/'MAP.json').exists()
     assert len(list((tmp_path/'map').glob('domain-*')))==1
+
+
+def test_sheet_component_coverage_is_not_limited_by_patch_chart_count(tmp_path):
+    m=matrix();v,f=geometry();cfg=m.settings(request(tmp_path),'lscm','sheet')
+    cfg['max_charts']=1
+    result=m.build_map(v,f,tmp_path/'map',cfg)
+    assert result['report']['source_components']==2
+    assert len(result['report']['domains'])==2
+    np.testing.assert_array_equal(np.sort(result['source_face_rows']),np.arange(len(f)))
+
+
+def test_saved_domains_finish_audit_without_solver(tmp_path,monkeypatch):
+    m=matrix();v,f=geometry();cfg=m.settings(request(tmp_path),'lscm','sheet')
+    out=tmp_path/'map';first=m.build_map(v,f,out,cfg)
+    for name in ('MAP.json','map.npz','AUDIT.json'):(out/name).unlink(missing_ok=True)
+    def forbidden(*args,**kwargs):raise AssertionError('solver must not run for saved domains')
+    monkeypatch.setattr(m,'solve',forbidden)
+    again=m.build_map(v,f,out,cfg)
+    assert again['report']['overlapping_faces']==first['report']['overlapping_faces']
+    assert again['report']['overlap']['status']=='COMPLETE'
+    np.testing.assert_array_equal(np.sort(again['source_face_rows']),np.arange(len(f)))
+    assert len(again['report']['domains'])==len(first['report']['domains'])
 
 
 def source_bundle(tmp_path):
