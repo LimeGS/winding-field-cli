@@ -3,6 +3,7 @@
 import argparse
 import colorsys
 import fcntl
+import stat
 import hashlib
 import json
 import math
@@ -12,6 +13,7 @@ import sqlite3
 import sys
 import uuid
 from copy import deepcopy
+from contextlib import ExitStack, contextmanager
 from pathlib import Path
 from typing import Any
 from zipfile import BadZipFile
@@ -24,6 +26,31 @@ from .field_workflow import _invalid, _object
 from .surface_mesh import MeshReader, _integer, _levels, extract_mesh, import_mesh, sha
 from .native_mesh import extract_mesh as extract_batched_mesh
 from .surface_sources import FieldSource
+
+
+@contextmanager
+def _checkpoint_lease(path):
+    """Hold a shared nonblocking lease for the whole extraction; never create the lock."""
+    lock = Path(path).parent / ".writer.lock"
+    fd = os.open(lock, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    try:
+        opened = os.fstat(fd)
+        if not stat.S_ISREG(opened.st_mode):
+            raise ValueError("checkpoint writer lease must be a regular file")
+        try:
+            fcntl.flock(fd, fcntl.LOCK_SH | fcntl.LOCK_NB)
+        except BlockingIOError:
+            raise ValueError("checkpoint has an active writer") from None
+
+        def check():
+            current = lock.lstat()
+            if not stat.S_ISREG(current.st_mode) or (current.st_dev, current.st_ino) != (opened.st_dev, opened.st_ino):
+                raise ValueError("checkpoint writer lease changed")
+
+        check()
+        yield check
+    finally:
+        os.close(fd)
 
 
 def _keys(value, allowed):
@@ -286,6 +313,7 @@ def run_surfaces(
         return stop is not None and bool(stop())
 
     if "field" in config:
+        field = config["field"]
         extractor = extract_batched_mesh
         binding = output / "RUN.json"
         if resume and binding.exists():
@@ -295,17 +323,31 @@ def run_surfaces(
             identity = saved.get("identity") if isinstance(saved, dict) else None
             if isinstance(identity, dict) and identity.get("algorithm") == "lewiner-shifted-f32-adaptive-global-edges-v2":
                 extractor = extract_mesh
-        with FieldSource(config["field"], config["geometry"], cache_bytes=execution["cache_bytes"]) as source:
-            result = extractor(
-                source,
-                output,
-                config["levels"],
-                tile=execution["tile"],
-                level_batch=execution["level_batch"],
-                resume=resume,
-                stop=stopped,
-                reserve_bytes=execution["reserve_bytes"],
-            )
+        with ExitStack() as stack:
+            lease = None
+            if field.get("kind") == "chunks":
+                if output.resolve().is_relative_to(Path(field["path"]).parent.resolve()):
+                    raise ValueError("mesh output must not modify the source checkpoint directory")
+                lease = stack.enter_context(_checkpoint_lease(field["path"]))
+
+            def leased_stop():
+                if sha(config["config_path"]) != config["config_sha256"]:
+                    raise ValueError("surface config changed during execution")
+                if lease is not None:
+                    lease()
+                return stop is not None and bool(stop())
+
+            with FieldSource(field, config["geometry"], cache_bytes=execution["cache_bytes"]) as source:
+                result = extractor(
+                    source,
+                    output,
+                    config["levels"],
+                    tile=execution["tile"],
+                    level_batch=execution["level_batch"],
+                    resume=resume,
+                    stop=leased_stop,
+                    reserve_bytes=execution["reserve_bytes"],
+                )
     else:
         result = import_mesh(
             config["mesh"],

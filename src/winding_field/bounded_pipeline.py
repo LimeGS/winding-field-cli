@@ -23,18 +23,27 @@ from .util import atomic_json,digest,file_sha
 
 
 @contextmanager
-def surface_maps(volume,root,config,lo,hi):
+def surface_maps(volume,root,config,lo,hi,stop=None):
     if config.get('lasagna_input'):
-        from .lasagna_input import streamed
-        if not streamed(config):
+        from .lasagna_input import prepare as prepare_import,read_observations,streamed
+        if config.get('lasagna_geometry') or not config.get('fibres'):
             raise ValueError('bounded preparation cannot use calibrated physical-frame imports')
-        from .lasagna_stream import LasagnaInput
-        geometry=dict(shape_zyx=(hi-lo).tolist(),roi_lo_zyx=lo.tolist(),stride=1,frame=digest(volume.identity))
-        with LasagnaInput(volume,root,config) as reader:
-            reader.validate_used()
-            maps=NativeMaps(tuple(map(int,hi-lo)),lambda a,b:reader.read(geometry,a,b))
+        if streamed(config):
+            geometry=dict(shape_zyx=(hi-lo).tolist(),roi_lo_zyx=lo.tolist(),stride=1,frame=digest(volume.identity))
+            from .lasagna_stream import LasagnaInput
+            with LasagnaInput(volume,root,config) as reader:
+                reader.validate_used()
+                maps=NativeMaps(tuple(map(int,hi-lo)),lambda a,b:reader.read(geometry,a,b))
+                maps.calibration=maps;maps.calibration_factor=1;maps.calibration_first=lo
+                yield maps,reader.identity
+        else:
+            geometry=dict(shape_zyx=(hi-lo).tolist(),spacing_xyz=np.asarray(volume.spacing_xyz).tolist(),
+                          origin_xyz=(np.asarray(volume.origin_xyz)+lo[::-1]*volume.spacing_xyz).tolist(),
+                          frame=digest(volume.identity),roi_lo_zyx=lo.tolist(),roi_hi_zyx=hi.tolist(),stride=1)
+            runtime=prepare_import(volume,root,config,geometry,stop).get('identity') or {}
+            maps=NativeMaps(tuple(map(int,hi-lo)),lambda a,b:read_observations(root,geometry,a,b))
             maps.calibration=maps;maps.calibration_factor=1;maps.calibration_first=lo
-            yield maps,reader.identity
+            yield maps,runtime
         return
     model_path=checkpoint(config.get('lasagna_model_path'),config.get('offline',False),prediction='lasagna')
     runtime=runtime_identity(config.get('lasagna_python'))
@@ -73,7 +82,7 @@ def prepare(volume,run,config,stop=None):
     native=dict(shape_zyx=(hi-lo).tolist(),spacing_xyz=np.asarray(volume.spacing_xyz).tolist(),
                 origin_xyz=(np.asarray(volume.origin_xyz)+lo[::-1]*volume.spacing_xyz).tolist(),frame=digest(volume.identity))
     grid=endpoint_grid(native,config['field_spacing_um'])
-    with surface_maps(volume,run,config,lo,hi) as (maps,runtime):
+    with surface_maps(volume,run,config,lo,hi,stop) as (maps,runtime):
         identity=dict(source=volume.identity,roi_lo=lo.tolist(),roi_hi=hi.tolist(),runtime=runtime,
                       lasagna_sha256=digest(runtime) if config.get('lasagna_input') else LASAGNA_MODEL_SHA,qual_sha256=None if config.get('fibres') else QUAL_MODEL_SHA,
                       lasagna_downsamples=lasagna_downsamples(config),

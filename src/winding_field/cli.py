@@ -119,6 +119,8 @@ def main(argv=None):
             'Estimate source geometry and disk use without creating the output or running model inference. Use the same options with run after checking the plan.')
         p.add_argument('--source',help='CT Zarr path or URL; alternatively select --scroll/--scan'); p.add_argument('--scroll',help='public catalog scroll identifier'); p.add_argument('--scan',help='public catalog scan identifier')
         p.add_argument('--output',required=True,help='run directory for configuration, checkpoints and products')
+        p.add_argument('--reuse-from',help='completed imported preparation/fibres from a prior run; new output required')
+        p.add_argument('--reuse-from-sha256',help='SHA256 of the selected reuse source RUN.json; required with --reuse-from')
         p.add_argument('--local',help='local mirror of source CT chunks'); p.add_argument('--cache',help='CT chunk cache directory')
         p.add_argument('--cache-gib',type=float,default=2.,help='CT chunk cache budget in GiB (default: 2); not total RAM')
         p.add_argument('--reserve-gib',type=float,default=1.,help='free disk reserve in GiB (default: 1); not RAM')
@@ -325,6 +327,8 @@ def main(argv=None):
             if until not in dict(stages) and not (config['surface_output']=='native' and until in ('mesh','flatten','assemble','render')):
                 raise ValueError('--until '+until+' is incompatible with the selected surface output')
             config['output']=str(Path(config['output']).expanduser().absolute())
+            if config.get('reuse_from'):
+                config['reuse_from']=str(Path(config['reuse_from']).expanduser().absolute())
             for key in ('local','cache','model_path','fibres','fibres_geometry','lasagna_model_path','lasagna_geometry'):
                 if config.get(key) and not isinstance(config[key],dict):
                     config[key]=str(Path(config[key]).expanduser().resolve())
