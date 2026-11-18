@@ -204,6 +204,12 @@ def solve(run,config,stop=None,*,sweep_target=None,convergence=None):
     constraint_budget=config.get('constraint_cache_bytes',0)
     if type(constraint_budget) is not int or constraint_budget<0:
         raise ValueError('constraint_cache_bytes must be a nonnegative integer')
+    observation_budget=config.get('observation_cache_bytes',0)
+    if type(observation_budget) is not int or observation_budget<0:
+        raise ValueError('observation_cache_bytes must be a nonnegative integer')
+    field_cache_bytes=config.get('field_cache_bytes',64<<20)
+    if type(field_cache_bytes) is not int or field_cache_bytes<0:
+        raise ValueError('field_cache_bytes must be a nonnegative integer')
     if config.get('preconditioner','jacobi')!='jacobi':
         raise ValueError("block workflows require preconditioner='jacobi'")
     run=Path(run); meta=json.loads((run/'PREPARED.json').read_bytes())
@@ -247,7 +253,7 @@ def solve(run,config,stop=None,*,sweep_target=None,convergence=None):
                  halo=2,sweeps=sweeps,rtol=config.get('rtol',1e-6),
                  maxiter=config.get('maxiter',2000),dtype='float64',device=config.get('device','cpu'),
                  nonconvergence_policy=config.get('nonconvergence_policy','fail'),
-                   cache_bytes=64<<20,reserve_bytes=config.get('reserve_bytes',0),
+                   cache_bytes=field_cache_bytes,reserve_bytes=config.get('reserve_bytes',0),
                    prepared_cache_bytes=config.get('prepared_cache_bytes',0))
     if bounded:options['max_bytes']=config.get('bounded_bytes',12<<30)//8
     db=sqlite3.connect((run/'fibres/fibres.sqlite').resolve().as_uri()+'?mode=ro',uri=True)
@@ -256,24 +262,58 @@ def solve(run,config,stop=None,*,sweep_target=None,convergence=None):
     cpu_inputs=None
     cache_stats=dict(budget=constraint_budget,hits=0,misses=0,builds=0,entries=0,
                      retained_bytes=0,peak_bytes=0,peak_entries=0,denied_entries=0)
+    # Static per-box observations (target, weights, support); never field values.
+    observations={};observation_state=dict(retain=bool(observation_budget),bytes=0)
+    solve_boxes=set()
+    for key in options['order']:
+        low=np.array(key)*chunk;high=np.minimum(low+chunk,shape)
+        solve_boxes.add(tuple(map(int,(*np.maximum(low-options['halo'],0),*np.minimum(high+options['halo'],shape)))))
+    observation_stats=dict(budget=observation_budget,hits=0,misses=0,entries=0,
+                           retained_bytes=0,peak_bytes=0,peak_entries=0,denied_entries=0)
 
-    def load(lo,hi):
-        if cpu_inputs is not None:return cpu_inputs.load(lo,hi)
+    def source_receipt():
+        return {'maps':meta['tiles_sha256']}
+
+    def compute_observations(lo,hi):
         if bounded:
             values=maps.read_many(('target','weights','support'),lo,hi)
             target,weights,valid=(values[k] for k in ('target','weights','support'))
         else:target,weights,valid=sample_prior(maps,meta,geometry,cal,lo,hi)
-        return target,weights,valid,{'maps':meta['tiles_sha256']}
+        return target,weights,valid,source_receipt()
+
+    def release_observations():
+        observations.clear();observation_state.update(retain=False,bytes=0)
+        observation_stats.update(entries=0,retained_bytes=0)
+
+    def load(lo,hi):
+        key=tuple(map(int,(*lo,*hi)))
+        cached=observations.get(key)
+        # The CPU pool skips a box only when both static inputs are retained.
+        if cached is not None and (cpu_inputs is None or key in static_rows):
+            observation_stats['hits']+=1
+            return (*cached,source_receipt())
+        observation_stats['misses']+=1
+        values=cpu_inputs.load(lo,hi) if cpu_inputs is not None else compute_observations(lo,hi)
+        if observation_state['retain'] and cached is None and key in solve_boxes:
+            arrays=tuple(values[:3])
+            charge=4096+sum(a.nbytes for a in arrays)
+            if charge<=observation_budget-observation_state['bytes']:
+                for array in arrays:array.setflags(write=False)
+                observations[key]=arrays;observation_state['bytes']+=charge
+                observation_stats.update(entries=len(observations),retained_bytes=observation_state['bytes'],
+                                         peak_bytes=observation_state['bytes'],peak_entries=len(observations))
+            else:observation_stats['denied_entries']+=1
+        return values
 
     def constraints(lo,hi,read_nodes):
         nonlocal row_count,static_bytes
         key=tuple(map(int,(*lo,*hi)))
-        prefetched=cpu_inputs.constraints(lo,hi,read_nodes) if cpu_inputs is not None else None
         if key in static_rows:
             cache_stats['hits']+=1
             rows=static_rows[key]
             row_count+=0 if rows is None else rows.matrix.shape[0]
             return rows
+        prefetched=cpu_inputs.constraints(lo,hi,read_nodes) if cpu_inputs is not None else None
         cache_stats['misses']+=1;cache_stats['builds']+=1
         result=(prefetched if cpu_inputs is not None else
                 _constraint_rows(db,meta,fibres,geometry,maps,lo,hi,identity['fibre_weight']))
@@ -305,7 +345,7 @@ def solve(run,config,stop=None,*,sweep_target=None,convergence=None):
                 initial.rename(root)
         saved=json.loads(checkpoint.read_bytes())
         if not saved['progress'].get('initialization_done') and not saved['progress'].get('solver'):
-            with BlockStore(root,shape,chunk,saved['identity'],resume=True,cache_bytes=64<<20,
+            with BlockStore(root,shape,chunk,saved['identity'],resume=True,cache_bytes=field_cache_bytes,
                             reserve_bytes=options['reserve_bytes'],max_bytes=options.get('max_bytes')) as store:
                 progress=store.manifest['progress']
                 for key in options['order']:
@@ -314,7 +354,7 @@ def solve(run,config,stop=None,*,sweep_target=None,convergence=None):
                     if '-'.join(map(str,key)) in store.manifest['chunks']:
                         continue
                     lo=np.array(key)*chunk; hi=np.minimum(lo+chunk,shape)
-                    _,_,valid,_=load(lo,hi)
+                    _,_,valid,_=compute_observations(lo,hi)
                     store.commit(key,initial_field(coordinates(lo,hi,geometry),geometry,cal),progress,valid)
                 progress['initialization_done']=True
                 store.save_progress(progress)
@@ -327,10 +367,10 @@ def solve(run,config,stop=None,*,sweep_target=None,convergence=None):
                               tuple(map(int,np.minimum(high+options['halo'],shape)))))
             spec=dict(run=str(run.resolve()),meta=meta,fibres=fibres,geometry=geometry,
                       calibration=cal,weight=identity['fibre_weight'],boxes=boxes,
-                      cache_bytes=constraint_budget+budget)
+                      cache_bytes=constraint_budget+budget+observation_budget)
             cpu_inputs=CPUFieldInputs(spec,workers=config['field_cpu_workers'],
                                       max_bytes=config['field_cpu_buffer_bytes'],cache=static_rows,
-                                      stop=preparation_stopped)
+                                      observations=observations,stop=preparation_stopped)
         if bounded:
             device=torch.device(config.get('device','cpu'))
             if device.type=='cuda':
@@ -352,12 +392,15 @@ def solve(run,config,stop=None,*,sweep_target=None,convergence=None):
         finish(options.get('observer'))
         static_rows.clear();static_bytes=0
         cache_stats.update(entries=0,retained_bytes=0)
+        release_observations()
         if result['status']!='SWEEP_BUDGET_REACHED':
-            return dict(status='PAUSED',solver=result,constraint_cache_stats=cache_stats)
+            return dict(status='PAUSED',solver=result,constraint_cache_stats=cache_stats,
+                        observation_cache_stats=observation_stats)
         receipt=dict(status='FIELD_READY',geometry=geometry,checkpoint_sha256=file_sha(checkpoint),
                      effective_threads=torch.get_num_threads(),
                      calibration=cal,solver=result,global_converged=False,physical_acceptance=False,
                        fibre_constraint_rows=row_count,constraint_cache_stats=cache_stats,
+                        observation_cache_stats=observation_stats,
                         numerical_status=(
                             'local solves converged; sweep budget exhausted' if result['local_solves_converged']
                             else 'local solves not converged; sweep budget exhausted'))
@@ -408,10 +451,12 @@ def solve(run,config,stop=None,*,sweep_target=None,convergence=None):
         status.pop('error',None)
         atomic_json(root/'STATUS.json',status)
         finish(options.get('observer'))
-        return dict(status='PAUSED',solver=status,constraint_cache_stats=cache_stats)
+        return dict(status='PAUSED',solver=status,constraint_cache_stats=cache_stats,
+                    observation_cache_stats=observation_stats)
     finally:
         if cpu_inputs is not None:cpu_inputs.close()
         static_rows.clear()
         cache_stats.update(entries=0,retained_bytes=0)
+        release_observations()
         maps.close(); db.close()
         if pair_provider is not None:pair_provider.__exit__()

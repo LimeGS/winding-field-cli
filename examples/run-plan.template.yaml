@@ -100,6 +100,8 @@ sweeps: 4 # Opciones: entero >=1; presupuesto de barridos, NO garantía de conve
 # field_advice: true # Opciones: true|false; diagnóstico consultivo opt-in; requiere core de desarrollo con observer; no cambia barridos, parada ni verificaciones.
 prepared_cache_bytes: 0 # Opciones: entero >=0 en bytes de workspaces retenidos; 0 desactiva; no es tope de memoria pico.
 constraint_cache_bytes: 0 # Opciones: entero >=0 en bytes de restricciones retenidas; 0 desactiva.
+# observation_cache_bytes: 4294967296 # Opciones: entero >=0 en bytes de observaciones por bloque retenidas entre barridos | null/omitir para 0 (desactivado); no es tope de RSS.
+# field_cache_bytes: 1073741824 # Opciones: entero >=0 en bytes de chunks decodificados del checkpoint | null/omitir para 64 MiB; no es tope de RSS.
 field_cpu_workers: 0 # Opciones: entero >=0 de procesos CPU de preparación; 0 desactiva; >0 requiere field_cpu_buffer_bytes > 0.
 field_cpu_buffer_bytes: 0 # Opciones: entero >=0 en bytes de buffer CPU/IPC; requiere field_cpu_workers > 0; no es tope de RAM ni RSS.
 maxiter: 2000 # Opciones: entero >=1, iteraciones máximas por solve local.
