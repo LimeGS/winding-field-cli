@@ -21,6 +21,17 @@ def reader_type():
     return LasagnaInput
 
 
+def with_external_afv(tmp_path, ct, config):
+    """Bounded imports need external AFV fibres; surface-only bounded imports are rejected."""
+    from test_splines import upstream_curves
+    afv=tmp_path/'external.afv'
+    upstream_curves(afv,(9,10,11),[(1,np.array([[1.,2.,3.],[5.,2.,3.]]))])
+    geometry=tmp_path/'fibres-geometry.json'
+    atomic_json(geometry,dict(source=str(ct),origin_xyz_um=[100.,200.,300.],spacing_xyz_um=[5.,10.,20.]))
+    config.update(fibres=str(afv),fibres_geometry=str(geometry))
+    return config
+
+
 def fixture(tmp_path, *, crops=None, source_to_base=1):
     ct=write_ct(tmp_path/'ct',np.full((9,10,11),33,np.uint8),spacing=(5.,10.,20.),origin=(100.,200.,300.),chunk=4)
     root=tmp_path/'external'; root.mkdir()
@@ -174,7 +185,7 @@ def test_classical_fibres_external_surface_bypasses_runtime(tmp_path,monkeypatch
 
 
 def test_bounded_surface_reader_never_stages_native_volume(tmp_path,monkeypatch):
-    reader_type(); ct,root,config=fixture(tmp_path)
+    reader_type(); ct,root,config=fixture(tmp_path); with_external_afv(tmp_path,ct,config)
     from winding_field import bounded_pipeline
     def forbidden(*a,**kw):pytest.fail('import must bypass model/runtime')
     monkeypatch.setattr(bounded_pipeline,'checkpoint',forbidden)
@@ -185,6 +196,15 @@ def test_bounded_surface_reader_never_stages_native_volume(tmp_path,monkeypatch)
             np.testing.assert_allclose(data['density'],.02,rtol=1e-6)
             assert identity['kind']=='external-lasagna-v2'
     assert not (tmp_path/'run/lasagna-source/input.zarr').exists()
+
+
+def test_bounded_surface_only_import_is_rejected(tmp_path):
+    reader_type(); ct,root,config=fixture(tmp_path)
+    from winding_field import bounded_pipeline
+    with Volume(ct,cache=tmp_path/'ct-cache') as volume:
+        with pytest.raises(ValueError,match='bounded preparation'):
+            with bounded_pipeline.surface_maps(volume,tmp_path/'run',config,np.zeros(3,dtype=int),np.array(volume.shape)):
+                pass
 
 
 @pytest.fixture
@@ -297,7 +317,7 @@ def test_explicit_mask_excludes_prediction_samples(tmp_path):
 
 
 def test_bounded_imported_prepare_and_completed_resume_require_no_lasagna_runtime(tmp_path,monkeypatch):
-    reader_type();ct,root,config=fixture(tmp_path)
+    reader_type();ct,root,config=fixture(tmp_path);with_external_afv(tmp_path,ct,config)
     path=ct/'.zattrs';attrs=json.loads(path.read_bytes())
     attrs['multiscales'][0]['datasets'][0]['coordinateTransformations'][0]['scale']=[8.64]*3
     atomic_json(path,attrs)
@@ -383,6 +403,7 @@ def test_partial_preparation_cannot_recreate_lost_import_provenance(tmp_path,pro
     from winding_field import predict,bounded_pipeline
     ct,root,config=fixture(tmp_path);run=tmp_path/'run'
     config.update(field_spacing_um=40.,field_chunk=4)
+    if producer=='bounded':with_external_afv(tmp_path,ct,config)
     prepare=predict.prepare if producer=='standard' else bounded_pipeline.prepare
     marker=run/('maps/0_0_0.npz' if producer=='standard' else 'coarse/calibration-progress.json')
     with Volume(ct,cache=tmp_path/'ct-cache') as volume:
