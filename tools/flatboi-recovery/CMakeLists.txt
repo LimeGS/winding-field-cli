@@ -10,7 +10,7 @@ project(flatboi_recovery LANGUAGES C CXX)
 
 include(FetchContent)
 find_package(OpenMP REQUIRED)
-find_package(OpenCV REQUIRED COMPONENTS core imgproc)
+find_package(OpenCV REQUIRED COMPONENTS core imgproc imgcodecs)
 
 set(VILLA_SOURCE "" CACHE PATH "ScrollPrize/villa checkout at the recorded revision")
 if(NOT VILLA_SOURCE)
@@ -86,4 +86,11 @@ unset(_flatboi_saved_bsl)
 add_executable(flatboi "${VILLA_LIBS}/flatboi/flatboi.cpp")
 set_target_properties(flatboi PROPERTIES AUTOMOC OFF AUTOUIC OFF AUTORCC OFF)
 target_compile_definitions(flatboi PRIVATE SLIM_CACHED PASTIX6)
-target_link_libraries(flatboi PRIVATE igl::core pastix spm OpenMP::OpenMP_CXX opencv_core opencv_imgproc)
+target_link_libraries(flatboi PRIVATE igl::core pastix spm OpenMP::OpenMP_CXX opencv_core opencv_imgproc opencv_imgcodecs)
+
+# Native regressions for the corrected PaStiX shim (return codes, pattern identity,
+# original-system residual). Run with: build/native_regression
+add_executable(native_regression "${CMAKE_CURRENT_SOURCE_DIR}/native_regression.cpp")
+set_target_properties(native_regression PROPERTIES AUTOMOC OFF AUTOUIC OFF AUTORCC OFF)
+target_compile_definitions(native_regression PRIVATE PASTIX6)
+target_link_libraries(native_regression PRIVATE igl::core pastix spm OpenMP::OpenMP_CXX)
