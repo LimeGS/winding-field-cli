@@ -63,6 +63,7 @@ print(f'PROGRESS {{n}}/{{n}}',flush=True)
     return app
 
 
+@pytest.mark.skipif(sys.platform!='linux',reason='Linux process-tree resource guard')
 def test_subprocess_resume_and_legacy_import_preserve_original_identity(tmp_path,monkeypatch):
     r=runner();v,f,obj,mapped=inputs(tmp_path);app=fake_native(tmp_path,monkeypatch,r)
     args=argparse.Namespace(output=tmp_path/'run',source_map=mapped,input=obj,app_run=app,native_recipe='installed-2f89bfc9',iterations=10,batch_iterations=10,hours=1.)
@@ -99,6 +100,7 @@ def test_status_distinguishes_live_calculation_from_durable_progress(tmp_path):
     assert (data['saved'],data['calculated'],data['energy'])==(10,17,7.5)
 
 
+@pytest.mark.skipif(sys.platform!='linux',reason='Linux process-tree resource guard')
 def test_native_run_binds_preparation_and_import_rejects_symlink_ancestor(tmp_path,monkeypatch):
     r=runner();v,f,obj,mapped=inputs(tmp_path);app=fake_native(tmp_path,monkeypatch,r)
     prep=tmp_path/'PREPARED.json';atomic_json(prep,dict(centerline=[[0,0,0],[0,0,1]]))
@@ -112,3 +114,18 @@ def test_native_run_binds_preparation_and_import_rejects_symlink_ancestor(tmp_pa
     assert not (target/'new').exists()
     atomic_json(prep,dict(centerline=[[1,0,0],[1,0,1]]))
     with pytest.raises(ValueError,match='identity'):r.run(args)
+
+
+def test_native_envelope_accepts_a_large_enforced_limit():
+    from winding_field import flatboi_checkpoint as native
+    # A 1.43 TiB container limit is admissible: size alone is not a numerical requirement.
+    assert native.native_envelope('1533428105216\n', '0\n') == (1533428105216, 0)
+    assert native.native_envelope(str(10 * 2**30) + '\n', '0\n') == (10 * 2**30, 0)
+
+
+def test_native_envelope_refuses_unenforced_or_unusable_limits():
+    from winding_field import flatboi_checkpoint as native
+    for memory, swap in (('max\n', '0\n'), ('10737418240\n', 'max\n'), ('0\n', '0\n'),
+                         ('10737418240\n', str(native.SWAP_CEILING + 1) + '\n')):
+        with pytest.raises(ValueError, match='cgroup'):
+            native.native_envelope(memory, swap)

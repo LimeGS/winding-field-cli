@@ -136,7 +136,7 @@ def test_export_mesh_real_core_and_source_ids(tmp_path,monkeypatch,capsys):
     from winding_field.util import file_sha
     source=tmp_path/'input.npz';np.savez(source,vertices_xyz=v,faces=f)
     import_mesh(dict(path=str(source),sha256=file_sha(source)),root,metadata)
-    cfg=p.settings(dict(output_frame=dict(id='test',voxel_um=9.6,origin_xyz_um=[0,0,0]),app_run='/unavailable',pitch_um=9.6,tile_size=32))
+    cfg=p.settings(dict(output_frame=dict(id='test',voxel_um=9.6,origin_xyz_um=[0,0,0]),app_run='/unavailable',pitch_um=9.6,tile_size=32,disk_reserve_gib=.001))
     monkeypatch.setattr(p,'check_flatboi',lambda app,recipe:dict(test_external=True))
     monkeypatch.setattr(p,'flatten_native',lambda v,f,app,path,**kw:planar(v,f,path))
     class CT:
@@ -172,7 +172,7 @@ def test_native_ct_positive_weight_missing_and_hash_change(tmp_path):
     import threading
     ct._lock=threading.RLock();ct._chunks=OrderedDict();ct._cache_bytes=0;ct._cache_limit=0
     ct._cache_path=tmp_path;ct._disk_reserve=0
-    ct.db=sqlite3.connect(tmp_path/'chunks.sqlite');ct.db.execute('CREATE TABLE chunks(key TEXT PRIMARY KEY,sha TEXT)')
+    ct.db=sqlite3.connect(tmp_path/'chunks.sqlite',check_same_thread=False);ct.db.execute('CREATE TABLE chunks(key TEXT PRIMARY KEY,sha TEXT)')
     ct.volume=SimpleNamespace(origin_xyz=np.array([20.,30.,40.]),spacing_xyz=np.array([2.,3.,4.]),
         shape=(4,4,4),chunks=(2,2,2),dtype=np.dtype('uint8'),metadata={'order':'C'})
     changed=False
@@ -180,6 +180,8 @@ def test_native_ct_positive_weight_missing_and_hash_change(tmp_path):
         z,y,x=np.indices((2,2,2));z+=index[0]*2;y+=index[1]*2;x+=index[2]*2
         return None if tuple(index)==(1,1,1) else (x+2*y+3*z+int(changed)).astype('uint8').tobytes()
     ct._load_chunk=load
+    from winding_field.native_ct_sampling import NativeCTSampler
+    ct._sampler=NativeCTSampler(ct.volume.shape,ct.volume.chunks,ct.volume.dtype,ct._chunk)
     frame=dict(voxel_um=1.,origin_xyz_um=[0,0,0])
     xyz=np.array([[20,30,40],[21,31.5,42],[22,33,44],[23,34.5,46]])
     values,valid=ct.sample(xyz,frame)
@@ -187,7 +189,7 @@ def test_native_ct_positive_weight_missing_and_hash_change(tmp_path):
     np.testing.assert_allclose(values[:3],[0,3,6]);assert np.isnan(values[3])
     changed=True
     with pytest.raises(ValueError,match='CT chunk changed'):ct.sample(xyz[:1],frame)
-    ct.db.close()
+    ct._sampler.close();ct.db.close()
 
 
 def test_native_ct_verified_cache_reuses_and_detects_change_after_eviction(tmp_path,monkeypatch):
@@ -337,7 +339,7 @@ def test_ct_workspace_is_subtracted_from_geometry_admission(tmp_path,monkeypatch
     p=pipeline()
     from types import SimpleNamespace
     from contextlib import contextmanager
-    cfg=p.settings(dict(output_frame=dict(id='test',voxel_um=1.,origin_xyz_um=[0,0,0]),app_run='/missing',memory_gib=1.,tile_size=8,cache_mib=0))
+    cfg=p.settings(dict(output_frame=dict(id='test',voxel_um=1.,origin_xyz_um=[0,0,0]),app_run='/missing',memory_gib=1.,tile_size=8,cache_mib=0,disk_reserve_gib=.001))
     ct=SimpleNamespace(chunks=(256,256,256),dtype=np.dtype('u1'),identity={})
     class StopProbe(Exception):pass
     class DB:

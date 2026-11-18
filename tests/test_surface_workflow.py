@@ -233,3 +233,159 @@ def test_unused_imported_vertices_do_not_shrink_actual_surface_out_of_view(tmp_p
     result = api().run_surfaces(path, tmp_path / "output")
     assert all(view["nonempty_pixels"] > 0 for view in result["renders"]["outputs"])
     assert result["renders"]["bounds_xyz"] == [[0.0, 0.0, 0.0], [0.0, 2.0, 2.0]]
+
+
+def test_prepared_extraction_batches_component_queries_without_changing_geometry(tmp_path, monkeypatch):
+    from winding_field.surface_mesh import extract_mesh
+    from winding_field.surface_sources import FieldSource
+
+    path, config = prepared(tmp_path)
+    config["levels"] = [1.5]
+    config["execution"]["tile"] = 16
+    path.write_text(json.dumps(config))
+    loaded = api().load_surface_config(path)
+    with FieldSource(loaded["field"], loaded["geometry"]) as field:
+        expected = extract_mesh(field, tmp_path / "reference", loaded["levels"], tile=16)
+    statements = []
+    connect = sqlite3.connect
+
+    def traced_connect(*args, **kwargs):
+        db = connect(*args, **kwargs)
+        db.set_trace_callback(statements.append)
+        return db
+
+    monkeypatch.setattr(sqlite3, "connect", traced_connect)
+    actual = api().run_surfaces(path, tmp_path / "actual", render=False)
+    assert actual["levels"] == expected["levels"]
+    assert (tmp_path / "actual/level-0000.obj").read_bytes() == (tmp_path / "reference/level-0000.obj").read_bytes()
+    parent_lookups = sum("SELECT parent FROM faces WHERE id=" in sql for sql in statements)
+    assert parent_lookups <= 8, f"component assembly still queries every face: {parent_lookups} lookups"
+
+
+@pytest.mark.parametrize("partial", [False, True])
+def test_prepared_resume_keeps_legacy_store_identity(tmp_path, partial):
+    from winding_field.surface_mesh import extract_mesh
+    from winding_field.surface_sources import FieldSource
+
+    path, _ = prepared(tmp_path)
+    loaded = api().load_surface_config(path)
+    root = tmp_path / "legacy"
+    calls = [0]
+
+    def stop():
+        calls[0] += 1
+        return partial and calls[0] > 2
+
+    with FieldSource(loaded["field"], loaded["geometry"]) as field:
+        extract_mesh(field, root, loaded["levels"], tile=2, level_batch=1, stop=stop)
+    binding = (root / "RUN.json").read_bytes()
+    result = api().run_surfaces(path, root, resume=True, render=False)
+    assert result["status"] == "MESH_READY"
+    assert [level["faces"] for level in result["levels"]] == [40, 40]
+    assert (root / "RUN.json").read_bytes() == binding
+
+
+@pytest.mark.parametrize("case", ["mask-hole", "exact-node", "tiny-component", "disconnected"])
+@pytest.mark.parametrize("tile", [1, 4])
+def test_prepared_default_preserves_sensitive_geometry(tmp_path, case, tile):
+    from winding_field.surface_mesh import extract_mesh
+    from winding_field.surface_sources import FieldSource
+
+    path, config = prepared(tmp_path)
+    mask = None
+    if case == "mask-hole":
+        values = np.broadcast_to(np.arange(7.0), (5, 6, 7)).copy()
+        mask = np.ones(values.shape, bool)
+        mask[2, 2, 2] = False
+        level, components, faces = 2.5, 1, 32
+    elif case == "tiny-component":
+        values = np.ones((3, 3, 10))
+        values[1, 1, 4] = -1e-8
+        level, components, faces = 0.0, 1, 8
+    else:
+        z, y, x = np.indices((5, 5, 10))
+        values = ((x - 2) ** 2 + (y - 2) ** 2 + (z - 2) ** 2).astype(float)
+        if case == "disconnected":
+            values = np.minimum(values, (x - 7) ** 2 + (y - 2) ** 2 + (z - 2) ** 2)
+        level, components, faces = 2.0, 2 if case == "disconnected" else 1, None
+    np.save(tmp_path / "phi.npy", values)
+    config["field"]["sha256"] = hashlib.sha256((tmp_path / "phi.npy").read_bytes()).hexdigest()
+    if mask is not None:
+        np.save(tmp_path / "mask.npy", mask)
+        config["field"]["mask"] = dict(path="mask.npy", sha256=hashlib.sha256((tmp_path / "mask.npy").read_bytes()).hexdigest())
+    config["geometry"]["shape_zyx"] = list(values.shape)
+    config["levels"] = [level]
+    config["execution"]["tile"] = tile
+    path.write_text(json.dumps(config))
+    loaded = api().load_surface_config(path)
+    with FieldSource(loaded["field"], loaded["geometry"]) as field:
+        expected = extract_mesh(field, tmp_path / "reference", [level], tile=tile)
+    actual = api().run_surfaces(path, tmp_path / "actual", render=False)
+    for key, value in expected["levels"][0].items():
+        if key == "area_world2":
+            assert actual["levels"][0][key] == pytest.approx(value)
+        else:
+            assert actual["levels"][0][key] == value
+    summary = actual["levels"][0]
+    assert summary["components"] == components
+    if faces is not None:
+        assert summary["faces"] == faces
+    if mask is None:
+        assert summary["boundary_edges"] == 0
+    assert summary["nonmanifold_edges"] == summary["inconsistent_edges"] == summary["duplicate_faces"] == 0
+    assert (tmp_path / "actual/level-0000.obj").read_bytes() == (tmp_path / "reference/level-0000.obj").read_bytes()
+
+
+@pytest.mark.parametrize("corruption", ["cursor", "vertices", "faces", "obj", "manifest"])
+def test_prepared_default_rejects_corruption_without_overwriting(tmp_path, corruption):
+    path, _ = prepared(tmp_path)
+    root = tmp_path / "output"
+    calls = [0]
+
+    def stop():
+        calls[0] += 1
+        return calls[0] > 3
+
+    api().run_surfaces(path, root, render=False, stop=stop if corruption in {"cursor", "vertices", "faces"} else None)
+    if corruption in {"cursor", "vertices", "faces"}:
+        with sqlite3.connect(root / "mesh.sqlite") as db:
+            db.execute({"cursor": "UPDATE meta SET value='999' WHERE key='next_tile'",
+                        "vertices": "UPDATE vertices SET x=x+100",
+                        "faces": "UPDATE faces SET area=area+1"}[corruption])
+    else:
+        target = root / ("level-0000.obj" if corruption == "obj" else "MESH.json")
+        target.write_text("user changed it" if corruption == "obj" else '{"foreign":true}')
+    before = {p.name: p.read_bytes() for p in root.iterdir() if p.is_file()}
+    with pytest.raises(ValueError):
+        api().run_surfaces(path, root, resume=True, render=False)
+    assert {name: (root / name).read_bytes() for name in before} == before
+
+
+@pytest.mark.parametrize("binding", ["malformed", "unknown-algorithm", "symlink", "dangling-symlink"])
+def test_prepared_resume_rejects_invalid_binding_without_overwriting(tmp_path, binding):
+    path, _ = prepared(tmp_path)
+    root = tmp_path / "output"
+    api().run_surfaces(path, root, render=False)
+    run = root / "RUN.json"
+    if binding == "malformed":
+        run.write_text("{invalid")
+    elif binding == "unknown-algorithm":
+        saved = json.loads(run.read_bytes())
+        saved["identity"]["algorithm"] = "unknown"
+        run.write_text(json.dumps(saved))
+    else:
+        target = tmp_path / "binding.json"
+        original = run.read_bytes()
+        if binding == "symlink":
+            target.write_bytes(original)
+        run.unlink()
+        run.symlink_to(target)
+    before = {p.name: p.read_bytes() for p in root.iterdir() if p.is_file() and not p.is_symlink()}
+    with pytest.raises((ValueError, FileNotFoundError)):
+        api().run_surfaces(path, root, resume=True, render=False)
+    assert {p.name: p.read_bytes() for p in root.iterdir() if p.is_file() and not p.is_symlink()} == before
+    if "symlink" in binding:
+        assert run.is_symlink() and run.readlink() == target
+        assert target.exists() == (binding == "symlink")
+        if target.exists():
+            assert target.read_bytes() == original

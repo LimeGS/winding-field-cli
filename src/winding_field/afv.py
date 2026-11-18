@@ -1,6 +1,6 @@
 """Read-only, calibrated AFV import into bounded world-coordinate curve blocks."""
 
-from contextlib import closing
+from contextlib import closing, suppress
 from functools import lru_cache
 import hashlib
 import heapq
@@ -8,9 +8,11 @@ import io
 import itertools
 import json
 import math
+import os
 from pathlib import Path
 import shutil
 import sqlite3
+import time
 
 import numpy as np
 
@@ -18,6 +20,10 @@ from .artifacts import Tiles
 from .io import http_url
 from .splines import bind
 from .util import atomic_json,digest,file_sha
+
+_BATCH_BLOCKS = 1000
+_BATCH_SECONDS = 2.
+_PROGRESS_SECONDS = 2.
 
 
 def _open(path):
@@ -84,10 +90,9 @@ def source_identity(path,geometry_path,source):
         embedded=dict(source=original['source'],origin_xyz_um=frame['origin_xyz_um'],spacing_xyz_um=frame['spacing_xyz_um'])
     explicit=None; descriptor_sha=None
     if geometry_path:
-        geometry_path=Path(geometry_path).expanduser().resolve()
-        if geometry_path.stat().st_size>65536: raise ValueError('AFV geometry descriptor too large')
-        raw=geometry_path.read_bytes(); descriptor_sha=hashlib.sha256(raw).hexdigest()
-        explicit=json.loads(raw)
+        from .input_settings import declaration,declaration_location
+        explicit,descriptor_sha,_=declaration(geometry_path,limit=65536)
+        geometry_path=declaration_location(geometry_path)
         if not isinstance(explicit,dict) or set(explicit)!={'source','origin_xyz_um','spacing_xyz_um'}:
             raise ValueError('AFV geometry requires source, origin_xyz_um and spacing_xyz_um')
     geometry=embedded or explicit
@@ -99,11 +104,16 @@ def source_identity(path,geometry_path,source):
         if value.shape!=(3,) or not np.isfinite(value).all() or (name=='spacing_xyz_um' and (value<=0).any()):
             raise ValueError('invalid AFV geometry '+name)
     if file_sha(path)!=sha: raise ValueError('AFV source changed during validation')
-    return dict(path=str(path),sha256=sha,geometry_path=str(geometry_path) if geometry_path else None,
+    return dict(path=str(path),sha256=sha,geometry_path=geometry_path if geometry_path else None,
         geometry_sha256=descriptor_sha,**geometry,input_count=header['fiber_count'],block_count=header['block_count'])
 
 
 def _pieces(points,maps,stop=None):
+    from .afv_clip import pieces
+    yield from pieces(points,maps,stop)
+
+
+def _scalar_pieces(points,maps,stop=None):
     """Split at exact voxel-cell boundaries: a sparse edge cannot jump a narrow gap."""
     @lru_cache(maxsize=8)
     def tile(key): return maps.load(key,('support',))['support']
@@ -153,11 +163,26 @@ def _pieces(points,maps,stop=None):
     if len(piece)>1: yield np.asarray(piece)
 
 
-def validate_retained(run,config):
+def _checked_source(config,source,verified_source):
+    """Only reuse a freshly checked result supplied by this invocation's caller."""
+    from .input_settings import check_recipe_sources
+    check_recipe_sources(config)
+    if verified_source is None:return source_identity(config['fibres'],config.get('fibres_geometry'),source)
+    from .input_settings import declaration_location
+    geometry=declaration_location(config.get('fibres_geometry'))
+    if (not isinstance(verified_source,dict)
+            or verified_source.get('path')!=str(Path(config['fibres']).expanduser().resolve())
+            or verified_source.get('geometry_path')!=geometry
+            or http_url(verified_source.get('source',''))!=source['source']):
+        raise ValueError('verified AFV input context changed')
+    return verified_source
+
+
+def validate_retained(run,config,*,verified_source=None):
     run=Path(run); root=run/'fibres'; binding=root/'IMPORT.json'
     if not binding.exists(): return
     meta=json.loads((run/'PREPARED.json').read_bytes()); identity=json.loads(binding.read_bytes())
-    if identity['input']!=source_identity(config['fibres'],config.get('fibres_geometry'),meta['source']):
+    if identity['input']!=_checked_source(config,meta['source'],verified_source):
         raise ValueError('external AFV input identity changed')
     if identity['maps']!=meta['tiles_sha256']: raise ValueError('AFV import maps changed')
     receipt=run/'FIBRES.json'
@@ -167,23 +192,101 @@ def validate_retained(run,config):
             raise ValueError('imported AFV payload or inventory changed')
 
 
-def import_fibres(run,config,stop=None,*,maps=None):
+def _source_blocks(src,source,meta,stop):
+    family_column='family' if 'family' in {r[1] for r in src.execute('PRAGMA table_info(fibers)')} else "'unknown'"
+    total=0
+    for fid,family,count,annotation in src.execute(f'SELECT id,{family_column},point_count,annotation FROM fibers ORDER BY id'):
+        if type(count) is not int or count<2 or not isinstance(annotation,str) or len(annotation)>1048576:
+            raise ValueError('invalid AFV fibre metadata')
+        note=json.loads(annotation);family=family or 'unknown';cursor=0;previous=None
+        classification=note.get('hv_classification') if isinstance(note,dict) else None
+        tag=classification.get('manual_tag') if isinstance(classification,dict) else None
+        if family=='unknown' and tag in ('V','H'):family=tag
+        for first,raw in src.execute('SELECT first_segment,points FROM blocks WHERE fiber_id=? ORDER BY first_segment',(fid,)):
+            if stop and stop():raise InterruptedError('AFV import paused')
+            if first!=cursor or len(raw)%24 or not 2<=len(raw)//24<=257:
+                raise ValueError('invalid or discontinuous AFV block')
+            points=np.frombuffer(raw,dtype='<f8').reshape(-1,3)
+            if not np.isfinite(points).all() or (previous is not None and not np.array_equal(previous,points[0])):
+                raise ValueError('nonfinite or discontinuous AFV block points')
+            previous=points[-1];cursor+=len(points)-1;total+=1
+            world=points*source['spacing_xyz_um']+source['origin_xyz_um']
+            if not np.isfinite(world).all():raise ValueError('nonfinite AFV world coordinates')
+            yield fid,family,first,annotation,(world-meta['origin_xyz'])/meta['spacing_xyz']
+        if cursor+1!=count:raise ValueError('AFV block point inventory mismatch')
+    if total!=source['block_count']:raise ValueError('AFV block inventory changed')
+
+
+_WORKER_SUPPORT=None
+
+
+def _clip_initialize(path,cache_bytes):
+    from .afv_clip import SupportTiles
+    global _WORKER_SUPPORT
+    _WORKER_SUPPORT=SupportTiles(Tiles(path,readonly=True),cache_bytes=cache_bytes)
+
+
+def _clip_worker(job):
+    from .import_parallel import RESULT_BYTES,worker_stopped
+    before=_WORKER_SUPPORT.loads;fragments=[]
+    charge=len(job[3].encode())+job[-1].nbytes+4096
+    if charge>RESULT_BYTES:return job,None,dict(pid=os.getpid(),support_loads=0)
+    for piece in _pieces(job[-1],_WORKER_SUPPORT,worker_stopped):
+        charge+=piece.nbytes+256
+        if charge>RESULT_BYTES:
+            fragments=None;break
+        fragments.append(piece)
+    return job,fragments,dict(pid=os.getpid(),support_loads=_WORKER_SUPPORT.loads-before)
+
+
+def import_fibres(run,config,stop=None,*,verified_source=None,maps=None):
+    started=time.monotonic()
     run=Path(run); meta=json.loads((run/'PREPARED.json').read_bytes())
-    supplied_maps=maps is not None
-    if supplied_maps:
-        meta=dict(meta,**meta['native_geometry'])
-    source=source_identity(config['fibres'],config.get('fibres_geometry'),meta['source'])
+    supplied=maps is not None
+    if supplied: meta=dict(meta,**meta['native_geometry'])
+    source=_checked_source(config,meta['source'],verified_source)
     identity=dict(input=source,maps=meta['tiles_sha256'],origin=meta['origin_xyz'],spacing=meta['spacing_xyz'])
+    from .import_parallel import limits,local_inputs,ordered_map
+    execution=limits(config.get('import_workers',1) if (local_inputs(config) and not supplied) else 1,
+                     output=run,reserve_bytes=config.get('reserve_bytes',0),worker_bytes=368<<20)
+    execution.update(worker_pids=[],worker_support_loads=0,streaming_replays=0)
     root=run/'fibres'; root.mkdir(exist_ok=True); bind(root/'IMPORT.json',identity)
-    validate_retained(run,config)
-    if (run/'FIBRES.json').exists(): return json.loads((run/'FIBRES.json').read_bytes())
-    maps=maps if supplied_maps else Tiles(run/'maps')
-    src=_open(config['fibres']); db=sqlite3.connect(root/'fibres.sqlite')
+    validate_retained(run,config,verified_source=source)
+    if (run/'FIBRES.json').exists():
+        if source!=_checked_source(config,meta['source'],None):
+            raise ValueError('external AFV source changed during import')
+        return json.loads((run/'FIBRES.json').read_bytes())
+    maps=maps if supplied else Tiles(run/'maps'); src=_open(config['fibres']); db=sqlite3.connect(root/'fibres.sqlite')
+    from .afv_clip import SupportTiles
+    support=SupportTiles(maps,cache_bytes=64<<20)
+    pending=processed=commits=0; committed=None
+    batch_started=last_commit_utc=last_update=None
+
+    def progress(status,force=False):
+        nonlocal last_update
+        if committed is None: return
+        now=time.monotonic()
+        if not force and last_update is not None and now-last_update<_PROGRESS_SECONDS: return
+        elapsed=max(0.,now-started)
+        atomic_json(root/'STATUS.json',dict(schema='afv-import-progress-v1',status=status,
+            identity_sha256=digest(identity),blocks_total=source['block_count'],blocks_processed=processed,
+            blocks_committed=committed,blocks_pending=pending,commits_this_invocation=commits,
+            elapsed_s=elapsed,blocks_per_second=processed/elapsed if elapsed else 0.,
+            last_batch_committed_utc=last_commit_utc,updated_utc=time.time(),execution=execution))
+        last_update=now
+
+    def commit_batch():
+        nonlocal pending,batch_started,committed,commits,last_commit_utc
+        if pending:
+            db.commit()
+            committed+=pending; commits+=1; last_commit_utc=time.time()
+            pending=0; batch_started=None
+
     try:
         if config.get('bounded_preparation'):
             from .util import sqlite_quota
             sqlite_quota(db,config.get('bounded_bytes',12<<30)//4)
-        if not supplied_maps and maps.identity()!=meta['tiles_sha256']: raise ValueError('AFV import maps changed')
+        if not supplied and maps.identity()!=meta['tiles_sha256']: raise ValueError('AFV import maps changed')
         db.executescript('CREATE TABLE IF NOT EXISTS done(fid INTEGER,block INTEGER,sha TEXT,PRIMARY KEY(fid,block));'
             'CREATE TABLE IF NOT EXISTS curves(id INTEGER PRIMARY KEY,tile TEXT,points BLOB,family TEXT,source_id INTEGER,source_block INTEGER,annotation TEXT);'
             'CREATE INDEX IF NOT EXISTS curves_source ON curves(source_id,source_block);'
@@ -192,31 +295,35 @@ def import_fibres(run,config,stop=None,*,maps=None):
                        'LEFT JOIN curve_bounds b ON b.id=c.id WHERE d.fid IS NULL OR b.id IS NULL LIMIT 1').fetchone()
                 or db.execute('SELECT 1 FROM curve_bounds b LEFT JOIN curves c ON c.id=b.id WHERE c.id IS NULL LIMIT 1').fetchone()):
             raise ValueError('imported AFV inventory changed')
-        family_column='family' if 'family' in {r[1] for r in src.execute('PRAGMA table_info(fibers)')} else "'unknown'"
-        total_blocks=0
-        for fid,family,count,annotation in src.execute(f'SELECT id,{family_column},point_count,annotation FROM fibers ORDER BY id'):
-            if type(count) is not int or count<2 or not isinstance(annotation,str) or len(annotation)>1048576:
-                raise ValueError('invalid AFV fibre metadata')
-            note=json.loads(annotation); family=family or 'unknown'; cursor=0; previous=None
-            classification=note.get('hv_classification') if isinstance(note,dict) else None
-            tag=classification.get('manual_tag') if isinstance(classification,dict) else None
-            if family=='unknown' and tag in ('V','H'): family=tag
-            for first,raw in src.execute('SELECT first_segment,points FROM blocks WHERE fiber_id=? ORDER BY first_segment',(fid,)):
-                if stop and stop(): return dict(status='PAUSED')
-                if first!=cursor or len(raw)%24 or not 2<=len(raw)//24<=257:
-                    raise ValueError('invalid or discontinuous AFV block')
-                points=np.frombuffer(raw,dtype='<f8').reshape(-1,3)
-                if not np.isfinite(points).all() or (previous is not None and not np.array_equal(previous,points[0])):
-                    raise ValueError('nonfinite or discontinuous AFV block points')
-                previous=points[-1]; cursor+=len(points)-1; total_blocks+=1
-                world=points*source['spacing_xyz_um']+source['origin_xyz_um']
-                if not np.isfinite(world).all(): raise ValueError('nonfinite AFV world coordinates')
-                local=(world-meta['origin_xyz'])/meta['spacing_xyz']
+        committed=db.execute('SELECT count(*) FROM done').fetchone()[0]
+        status_path=root/'STATUS.json'
+        if status_path.is_file() and status_path.stat().st_size<=65536:
+            with suppress(OSError,ValueError,TypeError,AttributeError):
+                previous_status=json.loads(status_path.read_bytes())
+                stamp=previous_status.get('last_batch_committed_utc')
+                if (previous_status.get('identity_sha256')==digest(identity)
+                        and previous_status.get('blocks_committed')==committed
+                        and type(stamp) in (int,float) and math.isfinite(stamp)):
+                    last_commit_utc=stamp
+        progress('IMPORTING',force=True)
+        jobs=_source_blocks(src,source,meta,stop)
+        computed=(ordered_map(_clip_worker,jobs,workers=execution['workers'],max_inflight=execution['max_inflight'],
+                    initializer=_clip_initialize,initargs=(str(run/'maps'),(64<<20)//execution['workers']),stop=stop)
+                  if execution['workers']>1 else ((job,None,None) for job in jobs))
+        with closing(computed):
+            for job,fragments,stats in computed:
+                fid,family,first,annotation,local=job
+                if stats:
+                    if stats['pid'] not in execution['worker_pids']:execution['worker_pids'].append(stats['pid'])
+                    execution['worker_support_loads']+=stats['support_loads']
+                    execution['streaming_replays']+=int(fragments is None)
                 old=db.execute('SELECT sha FROM done WHERE fid=? AND block=?',(fid,first)).fetchone()
                 rows=db.execute('SELECT id,points,family,annotation FROM curves WHERE source_id=? AND source_block=? ORDER BY id',(fid,first)) if old else None
                 checksum=hashlib.sha256(digest([family,annotation]).encode())
-                db.execute('BEGIN')
-                for piece in _pieces(local,maps,stop):
+                if not old and not db.in_transaction:
+                    db.execute('BEGIN'); batch_started=time.monotonic()
+                for piece in (_pieces(local,support,stop) if fragments is None else fragments):
+                    if stop and stop():raise InterruptedError('AFV import paused')
                     world=piece*meta['spacing_xyz']+meta['origin_xyz']
                     buffer=io.BytesIO(); np.save(buffer,world,allow_pickle=False)
                     box=tuple(float(v) for pair in zip(world.min(0),world.max(0)) for v in pair)
@@ -241,23 +348,39 @@ def import_fibres(run,config,stop=None,*,maps=None):
                 if old:
                     if old!=(checksum.hexdigest(),) or rows.fetchone() is not None:
                         raise ValueError('imported AFV inventory changed')
-                else: db.execute('INSERT INTO done VALUES (?,?,?)',(fid,first,checksum.hexdigest()))
-                db.commit()
-            if cursor+1!=count: raise ValueError('AFV block point inventory mismatch')
-        if total_blocks!=source['block_count'] or db.execute('SELECT count(*) FROM done').fetchone()[0]!=total_blocks:
+                else:
+                    db.execute('INSERT INTO done VALUES (?,?,?)',(fid,first,checksum.hexdigest()))
+                    pending+=1
+                processed+=1
+                if pending and (pending>=_BATCH_BLOCKS or time.monotonic()-batch_started>=_BATCH_SECONDS):
+                    commit_batch()
+                progress('IMPORTING')
+        if processed!=source['block_count'] or db.execute('SELECT count(*) FROM done').fetchone()[0]!=processed:
             raise ValueError('imported AFV inventory changed')
-        if stop and stop(): return dict(status='PAUSED')
-        if source!=source_identity(config['fibres'],config.get('fibres_geometry'),meta['source']):
+        commit_batch()
+        if stop and stop(): raise InterruptedError('AFV import paused')
+        progress('VALIDATING',force=True)
+        if source!=_checked_source(config,meta['source'],None):
             raise ValueError('external AFV source changed during import')
+        if not supplied and maps.identity()!=meta['tiles_sha256']:raise ValueError('AFV import maps changed during import')
         count=db.execute('SELECT count(*) FROM curves').fetchone()[0]
         kept=db.execute('SELECT count(DISTINCT source_id) FROM curves').fetchone()[0]
     except InterruptedError:
-        db.rollback(); return dict(status='PAUSED')
+        db.rollback(); pending=0
+        progress('PAUSED',force=True)
+        return dict(status='PAUSED')
+    except BaseException:
+        db.rollback(); pending=0
+        with suppress(OSError): progress('FAILED',force=True)
+        raise
     finally:
-        maps.close(); src.close(); db.close()
+        support.close()
+        if not supplied: maps.close()
+        src.close(); db.close()
     result=dict(status='FIBRES_READY',method='external-afv',spatial_index=True,count=count,
         input_count=source['input_count'],imported_sources=kept,excluded_sources=source['input_count']-kept,
         exclusion_reason='outside ROI or unsupported surface',identity=identity,sha256=file_sha(root/'fibres.sqlite'),
         coordinates='XYZ micrometres',physical_accuracy='UNVALIDATED')
     atomic_json(run/'FIBRES.json',result)
+    progress('FIBRES_READY',force=True)
     return result

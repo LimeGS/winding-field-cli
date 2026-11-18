@@ -1,7 +1,7 @@
 """Tiled CT preparation with explicit physical units and model provenance."""
 
 import hashlib
-from contextlib import ExitStack
+from contextlib import closing
 from functools import lru_cache
 import itertools
 import json
@@ -62,20 +62,26 @@ def observations(ct,spacing_xyz,*,threshold=None,presence=None,tangents=None,val
                 support=support,presence=presence.astype(np.float32),tangents=tangents.astype(np.float32))
 
 
-def prepare(volume,run,config,stop=None):
-    with ExitStack() as stack:
-        return _prepare(volume,run,config,stop,stack)
+def prepare(volume,run,config,stop=None,*,verified_lasagna=None):
+    from contextlib import ExitStack
+    try:
+        with ExitStack() as stack:
+            if config.get('lasagna_input') and not volume.remote and volume._ledger is not None:
+                stack.enter_context(volume.verified_chunks())
+            result=_prepare(volume,run,config,stop,stack,verified_lasagna)
+    except InterruptedError:
+        return dict(status='PAUSED')
+    if result['status']=='PREPARED':atomic_json(Path(run)/'PREPARED.json',result)
+    return result
 
 
-def _prepare(volume,run,config,stop,stack):
+def _prepare(volume,run,config,stop,stack,verified_lasagna=None):
     validate_config(config)
     run=Path(run); run.mkdir(parents=True,exist_ok=True)
     lo,hi=bounds(config.get('roi_lo',[0,0,0]),config.get('roi_hi',list(volume.shape)),volume.shape)
     stride=config.get('stride',1); chunk=config.get('chunk',32)
-    if type(stride) is not int or not 1<=stride<=8 or type(chunk) is not int or not 4<=chunk<=128:
-        raise ValueError('stride must be 1..8 and chunk 4..128')
     method='external-afv' if config.get('fibres') else config.get('prediction','classical')
-    surface=bool(config.get('lasagna_input')) or method!='classical'
+    surface=method!='classical' or bool(config.get('lasagna_input'))
     imported=None
     halo=40
     core_size=48 if method=='qual-v2' else 32
@@ -92,13 +98,17 @@ def _prepare(volume,run,config,stop,stack):
                   validity=dict(invalid_value=invalid,filter_radius=40))
     if surface:
         from . import lasagna
-        if config.get('lasagna_input'):
-            from .lasagna_input import LasagnaInput
-            imported=stack.enter_context(LasagnaInput(volume,run,config))
-            imported.validate_used()
+        from .lasagna_input import streamed,CalibratedLasagnaInput
         geometry['validity']['filter_radius']=0
         geometry['input_halo_voxels']=(lasagna.BORDER if method=='external-afv' else halo)*stride
-        ready=lasagna.prepare(volume,run,config,geometry,stop,**({'reader':imported} if imported else {}))
+        if method=='external-afv' and config.get('lasagna_input'): geometry['input_halo_voxels']=0
+        if streamed(config):
+            from .lasagna_stream import LasagnaInput
+            imported=stack.enter_context(LasagnaInput(volume,run,config))
+            imported.validate_used()
+        elif config.get('lasagna_input') and not (run/'lasagna-source/maps/TILES.json').exists():
+            imported=stack.enter_context(CalibratedLasagnaInput(volume,run,config,geometry,verified_source=verified_lasagna))
+        ready=lasagna.prepare(volume,run,config,geometry,stop,reader=imported)
         if ready['status']=='PAUSED': return ready
     threshold=config.get('threshold')
     if method=='classical' and threshold is None:
@@ -134,7 +144,11 @@ def _prepare(volume,run,config,stop,stack):
                                     padding='edge') if method in ('qual-v2','sd2') else None)
     if surface:
         identity.update(surface_method='lasagna',lasagna_sha256=file_sha(run/'LASAGNA.json'),recipe='independent-lasagna-surface-v1')
-    maps=Tiles(run/'maps',shape=shape,chunk=chunk,identity=identity)
+    maps=stack.enter_context(closing(Tiles(run/'maps',shape=shape,chunk=chunk,identity=identity)))
+    surface_jobs=surface_execution=None
+    if imported is not None:
+        from .import_tiles import observations as import_observations
+        surface_jobs,surface_execution=import_observations(imported,volume,geometry,maps,config,stack,stop)
     model_type={'sd2':SD2,'qual-v2':QualV2}.get(method)
     model=model_type(config.get('model_path'),config.get('device','cpu'),config.get('offline',False)) if model_type else None
     def infer(ct):
@@ -149,7 +163,8 @@ def _prepare(volume,run,config,stop,stack):
             if method=='qual-v2': arrays['probabilities']=result[2]
             return arrays
         arrays=observations(ct,spacing,threshold=threshold,presence=result[0],tangents=result[1],
-                             validity=ct!=invalid if invalid is not None else None,device=config.get('device','cpu'))
+                              validity=ct!=invalid if invalid is not None else None,device=config.get('device','cpu'))
+        if surface: arrays['fibre_support']=arrays['support'].copy()
         if method=='qual-v2':
             arrays['probabilities']=result[2]
         return arrays
@@ -206,18 +221,25 @@ def _prepare(volume,run,config,stop,stack):
                 raise ValueError('source CT changed since preparation')
             continue
         if surface:
-            arrays.update(imported.read(geometry,start,end) if imported else lasagna.read_observations(run,geometry,start,end))
+            if surface_jobs is not None:
+                surface_key,values=next(surface_jobs)
+                if surface_key!=key:raise ValueError('imported surface tile order changed')
+                arrays.update(values)
+            else:arrays.update(imported.read(geometry,start,end) if imported else lasagna.read_observations(run,geometry,start,end))
         maps.write(key,arrays,dict(ct_sha256=sha))
         completed+=1
         if stop and stop():
             maps.close(); return dict(status='PAUSED',new_tiles=completed)
+    if surface_jobs is not None:
+        if next(surface_jobs,None) is not None:raise ValueError('unexpected extra imported surface tile')
+    if surface_execution is not None:surface_execution['complete']=True
     binding=maps.identity()
     meta=dict(geometry,identity=identity,tiles_sha256=binding,prediction=method,
               surface_method='lasagna' if surface else 'classical',fibre_method=method,
               source=volume.identity,model_sha256=identity['model_sha256'],
               status='PREPARED',physical_accuracy='UNVALIDATED',
-              method_note=(('external Lasagna' if imported else 'official Lasagna')+' surfaces with '+method+' fibres') if surface else 'classical CT threshold/structure-tensor baseline')
-    if imported:meta['surface_origin']='external'
-    atomic_json(run/'PREPARED.json',meta)
+              method_note=(('imported' if config.get('lasagna_input') else 'official')+' Lasagna surfaces with '+method+' fibres')
+                          if surface else 'classical CT threshold/structure-tensor baseline')
+    if config.get('lasagna_input'):meta['surface_origin']='external'
     maps.close()
     return meta

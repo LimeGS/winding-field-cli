@@ -7,6 +7,7 @@ import io
 import itertools
 import json
 import os
+import time
 import tracemalloc
 import weakref
 from copy import deepcopy
@@ -426,6 +427,15 @@ def test_immutable_sources_reject_changes_even_with_restored_mtime(tmp_path, bac
         source.read((0, 0, 0), (2, 2, 2))
         before = path.stat()
         raw = bytearray(path.read_bytes())
+        # Metadata guards need a distinct filesystem tick (Linux may use 4 ms).
+        clock = tmp_path / "ctime-clock"
+        deadline = time.monotonic() + 5
+        while True:
+            clock.touch()
+            if clock.stat().st_ctime_ns > before.st_ctime_ns:
+                break
+            assert time.monotonic() < deadline, "filesystem ctime did not advance"
+            time.sleep(.001)
         if change == "replace":
             replacement = path.with_suffix(".replacement")
             replacement.write_bytes(raw)

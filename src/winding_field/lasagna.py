@@ -7,6 +7,7 @@ from pathlib import Path
 import shutil
 import sqlite3
 import subprocess
+from contextlib import ExitStack,closing,nullcontext
 
 import numpy as np
 
@@ -15,6 +16,7 @@ from .io import Volume,bounds
 from .models import checkpoint,LASAGNA_MODEL_SHA
 from .splines import bind,run_child
 from .util import atomic_bytes,atomic_json,file_sha
+from .config import lasagna_downsamples
 
 VILLA_REV='b29f310957c7b29e7d332f9876e0e487819cfaa3'
 DEFAULT_PYTHON='~/.cache/winding-field/lasagna-venv/bin/python'
@@ -69,28 +71,35 @@ def decode_observations(grad_mag,nx,ny,cos,*,input_spacing_xyz,encode_scale,grad
     shape=arrays[0].shape
     if len(shape)!=3 or any(a.shape!=shape for a in arrays) or validity.shape!=shape or validity.dtype!=np.bool_:
         raise ValueError('Lasagna products require matching ZYX arrays and boolean validity')
-    if any(not np.isfinite(a).all() for a in arrays):
+    if any(a.dtype.kind not in 'uif' or not np.isfinite(a).all() for a in arrays):
         raise ValueError('Lasagna products must be finite')
-    if any(np.any((a<0)|(a>255)) for a in arrays):
+    if np.any(arrays[0]<0):
+        raise ValueError('Lasagna gradient magnitude must be nonnegative')
+    if any(np.any((a<0)|(a>255)) for a in arrays[1:]):
         raise ValueError('Lasagna encoded products must be in 0..255')
+    return physical_observations(grad_mag,decode_lasagna_normals(nx,ny),cos,
+        input_spacing_xyz=input_spacing_xyz,encode_scale=encode_scale,
+        grad_mag_factor=grad_mag_factor,validity=validity)
+
+
+def physical_observations(grad_mag,normals,cos,*,input_spacing_xyz,encode_scale,grad_mag_factor,validity):
     spacing=np.asarray(input_spacing_xyz,float)
     if (spacing.shape!=(3,) or not np.isfinite(spacing).all() or (spacing<=0).any()
             or not np.isfinite([encode_scale,grad_mag_factor]).all() or min(encode_scale,grad_mag_factor)<=0):
         raise ValueError('Lasagna input spacing and density scales must be positive finite values')
-    normals=decode_lasagna_normals(nx,ny)/spacing
+    normals=normals/spacing
     magnitude=np.linalg.norm(normals,axis=-1)
     density=np.asarray(grad_mag,dtype=np.float64)*(grad_mag_factor/encode_scale)*magnitude
-    if (not np.isfinite(normals).all() or not np.isfinite(density).all()
-            or np.any(density>np.finfo(np.float32).max)):
-        raise ValueError('Lasagna physical observations exceed finite float32 range')
-    density=density.astype(np.float32)
-    if np.any((arrays[0]>0)&(magnitude>0)&(density==0)):
+    if not np.isfinite(density).all() or (density>np.finfo(np.float32).max).any():
+        raise ValueError('Lasagna physical density exceeds finite float32 range')
+    encoded=density.astype(np.float32)
+    if np.any((density>0)&(encoded==0)):
         raise ValueError('Lasagna positive density is below float32 range')
     support=validity & (density>0) & (magnitude>0)
     normals/=np.maximum(magnitude[...,None],1e-12)
     normals[~support]=0; density[~support]=0
     phase=np.where(support,np.asarray(cos,dtype=np.float32)/255,0)
-    return dict(density=density,normals=normals.astype(np.float32),
+    return dict(density=density.astype(np.float32),normals=normals.astype(np.float32),
                 support=support,surface_phase=phase.astype(np.float32))
 
 
@@ -125,26 +134,30 @@ def _validate_work(root):
         raise ValueError('Lasagna output is unsealed; use a new output')
 
 
-def validate_retained(run,config):
+def validate_retained(run,config,*,volume=None):
     if config.get('lasagna_input'):
-        from .lasagna_input import LasagnaInput,retained_import
-        from .workflow import open_volume
-        root=Path(run)/'lasagna-import'
-        if not retained_import(run):return
-        identity=json.loads((root/'IDENTITY.json').read_bytes())
-        source=identity['binding']['ct_selected']
-        volume=open_volume(dict(config,source=source['source'],level=source['level']))
-        try:
-            with LasagnaInput(volume,run,config) as reader:
-                reader.validate_used()
-                receipt=Path(run)/'LASAGNA.json'
-                if receipt.exists() and json.loads(receipt.read_bytes())['identity']!=reader.identity:
-                    raise ValueError('external Lasagna receipt changed')
-        finally:volume.close()
-        return
+        from .lasagna_input import streamed
+        if streamed(config):
+            from .lasagna_stream import LasagnaInput,retained_import
+            from .workflow import open_volume
+            if not retained_import(run):return
+            identity=json.loads((Path(run)/'lasagna-import/IDENTITY.json').read_bytes())
+            source=identity['binding']['ct_selected']
+            with closing(open_volume(dict(config,source=source['source'],level=source['level']))) if volume is None else nullcontext(volume) as current:
+                if current.identity!=source:raise ValueError('Lasagna CT source identity changed')
+                with LasagnaInput(current,run,config) as reader:
+                    reader.validate_used()
+                    receipt=Path(run)/'LASAGNA.json'
+                    if receipt.exists() and json.loads(receipt.read_bytes())['identity']!=reader.identity:
+                        raise ValueError('external Lasagna receipt changed')
+            return
+        from .lasagna_input import validate_retained as validate_input
+        return validate_input(run,config,volume=volume)
     root=Path(run)/'lasagna-source'
     if not root.exists(): return
     identity=json.loads((root/'IDENTITY.json').read_bytes())
+    if identity.get('output_downsamples')!=lasagna_downsamples(config):
+        raise ValueError('Lasagna output downsample settings changed; use a new output')
     if (identity['runtime']!=runtime_identity(config.get('lasagna_python'))
             or identity['worker_sha256']!=file_sha(Path(__file__).with_name('lasagna_worker.py'))):
         raise ValueError('Lasagna runtime changed')
@@ -160,7 +173,7 @@ def validate_retained(run,config):
             raise ValueError('Lasagna receipt or input inventory changed')
 
 
-def _products(root,shape):
+def _products(root,shape,factors):
     manifest=json.loads((root/'output/surface.lasagna.json').read_bytes())
     if (manifest.get('version')!=2 or manifest.get('base_shape_zyx')!=shape
             or manifest.get('source_to_base')!=1 or manifest.get('grad_mag_encode_scale')!=1000.
@@ -169,36 +182,61 @@ def _products(root,shape):
     paths={}
     for name in ('grad_mag','nx','ny','cos'):
         group=manifest['groups'][name]
-        relative=f'surface_{name}.ome.zarr/0'
-        if group!=dict(zarr=relative,scaledown=0,channels=[name]):
+        level=factors[name].bit_length()-1
+        relative=f'surface_{name}.ome.zarr/{level}'
+        if group!=dict(zarr=relative,scaledown=level,channels=[name]):
             raise ValueError('Lasagna output group mismatch: '+name)
         path=root/'output'/relative
         metadata=json.loads((path/'.zarray').read_bytes())
-        if metadata['shape']!=shape or metadata['dtype']!='|u1':
+        if metadata['shape']!=[(n+factors[name]-1)//factors[name] for n in shape] or metadata['dtype']!='|u1':
             raise ValueError('Lasagna output array geometry mismatch')
         paths[name]=path
     return manifest,paths
 
 
+def select_products(root,factors):
+    """Select official scalar/vector pyramid levels, never resample encoded bytes."""
+    path=root/'output/surface.lasagna.json'
+    manifest=json.loads(path.read_bytes())
+    for name,factor in factors.items():
+        level=factor.bit_length()-1
+        relative=f'surface_{name}.ome.zarr/{level}'
+        if not (root/'output'/relative/'.zarray').is_file():
+            raise ValueError('missing requested Lasagna pyramid level: '+relative)
+        manifest['groups'][name]=dict(zarr=relative,scaledown=level,channels=[name])
+    atomic_json(path,manifest)
+    for name,factor in factors.items():
+        folder=root/'output'/f'surface_{name}.ome.zarr';level=str(factor.bit_length()-1)
+        attrs=folder/'.zattrs'
+        if attrs.exists():
+            metadata=json.loads(attrs.read_bytes())
+            for scale in metadata.get('multiscales',[]):
+                scale['datasets']=[d for d in scale['datasets'] if d['path']==level]
+            atomic_json(attrs,metadata)
+        # Only this run's generated, unselected pyramid directories are removed.
+        for child in folder.iterdir():
+            if child.is_dir() and child.name.isdecimal() and child.name!=level:
+                shutil.rmtree(child)
+
+
 def prepare(volume,run,config,geometry,stop=None,reader=None):
     if config.get('lasagna_input'):
-        from .lasagna_input import LasagnaInput
-        if reader is None:
-            with LasagnaInput(volume,run,config) as imported:
-                imported.validate_used()
-                return prepare(volume,run,config,geometry,stop,reader=imported)
-        result=dict(status='LASAGNA_READY',identity=reader.identity,geometry=geometry,
-                    encoding=reader.manifest,density_units='cycles/micrometer',surface_method='external-lasagna')
-        bind(Path(run)/'LASAGNA.json',result)
-        return result
+        if reader is not None:
+            result=dict(status='LASAGNA_READY',identity=reader.identity,geometry=geometry,
+                        encoding=reader.manifest,density_units='cycles/micrometer',surface_method='external-lasagna')
+            bind(Path(run)/'LASAGNA.json',result)
+            return result
+        from .lasagna_input import prepare as import_input
+        return import_input(volume,run,config,geometry,stop)
     runtime=runtime_identity(config.get('lasagna_python'))
     weights=checkpoint(config.get('lasagna_model_path'),config.get('offline',False),prediction='lasagna')
     staged=input_geometry(volume,geometry)
+    factors=lasagna_downsamples(config)
     worker=Path(__file__).with_name('lasagna_worker.py')
     identity=dict(source=volume.identity,geometry=geometry,input=staged,runtime=runtime,
         checkpoint_sha256=LASAGNA_MODEL_SHA,worker_sha256=file_sha(worker),
         invalid_value=config.get('invalid_value'),tile=TILE,overlap=32,border=BORDER,
-        device=config.get('device','cpu'),precision='float32-cpu-preampere/bfloat16-ampere',output_scaledown=1)
+        device=config.get('device','cpu'),precision='float32-cpu-preampere/bfloat16-ampere',output_downsamples=factors)
     run=Path(run); root=run/'lasagna-source'; root.mkdir(parents=True,exist_ok=True)
     bind(root/'IDENTITY.json',identity)
     validate_retained(run,config)
@@ -231,24 +269,27 @@ def prepare(volume,run,config,geometry,stop=None,reader=None):
     command=[runtime['executable'],'-I',str(worker.resolve()),'predict3d',
         '--input',str(array.resolve()),'--output',str((output/'surface.lasagna.json').resolve()),
         '--unet-checkpoint',str(Path(weights).resolve()),'--tile-size',str(TILE),'--overlap','32',
-        '--border',str(BORDER),'--cos-scaledown','1','--scaledown','1','--device',config.get('device','cpu'),
+        '--border',str(BORDER),'--cos-scaledown',str(factors['cos']),
+        '--scaledown',str(min(factors['grad_mag'],factors['nx'])),'--device',config.get('device','cpu'),
         '--input-reader','python-zarr','--prefetch-workers','1','--prefetch-tiles-per-gpu','1',
         '--flush-workers','0','--accumulator-workers','0','--input-cache-gib','0',
-        '--no-download','--levels','2','--ome-chunk',str(CHUNK),'--ome-compressor','none']
+        '--no-download','--levels',str(max(factors.values()).bit_length()),
+        '--ome-chunk',str(CHUNK),'--ome-compressor','none']
     atomic_json(root/'WORK.json',_hashes(output))
     try:
         complete=run_child(command,root/'inference.log',stop,config.get('reserve_bytes',0),config.get('threads',4),label='Lasagna')
+        if complete: select_products(root,factors)
     finally:
         # shortcut: a hard-killed parent leaves unverifiable work; use a new run in that case.
         atomic_json(root/'WORK.json',_hashes(output))
     if not complete: return dict(status='PAUSED')
-    manifest,paths=_products(root,shape)
-    # Read every full-resolution product chunk before sealing the ready receipt.
+    manifest,paths=_products(root,shape,factors)
+    # Read every selected product chunk before sealing the ready receipt.
     for path in paths.values():
         product=Volume(path,voxel_um=1.,cache=root/'reader-cache',offline=True)
         try:
-            for key in itertools.product(*(range((n-1)//CHUNK+1) for n in shape)):
-                lo=np.asarray(key)*CHUNK; product.read(lo,np.minimum(lo+CHUNK,shape))
+            for key in itertools.product(*(range((n-1)//CHUNK+1) for n in product.shape)):
+                lo=np.asarray(key)*CHUNK; product.read(lo,np.minimum(lo+CHUNK,product.shape))
         finally: product.close()
     result=dict(status='LASAGNA_READY',identity=identity,input_sha256=file_sha(root/'input.sqlite'),
         input_metadata_sha256={name:file_sha(root/name) for name in ('input.zarr/.zgroup','input.zarr/0/.zarray')},
@@ -260,19 +301,28 @@ def prepare(volume,run,config,geometry,stop=None,reader=None):
 
 def read_observations(run,geometry,lo,hi):
     root=Path(run)/'lasagna-source'; receipt=json.loads((Path(run)/'LASAGNA.json').read_bytes())
+    if receipt.get('method')=='external-lasagna':
+        from .lasagna_input import read_observations as read_input
+        return read_input(run,geometry,lo,hi)
     identity=receipt['identity']
     if geometry!=identity['geometry']: raise ValueError('Lasagna observation geometry changed')
     lo,hi=bounds(lo,hi,geometry['shape_zyx']); staged=identity['input']
     lo=lo+staged['roi_offset_zyx']; hi=hi+staged['roi_offset_zyx']
-    manifest,paths=_products(root,staged['shape_zyx']); values={}
-    for name,path in dict(paths,ct=root/'input.zarr/0').items():
-        product=Volume(path,voxel_um=1.,cache=root/'reader-cache',offline=True)
-        try: values[name]=product.read(lo,hi)
-        finally: product.close()
-    validity=np.ones(values['ct'].shape,bool)
-    if identity['invalid_value'] is not None: validity &= values['ct']!=identity['invalid_value']
-    result=decode_observations(*(values[n] for n in ('grad_mag','nx','ny','cos')),
+    manifest,paths=_products(root,staged['shape_zyx'],identity['output_downsamples'])
+    with ExitStack() as stack:
+        products={name:stack.enter_context(closing(Volume(path,voxel_um=1.,cache=root/'reader-cache',offline=True)))
+                  for name,path in dict(paths,ct=root/'input.zarr/0').items()}
+        ct=products['ct'].read(lo,hi)
+        validity=np.ones(ct.shape,bool) if identity['invalid_value'] is None else ct!=identity['invalid_value']
+        values={}
+        from .lasagna_input import _sample
+        for names in (('grad_mag',),('nx','ny'),('cos',)):
+            name='normals' if len(names)==2 else names[0]
+            values[name],valid=_sample(products,[np.arange(a,b) for a,b in zip(lo,hi)],
+                                      manifest['groups'][names[0]]['scaledown'],names,[])
+            validity &= valid
+    result=physical_observations(*(values[n] for n in ('grad_mag','normals','cos')),
         input_spacing_xyz=staged['spacing_xyz'],encode_scale=manifest['grad_mag_encode_scale'],
         grad_mag_factor=manifest['grad_mag_factor'],validity=validity)
-    result['ct']=values['ct']
+    result['ct']=ct
     return result

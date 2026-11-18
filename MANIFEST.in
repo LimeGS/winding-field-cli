@@ -1,4 +1,5 @@
 include README.md THIRD_PARTY.md
+include uv.toml
 recursive-include licenses *.txt
 recursive-include provenance *.json
 recursive-include docs *.md *.png
@@ -7,9 +8,17 @@ prune .sdd
 prune docs/superpowers
 prune docs/verification
 recursive-include tests *.py
+include benchmarks/field_cpu.py
 include tools/vendor.py
 include examples/*.py
 include examples/*.json
+include examples/*.yaml
 include tools/run_field.py
 include tools/run_surfaces.py
 include tools/benchmark_blocks.py
+include tools/bench_solver.py
+include tools/bench_flattening.py tools/flattening_ct.py tools/flattening_metrics.py tools/flattening_review.py
+include tools/install.sh
+include tools/install-runtime.sh tools/ubuntu-packages.txt
+recursive-include docker *.in *.txt
+include tools/bench_local_imports.py tools/bench_afv_import.py

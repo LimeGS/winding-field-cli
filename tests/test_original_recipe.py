@@ -142,8 +142,8 @@ def test_missing_local_ct_is_bound():
     from types import SimpleNamespace
     from winding_field.original_pipeline import sample_ct
     def absent(key):raise FileNotFoundError(key)
-    volume=SimpleNamespace(metadata={},array_path='',_chunk_bytes=absent,spacing_xyz=[1.,1.,1.],
-                           origin_xyz=[0.,0.,0.],shape=(2,2,2),chunks=(2,2,2))
+    volume=SimpleNamespace(metadata={},array_path='',decoded_chunk=absent,spacing_xyz=[1.,1.,1.],
+                           origin_xyz=[0.,0.,0.],shape=(2,2,2),chunks=(2,2,2),dtype=np.dtype('u1'))
     missing=set();values,valid=sample_ct(volume,np.array([[0.,0.,0.]]),missing=missing)
     assert not valid[0] and np.isnan(values[0]) and missing=={'0.0.0'}
 
@@ -172,3 +172,18 @@ def test_integrated_resume_binds_missing_ct(tmp_path):
     state=dict(stages={'original':dict(receipt='ORIGINAL.json',sha256=file_sha(receipt))})
     with pytest.raises(ValueError,match='availability changed'):
         _validate_products(tmp_path,state,volume=SimpleNamespace(_chunk_bytes=lambda key:b'new CT'))
+
+
+def test_original_old_reader_rejected_before_creating_publication_index(tmp_path):
+    from types import SimpleNamespace
+    from winding_field.original_pipeline import export_mesh
+    from winding_field.util import atomic_json
+    out=tmp_path/'old';out.mkdir()
+    atomic_json(out/'IDENTITY.json',dict(ct={'backend':'portable-zarr-v2'}))
+    before=(out/'IDENTITY.json').read_bytes()
+    with pytest.raises(ValueError,match='v1.5.0'):
+        export_mesh(tmp_path/'unneeded-mesh',out,
+                    SimpleNamespace(identity={'backend':'vc_reader-zarr-v2-checked-v1'}),
+                    dict(output_frame=dict(id='test',origin_xyz_um=[0,0,0],voxel_um=1)))
+    assert sorted(p.name for p in out.iterdir())==['IDENTITY.json']
+    assert (out/'IDENTITY.json').read_bytes()==before

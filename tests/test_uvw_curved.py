@@ -143,14 +143,7 @@ def test_curved_workers_preserve_geometry_and_provenance(tmp_path):
     with GeometryWorkers(descriptor,level,[5.8,6.,6.2],7,workers=2,region_cache_bytes=1<<20) as pool:
         parallel=list(pool.map(jobs))
     for (a,_),(b,_) in zip(serial,parallel):
-        # Stored float32 endpoints may leave the exact band or reference edge;
-        # preserve conservative masks rather than requiring unsafe admission.
-        assert a['geometry'].any() and (a['reference_face']>=0).all()
-        assert (a['cause'][~a['geometry']]==10).all()
-        with field_array(tmp_path,lambda p:p[...,0]*p[...,2]) as field:
-            recovered,valid=xyz_to_uvw(ref,field,a['xyz'][a['geometry']])
-        assert valid.all()
-        np.testing.assert_allclose(recovered[:,:2],uv[a['geometry']],atol=1e-6,rtol=0)
+        assert a['geometry'].all() and (a['reference_face']>=0).all()
         np.testing.assert_allclose(a['reference_barycentric'].sum(1),1.)
         for key in a:np.testing.assert_array_equal(a[key],b[key])
 
@@ -165,6 +158,17 @@ def test_curved_inverse_uses_physical_units_at_large_origin(tmp_path):
         assert valid.all()
         back,valid=xyz_to_uvw(ref,field,xyz)
         assert valid.all();np.testing.assert_allclose(back[:,:2],uv,atol=1e-5)
+
+
+def test_curved_worker_preserves_geometry_at_large_origin(tmp_path):
+    from winding_field.uvw_workers import compute_geometry
+    origin=np.array([1e6,-2e6,3e6]);spacing=np.array([2.,3.,4.]);ref=curved_patch()
+    ref=Reference(ref.world*spacing+origin,ref.faces,ref.uv*spacing[:2],6.,band=(5.8,6.2))
+    with field_array(tmp_path,lambda p:((p-origin)/spacing)[...,0]*((p-origin)/spacing)[...,2],
+        origin=origin,spacing=spacing) as field:
+        data,_=compute_geometry(ref,field,dict(origin_xyz_um=origin,voxel_um=1.),[[6.06,12.12]],6.2)
+        assert data['geometry'].all(),data['cause']
+        assert (data['reference_face']>=0).all()
 
 
 def test_source_change_during_curved_search_is_detected(tmp_path,monkeypatch):
@@ -199,30 +203,57 @@ def test_transport_error_cannot_hide_skinny_competing_branch(tmp_path):
         assert not valid.any()
 
 
-@pytest.mark.parametrize('other_chart',[False,True])
-def test_encoded_coordinate_must_recover_requested_uv(tmp_path,other_chart):
+@pytest.mark.parametrize('origin,valid',[(0.,True),(1e16,False)])
+def test_encoded_coordinate_must_recover_requested_uv(tmp_path,origin,valid):
     from winding_field.uvw_workers import compute_geometry,CAUSES
     world=np.array([[3.00000003,2.,5.],[9.,2.,5.],[9.,8.,5.],[3.00000003,8.,5.]])
     ref=Reference(world,np.array([[0,1,2],[0,2,3]]),world[:,:2],5.)
-    if other_chart:
-        other=np.array([[2.,2.,5.],[3.00000001,2.,5.],[3.00000001,8.,5.],[2.,8.,5.]])
-        ref=Reference(np.concatenate((world,other)),np.concatenate((ref.faces,ref.faces+4)),
-            np.concatenate((ref.uv,other[:,:2]+20)),5.)
     with field_array(tmp_path,lambda p:p[...,2]) as field:
-        recovered,valid=xyz_to_uvw(ref,field,[[3.,4.,6.]])
-        assert bool(valid[0])==other_chart
-        if other_chart:np.testing.assert_allclose(recovered[0],[23.,24.,6.])
-        data,_=compute_geometry(ref,field,dict(origin_xyz_um=[0.,0.,0.],voxel_um=1.),np.array([[3.00000003,4.]]),6.)
-        assert not data['geometry'][0]
-        assert data['cause'][0]==CAUSES['coordinate_precision']
+        data,_=compute_geometry(ref,field,dict(origin_xyz_um=[origin,0.,0.],voxel_um=1.),np.array([[3.00000003,4.]]),6.)
+        assert data['geometry'][0]==valid
+        assert data['cause'][0]==(CAUSES['valid'] if valid else CAUSES['coordinate_precision'])
+        if valid:np.testing.assert_allclose(data['xyz'],[[3.00000003,4.,6.]],rtol=0,atol=1e-14)
+
+
+@pytest.mark.parametrize('w',[5.8,6.2])
+def test_encoded_band_endpoints_preserve_curved_correspondence(tmp_path,w):
+    from winding_field.uvw_workers import compute_geometry
+    ref=curved_patch();ref.band=(5.8,6.2)
+    uv=np.array([[3.03,4.04],[3.,4.],[3.05,4.0625]])
+    with field_array(tmp_path,lambda p:p[...,0]*p[...,2]) as field:
+        data,_=compute_geometry(ref,field,dict(origin_xyz_um=[0.,0.,0.],voxel_um=1.),uv,w)
+        assert data['geometry'].all(),data['cause']
+        assert (data['reference_face']>=0).all()
+        outside,_=compute_geometry(ref,field,dict(origin_xyz_um=[0.,0.,0.],voxel_um=1.),uv,w+(-.01 if w==5.8 else .01))
+        assert not outside['geometry'].any()
+        # The public inverse still rejects arbitrary XYZ outside the requested band.
+        _,valid=xyz_to_uvw(ref,field,[[3.,4.,5.79/3]])
+        assert not valid.any()
 
 
 def test_incoming_transport_envelope_keeps_near_missed_branch_unresolved(tmp_path):
     from winding_field.uvw_intersections import trajectory_hits
     ref=skinny_competing_patch()
-    # Offset across the flow: the skinny triangle is outside the numerical
-    # trajectory but inside the incoming integration-error envelope.
     base=np.array([3.,4.,2.])+3e-5*np.array([3.,0.,-2.])/np.sqrt(13.)
     with field_array(tmp_path,lambda p:p[...,0]*p[...,2]) as field:
         _,resolved=trajectory_hits(ref,field,base,uncertainty_um=1e-4)
     assert not resolved
+
+
+def test_publish_exact_encoding_without_second_affine_rounding(tmp_path):
+    from winding_field.uvw_workers import compute_geometry
+    x=2286189799.342009;origin=np.array([-1996792493.6633632,0.,0.]);unit=.12345
+    world=np.array([[x-3,2.,5.],[x+3,2.,5.],[x+3,8.,5.],[x-3,8.,5.]])
+    world=((world-origin)/unit)*unit+origin
+    ref=Reference(world,np.array([[0,1,2],[0,2,3]]),np.array([[0.,2.],[6.,2.],[6.,8.],[0.,8.]]),5.)
+    uv=np.array([[3.,4.]])
+    with field_array(tmp_path,lambda p:p[...,2],origin=(x-5,0.,0.)) as field:
+        data,_=compute_geometry(ref,field,dict(origin_xyz_um=origin.tolist(),voxel_um=unit),uv,6.)
+        assert data['geometry'].all()
+        twice=((data['xyz']-origin)/unit)*unit+origin
+        recovered,_=xyz_to_uvw(ref,field,twice)
+        assert np.linalg.norm(recovered[:,:2]-uv)>1e-6
+        stored=data['encoded_xyz']*unit+origin
+        np.testing.assert_array_equal(stored,data['xyz'])
+        recovered,valid=xyz_to_uvw(ref,field,stored)
+        assert valid.all() and np.linalg.norm(recovered[:,:2]-uv)<=1e-6

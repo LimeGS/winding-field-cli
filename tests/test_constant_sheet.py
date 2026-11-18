@@ -1,6 +1,7 @@
 """Installed constant-W stages preserve exact geometry and receipt bindings."""
 import importlib.util
 import json
+import sys
 
 import numpy as np
 import pytest
@@ -12,6 +13,22 @@ def preparation():
     assert importlib.util.find_spec('winding_field.sheet_prepare'), 'installed preparation is missing'
     from winding_field import sheet_prepare
     return sheet_prepare
+
+
+def test_render_rejects_old_ct_identity_before_creating_output(tmp_path):
+    from winding_field.sheet_finish import render
+    source=tmp_path/'validated';source.mkdir()
+    for name in ('map.npz','QUALITY.json','PREPARED.json','disconnected-source.npz'):
+        (source/name).write_bytes(b'not-needed-before-identity-check')
+    atomic_json(source/'MESH.json',dict(metadata=dict(frame='test',voxel_um=1.)))
+    files={p.name:file_sha(p) for p in source.iterdir()}
+    atomic_json(source/'VALIDATED.json',dict(status='MAP_VALIDATED_DIAGNOSTIC',overlap={'complete':True},files=files))
+    prior=tmp_path/'old.json';atomic_json(prior,dict(ct={'backend':'vc_reader'}))
+    config=dict(ct=dict(source='/must-not-open'),prior_identity=str(prior),settings=dict(
+        output_frame=dict(id='test',voxel_um=1.,origin_xyz_um=[0,0,0]),app_run='/unused'))
+    with pytest.raises(ValueError,match='v1.5.0'):
+        render(source,tmp_path/'output',config)
+    assert not (tmp_path/'output').exists()
 
 
 def extracted(tmp_path):
@@ -48,6 +65,7 @@ def test_reference_cut_keeps_an_existing_disk_connected():
     assert report['topology']['cut']['euler_characteristic']==1
 
 
+@pytest.mark.skipif(sys.platform!='linux',reason='Linux process-tree resource guard')
 def test_prepare_accounts_disconnected_geometry_and_rejects_tampering(tmp_path):
     p=preparation();mesh=extracted(tmp_path);out=tmp_path/'prepared'
     result=p.prepare(mesh,out,3.5,[[0,0,0],[0,0,6]])
@@ -89,13 +107,13 @@ def test_isotropic_calibration_z_orientation_and_exact_anchor():
     with pytest.raises(ValueError):p.reference_anchor(v,f,uv,[[0,0,0],[0,0,4]],10.)
 
 
-def native_fixture(prepared,tmp_path):
+def native_fixture(prepared,tmp_path,recipe='installed-2f89bfc9'):
     from winding_field import flatboi_checkpoint as r
     from winding_field.patch_pipeline import LAUNCHER_SHA,NATIVE_RECIPES
     record,mapped=preparation().load_prepared(prepared)
     root=tmp_path/'native';root.mkdir();batch=root/'batch-fixture';batch.mkdir()
     identity=dict(source_map_sha256=file_sha(prepared/'initial-map.npz'),source_obj_sha256=file_sha(prepared/'inputmesh.obj'),
-                  app_sha256=LAUNCHER_SHA,binary_sha256=NATIVE_RECIPES['installed-2f89bfc9'],runner_sha256=file_sha(r.__file__),
+                  app_sha256=LAUNCHER_SHA,binary_sha256=NATIVE_RECIPES[recipe],runner_sha256=file_sha(r.__file__),
                   source_prepared_sha256=file_sha(prepared/'PREPARED.json'),
                   batch_iterations=10,energy='symmetric_dirichlet',tolerance=1e-6,threads=2)
     # Exact planar native result; the circular initialization itself need not pass visual distortion gates.
@@ -112,10 +130,12 @@ def native_fixture(prepared,tmp_path):
     return root
 
 
-def test_validate_rebinds_source_geometry_and_centerline(tmp_path):
+@pytest.mark.skipif(sys.platform!='linux',reason='Linux process-tree resource guard')
+@pytest.mark.parametrize('recipe',['installed-2f89bfc9','historical'])
+def test_validate_rebinds_source_geometry_and_centerline(tmp_path,recipe):
     p=finishing();mesh=extracted(tmp_path);prepared=tmp_path/'prepared'
     preparation().prepare(mesh,prepared,3.5,[[0,0,0],[0,0,6]])
-    native=native_fixture(prepared,tmp_path)
+    native=native_fixture(prepared,tmp_path,recipe)
     with pytest.raises(ValueError,match='centerline'):
         p.validate(prepared,native,tmp_path/'bad',[[1,0,0],[1,0,6]],3.)
     out=tmp_path/'validated';report=p.validate(prepared,native,out,None,3.)
@@ -129,6 +149,7 @@ def test_validate_rebinds_source_geometry_and_centerline(tmp_path):
     assert not (tmp_path/'wrong-native'/'VALIDATED.json').exists()
 
 
+@pytest.mark.skipif(sys.platform!='linux',reason='Linux process-tree resource guard')
 def test_installed_stage_dispatch_renders_ct_and_feeds_atlas(tmp_path,capsys):
     finishing()
     from winding_field.cli import main
@@ -172,6 +193,7 @@ def test_installed_stage_dispatch_renders_ct_and_feeds_atlas(tmp_path,capsys):
 
 
 @pytest.mark.parametrize('change',['origin','tile-size'])
+@pytest.mark.skipif(sys.platform!='linux',reason='Linux process-tree resource guard')
 def test_render_rejects_shifted_origin_and_unreadable_tiles_before_output(tmp_path,change):
     p=finishing();mesh=extracted(tmp_path);prepared=tmp_path/'prepared'
     preparation().prepare(mesh,prepared,3.5,[[0,0,0],[0,0,6]])
@@ -187,6 +209,7 @@ def test_render_rejects_shifted_origin_and_unreadable_tiles_before_output(tmp_pa
 
 
 @pytest.mark.parametrize('change',['centerline','runner'])
+@pytest.mark.skipif(sys.platform!='linux',reason='Linux process-tree resource guard')
 def test_validation_rejects_replaced_preparation_or_unimported_runner(tmp_path,change):
     p=finishing();mesh=extracted(tmp_path);prepared=tmp_path/'prepared'
     preparation().prepare(mesh,prepared,3.5,[[0,0,0],[0,0,6]])
@@ -203,6 +226,7 @@ def test_validation_rejects_replaced_preparation_or_unimported_runner(tmp_path,c
 
 
 @pytest.mark.parametrize('stage',['prepare','validate'])
+@pytest.mark.skipif(sys.platform!='linux',reason='Linux process-tree resource guard')
 def test_output_symlink_ancestor_rejected_before_writing(tmp_path,stage):
     p=finishing();mesh=extracted(tmp_path);prepared=tmp_path/'prepared'
     target=tmp_path/'target';target.mkdir();alias=tmp_path/'alias';alias.symlink_to(target,target_is_directory=True)

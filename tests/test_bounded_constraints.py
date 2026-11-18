@@ -38,7 +38,8 @@ def test_physical_upper_boundary_survives_grid_roundoff(tmp_path):
             provider([0]*3,[3]*3,lambda nodes:np.zeros(len(nodes)))
 
 
-def test_global_pair_catalog_preserves_cross_block_row_and_exterior_values(tmp_path):
+@pytest.mark.parametrize('cache_bytes',[0,1,1<<20])
+def test_global_pair_catalog_preserves_cross_block_row_and_exterior_values(tmp_path,cache_bytes):
     from winding_field.bounded_constraints import build,PairCatalog
     from constraint_templates import StencilConstraints
     from winding_field.util import file_sha
@@ -55,19 +56,27 @@ def test_global_pair_catalog_preserves_cross_block_row_and_exterior_values(tmp_p
     phi=np.arange(72.).reshape(3,3,8)**2
     sampled=np.linspace(points[0],points[1],7)
     expected=StencilConstraints.pairs(sampled[:-1],sampled[1:],[0]*3,[1]*3,(3,3,8),weight=2.)
-    with PairCatalog(root,grid) as provider:
+    with PairCatalog(root,grid,cache_bytes=cache_bytes) as provider:
         lo=np.array([0,0,3]);hi=np.array([3,3,5])
         q=provider(lo,hi,lambda nodes:phi.ravel()[nodes])
         reference=expected.restrict(lo,hi,lambda nodes:phi.ravel()[nodes])
         np.testing.assert_allclose(q.matrix.toarray(),reference.matrix.toarray())
         np.testing.assert_allclose(q.targets,reference.targets)
         assert np.any(q.targets!=0)
+        # Changing exterior values must never be hidden by retained templates.
+        later=provider(lo,hi,lambda nodes:phi.ravel()[nodes]+7)
+        expected_later=expected.restrict(lo,hi,lambda nodes:phi.ravel()[nodes]+7)
+        np.testing.assert_array_equal(later.targets,expected_later.targets)
+        np.testing.assert_array_equal(q.targets,reference.targets)
+        assert provider.stats['bytes']<=cache_bytes
+        assert provider.stats['hits']==(1 if cache_bytes>1 else 0)
         from winding_field.global_residual import verify
         def read(lo,hi):return phi[tuple(slice(a,b) for a,b in zip(lo,hi))]
         def obs(lo,hi):return np.zeros((*tuple(hi-lo),3),'f4'),np.ones(tuple(hi-lo),'f4'),np.ones(tuple(hi-lo),bool),{}
         a=verify((3,3,8),2,[1]*3,read,obs,constraints=provider)
         b=verify((3,3,8),2,[1]*3,read,obs,constraints=expected.restrict)
         assert a==b
+    assert provider.stats['bytes']==0
     with sqlite3.connect(root/'pairs.sqlite') as db:db.execute('UPDATE pairs SET points=zeroblob(48) WHERE id=1')
     with pytest.raises(ValueError,match='changed'):
         build(root,source,file_sha(source),grid,weight=2.,quota_bytes=1<<20)

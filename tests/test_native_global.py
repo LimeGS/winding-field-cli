@@ -25,19 +25,11 @@ def test_overlap_iterator_preserves_contacts_slivers_and_count():
     assert overlap_pairs(uv,np.empty((0,3),int))==0
 
 
-def test_overlap_candidate_admission_precedes_neighbor_materialization(monkeypatch):
-    import winding_field.flatten as flatten
-    real=flatten.cKDTree; requests=[]
-    class ObservedTree:
-        def __init__(self,*args):self.tree=real(*args)
-        def query_ball_point(self,*args,**kwargs):
-            requests.append(kwargs.get('return_length',False))
-            return self.tree.query_ball_point(*args,**kwargs)
-    monkeypatch.setattr(flatten,'cKDTree',ObservedTree)
+def test_overlap_small_candidate_chunk_still_completes_every_pair():
     uv=np.array([[0.,0.],[1,0],[0,1]])
-    with pytest.raises(RuntimeError,match='candidate'):
-        list(iter_overlap_pairs(uv,np.tile([0,1,2],(5,1)),max_candidates=4))
-    assert requests==[True]
+    report={}
+    assert len(list(iter_overlap_pairs(uv,np.tile([0,1,2],(5,1)),max_candidates=4,report=report)))==10
+    assert report['complete'] and report['pairs']==10
 
 
 def test_overlap_budget_and_cancellation_never_report_complete():
@@ -91,15 +83,14 @@ def test_qualify_exact_native_thresholds_and_all_invalid_report():
     assert (arrays['reasons']&1).all();json.dumps(report,allow_nan=False)
 
 
-def test_qualification_budget_failure_is_not_an_accepted_subset(monkeypatch):
-    cut=disk();monkeypatch.setattr(global_uv,'MAX_NARROW_TESTS',0)
-    with pytest.raises(RuntimeError,match='narrow'):global_uv.qualify_map(cut,cut['vertices'][:,:2])
+def test_qualification_budget_failure_is_not_an_accepted_subset():
+    cut=disk()
+    with pytest.raises(RuntimeError,match='narrow'):
+        global_uv.qualify_map(cut,cut['vertices'][:,:2],max_tests=0)
 
 
-def test_input_limits_reject_before_allocations_or_optional_library(monkeypatch):
-    cut=disk();monkeypatch.setattr(global_uv,'MAX_FACES',3)
-    with pytest.raises(ValueError,match='bound'):global_uv.cut_component(cut['vertices'],cut['faces'])
-    monkeypatch.setattr(global_uv,'MAX_FACES',1250000)
+def test_input_validation_rejects_bad_geometry_and_indices():
+    cut=disk()
     for faces in (np.array([[0,1,99]]),np.array([[0,1,-1]]),np.array([[0.,1.,2.]]),np.array([[0,0,1]])):
         with pytest.raises(ValueError):global_uv.cut_component(cut['vertices'],faces)
     v=cut['vertices'].copy();v[0]=np.inf
@@ -115,22 +106,20 @@ def test_mvc_linear_precision_including_obtuse_angles():
     assert report['true_residual_pass'] and max(report['relative_residuals'])<=1e-10
 
 
-@pytest.mark.parametrize('info,answer',[(1,np.array([2.])),(0,np.array([0.]))])
-def test_solver_rejects_info_or_false_convergence(monkeypatch,info,answer):
+def test_solver_rejects_false_convergence_that_never_reaches_the_true_residual(monkeypatch):
     import scipy.sparse.linalg as sla
-    monkeypatch.setattr(sla,'gmres',lambda *a,**k:(answer,info))
-    with pytest.raises(ValueError,match='converge|residual'):
+    # info=0 with an iterate the true residual rejects must never be accepted.
+    monkeypatch.setattr(sla,'gmres',lambda *a,**k:(np.zeros(1),0))
+    with pytest.raises(ValueError,match='stagnated|nonfinite|converge'):
         global_uv._solve(eye(1,format='csc'),np.array([[2.,2.]]),None)
 
 
-def test_solver_inner_iteration_budget_and_callback(monkeypatch):
+def test_solver_stops_on_cancellation_between_cycles(monkeypatch):
     import scipy.sparse.linalg as sla
-    def never_converges(*args,**kwargs):
-        for _ in range(301):kwargs['callback'](1.)
-        return np.ones(1),0
-    monkeypatch.setattr(sla,'gmres',never_converges)
-    with pytest.raises(RuntimeError,match='iteration budget'):
-        global_uv._solve(eye(1,format='csc'),np.ones((1,2)),None)
+    class Weak:
+        nnz=0
+        def solve(self,values):return values*.95
+    monkeypatch.setattr(sla,'spilu',lambda *a,**k:Weak())
     calls=[]
     def stop():
         calls.append(None)
@@ -196,18 +185,25 @@ def test_reject_nonmanifold_duplicate_inconsistent_and_disconnected_input():
 
 
 def test_cut_budget_and_corrupt_boundary_rejected(monkeypatch):
-    pytest.importorskip('igl');v,f=sphere();monkeypatch.setattr(global_uv,'MAX_CUT_VERTICES',len(v))
-    with pytest.raises(ValueError,match='cut.*bound'):global_uv.cut_component(v,f)
+    igl=pytest.importorskip('igl');v,f=sphere()
+    from field_runtime import ResourceUnavailable
+    from winding_field import native_patches
+    def admit(required_bytes,*,phase,**kwargs):
+        if phase=='cut output arrays':raise ResourceUnavailable('cut allocation unavailable')
+        return dict(admitted=True)
+    monkeypatch.setattr(native_patches,'admit_memory',admit)
+    def forbidden(*args):raise AssertionError('cut must not allocate after failed admission')
+    monkeypatch.setattr(igl,'cut_mesh',forbidden)
+    with pytest.raises(ResourceUnavailable,match='cut allocation'):global_uv.cut_component(v,f)
     cut=disk();cut['boundary']=np.array([0,1,2,4])
     with pytest.raises(ValueError,match='boundary'):global_uv.mean_value_map(cut)
 
 
-def test_existing_disk_needs_no_extra_cut_vertex_budget(monkeypatch):
+def test_existing_disk_needs_no_extra_cut_vertex_copies():
     pytest.importorskip('igl');original=disk()
-    monkeypatch.setattr(global_uv,'MAX_CUT_VERTICES',len(original['vertices']))
     cut,report=global_uv.cut_component(original['vertices'],original['faces'])
     np.testing.assert_array_equal(cut['parent'],np.arange(len(original['vertices'])))
-    assert report['seam_duplicates']==0
+    assert report['seam_duplicates']==0 and report['cut_vertex_upper_bound']==len(original['vertices'])
 
 
 def test_direct_arap_folded_disk_known_isometry():

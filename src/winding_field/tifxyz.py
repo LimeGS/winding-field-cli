@@ -97,7 +97,7 @@ def _code_identity():
               'tifxyz_predicates.py','tifxyz_build.py','native/predicates.h','native/predicates.cpp','native/predicates.cu',
              'util.py', 'surface_sources.py']
     versions = {}
-    for name in ('numpy', 'scipy', 'scikit-image', 'libigl', 'tifffile', 'winding-field-experiments'):
+    for name in ('numpy', 'scipy', 'scikit-image', 'libigl', 'tifffile', 'winding-field'):
         try: versions[name] = importlib.metadata.version(name)
         except importlib.metadata.PackageNotFoundError: versions[name] = 'unavailable'
     import field_store
@@ -134,7 +134,7 @@ def _budget(settings, root):
 
 
 def _space(root, settings, pending=0):
-    fs = os.statvfs(root); quantum = max(fs.f_frsize, fs.f_bsize, 4096); device = root.stat().st_dev
+    fs = os.statvfs(root); quantum = max(fs.f_frsize, 4096); device = root.stat().st_dev
     def charge(path):
         info = path.lstat()
         if info.st_dev!=device or not (stat.S_ISREG(info.st_mode) or stat.S_ISDIR(info.st_mode)):

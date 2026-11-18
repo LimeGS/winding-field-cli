@@ -1,0 +1,16 @@
+{
+  "field_kind": "zarr-v2",
+  "field_url": "https://huggingface.co/datasets/LimeGS/winding-field-PHerc.Paris.4-307.2um/resolve/6753c9812ec8c455401da69b4e758769e565e39f/field.json",
+  "field_sha256": "8f148279de9fc0bc9a877c84e3209a7d0bda8d17cd9d7175820ce075512835be",
+  "field_complete_sha256": "57df0ad0358b3f6963b165fd155f91b22da2d37f3d8b996e6a018afd7dc133e9",
+  "field_support_policy": "stored",
+  "field_frame": "PHercParis4/20260411134726:L2",
+  "field_voxel_um": 9.6,
+  "field_origin_xyz": [0, 0, 0],
+  "field_spacing_xyz": [32, 32, 32],
+  "field_shape_zyx": [593, 256, 256],
+  "sheet_step": 1.192497988541921,
+  "levels": [-71.54987931251526],
+  "tile": 128,
+  "cache_bytes": 67108864
+}

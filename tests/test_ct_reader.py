@@ -153,12 +153,27 @@ def test_shared_volume_uses_native_and_preserves_coordinates(served):
         volume.close()
 
 
-def test_verified_legacy_payload_is_reused_offline(served):
+def test_decoded_cache_snapshot_recheck_uses_bounded_transport(served,monkeypatch):
+    from contextlib import closing
+    from pathlib import Path
+    import numpy as np
+    from winding_field.io import Volume
+    root,url,expected=served
+    read=Path.read_bytes
+    def metadata_only(path):
+        assert path.suffix!='.blob','payload recheck bypassed bounded native transport'
+        return read(path)
+    with closing(Volume(url,cache=root/'cache',decoded_cache_bytes=4096)) as volume:
+        monkeypatch.setattr(Path,'read_bytes',metadata_only)
+        np.testing.assert_array_equal(volume.decoded_chunk('0/0.0.0'),expected[:2,:2,:3])
+
+
+def test_verified_small_native_cache_is_reused_offline(served):
     import numpy as np
     from winding_field.io import Volume
 
     root, url, expected = served
-    # Small budgets exercise the existing streaming/cache format.
+    # A small native cache remains reusable by a subsequent offline session.
     old = Volume(url, cache=root / 'cache', cache_bytes=128)
     old.read([0, 0, 0], [2, 2, 3])
     old.close()
@@ -212,6 +227,63 @@ def test_native_budget_eviction_is_an_offline_miss(endpoint):
         offline.close()
 
 
+def test_reopened_cache_accounts_for_unindexed_owned_payloads(endpoint):
+    from winding_field.ct_reader import EncodedTransport
+    from winding_field.native_cache_index import cache_index
+    root,url=endpoint
+    (root/'a').write_bytes(b'12345678');(root/'b').write_bytes(b'abcdefgh')
+    old=EncodedTransport(root/'cache',16)
+    assert old.read(url+'/a')==b'12345678';assert old.read(url+'/b')==b'abcdefgh';old.close()
+    with cache_index(root/'cache/.vc_reader_cache.sqlite3') as db:
+        db.execute('DELETE FROM chunks');db.execute('UPDATE budget SET total=0')
+    current=EncodedTransport(root/'cache',8,offline=True)
+    try:
+        payloads=list((root/'cache/encoded').glob('*.blob'))
+        assert sum(p.stat().st_size for p in payloads)==current.size==8
+        assert len(payloads)==1
+        key='/a' if payloads[0]==current.path(url+'/a') else '/b'
+        assert current.read(url+key) in (b'12345678',b'abcdefgh')
+    finally:current.close()
+
+
+def test_cache_repair_rebases_owned_paths_without_touching_payloads(endpoint):
+    from winding_field.ct_reader import EncodedTransport
+    from winding_field.native_cache_index import cache_index
+    root,url=endpoint;(root/'a').write_bytes(b'12345678')
+    old=EncodedTransport(root/'cache',16);assert old.read(url+'/a')==b'12345678';path=old.path(url+'/a');old.close()
+    with cache_index(root/'cache/.vc_reader_cache.sqlite3') as db:
+        db.execute('UPDATE chunks SET path=?',('/old-mount/encoded/'+path.name,))
+    current=EncodedTransport(root/'cache',16,offline=True)
+    try:
+        assert current.size==8 and path.read_bytes()==b'12345678'
+        assert current.read(url+'/a')==b'12345678'
+        with cache_index(root/'cache/.vc_reader_cache.sqlite3') as db:
+            assert db.execute('SELECT path FROM chunks').fetchall()==[(str(path),)]
+    finally:current.close()
+
+
+def test_cache_repair_rejects_symlinks_without_touching_target(endpoint):
+    from winding_field.ct_reader import EncodedTransport
+    root,url=endpoint;(root/'a').write_bytes(b'12345678')
+    old=EncodedTransport(root/'cache',16);old.read(url+'/a');old.close()
+    target=root/'not-cache';target.write_bytes(b'preserve')
+    (root/'cache/encoded'/('f'*64+'.blob')).symlink_to(target)
+    with pytest.raises(ValueError,match='owned native CT cache'):EncodedTransport(root/'cache',8)
+    assert target.read_bytes()==b'preserve'
+
+
+@pytest.mark.parametrize('operation',['reconcile','trim'])
+def test_cache_repair_and_trim_reject_symlinked_namespace(endpoint,operation):
+    from winding_field.ct_reader import EncodedTransport,reconcile_cache,trim_cache
+    root,url=endpoint;(root/'a').write_bytes(b'12345678')
+    old=EncodedTransport(root/'cache',16);old.read(url+'/a');payload=old.path(url+'/a').name;old.close()
+    encoded=root/'cache/encoded';target=root/'not-cache';encoded.rename(target);encoded.symlink_to(target,target_is_directory=True)
+    with pytest.raises(ValueError,match='owned native CT cache'):
+        if operation=='reconcile':reconcile_cache(root/'cache')
+        else:trim_cache(root/'cache',0)
+    assert (target/payload).read_bytes()==b'12345678'
+
+
 def test_decoded_hit_checks_ledger_even_when_stat_signature_collides(served, monkeypatch):
     from winding_field.io import Volume
 
@@ -261,7 +333,7 @@ def test_revalidation_of_object_larger_than_half_budget(endpoint):
         transport.close()
 
 
-def test_portable_eviction_does_not_require_native_import(served, monkeypatch):
+def test_volume_requires_native_runtime_before_source_access(served, monkeypatch):
     import builtins
     from winding_field.io import Volume
 
@@ -277,11 +349,35 @@ def test_portable_eviction_does_not_require_native_import(served, monkeypatch):
         return original(name, *args, **kwargs)
 
     monkeypatch.setattr(builtins, '__import__', without_native)
-    local = Volume(root / 'ct.zarr', cache=root / 'cache', cache_bytes=4)
+    with pytest.raises(RuntimeError, match='vc_reader|required'):
+        Volume(root / 'ct.zarr', cache=root / 'cache', cache_bytes=4)
+
+
+@pytest.mark.parametrize('budget', [0, 4, 128])
+def test_all_cache_budgets_use_native_volume_reads(served, budget):
+    import numpy as np
+    from winding_field.io import Volume
+
+    root, url, expected = served
+    volume = Volume(url, cache=root / 'cache', cache_bytes=budget)
     try:
-        assert local.stats()['cache_bytes'] <= 4
+        assert volume.stats()['backend'] == 'vc_reader-zarr-v2-checked-v1'
+        np.testing.assert_array_equal(volume.read([1, 1, 2], [4, 4, 6]), expected[1:4, 1:4, 2:6])
+        assert volume.stats()['cache_bytes'] <= budget
     finally:
-        local.close()
+        volume.close()
+
+
+def test_volume_identity_binds_loaded_native_implementation(served):
+    from vc_reader import _reader
+    from winding_field.io import Volume
+    from winding_field.util import file_sha
+    root,url,_=served
+    volume=Volume(url,cache=root/'cache')
+    try:
+        assert volume.identity['native_runtime']['extension_sha256']==file_sha(_reader.__file__)
+        assert volume.identity['native_runtime']['libraries_sha256']
+    finally:volume.close()
 
 
 def test_native_refuses_oversized_reservation_before_payload(endpoint):
@@ -290,7 +386,7 @@ def test_native_refuses_oversized_reservation_before_payload(endpoint):
     root, url = endpoint
     transport = EncodedTransport(root / 'cache', 1 << 30)
     try:
-        with pytest.raises(RuntimeError, match='encoded CT transfer'):
+        with pytest.raises(RuntimeError, match='read byte limit'):
             transport.read(url + '/oversized')
         assert transport.size == 0
         assert transport.bytes_read == 0
@@ -310,9 +406,9 @@ def test_native_unsized_response_respects_budget(endpoint):
         transport.close()
     limited=EncodedTransport(root/'limited',4)
     try:
-        with pytest.raises(RuntimeError):limited.read(url+'/unsized')
+        assert limited.read(url+'/unsized')==b'12345678'
         assert limited.size==0
-        assert limited.db.execute('SELECT COUNT(*) FROM receipts').fetchone()[0]==0
+        assert limited.db.execute('SELECT COUNT(*) FROM receipts').fetchone()[0]==1
     finally:limited.close()
 
 

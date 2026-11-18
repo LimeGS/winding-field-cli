@@ -10,7 +10,7 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
-from test_io import make_volume
+from test_io import make_volume,served
 
 
 def test_http_gzip_decodes_and_limits_decoded_bytes(monkeypatch):
@@ -24,6 +24,34 @@ def test_http_gzip_decodes_and_limits_decoded_bytes(monkeypatch):
     assert reader.fetch('https://test/catalog',limit=8192)==(raw,'pinned')
     with pytest.raises(ValueError,match='budget'):
         reader.fetch('https://test/catalog',limit=100)
+
+
+@pytest.mark.parametrize('disconnects,status',[(2,200),(1,304),(3,200)])
+def test_http_disconnect_retries_preserve_validators_and_stop_after_three_attempts(disconnects,status):
+    from http.client import RemoteDisconnected
+    from http.server import BaseHTTPRequestHandler,ThreadingHTTPServer
+    import winding_field.io as reader
+    requests=[];payload=b'verified CT bytes'
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            requests.append((self.path,self.headers.get('If-None-Match')))
+            if len(requests)<=disconnects:
+                self.close_connection=True;return
+            self.send_response(status);self.send_header('ETag','"pinned"')
+            self.send_header('Content-Length',str(len(payload) if status==200 else 0));self.end_headers()
+            if status==200:self.wfile.write(payload)
+        def log_message(self,*args):pass
+    server=ThreadingHTTPServer(('127.0.0.1',0),Handler)
+    thread=threading.Thread(target=server.serve_forever,daemon=True);thread.start()
+    try:
+        url=f'http://127.0.0.1:{server.server_port}/0/1.2.3';headers={'If-None-Match':'"pinned"'}
+        if disconnects==3:
+            with pytest.raises(RemoteDisconnected):reader.fetch(url,headers=headers,limit=64)
+        else:
+            expected=(payload,'"pinned"') if status==200 else (None,None)
+            assert reader.fetch(url,headers=headers,limit=64)==expected
+        assert requests==[('/0/1.2.3','"pinned"')]*min(disconnects+1,3)
+    finally:server.shutdown();server.server_close();thread.join()
 
 
 def test_offline_mirror_uses_local_metadata_but_rejects_cached_conflict(tmp_path,monkeypatch):
@@ -54,7 +82,7 @@ def test_offline_catalog_is_cached_and_never_fetches(tmp_path,monkeypatch):
 
 
 @pytest.mark.parametrize('option,value',[
-    ('stride',0),('stride',-1),('stride',9),('field_chunk',3),('chunk',129),
+    ('stride',0),('stride',-1),('stride',9),('import_workers',-1),('import_workers',True),('field_chunk',3),('chunk',129),
     ('rtol',float('nan')),('sweeps',0),('seed_stride',0),('fibre_weight',-1),
     ('chart_faces',8193),('threads',0),('levels',[float('inf')]),('levels',[1.,1.]),('field_spacing_um',0),
 ])
@@ -81,17 +109,20 @@ def test_plan_checks_cache_filesystem_separately(tmp_path,monkeypatch):
         workflow.plan(dict(config,ct_mode='download'),volume)
 
 
-def test_cache_write_admission_preserves_reserve(tmp_path,monkeypatch):
+@pytest.mark.parametrize('free',[99,105])
+def test_cache_write_admission_preserves_reserve(served,monkeypatch,free):
+    from contextlib import closing
     import winding_field.io as reader
-    local=tmp_path/'source'; make_volume(local)
-    monkeypatch.setattr(reader,'fetch',lambda url,**k:((local/url.split('ct.zarr/')[1]).read_bytes(),None))
-    v=reader.Volume('https://test/ct.zarr',cache=tmp_path/'cache',reserve_bytes=100)
-    monkeypatch.setattr(reader.shutil,'disk_usage',lambda p:SimpleNamespace(free=105))
-    with pytest.raises(OSError,match='cache|space'):
-        v.read([0,0,0],[2,2,3])
-    assert v.stats()['cache_bytes']==0
-    assert not list((tmp_path/'cache').glob('[0-9a-f]'*64))
-    v.close()
+    from winding_field import ct_reader
+    root,url,data=served
+    with closing(reader.Volume(url,cache=root/'cache',cache_bytes=1<<20,reserve_bytes=100)) as volume:
+        monkeypatch.setattr(ct_reader.shutil,'disk_usage',lambda p:SimpleNamespace(free=free))
+        if free<100:
+            with pytest.raises(OSError,match='cache|space'):volume.read([0,0,0],[2,2,3])
+        else:
+            np.testing.assert_array_equal(volume.read([0,0,0],[2,2,3]),data[:2,:2,:3])
+        assert volume.stats()['cache_bytes']==0
+        assert not list((root/'cache/vc-reader').rglob('*.blob'))
 
 
 @pytest.mark.parametrize('prediction',['sd2','qual-v2'])

@@ -109,7 +109,8 @@ def main(argv=None):
         p.add_argument("--" + name, type=Path, required=True)
     p.add_argument("--gate-sha256", required=True)
     p.add_argument("--policy-sha256", required=True)
-    args = p.parse_args(argv)
+    from .cli_settings import parse_options
+    args = parse_options(p,argv)
     args.output.mkdir(exist_ok=False)
     start = time.monotonic()
     result = dict(

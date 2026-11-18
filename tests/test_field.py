@@ -40,6 +40,16 @@ def test_physical_planar_field_and_fibre_constraints(tmp_path):
     assert receipt['physical_acceptance'] is False
 
 
+@pytest.mark.parametrize('config',[{'preconditioner':'spectral'},{'prepared_cache_bytes':True},
+                                  {'prepared_cache_bytes':-1},{'prepared_cache_bytes':1.5}])
+def test_general_solver_rejects_invalid_execution_before_io(tmp_path,config):
+    from winding_field.config import validate_config
+    from winding_field.field import solve
+    with pytest.raises(ValueError):validate_config(config)
+    with pytest.raises(ValueError):solve(tmp_path/'absent',config)
+    assert not (tmp_path/'absent').exists()
+
+
 def test_nonconstant_layer_separation_is_not_replaced_by_mean(tmp_path):
     from winding_field.field import solve,open_field
     run=prepared_run(tmp_path/'run',shape=(6,6,32),chunk=32,variable=True)
@@ -49,6 +59,116 @@ def test_nonconstant_layer_separation_is_not_replaced_by_mean(tmp_path):
     delta=np.diff(field[3,3])
     assert np.mean(delta[2:10])==pytest.approx(.25,abs=.002)
     assert np.mean(delta[16:28])==pytest.approx(.125,abs=.002)
+
+
+def test_static_constraint_cache_avoids_rebuilds_with_identical_field(tmp_path,monkeypatch):
+    from winding_field import field
+    original=field.pair_constraints
+    builds=[]
+    def counted(*args,**kwargs):
+        builds.append(1)
+        return original(*args,**kwargs)
+    monkeypatch.setattr(field,'pair_constraints',counted)
+    results=[];counts=[];rows=[]
+    for budget in (0,1<<20):
+        builds.clear();run=prepared_run(tmp_path/str(budget))
+        receipt=field.solve(run,dict(sweeps=3,field_chunk=8,constraint_cache_bytes=budget,
+                                    prepared_cache_bytes=0))
+        with field.open_field(run) as source:results.append(source.read([0]*3,[6,6,24])[0])
+        counts.append(len(builds));rows.append(receipt['fibre_constraint_rows'])
+    assert counts[0]>0 and counts[1]*3==counts[0]
+    assert rows[0]==rows[1]
+    np.testing.assert_array_equal(*results)
+
+
+@pytest.mark.parametrize('budget',[0,1,16384,1<<20])
+def test_constraint_cache_reports_bounded_retention_and_releases(tmp_path,budget):
+    from winding_field import field
+    run=prepared_run(tmp_path/'run')
+    result=field.solve(run,dict(sweeps=3,field_chunk=8,constraint_cache_bytes=budget))
+    stats=result['constraint_cache_stats']
+    assert stats['budget']==budget
+    assert stats['hits']+stats['misses']==9
+    assert stats['builds']==stats['misses']
+    assert stats['peak_bytes']<=budget
+    assert stats['entries']==stats['retained_bytes']==0
+    assert json.loads((run/'FIELD.json').read_bytes())['constraint_cache_stats']==stats
+    if budget==0:
+        assert stats['hits']==0 and stats['builds']==9
+    if budget==1<<20:
+        assert stats['builds']==3 and stats['hits']==6 and stats['peak_entries']==3
+
+
+def test_partial_cache_preserves_field_across_sweeps(tmp_path):
+    from winding_field import field
+    fields=[];stats={}
+    for budget in (0,16384,1<<20):
+        run=prepared_run(tmp_path/str(budget))
+        receipt=field.solve(run,dict(sweeps=4,field_chunk=8,constraint_cache_bytes=budget,
+                                     prepared_cache_bytes=0))
+        with field.open_field(run) as source:
+            fields.append(source.read([0]*3,[6,6,24]))
+        stats[budget]=(receipt['constraint_cache_stats'],receipt['fibre_constraint_rows'])
+    for values,valid in fields[1:]:
+        np.testing.assert_array_equal(values,fields[0][0])
+        np.testing.assert_array_equal(valid,fields[0][1])
+    assert len({rows for _,rows in stats.values()})==1
+    assert stats[0][0]['hits']==0 and stats[0][0]['builds']==12
+    partial=stats[16384][0]
+    assert 0<partial['peak_entries']<3 and partial['denied_entries']>0
+    assert 0<partial['hits']<12 and 0<partial['builds']<12
+    assert partial['hits']+partial['misses']==12
+    full=stats[1<<20][0]
+    assert full['builds']==3 and full['hits']==9 and full['peak_entries']==3
+    assert full['denied_entries']==0
+    for budget,(cache,_) in stats.items():
+        assert cache['budget']==budget and cache['peak_bytes']<=budget
+        assert cache['entries']==cache['retained_bytes']==0
+
+
+@pytest.mark.parametrize('budget',[True,-1,1.5])
+def test_constraint_cache_rejects_invalid_budget_before_io(tmp_path,budget):
+    from winding_field.field import solve
+    with pytest.raises(ValueError,match='constraint_cache_bytes'):
+        solve(tmp_path/'missing',dict(constraint_cache_bytes=budget))
+    assert not (tmp_path/'missing').exists()
+
+
+def test_constraint_cache_retains_empty_blocks(tmp_path):
+    import sqlite3
+    from winding_field import field
+    from winding_field.util import file_sha
+    run=prepared_run(tmp_path/'run')
+    with sqlite3.connect(run/'fibres/fibres.sqlite') as db:db.execute('DELETE FROM curves')
+    receipt=json.loads((run/'FIBRES.json').read_bytes())
+    receipt['sha256']=file_sha(run/'fibres/fibres.sqlite')
+    (run/'FIBRES.json').write_text(json.dumps(receipt))
+    result=field.solve(run,dict(sweeps=3,field_chunk=8,constraint_cache_bytes=3*4096))
+    assert result['fibre_constraint_rows']==0
+    assert result['constraint_cache_stats']['builds']==3
+    assert result['constraint_cache_stats']['hits']==6
+    assert result['constraint_cache_stats']['peak_bytes']==3*4096
+
+
+def test_constraint_cache_resume_and_changed_source_preserve_checkpoint(tmp_path):
+    from winding_field import field
+    config=dict(sweeps=3,field_chunk=8,constraint_cache_bytes=1<<20)
+    run=prepared_run(tmp_path/'run')
+    def stop():
+        cp=run/'field/CHECKPOINT.json'
+        return cp.exists() and json.loads(cp.read_bytes())['progress'].get('next_block')==1
+    paused=field.solve(run,config,stop=stop)
+    assert paused['status']=='PAUSED'
+    assert paused['constraint_cache_stats']['retained_bytes']==0
+    assert field.solve(run,dict(config,constraint_cache_bytes=0))['status']=='FIELD_READY'
+    reference=prepared_run(tmp_path/'reference')
+    field.solve(reference,dict(config,constraint_cache_bytes=0))
+    with field.open_field(run) as a,field.open_field(reference) as b:
+        np.testing.assert_array_equal(a.read([0]*3,[6,6,24])[0],b.read([0]*3,[6,6,24])[0])
+    before=(run/'field/CHECKPOINT.json').read_bytes()
+    with (run/'fibres/fibres.sqlite').open('ab') as stream:stream.write(b'changed')
+    with pytest.raises(ValueError,match='changed'):field.solve(run,config)
+    assert (run/'field/CHECKPOINT.json').read_bytes()==before
 
 
 def test_interrupted_solver_resumes_exact_problem(tmp_path):

@@ -1,5 +1,10 @@
 # Historical patch flattening and CT/TIFXYZ
 
+Use this guide only for the older registration/welding recipe. For a new export
+where you want to choose LSCM or SLIM, use
+[the solver/scope matrix](FLATTENING.md#explicit-solver--scope-matrix) instead.
+The two routes do not produce the same UV map or share resume rules.
+
 `export-sheets --flattening-method patches` consumes an immutable mesh bundle or
 a **validated RANGE wrapper**. Join ranges in 3D first with `join-ranges`.
 Do not pass the wrapper's inner `mesh/`: slot 0 is storage, not W=0.
@@ -10,7 +15,7 @@ values, which do not by themselves establish a calibrated winding value.
 ```sh
 winding-field export-sheets --mesh-bundle joined-range \
   --flattening-method patches --flattening-config patches.json \
-  --source https://example.org/scan.zarr/2 --voxel-um 9.6 \
+  --source /data/scan.zarr/2 --voxel-um 9.6 \
   --output new-patch-export --export-tifxyz
 ```
 
@@ -60,8 +65,8 @@ python -m winding_field.patch_continue \
 The source needs its hash-bound `map.npz`, `keys.sqlite`, `MAPPING.json`, original
 mesh, CT ledger at `old-export/ct-chunks.sqlite`, and either a saved
 `MAP-REPORT.json` or completed `LEVEL.json`. Ordinary interrupted exports without
-either report cannot be continued this way. Paris4's gated runner saves the map
-report before rasterization. Stop the old producer before operational handoff.
+either report cannot be continued this way. A producer must have published the
+map report before rasterization for partial-tile reuse. Stop it before handoff.
 
 Overrides are limited to cache location/budgets, raster workers and memory/disk
 resource limits. Geometry, lattice, CT identity and numerical runtime remain
@@ -109,10 +114,9 @@ access are serialized; interpolation runs outside the lock.
 
 `cache_dir` may reside on a dedicated SSD; `cache_gib` caps the native disk cache.
 Cache misses require `disk_reserve_gib` free space plus two decoded chunks on that
-filesystem. Output scratch has its own reserve check. Paris4 experiments use
-`/mnt/fast2/vesuvius-ct-cache/paris4`, 64 GiB disk and 1024 MiB RAM with an 8 GiB
-reserve. These are benchmark settings, not revised defaults. Use a fresh output
-namespace; do not alter an active export's frozen implementation or cache.
+filesystem. Output scratch has its own reserve check. Choose budgets for your
+machine; the defaults above are not a full-scan sizing recommendation. Use a
+fresh output namespace; do not alter an active export's implementation or cache.
 
 To reuse completed native work, set both `reuse_export` to the old export's
 `patches/` directory and `reuse_identity_sha256` to that directory's
@@ -159,8 +163,8 @@ Budget PNG/mapping and optional TIFF disk usage separately before a full launch.
 
 ## Dependency and algorithm contract
 
-- Existing `vc_reader` is required for CLI CT reads. There is no installation or
-  automatic substitute. Native transport uses one thread/connection, a bounded
+- The pinned `vc_reader` is installed with the CLI and required for CT reads;
+  there is no fallback reader. Native transport uses one thread/connection, a bounded
   RAM cache, a shared bounded lossless disk cache and an on-disk chunk hash ledger.
   Missing chunks remain missing; exact zero-weight interpolation corners do not
   invalidate a sample. CT is central trilinear sampling with fixed **0..255** display.
@@ -175,8 +179,8 @@ Budget PNG/mapping and optional TIFF disk usage separately before a full launch.
   `2f89bfc96512bebf7ef44b25de01c5afd01c7af058e452515b03bc52cf6afd6a`
   with the same launcher pin and numerical parameters. Receipts bind this separate
   recipe with `historical_reproduction=false`; upstream release/commit is unknown.
-  Unknown recipes and any different binary hash are rejected. This is a newly
-  validated version, not reproduction of the historical executable.
+  Unknown recipes and different binary hashes are rejected. This alternative
+  is not a reproduction of the historical executable.
 - Native invocation is `AppRun flatboi inputmesh.obj 200 symmetric_dirichlet --tol=1e-6`.
   This reuses `surface_export.flatten_native`, including source OBJ correspondence,
   world edge-length scaling, timeout/process-group handling and UV diagnostics.
@@ -258,10 +262,12 @@ and tiles, but native scratch and total output disk use are not preallocated.
 Use a shared data-disk cache and set `SQLITE_TMPDIR` to that disk where appropriate.
 For a one-CPU run, set BLAS/OpenMP threads to 1 and use CPU affinity on the launcher.
 
-`--field-config`, `--levels`, and `--resume` are rejected for patches. Extraction is
+`--field-config`, `--levels`, and `--resume` are rejected for this historical
+`--flattening-method patches` route, not the solver/scope matrix. Extraction is
 a separate first step. A failed run retains diagnostics; retry into a **fresh**
-output. Publication has no completed receipt on failure. The full-range real-scale
-run and independent review remain separate from synthetic software tests.
+output. Publication has no completed receipt on failure. Use the native-reuse or
+PNG-continuation options above when their source requirements are satisfied;
+they are not an in-place resume.
 
 All outputs are **unaccepted diagnostics**. Software correctness does not gate on
 physical CT agreement and does not establish physical-sheet identity or flattening

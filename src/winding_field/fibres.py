@@ -47,10 +47,10 @@ def streamlines(presence,tangents,support,*,seeds,origin_xyz,spacing_xyz,thresho
     return curves
 
 
-def trace(run,config,stop=None):
+def trace(run,config,stop=None,*,verified_source=None):
     if config.get('fibres'):
         from .afv import import_fibres
-        return import_fibres(run,config,stop)
+        return import_fibres(run,config,stop,verified_source=verified_source)
     run=Path(run)
     prepared=json.loads((run/'PREPARED.json').read_bytes())
     if prepared['prediction']=='qual-v2':
@@ -79,7 +79,7 @@ def trace(run,config,stop=None):
             continue
         data=maps.load(key); lo,hi=maps.box(key)
         seeds=itertools.product(*(range(seed_stride//2,int(n),seed_stride) for n in hi-lo))
-        curves=streamlines(data['presence'],data['tangents'],data['support'],seeds=seeds,
+        curves=streamlines(data['presence'],data['tangents'],data.get('fibre_support',data['support']),seeds=seeds,
                  origin_xyz=(np.array(prepared['origin_xyz'])+lo[::-1]*prepared['spacing_xyz']),
                  spacing_xyz=prepared['spacing_xyz'],threshold=identity['threshold'])
         with db:

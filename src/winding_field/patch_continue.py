@@ -88,9 +88,17 @@ def continue_export(source,mesh,output,*,identity_sha256,overrides,stop=lambda:F
         raise ValueError('continuation cannot change geometric settings')
     if file_sha(source/'IDENTITY.json')!=identity_sha256:raise ValueError('source identity differs')
     previous=json.loads((source/'IDENTITY.json').read_text())
+    if previous.get('ct',{}).get('backend')!='vc_reader-zarr-v2-checked-v1':
+        raise ValueError('incompatible CT checkpoint; continue with the original v1.5.0 runtime')
+    from .ct_reader import runtime_identity
+    if previous['ct'].get('native_runtime')!=runtime_identity():
+        raise ValueError('CT sampler implementation differs: native runtime')
+    if (previous['ct'].get('sampler')!='vc_reader-float64-support-v1' or
+            previous['ct'].get('sampler_sha256')!=file_sha(Path(__file__).with_name('native_ct_sampling.py'))):
+        raise ValueError('CT sampler implementation differs from saved tiles')
     if previous['export_tifxyz']:raise ValueError('continuation supports PNG only')
     if any(version(name)!=value for name,value in previous['runtime'].items()):raise ValueError('source numerical runtime differs')
-    prior=dict(previous['settings']);prior.setdefault('ct_sampler','scalar')
+    prior=dict(previous['settings'])
     cfg=p.settings(dict(prior,**overrides));level=source/'level-0000'
     resources=ResourceGuard(output.parent,min(cfg['process_tree_gib'],cfg['memory_gib']),cfg['disk_reserve_gib'])
     reserve_bytes=int(cfg['disk_reserve_gib']*2**30)
@@ -143,12 +151,11 @@ def continue_export(source,mesh,output,*,identity_sha256,overrides,stop=lambda:F
         volume=p.PatchCT(previous['ct']['source'],output,cfg,voxel_um=previous['ct']['spacing_xyz'][0],level=previous['ct']['level'])
         for key in ('source','metadata_sha256','origin_xyz','spacing_xyz','shape','level'):
             if volume.identity[key]!=previous['ct'][key]:raise ValueError('CT identity differs: '+key)
-        if volume.identity.get('sampler','scalar')!=previous['ct'].get('sampler','scalar'):
+        if volume.identity.get('sampler')!=previous['ct'].get('sampler'):
             raise ValueError('CT sampler differs from saved tiles')
-        if volume.identity.get('sampler','scalar')!='scalar':
-            for key in ('sampler_sha256','extension_sha256','reader_libraries_sha256'):
-                if not previous['ct'].get(key) or volume.identity.get(key)!=previous['ct'][key]:
-                    raise ValueError('CT sampler implementation differs: '+key)
+        for key in ('sampler_sha256','native_runtime'):
+            if not previous['ct'].get(key) or volume.identity.get(key)!=previous['ct'][key]:
+                raise ValueError('CT sampler implementation differs: '+key)
         if 2*geometry_bytes+p.raster_memory(cfg)+p.ct_memory(volume.chunks,volume.dtype,cfg)>=cfg['memory_gib']*2**30:
             raise ValueError('continuation CT and geometry exceed memory budget')
         with sqlite3.connect(ledger) as snapshot:

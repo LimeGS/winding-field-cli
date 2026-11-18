@@ -4,6 +4,7 @@ import io
 import json
 from pathlib import Path
 import sqlite3
+import time
 
 import numpy as np
 from numcodecs import Blosc
@@ -33,9 +34,9 @@ def exported(db,run,path):
     return False
 
 
-def record_export(db,run,path):
+def record_export(db,run,path,*,commit=True):
     db.execute('INSERT OR REPLACE INTO files VALUES (?,?)',(str(path.relative_to(run)),file_sha(path)))
-    db.commit()
+    if commit:db.commit()
 
 
 def export_lasagna(run,stop=None):
@@ -45,6 +46,7 @@ def export_lasagna(run,stop=None):
     if maps.identity()!=meta['tiles_sha256']:
         maps.close(); raise ValueError('export input maps changed')
     db=export_db(run,'lasagna',meta)
+    pending=0;started=time.monotonic()
     external=meta.get('fibre_method')=='external-afv'
     names=([] if external else ['presence','nx','ny'])+['surface_presence','surface_nx','surface_ny','surface_grad_mag']
     if meta.get('surface_method')=='lasagna': names.append('surface_cos')
@@ -61,6 +63,7 @@ def export_lasagna(run,stop=None):
     try:
         for key in maps.keys():
             if stop and stop():
+                db.commit()
                 return None
             paths=[root/(name+'.ome.zarr')/'0'/'.'.join(map(str,key)) for name in names]
             done=[exported(db,run,path) for path in paths]
@@ -81,6 +84,7 @@ def export_lasagna(run,stop=None):
             if 'surface_phase' in data: values['surface_cos']=data['surface_phase']*255
             for name,path,ready in zip(names,paths,done):
                 if stop and stop():
+                    db.commit()
                     return None
                 if ready:
                     continue
@@ -88,7 +92,10 @@ def export_lasagna(run,stop=None):
                 array=np.zeros((maps.chunk,)*3,dtype)
                 array[tuple(slice(0,n) for n in value.shape)]=value if dtype==np.float32 else np.rint(np.clip(value,0,255)).astype(np.uint8)
                 atomic_bytes(path,codec.encode(array))
-                record_export(db,run,path)
+                record_export(db,run,path,commit=False);pending+=1
+                if pending>=128 or time.monotonic()-started>=2:
+                    db.commit();pending=0;started=time.monotonic()
+        db.commit()
         if stop and stop():
             return None
     finally:
@@ -129,17 +136,18 @@ def export_afv(run,stop=None,*,quota_bytes=None):
         record_export(ledger,run,destination); ledger.close(); return file_sha(destination)
     src=sqlite3.connect((root/'fibres.sqlite').resolve().as_uri()+'?mode=ro',uri=True)
     db=sqlite3.connect(pending)
+    batch_count=0;batch_started=time.monotonic()
     try:
         if quota_bytes is not None:
             from .util import sqlite_quota
             sqlite_quota(db,quota_bytes)
         db.executescript('PRAGMA application_id=1447249475; PRAGMA user_version=1; PRAGMA foreign_keys=ON;'
-        'CREATE TABLE IF NOT EXISTS metadata(key TEXT PRIMARY KEY,value TEXT NOT NULL);'
-        'CREATE TABLE IF NOT EXISTS fibers(id INTEGER PRIMARY KEY,name TEXT NOT NULL,family TEXT NOT NULL,point_count INTEGER NOT NULL,'
-        'length REAL NOT NULL,min_x REAL,max_x REAL,min_y REAL,max_y REAL,min_z REAL,max_z REAL,annotation TEXT NOT NULL);'
-        'CREATE TABLE IF NOT EXISTS blocks(id INTEGER PRIMARY KEY,fiber_id INTEGER REFERENCES fibers(id),first_segment INTEGER,points BLOB,UNIQUE(fiber_id,first_segment));'
-        'CREATE INDEX IF NOT EXISTS fibers_length ON fibers(length DESC,id);'
-        'CREATE VIRTUAL TABLE IF NOT EXISTS block_bounds USING rtree(id,min_x,max_x,min_y,max_y,min_z,max_z);')
+            'CREATE TABLE IF NOT EXISTS metadata(key TEXT PRIMARY KEY,value TEXT NOT NULL);'
+            'CREATE TABLE IF NOT EXISTS fibers(id INTEGER PRIMARY KEY,name TEXT NOT NULL,family TEXT NOT NULL,point_count INTEGER NOT NULL,'
+            'length REAL NOT NULL,min_x REAL,max_x REAL,min_y REAL,max_y REAL,min_z REAL,max_z REAL,annotation TEXT NOT NULL);'
+            'CREATE TABLE IF NOT EXISTS blocks(id INTEGER PRIMARY KEY,fiber_id INTEGER REFERENCES fibers(id),first_segment INTEGER,points BLOB,UNIQUE(fiber_id,first_segment));'
+            'CREATE INDEX IF NOT EXISTS fibers_length ON fibers(length DESC,id);'
+            'CREATE VIRTUAL TABLE IF NOT EXISTS block_bounds USING rtree(id,min_x,max_x,min_y,max_y,min_z,max_z);')
         row=db.execute("SELECT value FROM metadata WHERE key='export_identity'").fetchone()
         if row and row!=(json.dumps(identity),):
             raise ValueError('partial AFV export identity changed')
@@ -156,6 +164,7 @@ def export_afv(run,stop=None,*,quota_bytes=None):
         imported=fibres.get('method')=='external-afv'
         for fid,tile,blob,family in src.execute(f'SELECT id,tile,points,{family_column} FROM curves ORDER BY id'):
             if stop and stop():
+                db.commit()
                 return None
             world=np.load(io.BytesIO(blob),allow_pickle=False)
             points=((world-source['origin_xyz'])/source['spacing_xyz']).astype('<f8')
@@ -192,8 +201,11 @@ def export_afv(run,stop=None,*,quota_bytes=None):
                 box=[float(v) for pair in zip(block.min(0),block.max(0)) for v in pair]
                 db.execute('INSERT INTO block_bounds VALUES (?,?,?,?,?,?,?)',(bid,*box))
             db.execute('INSERT OR REPLACE INTO metadata VALUES (?,?)',('export_last_id',json.dumps(fid)))
-            db.commit()
+            batch_count+=1
+            if batch_count>=1000 or time.monotonic()-batch_started>=2:
+                db.commit();batch_count=0;batch_started=time.monotonic()
         if stop and stop():
+            db.commit()
             return None
         count,points_total=db.execute('SELECT count(*),coalesce(sum(point_count),0) FROM fibers').fetchone()
         root_meta=dict(type='vc3d_fiber_collection',version=1,scale=1,source=source['source'],

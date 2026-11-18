@@ -29,36 +29,53 @@ def verify_level(root,identity,ct):
     return record
 
 
+def render_contract(identity):
+    """Fields a CT-only render can verify without the solver or its runtime present."""
+    contract=dict(identity,ct_source=None,ct_level=None,ct_voxel_um=None)
+    for key in ('native','native_runtime','runtime'):contract.pop(key,None)
+    return contract
+
+
 def export_existing(args):
     from .workflow import implementation_sha
-    cfg=settings(_json(Path(args.flattening_config)),args.flattening_solver,args.scope)
+    from .export_settings import field_request,flattening_request
+    cfg=settings(flattening_request(args),args.flattening_solver,args.scope)
     if args.mesh_bundle and args.levels:raise ValueError('mesh bundle already binds levels; omit --levels')
-    if args.field_config and not args.levels:raise ValueError('--levels required with --field-config')
+    descriptor=field_request(args)
+    if descriptor is not None and not args.levels:raise ValueError('--levels required with a field source')
     out=Path(args.output).expanduser().absolute()
     if any(q.is_symlink() for q in (out,*out.parents)) or (out/'.lock').is_symlink():raise ValueError('matrix output symlink refused')
     out=out.resolve()
     mesh=Path(args.mesh_bundle).expanduser().resolve() if args.mesh_bundle else out/'meshes'
     if args.mesh_bundle and (out==mesh or out in mesh.parents or mesh in out.parents):raise ValueError('matrix output must be separate from source mesh')
-    descriptor=_json(Path(args.field_config)) if args.field_config else None
+    stages=getattr(args,'stages','all')
     native=None
-    if cfg['flattening_solver']=='slim':
+    if cfg['flattening_solver']=='slim' and stages!='ct':
         from .flatboi_checkpoint import require_cgroup
-        native=p.check_flatboi(cfg['app_run'],'installed-2f89bfc9');require_cgroup()
+        native=p.check_flatboi(cfg['app_run'],cfg['native_recipe']);require_cgroup()
     # Validate mesh provenance before creating output or caches.
     mesh_sha=None
     if args.mesh_bundle:
         with p.open_mesh(mesh) as (reader,_):mesh_sha=reader.manifest_sha
-    identity=dict(schema='flattening-matrix-v1',settings=cfg,mesh=str(mesh),mesh_sha256=mesh_sha,field=descriptor,
+    from .ct_reader import runtime_identity
+    identity=dict(schema='flattening-matrix-v1',native_runtime=runtime_identity(),settings=cfg,mesh=str(mesh),mesh_sha256=mesh_sha,field=descriptor,
                   levels=args.levels,ct_source=args.source,ct_level=args.level,ct_voxel_um=args.voxel_um,
                   export_tifxyz=args.export_tifxyz,native=native,implementation_sha256=implementation_sha(),
                   runtime={name:version(name) for name in ('numpy','scipy','libigl','Pillow')})
-    out.mkdir(exist_ok=args.resume)
+    # The UV phase must stand alone: its identity carries no CT fields so a later
+    # render can consume it on any host, without the CT or the solver present. The
+    # solver/runtime fields stay in the published UV receipt, never in the render
+    # contract, so rendering does not need the native binary to agree on them.
+    uv_identity=dict(identity,ct_source=None,ct_level=None,ct_voxel_um=None)
+    contract=render_contract(identity)
+    uv_path=out/'UV-MATRIX.json'
+    out.mkdir(exist_ok=args.resume or stages!='all')
     with (out/'.lock').open('a') as lock:
         fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
         if any(q.is_symlink() for q in out.rglob('*')):raise ValueError('matrix output symlink refused')
-        if args.resume:
-            if _json(_path(out,'EXPORT.json'))!=identity:raise ValueError('matrix resume identity changed')
-        else:atomic_json(out/'EXPORT.json',identity)
+        if (out/'EXPORT.json').exists():
+            if _json(_path(out,'EXPORT.json'))!=contract:raise ValueError('matrix resume identity changed')
+        else:atomic_json(out/'EXPORT.json',contract)
         resources=ResourceGuard(out,cfg['process_tree_gib'],cfg['disk_reserve_gib']);stopped=False
         def stop(*_):
             nonlocal stopped
@@ -77,6 +94,37 @@ def export_existing(args):
                     result=extract_mesh(source,mesh,args.levels,resume=mesh.exists(),stop=guard,
                                         reserve_bytes=int(cfg['disk_reserve_gib']*2**30))
                     if result['status']!='MESH_READY':return result
+            if stages=='uv':
+                records={}
+                with p.open_mesh(mesh) as (reader,source_identity):
+                    if mesh_sha is not None and reader.manifest_sha!=mesh_sha:raise ValueError('matrix source mesh changed')
+                    frame=cfg['output_frame']
+                    raster_gib=None if cfg['memory_gib'] is None else cfg['memory_gib']-p.raster_memory(cfg)/2**30
+                    for level,value in reader.db.execute('SELECT id,value FROM levels ORDER BY id'):
+                        guard();target=out/f'level-{level:04d}'
+                        if target.is_symlink():raise ValueError('matrix level symlink refused')
+                        published=target/'LEVEL-UV.json'
+                        if published.exists():
+                            record=_json(_path(target,'LEVEL-UV.json'))
+                            if record['identity']!=uv_identity:raise ValueError('published UV identity changed')
+                            _verified(target,'map.npz',record['map_sha256'])
+                        else:
+                            target.mkdir(exist_ok=True)
+                            v,f,vi,fi,vk,fk=p.read_level(reader,level,memory_gib=raster_gib)
+                            world=frame_coordinates(v,frame,reader.metadata['voxel_um'])
+                            mapped=build_map(world,f,target/'flattening',cfg,guard=guard)
+                            np.savez_compressed(target/'map.npz',**{k:mapped[k] for k in ('world','faces','uv','display','scientific','source_face_rows','domain_ids')})
+                            write_key_mapping(target,reader,vk,fk,guard)
+                            del v,f,world
+                            record=dict(identity=uv_identity,mapping=mapped['report'],published_by='uv',
+                                        map_sha256=file_sha(target/'map.npz'),physical_acceptance=False)
+                            atomic_json(published,record);del mapped
+                        records[target.name]=file_sha(published)
+                    reader.validate()
+                result=dict(status='UV_READY_DIAGNOSTIC',identity=uv_identity,levels=records,physical_acceptance=False)
+                if uv_path.exists() and _json(uv_path)!=result:raise ValueError('UV publication changed on resume')
+                if not uv_path.exists():atomic_json(uv_path,result)
+                return result
             saved=_json(_path(out,'MATRIX.json')) if (out/'MATRIX.json').exists() else None
             if saved:
                 if saved['identity']!=identity:raise ValueError('matrix publication identity changed')
@@ -98,7 +146,8 @@ def export_existing(args):
             with p.open_mesh(mesh) as (reader,source_identity):
                 if mesh_sha is not None and reader.manifest_sha!=mesh_sha:raise ValueError('matrix source mesh changed')
                 frame=cfg['output_frame']
-                geometry_gib=cfg['memory_gib']-(p.raster_memory(cfg)+p.ct_memory(ct.chunks,ct.dtype,cfg))/2**30
+                buffers=p.raster_memory(cfg)+p.ct_memory(ct.chunks,ct.dtype,cfg)
+                geometry_gib=None if cfg['memory_gib'] is None else cfg['memory_gib']-buffers/2**30
                 for level,value in reader.db.execute('SELECT id,value FROM levels ORDER BY id'):
                     guard();target=out/f'level-{level:04d}'
                     if target.is_symlink():raise ValueError('matrix level symlink refused')
@@ -107,20 +156,30 @@ def export_existing(args):
                         record=verify_level(target,binding,ct)
                     else:
                         target.mkdir(exist_ok=True)
-                        v,f,vi,fi,vk,fk=p.read_level(reader,level,memory_gib=geometry_gib)
-                        world=frame_coordinates(v,frame,reader.metadata['voxel_um'])
-                        mapped=build_map(world,f,target/'flattening',cfg,guard=guard)
-                        parent=mapped['parent'];rows=mapped['source_face_rows']
-                        if (target/'MAPPING.json').exists():
-                            provenance=_json(_path(target,'MAPPING.json'))
-                            _verified(target,'map.npz',provenance['map_sha256']);_verified(target,'keys.sqlite',provenance['keys_sha256'])
+                        if stages=='ct':
+                            # Render the published UV: no read_level, no solve, no native runtime.
+                            uv_record=_json(_path(target,'LEVEL-UV.json'))
+                            if not all(uv_record['identity'].get(k)==v for k,v in contract.items()):
+                                raise ValueError('published UV identity changed')
+                            _verified(target,'map.npz',uv_record['map_sha256'])
+                            mapped=dict(_arrays(target/'map.npz'),report=uv_record['mapping'])
                         else:
-                            # Incomplete key projection is retained, not mistaken for committed provenance.
-                            if (target/'keys.sqlite').exists():(target/'keys.sqlite').rename(target/('keys-interrupted-'+uuid.uuid4().hex+'.sqlite'))
-                            np.savez_compressed(target/'map.npz',**{k:mapped[k] for k in ('world','faces','uv','display','scientific','source_face_rows','domain_ids')},
-                                                field_xyz=v[parent],source_vertex_ids=vi[parent],source_face_ids=fi[rows])
-                            write_key_mapping(target,reader,vk,fk,guard)
-                        del v,f,vi,fi,vk,fk,world,parent,rows
+                            v,f,vi,fi,vk,fk=p.read_level(reader,level,memory_gib=geometry_gib)
+                            world=frame_coordinates(v,frame,reader.metadata['voxel_um'])
+                            mapped=build_map(world,f,target/'flattening',cfg,guard=guard)
+                            parent=mapped['parent'];rows=mapped['source_face_rows']
+                            if (target/'MAPPING.json').exists():
+                                provenance=_json(_path(target,'MAPPING.json'))
+                                _verified(target,'map.npz',provenance['map_sha256']);_verified(target,'keys.sqlite',provenance['keys_sha256'])
+                            else:
+                                # Incomplete key projection is retained, not mistaken for committed provenance.
+                                if (target/'keys.sqlite').exists():(target/'keys.sqlite').rename(target/('keys-interrupted-'+uuid.uuid4().hex+'.sqlite'))
+                                np.savez_compressed(target/'map.npz',**{k:mapped[k] for k in ('world','faces','uv','display','scientific','source_face_rows','domain_ids')},
+                                                    field_xyz=v[parent],source_vertex_ids=vi[parent],source_face_ids=fi[rows])
+                                write_key_mapping(target,reader,vk,fk,guard)
+                            del v,f,vi,fi,vk,fk,world,parent,rows
+                            atomic_json(target/'LEVEL-UV.json',dict(identity=uv_identity,mapping=mapped['report'],published_by='all',
+                                        map_sha256=file_sha(target/'map.npz'),physical_acceptance=False))
                         render=target/'render'
                         if render.exists():render.rename(target/('render-interrupted-'+uuid.uuid4().hex))
                         rendered=p.render_map(mapped,render,lambda xyz:ct.sample(xyz,frame),frame,

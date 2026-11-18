@@ -85,7 +85,7 @@ def test_large_key_export_never_materializes_unicode(tmp_path,monkeypatch):
     class CT:
         chunks=(2,2,2);dtype=np.dtype('uint8');identity={'synthetic':True}
         def sample(self,xyz,frame):return np.full(len(xyz),100.),np.ones(len(xyz),bool)
-    cfg=dict(output_frame=dict(id='test',voxel_um=1.,origin_xyz_um=[0,0,0]),app_run='/test',pitch_um=.25,tile_size=8,memory_gib=.5)
+    cfg=dict(output_frame=dict(id='test',voxel_um=1.,origin_xyz_um=[0,0,0]),app_run='/test',pitch_um=.25,tile_size=8,memory_gib=.5,disk_reserve_gib=.001)
     out=tmp_path/'export';p.export_mesh(tmp_path/'source',out,CT(),cfg)
     with PatchMapping(out/'level-0000') as mapping:
         assert 'source_vertex_keys' not in mapping.arrays.files
@@ -126,7 +126,7 @@ def test_shared_vertex_export_falls_back_before_repeated_key_gather(tmp_path,mon
     class CT:
         chunks=(2,2,2);dtype=np.dtype('uint8');identity={'synthetic':True}
         def sample(self,xyz,frame):return np.full(len(xyz),100.),np.ones(len(xyz),bool)
-    cfg=dict(output_frame=dict(id='test',voxel_um=1.,origin_xyz_um=[0,0,0]),app_run='/test',pitch_um=.25,tile_size=16,memory_gib=.5,max_patch_faces=1)
+    cfg=dict(output_frame=dict(id='test',voxel_um=1.,origin_xyz_um=[0,0,0]),app_run='/test',pitch_um=.25,tile_size=16,memory_gib=.5,max_patch_faces=1,disk_reserve_gib=.001)
     out=tmp_path/'export';receipt=p.export_mesh(tmp_path/'source',out,CT(),cfg)
     assert receipt['status']=='PATCHES_READY_DIAGNOSTIC'
     with PatchMapping(out/'level-0000') as mapping:

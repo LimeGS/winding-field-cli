@@ -5,8 +5,37 @@ For runnable commands and recovery start with [README](../README.md),
 [Lasagna/AFV](LASAGNA.md). This page is the technical reference for interpreting
 products and preserving coordinate, mask and resume contracts.
 
+## Find the right format
+
+| Product | Main receipt | Coordinates / validity |
+| --- | --- | --- |
+| CT run | `RUN.json` | Physical XYZ; arrays and ROI bounds are ZYX |
+| Original mesh-derived TIFFs | `original/level-*/tifxyz/VERIFIED.json` | float32, invalid XYZ = −1 |
+| Aligned UVW TIFFs | `UVW.json` | float64, invalid XYZ = NaN; separate geometry/CT masks |
+| Native surfaces | `surfaces/level-*/LEVEL.json` | Mesh/CT plus optional float32 TIFFs |
+| Direct-field TIFFs | `TIFXYZ.json` and `READY.json` or `PARTIAL.json` | float32, invalid XYZ = −1; independent verification protocol |
+
+These are separate exporters. A receipt from one is not a verification receipt
+for another. Completed software output is not physical-sheet acceptance.
+
+## Terms used in these guides
+
+| Term | Meaning |
+| --- | --- |
+| Receipt | A JSON record of inputs, settings, checks and output hashes |
+| SHA256 / hash | A fingerprint used to detect changed file contents |
+| Support | Samples available for the computation; not proof of papyrus or ink |
+| Mask | An array marking valid, missing or ambiguous samples; meanings depend on the product |
+| UV | Two-dimensional coordinates of the flattened surface |
+| W | A field value; some commands explicitly normalize it by `sheet_step` |
+| Diagnostic | Inspectable output that has not been accepted as a physical sheet |
+
 ## Coordinates
 
+- `--level` selects a CT pyramid level. Scalar mesh `--levels` and
+  `export-uvw --levels` use raw field values. `constant-sheet --w` and
+  `extract-range --w-range` use normalized `W = raw_value / sheet_step`.
+  If `sheet_step` is not 1, convert explicitly; filenames do not define W.
 - Arrays and ROI arguments: ZYX. `--roi Z0 Z1 Y0 Y1 X0 X1` is half-open in voxels
   of the explicitly selected source level, never implicitly level 0.
 - CT-pipeline field grids, fibre constraints and 3D mesh vertices: XYZ micrometres.
@@ -16,10 +45,14 @@ products and preserving coordinate, mask and resume contracts.
   `world_xyz = origin_xyz + i_xyz * spacing_xyz`.
 - Observation origin is the source origin plus reversed ROI-low times source
   spacing; observation spacing is source spacing times explicit `--stride`.
-- Field origin is the observation origin. `--field-spacing-um P` sets exact
+- Field origin is the observation origin. In ordinary preparation,
+  `--field-spacing-um P` sets exact
   isotropic field spacing. Per-axis node count is
   `floor((observation_count-1)*observation_spacing/P)+1`. The last field centre
   never exceeds the last observation centre. Default: the full observation grid.
+- `--bounded-preparation` instead includes both ROI endpoints. Its per-axis pitch
+  can be slightly smaller than the requested maximum; use the actual geometry in
+  `plan` and `FIELD.json`, not a pitch inferred from the command line.
 - OME-NGFF scale/translation and axis units are interpreted. Unitless metadata
   requires explicit `--voxel-um` or catalog spacing. No silent resolution change.
 - Fibre inference/classical preparation has a 40-observation-grid-voxel input halo, clipped to the source volume.
@@ -27,7 +60,8 @@ products and preserving coordinate, mask and resume contracts.
   `RUN.json.plan.input_lo_zyx/input_hi_zyx` records this extra input-only context.
   Persistent maps and extracted meshes remain within the output grid/ROI.
   Lasagna separately stages 16 observations of context per side. External-AFV
-  preparation needs only this surface context; all retained maps remain ROI-local.
+  preparation needs only this surface context. With `--lasagna-input` plus external
+  AFV, preparation needs no halo; all retained maps remain ROI-local.
 
 ## Run and integrity
 
@@ -86,16 +120,39 @@ validity mask. `meta.json` declares output frame, origin, physical voxel size,
 UV pitch and reciprocal pitch scale. `VERIFIED.json` records TIFF readback and
 excluded node/cell counts, not physical acceptance or actual VC3D opening.
 
+## Aligned UVW products
+
+`export-uvw` consumes an original reference map and its independent publication
+ledger. It transports that map to the requested W values on one shared UV grid;
+it does not recompute a separate flattening for each level.
+
+`UVW.json` binds the `aligned-uvw-v2` identity, level receipts and quality report.
+Each `level-NNNN/` has an image, geometry/CT/cause/cell masks and
+`tifxyz/{x,y,z}.tif`. Unlike the mesh-derived routes, these are **float64** voxel
+coordinates with **NaN** for invalid nodes. `tifxyz/meta.json` records schema
+`aligned-uvw-tifxyz-v2`, `coordinate_dtype: float64`, the output frame and canvas.
+Decode with `xyz_um = xyz_tiff * voxel_um + origin_xyz_um`.
+
+The exact validated encoding is checkpointed and written without another
+coordinate conversion. Old float32 outputs cannot be resumed by this version.
+`UVW_READY_DIAGNOSTIC` requires geometry at at least one level;
+`UVW_EMPTY_DIAGNOSTIC` means all levels are empty. Neither promises common
+coverage, CT contrast or physical validity. See [UVW](UVW.md) for masks,
+precision gates, resource limits and downstream float32 conversion in VC3D.
+
 ## Observations and fibres
 
 `maps/` is a transactional tile inventory plus checksummed NPZ payloads.
 `PREPARED.json` describes its physical grid, source, ROI, model provenance and halo.
 Maps contain sheet density (cycles per micrometre), unsigned physical surface
 normals (XYZ), CT and surface support. Default/SD2 routes obtain these from official
-Lasagna and additionally retain `surface_phase` (cos / 255). Fibre presence,
+Lasagna; `--lasagna-input` supplies them from existing predictions instead.
+Both retain `surface_phase` (cos / 255). Fibre presence,
 tangents, V/H probabilities and `fibre_support` are separate observations. External
 AFV maps have no fabricated fibre probabilities/tangents/presence.
-`PREPARED.json.surface_method` and `fibre_method` identify these sources.
+`PREPARED.json.surface_method` remains `lasagna` for either Lasagna route;
+`LASAGNA.json.method: external-lasagna` identifies imported predictions.
+`PREPARED.json.fibre_method` independently identifies the fibre source.
 See [Lasagna setup and decoding](LASAGNA.md) for pins and raw products.
 
 SD2 inference owns fixed 32³ cores on the selected-source sampling lattice. Its
@@ -141,6 +198,23 @@ AFV runs omit them. Direction XY is encoded around
 128 with scale 127 after folding the sign into the positive-Z hemisphere. The
 manifests address an **ROI-local output grid** and include world origin, spacing
 and original-source metadata; align this frame before combining with other data.
+
+External `--lasagna-input` uses a local v2 manifest with scalar ZYX Zarr v2
+`cos`, `grad_mag`, `nx`, `ny` and optional `presence`. Each channel's `scaledown`
+is an exponent (`2**scaledown` base voxels); `nx` and `ny` share a grid. A `--lasagna-geometry` descriptor
+calibrates the base grid unless the manifest embeds the CLI's world frame.
+Import samples scalar channels and decoded, sign-aligned normal vectors onto the
+observation grid without extrapolation or bridging unsupported interpolation corners,
+then converts normalized directions and density
+to world units exactly once. Floating `grad_mag` preserves values above 255.
+See [input contract](LASAGNA.md#external-lasagna-predictions) for details.
+
+`lasagna-source/IDENTITY.json` and `RUN.json.lasagna_input` bind imported headers,
+geometry and channel metadata. `lasagna-source/<channel>.sqlite` binds consumed
+source bytes; `lasagna-source/maps/` contains normalized surface/CT tiles.
+`WORK.json` seals partial source/tile inventories; `LASAGNA.json` binds completed
+hashes. Both paths reject missing or altered records before reusing retained work.
+The external source files remain required even after preparation completes.
 
 `fibres/fibres.sqlite` stores curves in physical XYZ units.
 `FIBRES.json` includes their count and database SHA. `fibres/fibres.afv` is an AFV
@@ -197,6 +271,21 @@ constraint rows and conditional local-solver convergence. Sweeps are a budget;
 `global_converged: false` means no independent global convergence is established.
 The nominal unit sheet step and automatic planar/radial-Z calibration are
 scientifically unvalidated.
+
+With `--bounded-preparation`, `coarse/maps/` holds endpoint-aligned coarse
+observations and `pairs/` holds global fibre constraints. Native model windows
+are recomputed rather than retained as the ordinary dense preparation products.
+`GLOBAL_RESIDUAL.json` must pass before `FIELD.json` is published. If it does not,
+the run pauses and can extend its absolute sweep budget with
+`resume RUN --field-sweeps N`; repeating N does not add N more sweeps. This
+numerical check still does not certify a physical sheet.
+
+Bounded plans report `fibre_tracing` separately from observations and field grids.
+`--fibre-downsample 2|4` defaults to 2; the 4× option pools native predictions over
+4³ cells and traces at cell centres, mapping XYZ back by `q * 4 + 1.5` before
+physical calibration. `FIBRES.json` records `fibre_downsample`, which is also
+bound into the input and tracing journal identities. Inference resolution stays
+native; this is not a CT pyramid or field-spacing choice.
 
 The grid adapter orients fine unsigned normals before trilinearly sampling the
 physical density-normal target. All contributing interpolation nodes must be

@@ -1,8 +1,28 @@
 name: tests
-on: [push, pull_request]
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
+  preflight:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install pytest PyYAML
+      - run: python -m pytest -q --durations=30 -o pythonpath= .github/tests/test_ci_workflows.py tests/test_container_layout.py tests/test_install_script.py
+
   installed-package:
+    needs: preflight
     strategy:
+      fail-fast: false
       matrix:
         include:
           - os: ubuntu-latest
@@ -12,23 +32,37 @@ jobs:
     runs-on: ${{ matrix.os }}
     env:
       OMP_NUM_THREADS: '4'
+      CMAKE_BUILD_PARALLEL_LEVEL: '2'
+      CMAKE_ARGS: '-DVC_READER_ENABLE_CUDA=OFF'
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python }}
           cache: pip
-      - run: python -m pip install build pytest
+      - run: python -m pip install build pytest wheel
+      - name: Native CT build dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build pkg-config libcurl4-openssl-dev libblosc-dev libzstd-dev liblz4-dev libsqlite3-dev nlohmann-json3-dev zlib1g-dev libtiff-dev libpng-dev libjpeg-dev
+      - name: Native CT build dependencies (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          brew install bash cmake ninja pkgconf curl c-blosc zstd lz4 sqlite nlohmann-json libtiff libpng jpeg-turbo
+          # Apple's Bash 3.2 silently ignores sourced process substitutions.
+          echo "$(brew --prefix bash)/bin" >> "$GITHUB_PATH"
       - if: runner.os == 'Linux'
         run: python -m pip install torch --index-url https://download.pytorch.org/whl/cpu
       - name: Install original numerical library
         run: |
           CORE_REV=$(python -c "import json; print(json.load(open('provenance/core.json'))['revision'])")
-          python -m pip install "winding-field-experiments @ https://github.com/LimeGS/winding-field/archive/$CORE_REV.tar.gz"
+          python -m pip install "winding-field @ https://github.com/LimeGS/winding-field/archive/$CORE_REV.tar.gz"
       - run: python -m build
-      - run: python -m pip install dist/*.whl "matplotlib>=3.8,<4" "libigl==2.6.3" "tifffile>=2023.7"
+      - run: python -m pip install dist/*.whl "winding-field-cli[ct]" "matplotlib>=3.8,<4" "libigl==2.6.3" "tifffile>=2023.7"
+      - run: python -I -c "from vc_reader.reader import ObjectStore, ZarrReader, decode_chunk; from vc_reader import _reader; assert hasattr(_reader.DiskCache, 'write')"
       - run: python -m pip check
-      - run: python -m pytest -q -o pythonpath=
+      - run: python -m pytest -q --durations=30 -o pythonpath=
       - name: Installed CLI outside checkout
         working-directory: ${{ runner.temp }}
         run: |
