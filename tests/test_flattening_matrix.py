@@ -39,7 +39,9 @@ def geometry():
 def test_settings_require_explicit_native_only_for_slim(tmp_path):
     m=matrix();req=request(tmp_path)
     assert m.settings(req,'lscm','sheet')['flattening_solver']=='lscm'
-    with pytest.raises(ValueError,match='app_run'):m.settings(req,'slim','sheet')
+    # SLIM without an explicit app_run resolves the vendored pinned Flatboi pair (installed-2f89bfc9).
+    from winding_field.patch_pipeline import VENDORED_APP_RUN
+    assert m.settings(req,'slim','sheet')['app_run']==str(VENDORED_APP_RUN)
     for extra in ({'max_patch_faces':32},{'max_depth':2},{'iterations':10}):
         with pytest.raises(ValueError):m.settings(dict(req,**extra),'lscm','sheet')
     assert m.settings(dict(req,max_patch_faces=32),'lscm','patches')['max_patch_faces']==32
