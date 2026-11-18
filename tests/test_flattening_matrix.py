@@ -102,6 +102,19 @@ def test_sheet_component_coverage_is_not_limited_by_patch_chart_count(tmp_path):
     np.testing.assert_array_equal(np.sort(result['source_face_rows']),np.arange(len(f)))
 
 
+def test_saved_domains_finish_audit_without_solver(tmp_path,monkeypatch):
+    m=matrix();v,f=geometry();cfg=m.settings(request(tmp_path),'lscm','sheet')
+    out=tmp_path/'map';first=m.build_map(v,f,out,cfg)
+    for name in ('MAP.json','map.npz','AUDIT.json'):(out/name).unlink(missing_ok=True)
+    def forbidden(*args,**kwargs):raise AssertionError('solver must not run for saved domains')
+    monkeypatch.setattr(m,'solve',forbidden)
+    again=m.build_map(v,f,out,cfg)
+    assert again['report']['overlapping_faces']==first['report']['overlapping_faces']
+    assert again['report']['overlap']['status']=='COMPLETE'
+    np.testing.assert_array_equal(np.sort(again['source_face_rows']),np.arange(len(f)))
+    assert len(again['report']['domains'])==len(first['report']['domains'])
+
+
 def source_bundle(tmp_path):
     from winding_field.surface_mesh import import_mesh
     v,f=geometry();source=tmp_path/'source.npz';np.savez(source,vertices_xyz=v,faces=f)

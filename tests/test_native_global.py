@@ -25,19 +25,11 @@ def test_overlap_iterator_preserves_contacts_slivers_and_count():
     assert overlap_pairs(uv,np.empty((0,3),int))==0
 
 
-def test_overlap_candidate_admission_precedes_neighbor_materialization(monkeypatch):
-    import winding_field.flatten as flatten
-    real=flatten.cKDTree; requests=[]
-    class ObservedTree:
-        def __init__(self,*args):self.tree=real(*args)
-        def query_ball_point(self,*args,**kwargs):
-            requests.append(kwargs.get('return_length',False))
-            return self.tree.query_ball_point(*args,**kwargs)
-    monkeypatch.setattr(flatten,'cKDTree',ObservedTree)
+def test_overlap_small_candidate_chunk_still_completes_every_pair():
     uv=np.array([[0.,0.],[1,0],[0,1]])
-    with pytest.raises(RuntimeError,match='candidate'):
-        list(iter_overlap_pairs(uv,np.tile([0,1,2],(5,1)),max_candidates=4))
-    assert requests==[True]
+    report={}
+    assert len(list(iter_overlap_pairs(uv,np.tile([0,1,2],(5,1)),max_candidates=4,report=report)))==10
+    assert report['complete'] and report['pairs']==10
 
 
 def test_overlap_budget_and_cancellation_never_report_complete():
@@ -91,9 +83,10 @@ def test_qualify_exact_native_thresholds_and_all_invalid_report():
     assert (arrays['reasons']&1).all();json.dumps(report,allow_nan=False)
 
 
-def test_qualification_budget_failure_is_not_an_accepted_subset(monkeypatch):
-    cut=disk();monkeypatch.setattr(global_uv,'MAX_NARROW_TESTS',0)
-    with pytest.raises(RuntimeError,match='narrow'):global_uv.qualify_map(cut,cut['vertices'][:,:2])
+def test_qualification_budget_failure_is_not_an_accepted_subset():
+    cut=disk()
+    with pytest.raises(RuntimeError,match='narrow'):
+        global_uv.qualify_map(cut,cut['vertices'][:,:2],max_tests=0)
 
 
 def test_input_validation_rejects_bad_geometry_and_indices():
