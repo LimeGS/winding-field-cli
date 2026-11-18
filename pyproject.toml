@@ -42,7 +42,7 @@ Documentation = "https://github.com/LimeGS/winding-field-cli/blob/main/README.md
 where = ["src"]
 
 [tool.setuptools.package-data]
-winding_field = ["native/predicates.h", "native/predicates.cpp", "native/predicates.cu"]
+winding_field = ["native/predicates.h", "native/predicates.cpp", "native/predicates.cu", "_native/vc3d/AppRun", "_native/vc3d/usr/bin/flatboi"]
 "winding_field._vendor" = ["qual_plans.json"]
 
 [tool.setuptools.data-files]
