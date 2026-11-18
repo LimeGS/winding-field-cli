@@ -116,7 +116,7 @@ def export_lasagna(run,stop=None):
     return True
 
 
-def export_afv(run,stop=None):
+def export_afv(run,stop=None,*,quota_bytes=None):
     run=Path(run); meta=json.loads((run/'PREPARED.json').read_bytes())
     source=meta['source']; root=run/'fibres'; destination=root/'fibres.afv'; pending=root/'fibres.partial.afv'
     fibres=json.loads((run/'FIBRES.json').read_bytes())
@@ -137,14 +137,17 @@ def export_afv(run,stop=None):
     src=sqlite3.connect((root/'fibres.sqlite').resolve().as_uri()+'?mode=ro',uri=True)
     db=sqlite3.connect(pending)
     batch_count=0;batch_started=time.monotonic()
-    db.executescript('PRAGMA application_id=1447249475; PRAGMA user_version=1; PRAGMA foreign_keys=ON;'
-        'CREATE TABLE IF NOT EXISTS metadata(key TEXT PRIMARY KEY,value TEXT NOT NULL);'
-        'CREATE TABLE IF NOT EXISTS fibers(id INTEGER PRIMARY KEY,name TEXT NOT NULL,family TEXT NOT NULL,point_count INTEGER NOT NULL,'
-        'length REAL NOT NULL,min_x REAL,max_x REAL,min_y REAL,max_y REAL,min_z REAL,max_z REAL,annotation TEXT NOT NULL);'
-        'CREATE TABLE IF NOT EXISTS blocks(id INTEGER PRIMARY KEY,fiber_id INTEGER REFERENCES fibers(id),first_segment INTEGER,points BLOB,UNIQUE(fiber_id,first_segment));'
-        'CREATE INDEX IF NOT EXISTS fibers_length ON fibers(length DESC,id);'
-        'CREATE VIRTUAL TABLE IF NOT EXISTS block_bounds USING rtree(id,min_x,max_x,min_y,max_y,min_z,max_z);')
     try:
+        if quota_bytes is not None:
+            from .util import sqlite_quota
+            sqlite_quota(db,quota_bytes)
+        db.executescript('PRAGMA application_id=1447249475; PRAGMA user_version=1; PRAGMA foreign_keys=ON;'
+            'CREATE TABLE IF NOT EXISTS metadata(key TEXT PRIMARY KEY,value TEXT NOT NULL);'
+            'CREATE TABLE IF NOT EXISTS fibers(id INTEGER PRIMARY KEY,name TEXT NOT NULL,family TEXT NOT NULL,point_count INTEGER NOT NULL,'
+            'length REAL NOT NULL,min_x REAL,max_x REAL,min_y REAL,max_y REAL,min_z REAL,max_z REAL,annotation TEXT NOT NULL);'
+            'CREATE TABLE IF NOT EXISTS blocks(id INTEGER PRIMARY KEY,fiber_id INTEGER REFERENCES fibers(id),first_segment INTEGER,points BLOB,UNIQUE(fiber_id,first_segment));'
+            'CREATE INDEX IF NOT EXISTS fibers_length ON fibers(length DESC,id);'
+            'CREATE VIRTUAL TABLE IF NOT EXISTS block_bounds USING rtree(id,min_x,max_x,min_y,max_y,min_z,max_z);')
         row=db.execute("SELECT value FROM metadata WHERE key='export_identity'").fetchone()
         if row and row!=(json.dumps(identity),):
             raise ValueError('partial AFV export identity changed')

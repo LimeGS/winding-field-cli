@@ -471,7 +471,7 @@ def main(argv=None):
                 except (OSError,ValueError):
                     pass  # Advisory progress must not hide the authoritative run state.
             else:
-                result=run(state['config'],resume=True,until=None if args.command=='resume' else args.command,
+                result=run(state['config'],resume=True,until=('fibres' if state.get('preparation_only') else None) if args.command=='resume' else args.command,
                            extra_surface_seconds=getattr(args,'extra_surface_seconds',0.),
                            field_sweeps=getattr(args,'field_sweeps',None),offline=args.offline)
         print(json.dumps(result,indent=2,allow_nan=False))

@@ -301,7 +301,7 @@ class Volume:
             raise ValueError('invalid physical geometry')
         return spacing[::-1].tolist(), origin[::-1].tolist()
 
-    def bind_ledger(self, path):
+    def bind_ledger(self, path, *, quota_bytes=None):
         """Pin every consumed encoded chunk; changed bytes cannot enter a resumed run."""
         if self._verified_sampling or self._batching:raise ValueError('cannot switch ledger during verified sampling/batch')
         for key,(array,_,pin) in list(self._decoded.items()):
@@ -309,6 +309,9 @@ class Volume:
                 del self._decoded[key];self._decoded_bytes-=array.nbytes+512
         if self._ledger is not None:self._ledger.close()
         self._ledger = sqlite3.connect(path, check_same_thread=False)
+        if quota_bytes is not None:
+            from .util import sqlite_quota
+            sqlite_quota(self._ledger,quota_bytes)
         self._ledger.execute('CREATE TABLE IF NOT EXISTS chunks (key TEXT PRIMARY KEY, sha TEXT NOT NULL)')
         self._ledger.commit()
 
