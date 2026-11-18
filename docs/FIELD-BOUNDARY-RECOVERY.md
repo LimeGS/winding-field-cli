@@ -92,7 +92,7 @@ completion of the reported field. No production recovery was executed.
 Commit this focused fix separately from config/flag parity. Review and qualify
 the installed wheel with the published pinned core; keep old tags immutable.
 After explicit release authorization, use the next free CLI patch version
-(candidate 1.5.7 if still free), leave core 1.5.2 pinned, and publish notes
+(candidate 1.5.9), leave core 1.5.2 pinned, and publish notes
 describing the changed boundary arithmetic and separate recovery requirement.
 Do not wait for CI if the user maintains that instruction, but report CI's actual
 state and exactly which local checks ran.
