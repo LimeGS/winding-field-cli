@@ -1,10 +1,10 @@
 # Consultative field progress
 
-This development feature is **explicitly opt-in** and has no scientific control
+This advisory feature is **explicitly opt-in** and has no scientific control
 authority. The CLI now depends on an immutable observer-capable core archive,
-version `1.5.3.dev0`, with its revision, archive hash and module hashes recorded
+version `1.5.3`, with its revision, archive hash and module hashes recorded
 in `provenance/core.json`; the CPU/CUDA locks select that same archive.
-This development pin is not a stable release. Older core 1.5.2 lacks the hooks
+This pin selects the stable core release. Older core 1.5.2 lacks the hooks
 and is rejected clearly rather than approximating pre-encoding measurements.
 Existing installed runtimes are not upgraded automatically.
 
