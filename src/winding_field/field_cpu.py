@@ -146,8 +146,10 @@ def validate_block(block,spec,lo,hi,*,build_rows):
 class CPUFieldInputs:
     timeout_seconds=300.
 
-    def __init__(self,spec,*,workers,max_bytes,cache=None,stop=None):
+    def __init__(self,spec,*,workers,max_bytes,cache=None,observations=None,stop=None):
         self.cache={} if cache is None else cache
+        # Boxes whose observations and rows the parent retains are never resubmitted.
+        self.observations={} if observations is None else observations
         self.stop=stop;self.pending=deque();self.active=None;self.pool=None;self.closed=False
         self.boxes=[(tuple(map(int,lo)),tuple(map(int,hi))) for lo,hi in spec['boxes']]
         self.next_index=0
@@ -170,7 +172,7 @@ class CPUFieldInputs:
             raise ResourceUnavailable('CPU buffer too small for block observations/preparation slot')
         self.spec=spec
         self.stats=dict(workers=workers,requested_workers=requested,completed=0,submitted=0,
-                        constraint_builds=0,peak_buffer_bytes=0,buffer_bytes=max_bytes,
+                        skipped=0,constraint_builds=0,peak_buffer_bytes=0,buffer_bytes=max_bytes,
                         wait_seconds=0.,worker_info={})
         context=mp.get_context('spawn')
         self.pool=ProcessPoolExecutor(max_workers=workers,mp_context=context,initializer=_initialize,initargs=(spec,))
@@ -178,6 +180,9 @@ class CPUFieldInputs:
     def _fill(self):
         while len(self.pending)+(self.active is not None)<self.slots and self.next_index<len(self.boxes):
             lo,hi=self.boxes[self.next_index];key=(*lo,*hi);build=key not in self.cache
+            if not build and key in self.observations:
+                self.next_index+=1;self.stats['skipped']+=1
+                continue
             with _spawn_environment():
                 future=self.pool.submit(prepare_static_block,self.spec,lo,hi,build)
             self.pending.append((lo,hi,build,future));self.next_index+=1

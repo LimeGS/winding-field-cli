@@ -135,7 +135,8 @@ def validate_config(config):
               'sweeps':(1,None),'maxiter':(1,None),'seed_stride':(1,None),
               'mesh_tile':(1,256),'chart_faces':(1,8192),'threads':(1,None),
               'cache_bytes':(0,None),'reserve_bytes':(0,None),'bounded_bytes':(16<<20,None),
-              'prepared_cache_bytes':(0,None),'constraint_cache_bytes':(0,None)}
+              'prepared_cache_bytes':(0,None),'constraint_cache_bytes':(0,None),
+              'observation_cache_bytes':(0,None),'field_cache_bytes':(0,None)}
     for name,(low,high) in integers.items():
         if name in config:
             value=config[name]

@@ -153,6 +153,8 @@ def main(argv=None):
         p.add_argument('--field-advice',action='store_true',default=argparse.SUPPRESS,help='opt-in consultative diagnostics only; requires observer-capable development core')
         p.add_argument('--prepared-cache-bytes',type=int,default=0,help='retained field CPU/device workspaces; 0 disables (not a peak-memory cap)')
         p.add_argument('--constraint-cache-bytes',type=int,default=0,help='retained static fibre restrictions; 0 disables; retained bytes are not a total RSS cap')
+        p.add_argument('--observation-cache-bytes',type=int,default=argparse.SUPPRESS,help='retained static per-block field observations across sweeps (default: 0, disabled); not a total RSS cap')
+        p.add_argument('--field-cache-bytes',type=int,default=argparse.SUPPRESS,help='decoded field-checkpoint chunk cache for block solves (default: 64 MiB); not a total RSS cap')
         p.add_argument('--field-cpu-workers',type=int,default=0,help='opt-in ordinary-field CPU preparation processes; solves/writes stay ordered and serial; 0 disables')
         p.add_argument('--field-cpu-buffer-bytes',type=int,default=0,help='explicit CPU preparation/IPC buffer budget; requires --field-cpu-workers; not a total RAM or RSS cap')
         p.add_argument('--maxiter',type=int,default=2000,help='iteration limit per local field solve (default: 2000)'); p.add_argument('--rtol',type=float,default=1e-6,help='relative tolerance of local field solves (default: 1e-6)')
