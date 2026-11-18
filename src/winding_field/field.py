@@ -17,7 +17,7 @@ from field_constraints import pair_constraints
 from field_store import BlockStore
 from .surface_sources import FieldSource
 from .artifacts import Tiles
-from .config import field_geometry
+from .config import field_geometry,validate_field_cpu
 from .util import atomic_json, digest, file_sha
 
 
@@ -112,18 +112,105 @@ def spline_samples(points,low,high,step):
             yield np.linspace(a,b,max(1,int(np.ceil(length/step)))+1)
 
 
+def spline_pairs(points,low,high,step,*,max_pairs=None):
+    """Batch short edges; preserve scalar norm/linspace for sensitive lengths."""
+    start=points[:-1];delta=np.diff(points,axis=0)
+    near=np.divide(low-start,delta,out=np.full_like(start,-np.inf),where=delta!=0)
+    far=np.divide(high-start,delta,out=np.full_like(start,np.inf),where=delta!=0)
+    enter=np.maximum(0,np.minimum(near,far).max(1))
+    leave=np.minimum(1,np.maximum(near,far).min(1))
+    valid=(leave>enter)&np.all((delta!=0)|((start>=low)&(start<=high)),axis=1)
+    indices=np.flatnonzero(valid)
+    a=np.clip(start[indices]+enter[indices,None]*delta[indices],low,high)
+    b=np.clip(start[indices]+leave[indices,None]*delta[indices],low,high)
+    difference=abs(b-a)
+    # A generous margin keeps near-step and underflow rounding on the old path.
+    short=(difference.sum(1)<=step/2)&(difference.max(1,initial=0)>np.sqrt(np.finfo(difference.dtype).tiny))
+    counts=short.astype(np.int64);long={}
+    total=int(short.sum())
+    if max_pairs is not None and total>max_pairs:
+        from field_runtime import ResourceUnavailable
+        raise ResourceUnavailable('CPU pair preparation exceeds its slot')
+    for i in np.flatnonzero(~short):
+        length=np.linalg.norm(b[i]-a[i])
+        if length:
+            count=max(1,int(np.ceil(length/step)));total+=count
+            if max_pairs is not None and total>max_pairs:
+                from field_runtime import ResourceUnavailable
+                raise ResourceUnavailable('CPU pair preparation exceeds its slot')
+            counts[i]=count;long[i]=count
+    pairs=np.linspace(a[short],b[short],2,axis=1)
+    offsets=np.r_[0,np.cumsum(counts)]
+    left=np.empty((offsets[-1],3),dtype=pairs.dtype);right=np.empty_like(left)
+    left[offsets[:-1][short]]=pairs[:,0];right[offsets[:-1][short]]=pairs[:,1]
+    for i,count in long.items():
+        samples=np.linspace(a[i],b[i],count+1)
+        left[offsets[i]:offsets[i+1]]=samples[:-1]
+        right[offsets[i]:offsets[i+1]]=samples[1:]
+    return left,right
+
+
+def _constraint_rows(db,meta,fibres,geometry,maps,lo,hi,weight,*,max_pairs=None,stop=None):
+    """Immutable ordinary-provider rows; no live field or exterior targets."""
+    block_origin=np.asarray(geometry['origin_xyz'])+lo[::-1]*geometry['spacing_xyz']
+    block_shape=hi-lo
+    block_upper=block_origin+(block_shape[::-1]-1)*geometry['spacing_xyz']
+    a=[];b=[];count=0
+    if meta['prediction']=='qual-v2' or fibres.get('spatial_index'):
+        rows=db.execute('SELECT c.points FROM curve_bounds b JOIN curves c ON c.id=b.id '
+                        'WHERE b.max_x>=? AND b.min_x<=? AND b.max_y>=? AND b.min_y<=? '
+                        'AND b.max_z>=? AND b.min_z<=? ORDER BY c.id',
+                        tuple(v for pair in zip(block_origin,block_upper) for v in pair))
+    else:
+        axes=map_axes(meta,geometry,lo,hi)
+        keys=itertools.product(*(range(int(axis[0])//maps.chunk,int(axis[-1])//maps.chunk+1) for axis in axes))
+        rows=(row for key in keys for row in db.execute('SELECT points FROM curves WHERE tile=?',('_'.join(map(str,key)),)))
+    for (raw,) in rows:
+        if stop and stop():raise InterruptedError('CPU preparation stopped')
+        if max_pairs is not None and len(raw)>(max_pairs+1)*24+4096:
+            from field_runtime import ResourceUnavailable
+            raise ResourceUnavailable('CPU curve exceeds its preparation slot')
+        points=np.load(io.BytesIO(raw),allow_pickle=False)
+        if max_pairs is not None and (not isinstance(points,np.ndarray) or points.ndim!=2 or points.shape[1]!=3
+                or points.dtype not in (np.float32,np.float64) or not np.isfinite(points).all()):
+            raise ValueError('CPU curve must contain finite float32/float64 XYZ points')
+        if meta['prediction']=='qual-v2' or fibres.get('spatial_index'):
+            left,right=spline_pairs(points,block_origin,block_upper,min(geometry['spacing_xyz']),
+                                    max_pairs=None if max_pairs is None else max_pairs-count)
+        else:
+            points=points[::3]
+            if len(points)<2:continue
+            inside=((points>=block_origin)&(points<=block_upper)).all(1)
+            valid=inside[:-1]&inside[1:]
+            left,right=points[:-1][valid],points[1:][valid]
+        count+=len(left)
+        if max_pairs is not None and count>max_pairs:
+            from field_runtime import ResourceUnavailable
+            raise ResourceUnavailable('CPU constraint rows exceed their preparation slot')
+        if len(left):a.append(left);b.append(right)
+    if not a:return None
+    return pair_constraints(np.concatenate(a),np.concatenate(b),block_origin,geometry['spacing_xyz'],
+                            tuple(block_shape),weight=weight)
+
+
 def solve(run,config,stop=None,*,sweep_target=None,convergence=None):
+    validate_field_cpu(config,convergence=convergence is not None)
     from .field_advice import observer_options,require_observer,record_verification,finish
     if type(config.get('field_advice',False)) is not bool:raise ValueError('field_advice must be boolean')
     if config.get('field_advice'):require_observer()
     budget=config.get('prepared_cache_bytes',0)
     if type(budget) is not int or budget<0:
         raise ValueError('prepared_cache_bytes must be a nonnegative integer')
+    constraint_budget=config.get('constraint_cache_bytes',0)
+    if type(constraint_budget) is not int or constraint_budget<0:
+        raise ValueError('constraint_cache_bytes must be a nonnegative integer')
     if config.get('preconditioner','jacobi')!='jacobi':
         raise ValueError("block workflows require preconditioner='jacobi'")
     run=Path(run); meta=json.loads((run/'PREPARED.json').read_bytes())
     fibres=json.loads((run/'FIBRES.json').read_bytes())
     bounded=meta.get('bounded_preparation',False)
+    if config.get('field_cpu_workers',0) and bounded:
+        raise ValueError('CPU preparation pool supports only ordinary static providers')
     maps=Tiles(run/('coarse/maps' if bounded else 'maps'),readonly=convergence is not None)
     if maps.identity()!=meta['tiles_sha256'] or file_sha(run/'fibres/fibres.sqlite')!=fibres['sha256']:
         raise ValueError('prepared maps or fibres changed')
@@ -149,6 +236,8 @@ def solve(run,config,stop=None,*,sweep_target=None,convergence=None):
             identity.update(algorithm='global-arclength-pairs-coarse-prior-v1' if bounded else
                             'global-arclength-pairs-full-prior-v1',mode='automatic-convergence-v1')
     root=run/'field'
+    def preparation_stopped():
+        return (root/'STOP').exists() or bool(stop and stop())
     from .field_budget import effective_budget,extend
     sweeps=effective_budget(root,config.get('sweeps',4)) if bounded or convergence is not None else config.get('sweeps',4)
     if sweep_target is not None and (not bounded or type(sweep_target) is not int or sweep_target<sweeps):
@@ -163,8 +252,12 @@ def solve(run,config,stop=None,*,sweep_target=None,convergence=None):
     db=sqlite3.connect((run/'fibres/fibres.sqlite').resolve().as_uri()+'?mode=ro',uri=True)
     row_count=0
     static_rows={};static_bytes=0
+    cpu_inputs=None
+    cache_stats=dict(budget=constraint_budget,hits=0,misses=0,builds=0,entries=0,
+                     retained_bytes=0,peak_bytes=0,peak_entries=0,denied_entries=0)
 
     def load(lo,hi):
+        if cpu_inputs is not None:return cpu_inputs.load(lo,hi)
         if bounded:
             values=maps.read_many(('target','weights','support'),lo,hi)
             target,weights,valid=(values[k] for k in ('target','weights','support'))
@@ -174,45 +267,29 @@ def solve(run,config,stop=None,*,sweep_target=None,convergence=None):
     def constraints(lo,hi,read_nodes):
         nonlocal row_count,static_bytes
         key=tuple(map(int,(*lo,*hi)))
+        prefetched=cpu_inputs.constraints(lo,hi,read_nodes) if cpu_inputs is not None else None
         if key in static_rows:
+            cache_stats['hits']+=1
             rows=static_rows[key]
             row_count+=0 if rows is None else rows.matrix.shape[0]
             return rows
-        block_origin=np.asarray(geometry['origin_xyz'])+lo[::-1]*geometry['spacing_xyz']
-        block_shape=hi-lo
-        block_upper=block_origin+(block_shape[::-1]-1)*geometry['spacing_xyz']
-        a=[]; b=[]
-        if meta['prediction']=='qual-v2' or fibres.get('spatial_index'):
-            rows=db.execute('SELECT c.points FROM curve_bounds b JOIN curves c ON c.id=b.id '
-                            'WHERE b.max_x>=? AND b.min_x<=? AND b.max_y>=? AND b.min_y<=? '
-                            'AND b.max_z>=? AND b.min_z<=? ORDER BY c.id',tuple(v for pair in zip(block_origin,block_upper) for v in pair))
-        else:
-            axes=map_axes(meta,geometry,lo,hi)
-            keys=itertools.product(*(range(int(axis[0])//maps.chunk,int(axis[-1])//maps.chunk+1) for axis in axes))
-            rows=(row for key in keys for row in db.execute('SELECT points FROM curves WHERE tile=?',('_'.join(map(str,key)),)))
-        for (raw,) in rows:
-            points=np.load(io.BytesIO(raw),allow_pickle=False)
-            if meta['prediction']=='qual-v2' or fibres.get('spatial_index'):
-                for sampled in spline_samples(points,block_origin,block_upper,min(geometry['spacing_xyz'])):
-                    a.extend(sampled[:-1]); b.extend(sampled[1:])
-                continue
-            points=points[::3]
-            if len(points)<2:
-                continue
-            inside=((points>=block_origin) & (points<=block_upper)).all(1)
-            valid=inside[:-1]&inside[1:]
-            a.extend(points[:-1][valid]); b.extend(points[1:][valid])
-        if not a:
-            if static_bytes+4096<=config.get('constraint_cache_bytes',0):
+        cache_stats['misses']+=1;cache_stats['builds']+=1
+        result=(prefetched if cpu_inputs is not None else
+                _constraint_rows(db,meta,fibres,geometry,maps,lo,hi,identity['fibre_weight']))
+        if result is None:
+            if static_bytes+4096<=constraint_budget:
                 static_rows[key]=None;static_bytes+=4096
+                cache_stats.update(entries=len(static_rows),retained_bytes=static_bytes,
+                                   peak_bytes=static_bytes,peak_entries=len(static_rows))
+            else:cache_stats['denied_entries']+=1
             return None
-        row_count+=len(a)
-        result=pair_constraints(np.array(a),np.array(b),
-                block_origin,geometry['spacing_xyz'],tuple(block_shape),
-                weight=identity['fibre_weight'])
+        row_count+=result.matrix.shape[0]
         charge=4096+result.targets.nbytes+sum(a.nbytes for a in result._structural_arrays())
-        if charge<=config.get('constraint_cache_bytes',0)-static_bytes:
+        if charge<=constraint_budget-static_bytes:
             static_rows[key]=result.with_targets(result.targets);static_bytes+=charge
+            cache_stats.update(entries=len(static_rows),retained_bytes=static_bytes,
+                               peak_bytes=static_bytes,peak_entries=len(static_rows))
+        else:cache_stats['denied_entries']+=1
         return result
 
     constraints.prepared_key=lambda lo,hi:fibres['sha256']
@@ -240,6 +317,19 @@ def solve(run,config,stop=None,*,sweep_target=None,convergence=None):
                     store.commit(key,initial_field(coordinates(lo,hi,geometry),geometry,cal),progress,valid)
                 progress['initialization_done']=True
                 store.save_progress(progress)
+        if config.get('field_cpu_workers',0):
+            from .field_cpu import CPUFieldInputs
+            boxes=[]
+            for key in options['order']:
+                low=np.array(key)*chunk;high=np.minimum(low+chunk,shape)
+                boxes.append((tuple(map(int,np.maximum(low-options['halo'],0))),
+                              tuple(map(int,np.minimum(high+options['halo'],shape)))))
+            spec=dict(run=str(run.resolve()),meta=meta,fibres=fibres,geometry=geometry,
+                      calibration=cal,weight=identity['fibre_weight'],boxes=boxes,
+                      cache_bytes=constraint_budget+budget)
+            cpu_inputs=CPUFieldInputs(spec,workers=config['field_cpu_workers'],
+                                      max_bytes=config['field_cpu_buffer_bytes'],cache=static_rows,
+                                      stop=preparation_stopped)
         if bounded:
             device=torch.device(config.get('device','cpu'))
             if device.type=='cuda':
@@ -259,12 +349,16 @@ def solve(run,config,stop=None,*,sweep_target=None,convergence=None):
             result=solve_blocks(root,shape,chunk,identity,load,resume=True,stop=stop,**options)
         result['effective_threads']=torch.get_num_threads()
         finish(options.get('observer'))
+        static_rows.clear();static_bytes=0
+        cache_stats.update(entries=0,retained_bytes=0)
         if result['status']!='SWEEP_BUDGET_REACHED':
-            return dict(status='PAUSED',solver=result)
+            return dict(status='PAUSED',solver=result,constraint_cache_stats=cache_stats)
         receipt=dict(status='FIELD_READY',geometry=geometry,checkpoint_sha256=file_sha(checkpoint),
                      effective_threads=torch.get_num_threads(),
                      calibration=cal,solver=result,global_converged=False,physical_acceptance=False,
-                      fibre_constraint_rows=row_count,numerical_status='local solves converged; sweep budget exhausted')
+                       fibre_constraint_rows=row_count,constraint_cache_stats=cache_stats,
+                        numerical_status='local solves converged; sweep budget exhausted')
+        if cpu_inputs is not None:receipt['field_cpu_stats']=cpu_inputs.stats
         if bounded:
             from .global_residual import verify
             backend=dict(name='canonical-block-solver',device=str(torch.empty(0,device=device).device),
@@ -298,6 +392,17 @@ def solve(run,config,stop=None,*,sweep_target=None,convergence=None):
                            numerical_status='stored global normal equations and codec-encoded zero gauge verified')
         atomic_json(run/'FIELD.json',receipt)
         return receipt
+    except InterruptedError:
+        if cpu_inputs is None or not preparation_stopped():raise
+        status=json.loads((root/'STATUS.json').read_bytes())
+        status.update(status='CHECKPOINTED_STOP')
+        status.pop('error',None)
+        atomic_json(root/'STATUS.json',status)
+        finish(options.get('observer'))
+        return dict(status='PAUSED',solver=status,constraint_cache_stats=cache_stats)
     finally:
+        if cpu_inputs is not None:cpu_inputs.close()
+        static_rows.clear()
+        cache_stats.update(entries=0,retained_bytes=0)
         maps.close(); db.close()
         if pair_provider is not None:pair_provider.__exit__()
