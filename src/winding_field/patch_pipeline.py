@@ -12,6 +12,7 @@ import math
 import os
 from pathlib import Path
 import shutil
+import sys
 import threading
 
 import numpy as np
@@ -49,10 +50,12 @@ def settings(request,*,native_required=True):
         if not isinstance(cfg.get('app_run'),str) or not cfg['app_run']:raise ValueError('patch app_run required')
     if type(cfg['cache_gib']) not in (int,float) or not math.isfinite(cfg['cache_gib']) or cfg['cache_gib']<0:raise ValueError('invalid patch cache_gib')
     for key in ('pitch_um','memory_gib','timeout_seconds','process_tree_gib','disk_reserve_gib'):
+        if key in ('memory_gib','process_tree_gib') and cfg[key] is None:continue
         if type(cfg[key]) not in (int,float) or not math.isfinite(cfg[key]) or cfg[key]<=0:raise ValueError('invalid patch '+key)
     for key,lo,hi in (('workers',1,4),('raster_workers',1,4),('ct_workers',1,4),('max_patch_faces',1,100000),('max_depth',0,16),('max_charts',1,100000),('tile_size',2,2048),('cache_mib',0,8192)):
         if type(cfg[key]) is not int or not lo<=cfg[key]<=hi:raise ValueError('invalid patch '+key)
-    if raster_memory(cfg)>=cfg['memory_gib']*2**30:raise ValueError('patch memory budget cannot hold raster, CT cache and runtime reserve')
+    if cfg['memory_gib'] is not None and raster_memory(cfg)>=cfg['memory_gib']*2**30:
+        raise ValueError('patch memory budget cannot hold raster, CT cache and runtime reserve')
     cpus=cfg['native_cpus']
     if cpus is not None and (not isinstance(cpus,list) or not cpus or any(type(c) is not int or c<0 for c in cpus) or len(set(cpus))!=len(cpus)):
         raise ValueError('invalid native CPU set')
@@ -73,7 +76,7 @@ def ct_memory(chunks,dtype,cfg):
     decoded=math.prod(chunks)*np.dtype(dtype).itemsize
     # Native decode + codec workspace + new Python bytes + previous sampler chunk.
     reserved=4*decoded*(cfg.get('raster_workers',1)+(cfg.get('ct_workers',1) if cfg.get('ct_workers',1)>1 else 0))
-    if raster_memory(cfg)+reserved>=cfg['memory_gib']*2**30:
+    if cfg['memory_gib'] is not None and raster_memory(cfg)+reserved>=cfg['memory_gib']*2**30:
         raise ValueError('CT chunk memory exceeds whole patch memory budget')
     return reserved
 
@@ -498,14 +501,27 @@ def open_mesh(path):
             yield reader,dict(kind=kind,storage_slot_semantics='each saved mesh level is exported independently')
 
 
-def read_level(reader,level,*,memory_gib):
+def read_level(reader,level,*,memory_gib,workspace=None):
     from .patch_mapping import SourceKeys
+    from .native_patches import admit_memory
     db=reader.db;nv=db.execute('SELECT COUNT(*) FROM vertices WHERE level=?',(level,)).fetchone()[0]
     nf=db.execute('SELECT COUNT(*) FROM faces WHERE level=?',(level,)).fetchone()[0]
-    # shortcut: conservative in-memory graph admission, use a disk graph for larger meshes.
-    estimate=(nv+nf)*2048
-    if estimate>memory_gib*2**30:raise ValueError(f'patch geometry admission exceeds {memory_gib:g} GiB ({nv} vertices, {nf} faces)')
-    vi=np.empty(nv,np.int64);v=np.empty((nv,3));fi=np.empty(nf,np.int64);f=np.empty((nf,3),np.int64)
+    # Two fetch batches can coexist with packed rows, search indices and masks.
+    row=sys.getsizeof((0,0,0,0))+4*sys.getsizeof(0)+np.dtype(np.intp).itemsize
+    temporary=2*min(4096,max(nv,nf))*(row+4*8+3*8+3)
+    storage=nv*(8+3*8)+nf*(8+3*8)
+    operator=None if memory_gib is None else int(memory_gib*2**30)
+    admit_memory(temporary+(storage if workspace is None else 0),phase='mesh numeric read',operator_bytes=operator)
+    if workspace is not None:
+        workspace=Path(workspace)
+        if any(p.is_symlink() for p in (workspace,*workspace.parents)):raise ValueError('mesh workspace symlink refused')
+        workspace.mkdir(exist_ok=False)
+        if shutil.disk_usage(workspace).free<storage:raise InterruptedError('mesh array scratch space unavailable')
+    def array(name,shape,dtype):
+        if workspace is None or not math.prod(shape):return np.empty(shape,dtype)
+        return np.lib.format.open_memmap(workspace/(name+'.npy'),mode='w+',shape=shape,dtype=dtype)
+    vi=array('vertex-ids',(nv,),np.int64);v=array('vertices',(nv,3),np.float64)
+    fi=array('face-ids',(nf,),np.int64);f=array('faces',(nf,3),np.int64)
     cursor=db.execute('SELECT id,x,y,z FROM vertices WHERE level=? ORDER BY id',(level,));offset=0
     while batch:=cursor.fetchmany(4096):
         count=len(batch)
@@ -540,7 +556,7 @@ def export_mesh(mesh_path,out,volume,request,*,export_tifxyz=False,stop=lambda:F
             ('patch_pipeline','native_ct_sampling','native_patches','patch_mapping','surface_export','surface_atlas','original_recipe','original_pipeline','original_tifxyz','surface_mesh','range_surface','io')}
         identity['runtime']={name:version(name) for name in ('numpy','scipy','Pillow')}
         identity['memory_admission']=dict(raster_cache_runtime_bytes=raster_memory(cfg),ct_chunk_workspace_bytes=ct_reserve,
-            geometry_budget_bytes=cfg['memory_gib']*2**30-raster_memory(cfg)-ct_reserve)
+            geometry_budget_bytes=None if cfg['memory_gib'] is None else cfg['memory_gib']*2**30-raster_memory(cfg)-ct_reserve)
         from .native_patches import NativeReuse,ResourceGuard
         reuse=NativeReuse(cfg['reuse_export'],cfg['reuse_identity_sha256'],identity) if cfg['reuse_export'] else None
         if reuse:identity['native_reuse']=dict(export=str(reuse.root),identity_sha256=reuse.identity_sha256,inventory=reuse.inventory)
@@ -555,7 +571,8 @@ def export_mesh(mesh_path,out,volume,request,*,export_tifxyz=False,stop=lambda:F
         records=[]
         try:
             for level,value in reader.db.execute('SELECT id,value FROM levels ORDER BY id'):
-                guard();v,f,vi,fi,vk,fk=read_level(reader,level,memory_gib=cfg['memory_gib']-(raster_memory(cfg)+ct_reserve)/2**30)
+                geometry_gib=None if cfg['memory_gib'] is None else cfg['memory_gib']-(raster_memory(cfg)+ct_reserve)/2**30
+                guard();v,f,vi,fi,vk,fk=read_level(reader,level,memory_gib=geometry_gib)
                 target=out/f'level-{level:04d}';target.mkdir()
                 world=frame_coordinates(v,frame,reader.metadata['voxel_um'])
                 cancelled.clear()

@@ -6,7 +6,8 @@ from types import SimpleNamespace
 import numpy as np
 
 from . import patch_pipeline as p
-from .flatten import cross2, iter_overlap_pairs
+from .flatten import cross2
+from .overlap_audit import audit_uv
 from .native_global import cut_component, mean_value_map
 from .original_recipe import face_quality, scale_uv_to_world
 from .sheet_atlas import _arrays, _json, _verified
@@ -30,12 +31,10 @@ def settings(request,solver,scope):
         extra['centerline']=centerline_points(extra['centerline']).tolist()
     if 'reference_z' in extra and ('centerline' not in extra or type(extra['reference_z']) not in (int,float) or not np.isfinite(extra['reference_z'])):
         raise ValueError('reference_z requires centerline and a finite height')
-    base=dict(memory_gib=6.,process_tree_gib=22.,native_recipe='installed-2f89bfc9')
+    base=dict(memory_gib=None,process_tree_gib=None,native_recipe='installed-2f89bfc9')
     base.update({k:v for k,v in request.items() if k not in extra})
     cfg=p.settings(base,native_required=solver=='slim')
     if solver=='slim' and cfg['native_recipe'] not in p.CHECKPOINT_RECIPES:raise ValueError('native_recipe is not checkpoint-qualified')
-    if cfg['disk_reserve_gib']<8 or cfg['memory_gib']>6 or cfg['process_tree_gib']>22:
-        raise ValueError('matrix requires >=8GiB disk reserve, <=6GiB geometry/raster and <=22GiB process-tree budget')
     cfg.update(extra,flattening_solver=solver,scope=scope)
     return cfg
 
@@ -59,7 +58,7 @@ def solve(cut,output,cfg,guard):
         np.testing.assert_array_equal(data['world'],v);np.testing.assert_array_equal(data['faces'],f)
         initialization=record['initialization']
     else:
-        uv,initialization=mean_value_map(cut,guard)
+        uv,initialization=mean_value_map(cut,guard,diagnostics=output/'initialization')
         np.savez_compressed(initial,world=v,faces=f,uv=uv)
         with obj.open('w') as stream:
             np.savetxt(stream,v,fmt='v %.17g %.17g %.17g');np.savetxt(stream,uv,fmt='vt %.17g %.17g')
@@ -95,7 +94,8 @@ def build_map(vertices,faces,output,cfg,*,guard=lambda:None):
         if cfg['scope']=='patches' and len(rows)>cfg['max_patch_faces']:
             pending.extend(reversed(split_faces(v,f,rows)));continue
         domains.append(rows)
-        if len(domains)+len(pending)>cfg['max_charts']:raise ValueError('matrix domain budget exceeded; no faces omitted')
+        if cfg['scope']=='patches' and len(domains)+len(pending)>cfg['max_charts']:
+            raise ValueError('matrix domain budget exceeded; no faces omitted')
     partition=np.empty(len(f),np.int64)
     for i,rows in enumerate(domains):partition[rows]=i
     report=dict(flattening_solver=cfg['flattening_solver'],scope=cfg['scope'],source_faces=len(f),source_components=len(components),
@@ -145,10 +145,11 @@ def build_map(vertices,faces,output,cfg,*,guard=lambda:None):
     result={k:np.concatenate([part[k] for part in parts]) for k in parts[0]}
     np.testing.assert_array_equal(np.sort(result['source_face_rows']),np.arange(len(f)))
     display,scientific,quality=face_quality(result['world'],result['faces'],result['uv'])
-    involved=np.zeros(len(f),bool);audit={}
-    for a,b in iter_overlap_pairs(result['uv'],result['faces'],guard,max_candidates=262144,max_tests=20_000_000,report=audit):involved[[a,b]]=True
-    if not audit['complete']:raise ValueError('matrix overlap audit incomplete')
-    report.update(quality=quality,overlap=audit,overlapping_faces=int(involved.sum()))
+    audit=audit_uv(result['uv'],result['faces'],out,guard=guard)
+    if audit['status']!='COMPLETE':raise ValueError('matrix overlap audit incomplete')
+    involved=audit['involved']
+    report.update(quality=quality,overlap={k:v for k,v in audit.items() if k!='involved'},
+                  overlapping_faces=audit['overlapping_faces'])
     result.update(display=display,scientific=scientific&~involved,omitted_face_rows=np.empty(0,np.int64))
     np.savez_compressed(out/'map.npz',**result)
     files={str(q.relative_to(out)):file_sha(q) for q in sorted(out.rglob('*')) if q.is_file() and q.name!='.lock'}
