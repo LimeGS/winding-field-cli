@@ -6,7 +6,8 @@ from types import SimpleNamespace
 import numpy as np
 
 from . import patch_pipeline as p
-from .flatten import cross2, iter_overlap_pairs
+from .flatten import cross2
+from .overlap_audit import audit_uv
 from .native_global import cut_component, mean_value_map
 from .original_recipe import face_quality, scale_uv_to_world
 from .sheet_atlas import _arrays, _json, _verified
@@ -144,10 +145,11 @@ def build_map(vertices,faces,output,cfg,*,guard=lambda:None):
     result={k:np.concatenate([part[k] for part in parts]) for k in parts[0]}
     np.testing.assert_array_equal(np.sort(result['source_face_rows']),np.arange(len(f)))
     display,scientific,quality=face_quality(result['world'],result['faces'],result['uv'])
-    involved=np.zeros(len(f),bool);audit={}
-    for a,b in iter_overlap_pairs(result['uv'],result['faces'],guard,max_candidates=262144,max_tests=20_000_000,report=audit):involved[[a,b]]=True
-    if not audit['complete']:raise ValueError('matrix overlap audit incomplete')
-    report.update(quality=quality,overlap=audit,overlapping_faces=int(involved.sum()))
+    audit=audit_uv(result['uv'],result['faces'],out,guard=guard)
+    if audit['status']!='COMPLETE':raise ValueError('matrix overlap audit incomplete')
+    involved=audit['involved']
+    report.update(quality=quality,overlap={k:v for k,v in audit.items() if k!='involved'},
+                  overlapping_faces=audit['overlapping_faces'])
     result.update(display=display,scientific=scientific&~involved,omitted_face_rows=np.empty(0,np.int64))
     np.savez_compressed(out/'map.npz',**result)
     files={str(q.relative_to(out)):file_sha(q) for q in sorted(out.rglob('*')) if q.is_file() and q.name!='.lock'}

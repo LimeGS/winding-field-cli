@@ -6,9 +6,6 @@ from .flatten import cross2,iter_overlap_pairs
 from .native_mesh import _topology
 from .tifxyz_guide import _cut_flags,_sphere_seam,validate_map
 
-MAX_NARROW_TESTS=20_000_000
-
-
 def _check(check):
     if check:check()
 
@@ -218,7 +215,7 @@ def arap_map(cut,uv,check=None):
         pin_rule='lexicographically leftmost boundary UV, then farthest; cut-index tie break')
 
 
-def qualify_map(cut,uv,check=None):
+def qualify_map(cut,uv,check=None,*,max_tests=None):
     v,f=cut['vertices'],cut['faces'];area=_input(v,f,check)
     if uv.shape!=(len(v),2):raise ValueError('invalid qualification UV shape')
     reasons=np.zeros(len(f),np.uint8)
@@ -232,7 +229,7 @@ def qualify_map(cut,uv,check=None):
                 bits[(ratio<.25)|(ratio>4)|~np.isfinite(ratio)]|=4
         reasons[first:first+len(part)]=bits
     selected=np.flatnonzero(reasons==0);audit={}
-    for i,j in iter_overlap_pairs(uv,f[selected],check,max_candidates=262144,max_tests=MAX_NARROW_TESTS,report=audit):
+    for i,j in iter_overlap_pairs(uv,f[selected],check,max_tests=max_tests,report=audit):
         reasons[selected[[i,j]]]|=8
     valid=reasons==0;qualified=float(area[valid].sum());total=float(area.sum())
     labels=np.full(len(f),-1,np.int64);largest_area=0.;largest_faces=0;components=0

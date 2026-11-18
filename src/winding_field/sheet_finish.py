@@ -11,8 +11,8 @@ import numpy as np
 from . import patch_pipeline as p
 from . import flatboi_checkpoint
 from .flatboi_checkpoint import load_checkpoint, positive_uv
-from .flatten import iter_overlap_pairs
 from .native_patches import ResourceGuard
+from .overlap_audit import audit_uv
 from .original_recipe import _points, face_quality, sample_points, scale_uv_to_world
 from .sheet_atlas import _arrays, _edge, _halo, _json, _path, _tile, _verified, MAX_PIXELS
 from .sheet_prepare import centerline_points, load_prepared
@@ -102,10 +102,10 @@ def validate(prepared,native,output,centerline,reference_z,*,mesh_source=None):
                 world_bounds=[v.min(0).tolist(),v.max(0).tolist()],uv_bounds=[uv.min(0).tolist(),uv.max(0).tolist()],
                 overlap=dict(complete=False),source_faces=receipt['source_faces'],principal_faces=len(f),
                 disconnected_faces=receipt['disconnected_faces'],code_sha256=file_sha(__file__),physical_acceptance=False)
-    involved=np.zeros(len(f),bool)
-    for a,b in iter_overlap_pairs(uv,f,guard,max_candidates=262144,max_tests=200_000_000,report=report['overlap']):involved[[a,b]]=True
-    if not report['overlap']['complete']:raise ValueError('incomplete overlap audit')
-    report['overlapping_faces']=int(involved.sum());np.save(out/'overlap-faces.npy',np.flatnonzero(involved))
+    audit=audit_uv(uv,f,out,guard=guard)
+    if audit['status']!='COMPLETE':raise ValueError('incomplete overlap audit')
+    involved=audit['involved'];report['overlap']={k:v for k,v in audit.items() if k!='involved'}
+    report['overlapping_faces']=audit['overlapping_faces'];np.save(out/'overlap-faces.npy',np.flatnonzero(involved))
     mapped.update(uv=uv,display=display,scientific=scientific&~involved);np.savez_compressed(out/'map.npz',**mapped)
     report['map_sha256']=file_sha(out/'map.npz');atomic_json(out/'QUALITY.json',report)
     for name in ('MESH.json','PREPARED.json','disconnected-source.npz'):shutil.copyfile(source/name,out/name)

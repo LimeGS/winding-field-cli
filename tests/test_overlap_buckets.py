@@ -1,3 +1,5 @@
+import time
+
 import numpy as np
 import pytest
 
@@ -33,19 +35,37 @@ def brute_pairs(uv,faces):
     return result
 
 
-def test_distant_large_face_does_not_inflate_every_small_face_query(monkeypatch):
+def test_distant_large_face_does_not_inflate_every_small_face_query():
     uv,faces=mesh([[[i*10,0],[i*10+1,0],[i*10,1]] for i in range(128)]+
                   [[[100000,100000],[200000,100000],[100000,200000]]])
-    original=flatten.cKDTree; materialized=[]
-    class MeasuredTree:
-        def __init__(self,*args,**kwargs):self.tree=original(*args,**kwargs)
-        def query_ball_point(self,*args,**kwargs):
-            result=self.tree.query_ball_point(*args,**kwargs)
-            if not kwargs.get('return_length'):materialized.append(sum(map(len,result)))
-            return result
-    monkeypatch.setattr(flatten,'cKDTree',MeasuredTree)
-    assert list(flatten.iter_overlap_pairs(uv,faces,max_candidates=256))==[]
-    assert sum(materialized)<1024
+    report={}
+    assert list(flatten.iter_overlap_pairs(uv,faces,max_candidates=4,report=report))==[]
+    assert report['complete'] and report['narrow_tests']<128
+
+
+@pytest.mark.parametrize('scale,shift',[(1.,[0.,0.]),(1e-3,[3.,-2.]),(1e3,[-500.,800.])])
+def test_crowded_aabb_chunk_matches_brute_force(scale,shift):
+    rng=np.random.default_rng(4)
+    crowd=rng.normal(size=(30,3,2))*.3
+    crowd[:,:,0]+=np.linspace(0,.4,30)[:,None]
+    sliver=np.array([[[0.,0.],[2.,1e-9],[4.,0.]]])
+    contact=np.array([[[0.,0.],[1.,0.],[0.,1.]],[[1.,0.],[2.,0.],[1.,1.]]])
+    giant=np.array([[[1000.,1000.],[2000.,1000.],[1000.,2000.]]])
+    triangles=(np.concatenate([crowd,sliver,contact,giant])*scale+np.asarray(shift)).reshape(-1,3,2)
+    uv,faces=mesh(triangles)
+    expected=brute_pairs(uv,faces);report={}
+    assert list(flatten.iter_overlap_pairs(uv,faces,max_candidates=3,report=report))==expected
+    assert report['complete'] and report['pairs']==len(expected)
+
+
+def test_scattered_face_order_does_not_multiply_traversal():
+    # Real saved-domain aggregates are not spatially ordered; block bounding boxes are not usable.
+    uv,faces=mesh([[[i*3,0],[i*3+1,0],[i*3,1]] for i in range(20000)])
+    perm=np.random.default_rng(0).permutation(len(faces))
+    shuffled=uv.reshape(-1,3,2)[perm].reshape(-1,2);shuffled_faces=np.arange(len(faces)*3).reshape(-1,3)
+    report={};started=time.perf_counter()
+    assert list(flatten.iter_overlap_pairs(shuffled,shuffled_faces,report=report))==[]
+    assert time.perf_counter()-started<5 and report['complete'] and report['narrow_tests']==0
 
 
 @pytest.mark.parametrize('seed',range(5))
@@ -61,12 +81,11 @@ def test_bucket_pairs_match_scalar_reference_in_order(seed):
     assert report['complete'] and report['pairs']==len(expected)
 
 
-def test_total_candidate_bound_counts_all_radius_groups():
+def test_tiny_candidate_chunk_never_limits_auditable_mesh_size():
     uv,faces=mesh([[[0,0],[s,0],[0,s]] for s in (1,2,4,8,16,32)])
     report={}
-    with pytest.raises(RuntimeError,match='candidate materialization'):
-        list(flatten.iter_overlap_pairs(uv,faces,max_candidates=5,report=report))
-    assert report['complete'] is False
+    assert len(list(flatten.iter_overlap_pairs(uv,faces,max_candidates=5,report=report)))==15
+    assert report['complete'] and report['pairs']==15
 
 
 def test_shared_vertices_edges_duplicates_and_tiny_intersections():
