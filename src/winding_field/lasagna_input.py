@@ -147,7 +147,7 @@ def source_identity(path,geometry_path,source,geometry,cache):
                 files=files,frame=frame,manifest=manifest,channels=channels)
 
 
-def _open_products(stack,identity,root,*,required,cache_bytes=256<<20):
+def _open_products(stack,identity,root,*,required,cache_bytes=256<<20,ledger_quota=None):
     products={}
     for name,channel in identity['input']['channels'].items():
         ledger=root/(name+'.sqlite')
@@ -155,7 +155,7 @@ def _open_products(stack,identity,root,*,required,cache_bytes=256<<20):
         product=stack.enter_context(closing(Volume(channel['path'],voxel_um=1.,cache=root/'reader-cache',offline=True,
                                                   decoded_cache_bytes=cache_bytes//6)))
         if product.identity!=channel['identity']: raise ValueError('Lasagna channel metadata changed: '+name)
-        product.bind_ledger(ledger); product.validate_used()
+        product.bind_ledger(ledger,quota_bytes=ledger_quota); product.validate_used()
         products[name]=product
     return products
 
@@ -338,7 +338,8 @@ class CalibratedLasagnaInput:
                 raise ValueError('Lasagna input provenance missing for retained products')
             self.root.mkdir(parents=True,exist_ok=True);bind(self.root/'IDENTITY.json',self.identity)
             self.products=_open_products(self.stack,self.identity,self.root,required=seal.exists(),
-                                        cache_bytes=config.get('_import_cache_bytes',256<<20))
+                                        cache_bytes=config.get('_import_cache_bytes',256<<20),
+                                        ledger_quota=config.get('bounded_bytes',12<<30)//64 if config.get('bounded_preparation') else None)
             if not config.get('_import_worker'):
                 for product in self.products.values():self.stack.enter_context(product.verified_chunks())
         except BaseException:
