@@ -1,10 +1,10 @@
 {
   "origin": "https://github.com/LimeGS/winding-field",
   "distribution": "winding-field",
-  "version": "1.5.3.dev0",
-  "revision": "caf840891d7a52123bb3fedc6961e10b8d4e267e",
-  "archive_sha256": "8d360aeb99f043519ce767cbf557bdffc37e624bc7df1db2c103640209a15257",
-  "changes": "Immutable observer-capable development source: optional advisory transaction/sweep hooks with recovery and temporary-array lifetime fixes; Ruff/lint/type checks satisfied; scientific operators unchanged; no numerical core bundled in the CLI and no stable release implied",
+  "version": "1.5.3",
+  "revision": "634be5a9e554e9a940823350c1dc9bba96602aa7",
+  "archive_sha256": "455d988727f57cfdf2af57f408a94daacd431534ba98f7ca0b39a07f4228b69b",
+  "changes": "Immutable stable 1.5.3 source: optional advisory transaction/sweep hooks with recovery and temporary-array lifetime fixes; Ruff/lint/type checks satisfied; scientific operators unchanged; no numerical core bundled in the CLI",
   "migrated_workflows": {
     "revision": "769ed1b1587fc2a275a66059e15a36b8fa7acc93",
     "changes": "moved to winding_field with tests, examples and wrappers; package imports, prepared command routing and module-based supervised launch",
