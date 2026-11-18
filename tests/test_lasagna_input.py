@@ -92,6 +92,37 @@ def test_missing_local_prediction_chunk_fails_closed(tmp_path):
         with pytest.raises(FileNotFoundError):reader.read(geometry(volume),[0,0,0],[4,4,4])
 
 
+@pytest.mark.parametrize('changed',[False,True])
+def test_manifest_channel_metadata_pin_rejects_changed_metadata(tmp_path,changed):
+    cls=reader_type(); ct,root,config=fixture(tmp_path)
+    manifest_path=root/'input.lasagna.json'; manifest=json.loads(manifest_path.read_bytes())
+    for group in manifest['groups'].values():
+        channel=root/group['zarr']
+        group['metadata_sha256']=digest([json.loads((channel.parent/'.zattrs').read_bytes()),None,
+                                        json.loads((channel/'.zarray').read_bytes())])
+    atomic_json(manifest_path,manifest)
+    channel=root/manifest['groups']['nx']['zarr']
+    if changed:
+        metadata=json.loads((channel/'.zarray').read_bytes()); metadata['changed_after_import']=True
+        atomic_json(channel/'.zarray',metadata)
+    with Volume(ct,cache=tmp_path/'ct-cache') as volume:
+        if changed:
+            with pytest.raises(ValueError,match='metadata'):
+                cls(volume,tmp_path/'run',config)
+        else:
+            with cls(volume,tmp_path/'run',config):pass
+
+
+def test_manifest_required_transport_cannot_silently_fall_back(tmp_path):
+    cls=reader_type(); ct,root,config=fixture(tmp_path)
+    manifest_path=root/'input.lasagna.json'; manifest=json.loads(manifest_path.read_bytes())
+    manifest['required_transport']='vc_reader.DiskCache'
+    atomic_json(manifest_path,manifest)
+    with Volume(ct,cache=tmp_path/'ct-cache') as volume:
+        with pytest.raises(ValueError,match='transport'):
+            cls(volume,tmp_path/'run',config)
+
+
 def test_classical_fibres_external_surface_bypasses_runtime(tmp_path,monkeypatch):
     reader_type(); ct,root,config=fixture(tmp_path)
     from winding_field import lasagna,predict

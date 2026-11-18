@@ -55,7 +55,7 @@ def prepare(volume,run,config,stop=None):
     grid=endpoint_grid(native,config['field_spacing_um'])
     with surface_maps(volume,run,config,lo,hi) as (maps,runtime):
         identity=dict(source=volume.identity,roi_lo=lo.tolist(),roi_hi=hi.tolist(),runtime=runtime,
-                      lasagna_sha256=digest(runtime) if config.get('lasagna_input') else LASAGNA_MODEL_SHA,qual_sha256=QUAL_MODEL_SHA,
+                      lasagna_sha256=digest(runtime) if config.get('lasagna_input') else LASAGNA_MODEL_SHA,qual_sha256=None if config.get('fibres') else QUAL_MODEL_SHA,
                       precision='float32-cpu-preampere/bfloat16-ampere',invalid_value=config.get('invalid_value'))
         status=produce(run/'coarse',maps,native,grid,identity,chunk=config.get('field_chunk',64),stop=stop,
                        reserve_bytes=config.get('reserve_bytes',0),quota_bytes=config.get('bounded_bytes',12<<30)//4)
@@ -66,6 +66,8 @@ def prepare(volume,run,config,stop=None):
               prediction='qual-v2',surface_method='lasagna',fibre_method='qual-v2-bounded-global',
               tiles_sha256=coarse['tiles_sha256'],calibration=coarse['calibration'],producer_identity=identity)
     if config.get('lasagna_input'):meta['surface_origin']='external'
+    if config.get('fibres'):
+        meta.update(prediction='external-afv',fibre_method='external-afv')
     atomic_json(run/'PREPARED.json',meta)
     return meta
 
@@ -182,6 +184,10 @@ def _trace_and_fit(volume,root,meta,config,stop):
 def fibres(volume,run,config,stop=None):
     run=Path(run);root=run/'fibres';root.mkdir(exist_ok=True)
     meta=json.loads((run/'PREPARED.json').read_bytes())
+    if config.get('fibres'):
+        from .afv import import_fibres
+        with surface_maps(volume,run,config,np.asarray(meta['roi_lo_zyx']),np.asarray(meta['roi_hi_zyx'])) as (maps,_):
+            return import_fibres(run,config,stop,maps=maps)
     if np.any(np.asarray(meta['roi_lo_zyx'])%4):
         raise ValueError('bounded Qual ROI origin must preserve the global half-grid checkerboard (multiple of4)')
     bind(root/'INPUT.json',dict(producer=meta['producer_identity'],algorithm='paged-global-qual-v1'))

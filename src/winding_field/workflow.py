@@ -230,7 +230,7 @@ def _validate_products(root,state,stop=None,volume=None):
         expected=json.loads((root/'FIBRES.json').read_bytes())
         if file_sha(root/'fibres/fibres.sqlite')!=expected['sha256']:
             raise ValueError('fibres changed')
-        if bounded:
+        if bounded and expected.get('method')!='external-afv':
             for name in ('raw','candidates'):
                 if file_sha(root/'fibres'/f'{name}.sqlite')!=expected[f'{name}_sha256']:
                     raise ValueError('bounded fibre inventory changed: '+name)
@@ -398,6 +398,7 @@ def run(config,resume=False,until=None,extra_surface_seconds=0,field_sweeps=None
             (root/'STOP').unlink(missing_ok=True)
         else:
             state=dict(schema='winding-field-run-v1',version=__version__,config=config,stages={},
+                       preparation_only=bool(config.get('bounded_preparation') and config.get('fibres') and until=='fibres'),
                        status='STARTING',physical_acceptance=False,created=time.time(),implementation_sha256=implementation_sha())
             if terminal=='tifxyz':
                 state.update(experimental=True,comparison_status='UNMEASURED',comparison_reason='reference OOM',
@@ -437,7 +438,7 @@ def run(config,resume=False,until=None,extra_surface_seconds=0,field_sweeps=None
                 state.update(reused)
                 atomic_json(root/'RUN.json',state)
                 print('[prepare/fibres] reused verified stages',file=sys.stderr,flush=True)
-            else:volume.bind_ledger(root/'source.sqlite')
+            else:volume.bind_ledger(root/'source.sqlite',quota_bytes=config.get('bounded_bytes',12<<30)//64 if config.get('bounded_preparation') else None)
             if resume:
                 volume.validate_used(); result=_validate_products(root,dict(state,config=config),stop,volume)
                 if result is not None:
@@ -484,7 +485,7 @@ def run(config,resume=False,until=None,extra_surface_seconds=0,field_sweeps=None
                             result=bounded_fibres(volume,root,config,stop)
                         else:result=trace(root,config,stop)
                         if result['status']=='FIBRES_READY':
-                            sha=export_afv(root,stop)
+                            sha=export_afv(root,stop,quota_bytes=config.get('bounded_bytes',12<<30)//8 if config.get('bounded_preparation') else None)
                             if sha is None:
                                 result=dict(status='PAUSED')
                             else:
@@ -547,5 +548,10 @@ def run(config,resume=False,until=None,extra_surface_seconds=0,field_sweeps=None
         finally:
             if volume is not None:
                 volume.close()
+            if (config.get('bounded_preparation') and config.get('fibres') and not state.get('reuse')
+                    and state.get('status') in ('PAUSED','COMPLETE') and set(state.get('stages',{}))=={'prepare','fibres'}):
+                from .reuse import seal_prepared_asset
+                state['prepared_asset_sha256']=seal_prepared_asset(root)
+                atomic_json(root/'RUN.json',state)
             for sig,handler in previous.items():
                 signal.signal(sig,handler)

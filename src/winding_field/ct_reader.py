@@ -44,12 +44,13 @@ def _forget_file(db, path):
 
 
 class EncodedTransport:
-    def __init__(self, root, limit, *, offline=False, reserve=0):
+    def __init__(self, root, limit, *, offline=False, reserve=0, stream_policy=False):
         from vc_reader.reader.disk_cache import disk_budget
 
         self.root = Path(root).resolve()
         self.root.mkdir(parents=True, exist_ok=True)
         self.limit, self.reserve, self.offline = limit, reserve, offline
+        self.stream_policy=stream_policy;self._relay=None
         index = self.root / '.vc_reader_cache.sqlite3'
         if index.exists():
             with cache_index(index) as db:
@@ -108,7 +109,8 @@ class EncodedTransport:
             etag = validator[0] if validator else None
             headers = {'If-None-Match':etag} if etag and not etag.startswith('W/') else {}
             try:
-                checked, etag = fetch(url, headers=headers)
+                checked, etag = fetch(url, headers=headers,
+                                      **({'stream_policy':True} if self.stream_policy else {}))
             except FileNotFoundError:
                 self._discard(path)
                 self.db.execute('INSERT OR REPLACE INTO receipts VALUES (?,NULL)', (url,))
@@ -140,7 +142,15 @@ class EncodedTransport:
                 handle = path.open('rb');self.cache_hits += 1
             else:
                 from vc_reader.reader.auth import resolve_access
-                fd, received = self._budget.open_file(str(path), url, resolve_access(url))
+                location=url
+                if self.stream_policy and not cached:
+                    from .stream_policy import ChunkRelay
+                    if self._relay is None:self._relay=ChunkRelay()
+                    location=self._relay.location(url)
+                try:
+                    fd, received = self._budget.open_file(str(path), location, resolve_access(location))
+                finally:
+                    if self._relay is not None:self._relay.raw=None
                 self.bytes_read += received
                 if fd < 0:raise FileNotFoundError(url)
                 self.cache_hits += int(cached and received == 0)
@@ -174,4 +184,6 @@ class EncodedTransport:
         return raw
 
     def close(self):
-        self.db.close()
+        try:self.db.close()
+        finally:
+            if self._relay is not None:self._relay.close()

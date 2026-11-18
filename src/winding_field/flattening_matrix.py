@@ -32,6 +32,9 @@ def settings(request,solver,scope):
         raise ValueError('reference_z requires centerline and a finite height')
     base=dict(memory_gib=6.,process_tree_gib=22.,native_recipe='installed-2f89bfc9')
     base.update({k:v for k,v in request.items() if k not in extra})
+    if solver=='slim' and not base.get('app_run'):
+        from .patch_pipeline import VENDORED_APP_RUN
+        base['app_run']=str(VENDORED_APP_RUN)
     cfg=p.settings(base,native_required=solver=='slim')
     if cfg['disk_reserve_gib']<8 or cfg['memory_gib']>6 or cfg['process_tree_gib']>22:
         raise ValueError('matrix requires >=8GiB disk reserve, <=6GiB geometry/raster and <=22GiB process-tree budget')

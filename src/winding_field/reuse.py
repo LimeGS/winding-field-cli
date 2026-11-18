@@ -17,6 +17,8 @@ from .util import file_sha
 STAGES={'prepare':'PREPARED.json','fibres':'FIBRES.json'}
 DIRECTORIES=('maps','lasagna','lasagna-import','fibres')
 FILES=('PREPARED.json','LASAGNA.json','FIBRES.json','source.sqlite','products.sqlite')
+BOUNDED_DIRECTORIES=('coarse','lasagna-import','fibres')
+BOUNDED_FILES=('PREPARED.json','FIBRES.json','source.sqlite','products.sqlite')
 VARIABLE={'output','reuse_from','reuse_from_sha256','field_chunk','sweeps','maxiter','rtol','fibre_weight','nonconvergence_policy'}
 
 
@@ -24,6 +26,25 @@ def _regular(path):
     if not stat.S_ISREG(path.lstat().st_mode):
         raise ValueError('reuse requires regular files: '+str(path))
     return path
+
+
+def prepared_inventory(root):
+    files=[_regular(root/name) for name in BOUNDED_FILES]
+    for name in BOUNDED_DIRECTORIES:
+        folder=root/name
+        if folder.is_symlink() or not folder.is_dir():raise ValueError('unsafe prepared asset directory')
+        for p in folder.rglob('*'):
+            if p.is_symlink():raise ValueError('symlink in prepared asset')
+            if not p.is_dir():files.append(_regular(p))
+    if any(p.name.endswith(('-wal','-journal','-shm')) for p in files):
+        raise ValueError('prepared asset has open SQLite journals')
+    return {str(p.relative_to(root)):file_sha(p) for p in files}
+
+
+def seal_prepared_asset(root):
+    from .util import atomic_json
+    atomic_json(root/'PREPARED_ASSET.json',dict(schema='winding-prepared-asset-v1',files=prepared_inventory(root)))
+    return file_sha(root/'PREPARED_ASSET.json')
 
 
 def validate_reuse_request(source: Path,config: dict,expected_sha: str) -> dict:
@@ -46,9 +67,15 @@ def validate_reuse_request(source: Path,config: dict,expected_sha: str) -> dict:
     old=state['config']
     if state.get('reuse') or any(v.get('mode')=='reused' for v in state.get('stages',{}).values()):
         raise ValueError('chained reuse unsupported; select the original producer run')
-    # shortcut: only imported unbounded stages, add producer-specific admission before widening.
-    if any(c.get('bounded_preparation') or not c.get('fibres') or not c.get('lasagna_input') for c in (old,config)):
-        raise ValueError('reuse supports unbounded imported Lasagna and AFV stages only')
+    if any(not c.get('fibres') or not c.get('lasagna_input') for c in (old,config)):
+        raise ValueError('reuse supports imported Lasagna and AFV stages only')
+    if old.get('bounded_preparation'):
+        seal=_regular(source/'PREPARED_ASSET.json')
+        if file_sha(seal)!=state.get('prepared_asset_sha256'):
+            raise ValueError('prepared asset seal changed')
+        saved=json.loads(seal.read_bytes())
+        if saved.get('schema')!='winding-prepared-asset-v1' or saved.get('files')!=prepared_inventory(source):
+            raise ValueError('prepared asset inventory changed')
     changed=sorted(k for k in old.keys()|config.keys() if k not in VARIABLE and old.get(k)!=config.get(k))
     if changed:raise ValueError('reuse preparation configuration changed: '+', '.join(changed))
     for stage,receipt in STAGES.items():
@@ -68,8 +95,9 @@ def reuse_stages(source: Path,root: Path,config: dict,volume,expected_sha: str,s
         estimate=plan({k:v for k,v in config.items() if k not in ('reuse_from','reuse_from_sha256')},volume)
         if state['source']!=volume.identity or any(state['plan'].get(k)!=estimate[k] for k in ('observations','field')):
             raise ValueError('reuse CT or preparation geometry changed')
-        files=[_regular(source/name) for name in FILES]
-        for name in DIRECTORIES:
+        bounded=bool(state['config'].get('bounded_preparation'))
+        files=[_regular(source/name) for name in (BOUNDED_FILES if bounded else FILES)]
+        for name in (BOUNDED_DIRECTORIES if bounded else DIRECTORIES):
             folder=source/name
             if folder.is_symlink() or not folder.is_dir():raise ValueError('reuse product directory missing or unsafe: '+name)
             for p in folder.rglob('*'):
@@ -90,14 +118,15 @@ def reuse_stages(source: Path,root: Path,config: dict,volume,expected_sha: str,s
         for p in files:
             if stop and stop():raise InterruptedError('reuse copy paused')
             relative_path=p.relative_to(source)
-            if relative_path==Path('products.sqlite'):continue
+            if relative_path==Path('products.sqlite') and not bounded:continue
             target=root/relative_path;target.parent.mkdir(parents=True,exist_ok=True)
             if target.exists():raise ValueError('reuse destination product already exists')
             before=file_sha(p);shutil.copy2(p,target)
             if file_sha(target)!=before or file_sha(p)!=before:raise ValueError('reuse source changed during copy')
-        with closing(sqlite3.connect(root/'products.sqlite')) as db:
-            db.execute('CREATE TABLE exports (path TEXT PRIMARY KEY,stage TEXT,sha TEXT)')
-            db.executemany('INSERT INTO exports VALUES (?,?,?)',exports);db.commit()
+        if not bounded:
+            with closing(sqlite3.connect(root/'products.sqlite')) as db:
+                db.execute('CREATE TABLE exports (path TEXT PRIMARY KEY,stage TEXT,sha TEXT)')
+                db.executemany('INSERT INTO exports VALUES (?,?,?)',exports);db.commit()
         if stop and stop():raise InterruptedError('reuse validation paused')
         stages={k:state['stages'][k] for k in STAGES}
         for stage,receipt in STAGES.items():
@@ -106,11 +135,15 @@ def reuse_stages(source: Path,root: Path,config: dict,volume,expected_sha: str,s
         fibres=json.loads((root/'FIBRES.json').read_bytes())
         if prepared.get('status')!='PREPARED' or fibres.get('status')!='FIBRES_READY' or fibres.get('method')!='external-afv':
             raise ValueError('reuse stages are incomplete or unsupported')
-        if prepared.get('source')!=volume.identity or any(prepared.get(k)!=estimate['observations'][k]
+        geometry=prepared.get('native_geometry') if bounded else prepared
+        if prepared.get('source')!=volume.identity or any(geometry.get(k)!=estimate['observations'][k]
                                                           for k in ('shape_zyx','origin_xyz','spacing_xyz','frame')):
             raise ValueError('reuse prepared geometry changed')
         if not (root/'fibres/IMPORT.json').is_file():raise ValueError('reuse import provenance missing')
-        _validate_inventory(root,prepared,fibres,exports,volume)
+        if bounded:
+            if prepared_inventory(root)!=json.loads((source/'PREPARED_ASSET.json').read_bytes())['files']:
+                raise ValueError('prepared asset copy changed')
+        else:_validate_inventory(root,prepared,fibres,exports,volume)
         _validate_products(root,dict(state,config=config,stages=stages),stop,volume)
         with closing(sqlite3.connect((root/'fibres/fibres.sqlite').as_uri()+'?mode=ro',uri=True)) as db:
             if (db.execute('SELECT count(*) FROM done').fetchone()[0]!=fibres['identity']['input']['block_count']

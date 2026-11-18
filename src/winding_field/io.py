@@ -39,16 +39,23 @@ def http_url(source):
     return source
 
 
-def fetch(url, *, headers=None, limit=256 << 20):
+def fetch(url, *, headers=None, limit=256 << 20, stream_policy=False):
     for attempt in range(3):
         try:
-            with urlopen(Request(url, headers=headers or {}), timeout=60) as response:
+            if stream_policy:
+                from .stream_policy import open_stream
+                response=open_stream(url,headers or {})
+            else:
+                response=urlopen(Request(url, headers=headers or {}), timeout=60)
+            with response:
                 if int(response.headers.get('Content-Length', 0)) > limit:
                     raise ValueError(f'remote object exceeds {limit} byte read budget: {url}')
                 data = response.read(limit + 1)
                 if len(data) > limit:
                     raise ValueError('remote response exceeds read budget')
                 encoding=response.headers.get('Content-Encoding','identity').lower().strip()
+                if stream_policy and encoding not in ('','identity'):
+                    raise ValueError('unsupported streaming Content-Encoding')
                 if encoding=='gzip':
                     with gzip.GzipFile(fileobj=io.BytesIO(data)) as decoded:
                         data=decoded.read(limit+1)
@@ -122,7 +129,8 @@ def bounds(lo, hi, shape):
 
 class Volume:
     def __init__(self, source, *, local=None, cache=None, cache_bytes=2 << 30,
-                 offline=False, voxel_um=None, level=0, reserve_bytes=0, decoded_cache_bytes=0):
+                 offline=False, voxel_um=None, level=0, reserve_bytes=0, decoded_cache_bytes=0, stream_policy=False):
+        self.stream_policy=stream_policy
         if type(cache_bytes) is not int or cache_bytes < 0 or type(level) is not int or level < 0:
             raise ValueError('invalid cache budget or pyramid level')
         if type(reserve_bytes) is not int or reserve_bytes<0:
@@ -161,6 +169,9 @@ class Volume:
             if level:
                 raise ValueError('a direct Zarr array has no pyramid levels')
         m = self.metadata
+        if self.stream_policy:
+            from .stream_policy import validate_array
+            validate_array(m)
         if m.get('zarr_format') != 2:
             raise ValueError('portable reader requires Zarr v2; unsupported layout is not substituted')
         self.shape, self.chunks = tuple(m['shape']), tuple(m['chunks'])
@@ -191,7 +202,8 @@ class Volume:
                 with self._lock():
                     legacy = self.db.execute('SELECT coalesce(sum(size),0) FROM cache').fetchone()[0]
                     self._native = EncodedTransport(self.cache/'vc-reader', max(0,self.limit-legacy),
-                                                    offline=self.offline,reserve=self.reserve)
+                                                    offline=self.offline,reserve=self.reserve,
+                                                    **({'stream_policy':True} if self.stream_policy else {}))
                 self._transport = 'vc_reader.DiskCache'
 
     @contextmanager
@@ -232,7 +244,8 @@ class Volume:
             elif self.offline:
                 raw = (cached if cached.exists() else self.local/key if self.local else cached).read_bytes()
             else:
-                raw, _ = fetch(self.source+'/'+key, limit=4 << 20)
+                raw, _ = fetch(self.source+'/'+key, limit=4 << 20,
+                               **({'stream_policy':True} if self.stream_policy else {}))
                 atomic_bytes(cached, raw)
         except FileNotFoundError:
             if optional:
@@ -278,10 +291,13 @@ class Volume:
             raise ValueError('invalid physical geometry')
         return spacing[::-1].tolist(), origin[::-1].tolist()
 
-    def bind_ledger(self, path):
+    def bind_ledger(self, path, *, quota_bytes=None):
         """Pin every consumed encoded chunk; changed bytes cannot enter a resumed run."""
         self._decoded.clear();self._decoded_bytes=0
         self._ledger = sqlite3.connect(path)
+        if quota_bytes is not None:
+            from .util import sqlite_quota
+            sqlite_quota(self._ledger,quota_bytes)
         self._ledger.execute('CREATE TABLE IF NOT EXISTS chunks (key TEXT PRIMARY KEY, sha TEXT NOT NULL)')
         self._ledger.commit()
 
@@ -327,7 +343,8 @@ class Volume:
                 # S3 single-part ETags are MD5s; a 304 verifies the mirror without a payload download.
                 s3 = (urlparse(self.source).hostname or '').endswith('.s3.amazonaws.com')
                 headers = {'If-None-Match':'"'+hashlib.md5(raw,usedforsecurity=False).hexdigest()+'"'} if s3 else {}
-                data, _ = fetch(self.source+'/'+key,headers=headers)
+                data, _ = fetch(self.source+'/'+key,headers=headers,
+                                **({'stream_policy':True} if self.stream_policy else {}))
                 if data is not None:
                     self._stats['downloads'] += 1
                     self._stats['downloaded_bytes'] += len(data)
@@ -358,7 +375,8 @@ class Volume:
                 raise FileNotFoundError(f'offline cache miss: {key}')
             headers = {'If-None-Match':record[0]} if raw is not None and record[0] and record[0]!=MISSING_ETAG and not record[0].startswith('W/') else {}
             try:
-                data, etag = fetch(self.source+'/'+key, headers=headers)
+                data, etag = fetch(self.source+'/'+key, headers=headers,
+                                   **({'stream_policy':True} if self.stream_policy else {}))
             except FileNotFoundError:
                 # Only the authoritative server's 404 establishes sparse Zarr fill.
                 data,etag=b'',MISSING_ETAG
@@ -434,8 +452,7 @@ class Volume:
                     if after[0].read_bytes()!=raw or self._encoded_signature(key)!=after:
                         raise ValueError('CT source/cache changed during decode')
                 retained_signature=after
-        if self.metadata.get('compressor'):raw=get_codec(self.metadata['compressor']).decode(raw)
-        for spec in reversed(self.metadata.get('filters') or []):raw=get_codec(spec).decode(raw)
+        raw=self._decode_chunk(raw)
         array=np.frombuffer(raw,dtype=self.dtype)
         if array.size!=math.prod(self.chunks):raise ValueError('corrupt CT chunk: '+key)
         array=array.reshape(self.chunks,order=self.metadata['order']);array.flags.writeable=False
@@ -462,10 +479,7 @@ class Volume:
                 encoded=False
             else:
                 encoded=True
-            if encoded and self.metadata.get('compressor'):
-                raw = get_codec(self.metadata['compressor']).decode(raw)
-            for spec in reversed((self.metadata.get('filters') or []) if encoded else []):
-                raw = get_codec(spec).decode(raw)
+            if encoded:raw=self._decode_chunk(raw)
             array = np.frombuffer(raw,dtype=self.dtype)
             if array.size != math.prod(self.chunks):
                 raise ValueError('corrupt or truncated CT chunk: '+key)
@@ -475,6 +489,14 @@ class Volume:
             result[tuple(slice(int(x),int(y)) for x,y in zip(a-lo,b-lo))] = array[
                 tuple(slice(int(x),int(y)) for x,y in zip(a-start,b-start))]
         return result
+
+    def _decode_chunk(self,raw):
+        if self.stream_policy:
+            from .stream_policy import decode_chunk
+            return decode_chunk(raw,self.metadata)
+        if self.metadata.get('compressor'):raw=get_codec(self.metadata['compressor']).decode(raw)
+        for spec in reversed(self.metadata.get('filters') or []):raw=get_codec(spec).decode(raw)
+        return raw
 
     def sample(self, indices_zyx):
         """Sample a Cartesian grid without materializing its dense native envelope."""

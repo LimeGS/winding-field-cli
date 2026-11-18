@@ -39,11 +39,12 @@ def location(value,base=None):
 
 class LasagnaInput:
     """Nearest pooled-cell sampling; channel downsampling never rescales density."""
+    stream_contract_version=2
 
     def __init__(self,volume,run,config):
         self.volume=volume; self.config=config; self.products={}; self.stack=ExitStack()
         self.root=Path(run)/'lasagna-import'; self.root.mkdir(parents=True,exist_ok=True)
-        self.source=location(config['lasagna_input']); self.documents={}
+        self.source=location(config['lasagna_input']); self.documents={}; self.stream_policy=False
         try:
             retained_import(run)
             seal=self.root/'CHUNKS.json'
@@ -54,6 +55,7 @@ class LasagnaInput:
             if not isinstance(manifest,dict) or manifest.get('version')!=2:
                 raise ValueError('external Lasagna requires a v2 manifest')
             self.manifest=manifest
+            self.stream_policy=manifest.get('required_transport')=='vc_reader.DiskCache'
             shape=manifest.get('base_shape_zyx')
             if not isinstance(shape,list) or len(shape)!=3 or any(type(n) is not int or n<1 for n in shape):
                 raise ValueError('invalid Lasagna base_shape_zyx')
@@ -108,13 +110,19 @@ class LasagnaInput:
                 if direct and direct.get('multiscales'):raise ValueError('Lasagna groups must name direct arrays')
                 product=Volume(source,voxel_um=1.,cache=config.get('cache',volume.cache),
                     cache_bytes=config.get('cache_bytes',volume.limit),offline=config.get('offline',False),
-                    reserve_bytes=config.get('reserve_bytes',volume.reserve))
+                    reserve_bytes=config.get('reserve_bytes',volume.reserve),stream_policy=self.stream_policy)
                 self.stack.callback(product.close)
+                expected=group.get('metadata_sha256')
+                if expected is not None and expected!=digest([attrs,direct,product.metadata]):
+                    raise ValueError('Lasagna channel metadata differs from imported snapshot: '+name)
+                required=manifest.get('required_transport')
+                if required is not None and (required!='vc_reader.DiskCache' or product._transport!=required):
+                    raise ValueError('Lasagna required transport is unavailable: '+str(required))
                 if (product.array_path or product.dtype!=np.uint8
                         or tuple(product.shape)!=tuple((self.base_shape+scale-1)//scale)
                         or product.metadata.get('fill_value')!=0):
                     raise ValueError('Lasagna channel geometry/uint8/zero-fill mismatch: '+name)
-                product.bind_ledger(self.root/(name+'.sqlite'))
+                product.bind_ledger(self.root/(name+'.sqlite'),quota_bytes=config.get('bounded_bytes',12<<30)//64 if config.get('bounded_preparation') else None)
                 self.products[name]=product
             self.identity=dict(kind='external-lasagna-v2',manifest=self.source,documents=self.documents,
                 encoding=manifest,provenance=provenance,channels={n:p.identity for n,p in self.products.items()},
@@ -123,9 +131,17 @@ class LasagnaInput:
                 input_spacing_xyz=(self.base_spacing*manifest['source_to_base']).tolist(),
                 sampling='pooled-cell-floor-base-index-v1',coverage='manifest-crop-union-conservative-cell',
                 invalid_value=config.get('invalid_value'))
-            bind(self.root/'IDENTITY.json',self.identity)
+            self.bind_metadata(self.root/'IDENTITY.json',self.identity)
         except BaseException:
             self.stack.close();raise
+
+    def bind_metadata(self,path,value):
+        if self.config.get('bounded_preparation'):
+            retained=sum(p.stat().st_size for p in self.root.glob('*.json'))
+            incoming=0 if path.exists() else len((json.dumps(value,indent=2,sort_keys=True,allow_nan=False)+'\n').encode())
+            if retained+incoming>self.config.get('bounded_bytes',12<<30)//8:
+                raise OSError('Lasagna metadata quota exhausted')
+        bind(path,value)
 
     def document(self,source,optional=False):
         path=self.root/('document-'+digest(source)+'.json')
@@ -135,7 +151,7 @@ class LasagnaInput:
             record=json.loads(path.read_bytes())
         else:
             try:
-                if remote:raw=fetch(source,limit=4<<20)[0]
+                if remote:raw=fetch(source,limit=4<<20,**({'stream_policy':True} if self.stream_policy else {}))[0]
                 else:
                     with Path(source).open('rb') as stream:raw=stream.read((4<<20)+1)
                 if len(raw)>4<<20:raise ValueError('Lasagna metadata exceeds 4MiB budget')
@@ -145,7 +161,7 @@ class LasagnaInput:
                 record=dict(source=source,sha256=None,value=None)
             if shutil.disk_usage(self.root).free<self.config.get('reserve_bytes',0)+(4<<20):
                 raise OSError('Lasagna metadata disk reserve exhausted')
-            bind(path,record)
+            self.bind_metadata(path,record)
         self.documents[source]=dict(sha256=record['sha256'],value_sha256=digest(record['value']))
         return record['value']
 
