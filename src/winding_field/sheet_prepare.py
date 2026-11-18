@@ -103,7 +103,7 @@ def prepare(source,output,w,centerline):
         print('CUT_START',w,len(world),len(faces),flush=True)
         cut,cut_report=reference_cut(world,faces,cp,guard)
         print('INIT_START',w,len(cut['vertices']),flush=True)
-        uv,initialization=mean_value_map(cut,guard)
+        uv,initialization=mean_value_map(cut,guard,diagnostics=out/'initialization')
         mapped=dict(world=cut['vertices'],faces=cut['faces'],uv=uv,source_vertex_ids=vi[ids[cut['parent']]],
                     source_face_ids=fi[rows],source_face_rows=rows,source_vertex_rows=ids[cut['parent']])
         np.testing.assert_array_equal(mapped['world'],v[mapped['source_vertex_rows']])
