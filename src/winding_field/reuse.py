@@ -177,13 +177,14 @@ def _validate_inventory(root,prepared,fibres,exports,volume):
         raise ValueError('incomplete reuse CT ledger')
     maps=json.loads((root/'maps/TILES.json').read_bytes())
     keys=['.'.join(map(str,key)) for key in itertools.product(*(range((n+maps['chunk']-1)//maps['chunk']) for n in maps['shape']))]
+    # lasagna-import/ (IDENTITY.json, CHUNKS.json, documents) is sealed by its own ledger and is
+    # re-verified by _validate_products -> lasagna.validate_retained; the export ledger never lists it.
     expected={'fibres/fibres.afv':'fibres','LASAGNA.json':'prepare',
-              'lasagna/surfaces.lasagna.json':'prepare','lasagna-import/IDENTITY.json':'prepare'}
+              'lasagna/surfaces.lasagna.json':'prepare'}
     for channel in ('presence','nx','ny','grad_mag','cos'):
         folder='lasagna/surface_'+channel+'.ome.zarr/'
         expected.update({folder+name:'prepare' for name in ('.zgroup','.zattrs','0/.zarray')})
         expected.update({folder+'0/'+key:'prepare' for key in keys})
-    expected.update({str(p.relative_to(root)):'prepare' for p in (root/'lasagna-import').glob('document-*.json')})
     inventory={name:stage for name,stage,_ in exports}
     if any(inventory.get(name)!=stage for name,stage in expected.items()):
         raise ValueError('incomplete reuse export inventory')

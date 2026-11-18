@@ -8,10 +8,32 @@ import sqlite3
 import numpy as np
 import pytest
 
-from test_lasagna_input import fixture
+from ct_fixture import write_ct
 from test_splines import upstream_curves
 from winding_field import workflow
 from winding_field.util import atomic_json, file_sha
+
+
+def fixture(tmp_path, *, crops=None, source_to_base=1):
+    """External Lasagna v2 input over a tiny CT (moved here from test_lasagna_input)."""
+    ct=write_ct(tmp_path/'ct',np.full((9,10,11),33,np.uint8),spacing=(5.,10.,20.),origin=(100.,200.,300.),chunk=4)
+    root=tmp_path/'external'; root.mkdir()
+    groups={}
+    for name,value,level in [('grad_mag',100,2),('nx',255,2),('ny',128,2),('cos',255,1)]:
+        scale=2**level; shape=tuple((n+scale-1)//scale for n in (9,10,11))
+        folder=write_ct(root/(name+'.ome.zarr'),np.full(shape,value,np.uint8),chunk=4)
+        (folder/'0').rename(folder/str(level))
+        atomic_json(folder/'.zattrs',{'multiscales':[{'axes':[{'name':a,'unit':'pixel'} for a in 'zyx'],
+            'datasets':[{'path':str(level),'coordinateTransformations':[{'type':'scale','scale':[scale]*3}]}]}]})
+        groups[name]=dict(zarr=folder.name+'/'+str(level),scaledown=level,channels=[name])
+    manifest=dict(version=2,source_to_base=source_to_base,grad_mag_encode_scale=1000.,grad_mag_factor=1.,
+                  base_shape_zyx=[9,10,11],groups=groups,provenance='inference.json')
+    if crops is not None: manifest['crops']=crops
+    atomic_json(root/'input.lasagna.json',manifest)
+    atomic_json(root/'inference.json',dict(status='completed',repository=dict(revision='custom',dirty=True)))
+    config=dict(lasagna_input=str(root/'input.lasagna.json'),cache=str(tmp_path/'cache'),cache_bytes=1<<20,reserve_bytes=0,
+                invalid_value=0,prediction='classical',chunk=4,threshold=10,threads=1)
+    return ct,root,config
 
 
 @pytest.fixture

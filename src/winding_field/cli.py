@@ -119,6 +119,8 @@ def main(argv=None):
             'Estimate source geometry and disk use without creating the output or running model inference. Use the same options with run after checking the plan.')
         p.add_argument('--source',help='CT Zarr path or URL; alternatively select --scroll/--scan'); p.add_argument('--scroll',help='public catalog scroll identifier'); p.add_argument('--scan',help='public catalog scan identifier')
         p.add_argument('--output',required=True,help='run directory for configuration, checkpoints and products')
+        p.add_argument('--reuse-from',help='completed imported preparation/fibres from a prior run; new output required')
+        p.add_argument('--reuse-from-sha256',help='SHA256 of the selected reuse source RUN.json; required with --reuse-from')
         p.add_argument('--local',help='local mirror of source CT chunks'); p.add_argument('--cache',help='CT chunk cache directory')
         p.add_argument('--cache-gib',type=float,default=2.,help='CT chunk cache budget in GiB (default: 2); not total RAM')
         p.add_argument('--reserve-gib',type=float,default=1.,help='free disk reserve in GiB (default: 1); not RAM')
@@ -157,6 +159,7 @@ def main(argv=None):
         p.add_argument('--field-cpu-buffer-bytes',type=int,default=0,help='explicit CPU preparation/IPC buffer budget; requires --field-cpu-workers; not a total RAM or RSS cap')
         p.add_argument('--maxiter',type=int,default=2000,help='iteration limit per local field solve (default: 2000)'); p.add_argument('--rtol',type=float,default=1e-6,help='relative tolerance of local field solves (default: 1e-6)')
         p.add_argument('--preconditioner',choices=['jacobi','spectral'],default=argparse.SUPPRESS,help='default: jacobi; spectral is rejected for block workflows')
+        p.add_argument('--nonconvergence-policy',choices=('fail','continue'),default='fail',help='fail at the first nonconverged block or continue the full field budget; numerical breakdowns always fail')
         p.add_argument('--seed-stride',type=int,default=8,help='fibre seed grid spacing in observation samples (default: 8)'); p.add_argument('--fibre-weight',type=float,default=1.,help='field solver fibre constraint weight (default: 1)')
         p.add_argument('--levels',nargs='+',type=float,help='raw field isovalues (W * sheet_step), e.g. --levels -31; not CT pyramid levels'); p.add_argument('--mesh-tile',type=int,default=64,help='mesh extraction tile edge in field-grid cells (default: 64)')
         p.add_argument('--chart-faces',type=int,default=1024,help='native/atlas local chart face budget (default: 1024); not original global flattening'); p.add_argument('--threads',type=int,default=4,help='PyTorch CPU thread count (default: 4); not a global worker limit')
@@ -329,6 +332,8 @@ def main(argv=None):
             if config.get('lasagna_input') and not isinstance(config['lasagna_input'],dict):
                 from .lasagna_stream import location
                 config['lasagna_input']=location(config['lasagna_input'])
+            if config.get('reuse_from'):
+                config['reuse_from']=str(Path(config['reuse_from']).expanduser().absolute())
             if config.get('lasagna_python'):
                 # Resolving the venv executable symlink would select the base interpreter.
                 config['lasagna_python']=str(Path(config['lasagna_python']).expanduser().absolute())

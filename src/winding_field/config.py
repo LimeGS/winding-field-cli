@@ -97,6 +97,8 @@ def validate_config(config):
     if type(config.get('field_advice',False)) is not bool:raise ValueError('field_advice must be boolean')
     if config.get('preconditioner','jacobi')!='jacobi':
         raise ValueError("block workflows require preconditioner='jacobi'")
+    if config.get('nonconvergence_policy','fail') not in ('fail','continue'):
+        raise ValueError('invalid nonconvergence_policy')
     lasagna_downsamples(config)
     if config.get('lasagna_input') and any('lasagna_'+n+'_downsample' in config for n in LASAGNA_DOWNSAMPLE):
         raise ValueError('--lasagna-input conflicts with Lasagna generation downsample flags')

@@ -246,6 +246,7 @@ def solve(run,config,stop=None,*,sweep_target=None,convergence=None):
                  order=list(itertools.product(*(range((n-1)//chunk+1) for n in shape))),
                  halo=2,sweeps=sweeps,rtol=config.get('rtol',1e-6),
                  maxiter=config.get('maxiter',2000),dtype='float64',device=config.get('device','cpu'),
+                 nonconvergence_policy=config.get('nonconvergence_policy','fail'),
                    cache_bytes=64<<20,reserve_bytes=config.get('reserve_bytes',0),
                    prepared_cache_bytes=config.get('prepared_cache_bytes',0))
     if bounded:options['max_bytes']=config.get('bounded_bytes',12<<30)//8
@@ -357,7 +358,9 @@ def solve(run,config,stop=None,*,sweep_target=None,convergence=None):
                      effective_threads=torch.get_num_threads(),
                      calibration=cal,solver=result,global_converged=False,physical_acceptance=False,
                        fibre_constraint_rows=row_count,constraint_cache_stats=cache_stats,
-                        numerical_status='local solves converged; sweep budget exhausted')
+                        numerical_status=(
+                            'local solves converged; sweep budget exhausted' if result['local_solves_converged']
+                            else 'local solves not converged; sweep budget exhausted'))
         if cpu_inputs is not None:receipt['field_cpu_stats']=cpu_inputs.stats
         if bounded:
             from .global_residual import verify
@@ -382,14 +385,20 @@ def solve(run,config,stop=None,*,sweep_target=None,convergence=None):
                                     **(dict(regions=regions) if advisor is not None else {}))
                 source.validate(hashes=True)
             verification.update(checkpoint_sha256=receipt['checkpoint_sha256'],solver_backend=backend)
+            if verification['status']!='PAUSED' and (
+                    verification['fixed_storage_max_error']!=0 or
+                    not all(math.isfinite(verification[k]) for k in ('residual_l2','rhs_l2'))):
+                raise ValueError('global verification found invalid gauge or nonfinite residual')
             record_verification(advisor,receipt['checkpoint_sha256'],verification,verification_started,
                                 sweep=len(result['completed_sweeps']),regions=regions)
             atomic_json(run/'GLOBAL_RESIDUAL.json',verification)
-            if not verification['global_converged']:
+            if verification['status']=='PAUSED' or (not verification['global_converged'] and options['nonconvergence_policy']=='fail'):
                 return dict(status='PAUSED',solver=result,verification=verification,
                             reason='global numerical verification not passed; sweep budget is not convergence')
-            receipt.update(global_converged=True,verification=verification,solver_backend=backend,
-                           numerical_status='stored global normal equations and codec-encoded zero gauge verified')
+            receipt.update(global_converged=verification['global_converged'],verification=verification,solver_backend=backend,
+                           numerical_status=receipt['numerical_status']+'; '+(
+                               'stored global normal equations and codec-encoded zero gauge verified' if verification['global_converged']
+                               else 'stored global normal equations not converged'))
         atomic_json(run/'FIELD.json',receipt)
         return receipt
     except InterruptedError:
