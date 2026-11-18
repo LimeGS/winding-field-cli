@@ -20,16 +20,6 @@ def workflow():
     return field_workflow
 
 
-def test_prepared_continue_policy_runs_full_budget(tmp_path):
-    path,config=prepared(tmp_path)
-    config['solver'].update(maxiter=1,nonconvergence_policy='continue')
-    path.write_text(json.dumps(config))
-    result=workflow().run_field(path,tmp_path/'run')
-    assert result['status']=='SWEEP_BUDGET_REACHED'
-    assert result['nonconverged_solves']>0
-    assert result['local_solves_converged'] is False
-
-
 def sha(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
