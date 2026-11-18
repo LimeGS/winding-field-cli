@@ -1,7 +1,94 @@
-# Field-to-TIFXYZ setup
+# Flatten fields or meshes and sample CT
 
-Start with the [commands in README section 5](../README.md). Use original mapping
-for global CT plus optional XYZ TIFFs; native runs use their saved configuration.
+Start with [README section 5](../README.md). Choose the route before creating an
+output directory:
+
+| Goal | Use |
+| --- | --- |
+| Export selected levels from a saved CLI run | `export-sheets --run RUN --levels ... --export-tifxyz` below |
+| Choose LSCM or SLIM on patches or whole sheets | `export-sheets --flattening-solver ... --scope ...` below |
+| Run the original global LSCM recipe | [Original mapping](#new-ct-run-with-original-mapping) |
+| Continue a normal CT run | [Native output](#native-output); use the saved run configuration |
+| Align neighbouring W levels on one UV grid | [UVW](UVW.md) |
+| Export directly from the field, without a mesh | [Experimental direct-field TIFXYZ](#experimental-direct-field-tifxyz) |
+
+CT images and optional XYZ TIFFs are different products. Missing CT does not
+necessarily mean missing geometry; always inspect masks and coverage.
+
+## Flag-first external mesh export
+
+Native recipe files remain supported, but are no longer required. On Linux:
+
+```bash
+winding-field export-sheets --mesh-bundle runs/paris4-flags-W-60 \
+  --source /data/paris4-original-ct.zarr --voxel-um 9.6 --level 0 \
+  --flattening-solver lscm --scope sheet \
+  --output-frame-id 'PHercParis4/20260411134726:L2' \
+  --output-origin-xyz-um 0 0 0 --output-voxel-um 9.6 \
+  --pitch-um 19.2 --memory-gib 6 --output exports/paris4-W-60
+```
+
+Replace CT path/level with the **actual calibrated dataset**, not the field's
+coarse Zarr. The pitch/memory above are an explicit example, not measured
+full-scroll settings or the user's production flattening recipe. Reuse your
+approved values. LSCM needs no native Flatboi; SLIM still requires its pinned
+binary and Linux admission. Complete mappings, automatic values and file/flag
+precedence are in [CLI-FLAGS](CLI-FLAGS.md).
+
+## Export from a saved run
+
+After the README's `run --until field`, export without creating configuration files:
+
+```sh
+winding-field export-sheets --run runs/175a-roi --levels -31 \
+  --export-tifxyz --output exports/W-31
+```
+
+`--run` selects the original global LSCM recipe. It loads the completed field
+receipt/checkpoint, CT source, CT pyramid level and scale from the saved run.
+It verifies field hashes and geometry, current CT metadata and previously
+consumed encoded CT chunks before creating the export. Keep `RUN.json`,
+`FIELD.json`, `field/` and `source.sqlite` intact. This is a new read-only export,
+not a resume of the producer; the old producer implementation need not match
+the exporter. Revalidating the saved field and CT history can take time on large runs.
+The export retains a copy of the producer's CT hash ledger, so those expected
+hashes also protect rendering after admission. Resume rejects lost producer rows
+or a missing/symlinked export ledger instead of accepting fresh source bytes.
+
+Default output frame: the saved field's frame identity, `voxel_um: 1`,
+`origin_xyz_um: [0,0,0]`. Thus XYZ TIFFs contain physical micrometres; nonzero
+CT origins and anisotropic spacing remain accounted for. Original mapping's
+existing automatic raster pitch and 4 GiB memory-admission estimate are unchanged.
+Do not treat a successful diagnostic export as physical-sheet acceptance.
+
+The exporter creates `field.json` and `flattening.json` inside `OUT`, binding their
+hashes and source receipts in `EXPORT.json`. Repeat the identical command with
+`--resume`; edited/missing configuration or changed sources are rejected, never
+silently regenerated. Use a fresh output for changed settings. The output must
+be separate from the source run, not inside or above it.
+
+To override output coordinates, pitch or memory admission, supply output-frame
+flags, `--pitch NUMBER|auto`, `--memory-gib`, or optional `--flattening-config`
+using the original recipe's format below. Do not combine
+`--run` with `--source`, `--level`, `--voxel-um`, another input selector, patches,
+or the solver/scope matrix: saved inputs are authoritative. `--levels` retains
+the existing **raw field isovalue** contract, not automatic W recalibration.
+
+The shared manual/quick/Docker installation already includes `plot` and `tifxyz`.
+Only for an environment installed without these extras, run from the checkout:
+
+```sh
+uv pip install --constraint docker/cli.in '.[tifxyz]'
+```
+
+For external fields/meshes, keep using the explicit configuration routes below.
+
+Remote field exports can use the same `zarr-v2` field descriptor documented in
+[Prepared: remote Zarr v2](PREPARED.md#read-a-remote-zarr-v2-field), including
+`--field-config` inputs. A flatten/export field-config contains `field` and
+`geometry` from the [Paris4 example](../examples/paris4-remote.json); levels are
+still supplied with `--levels` in raw phi units. This adds remote **field** reads,
+not CT texturing or a different flattening algorithm.
 
 ## Native run flattening
 
@@ -35,7 +122,8 @@ interruption within SLIM restarts only the uncommitted chart on continuation.
 ## Explicit solver × scope matrix
 
 `export-sheets` accepts **both** `--flattening-solver lscm|slim` and
-`--scope patches|sheet`. Install `.[tifxyz,ct]` and run on Linux. The four
+`--scope patches|sheet`. Follow the [installation guide](../README.md)
+and run on Linux. The four
 combinations use the same source-preserving preparation and tiled CT exporter:
 
 | Selection | Domain | Algorithm |
@@ -59,9 +147,11 @@ Minimal `matrix.json` for LSCM:
 }
 ```
 
-For SLIM, add `"app_run": "/opt/vc3d/AppRun"`. This requires the pinned
-`installed-2f89bfc9` Flatboi binary used by `constant-sheet`, not an arbitrary
-executable. Its recipe remains cap200, batches10, two threads, symmetric
+For SLIM, add `"app_run": "/opt/vc3d/AppRun"`. The default is the pinned
+`installed-2f89bfc9` Flatboi binary used by `constant-sheet`. To select the
+official Villa stable release recorded in [native provenance](../provenance/flatboi.json),
+also add `"native_recipe": "historical"`. Both launcher and binary hashes
+must match the selected recipe. Its settings remain cap200, batches10, two threads, symmetric
 Dirichlet and tolerance1e−6. SLIM runs require a cgroup v2 envelope:
 
 ```sh
@@ -132,10 +222,12 @@ well as its own checkpoint bounds. It also honors
 As with existing checkpoint code identities, a checkpoint from an older runner
 must use its frozen runtime or the explicit `constant-sheet import-native`
 migration with the original runner SHA; it is never relabeled as a new run.
+Changing `native_recipe` requires a new output; import-native also retains the
+original binary identity and cannot migrate checkpoints between these releases.
 
 Sampling stays isotropic at `pitch_um` (default19.2), window0–255, with bounded
 native CT caching. Common rendering settings are `tile_size`, `raster_workers`,
-`ct_workers`, `cache_dir`, `cache_mib`, `cache_gib`, and `ct_sampler`; they retain
+`ct_workers`, `cache_dir`, `cache_mib`, and `cache_gib`; they retain
 the patch export validation. At least8GiB disk reserve is required. Geometry/
 raster memory remains capped at6GiB, and existing topology/map bounds still
 apply. Selecting the matrix does **not** establish feasibility for full fine
@@ -195,6 +287,8 @@ For a CLI block checkpoint, replace the `field` object with:
 Copy `geometry` from that run's `FIELD.json`. Keep the immutable checkpoint and
 its chunk files together. The existing field determines coarse/fine resolution.
 Missing chunks are unsupported; `observed` also requires observation support.
+Scalar `--levels` are raw field isovalues. For a nominal winding value W, use
+`raw_level = W * sheet_step`; the values coincide only when `sheet_step` is 1.
 
 ### `flattening.json`: the output coordinates
 
@@ -211,8 +305,10 @@ Missing chunks are unsupported; `observed` also requires observation support.
 
 Set the ID, origin and voxel size to the destination scan's frame. This writes
 XYZ in 8.64 µm voxels; it does not change field resolution. Conversion is
-`xyz = (physical_xyz_um - output_origin_um) / output_voxel_um`. Valid TIFF XYZ
-must be nonnegative; −1 marks invalid nodes.
+`xyz = (physical_xyz_um - output_origin_um) / output_voxel_um`. Mesh-derived TIFFs
+use float32, nonnegative valid XYZ and −1 for invalid nodes. The separate
+[UVW exporter](UVW.md#products) uses float64 and NaN instead; do not interchange
+their validity conventions.
 
 `--source` must be the matching CT. `--voxel-um` supplies its scale if metadata
 lacks units, separately from the output frame. Select CT pyramid level with
@@ -226,7 +322,7 @@ with `--mesh-bundle /data/run/meshes`. The immutable bundle must contain
 
 ## New CT run with original mapping
 
-After preparing `flattening.json` and installing `.[tifxyz]`:
+After preparing `flattening.json` and installing the `tifxyz` extra:
 
 ```bash
 winding-field run --source /data/scroll.zarr --voxel-um 8.64 \
@@ -316,8 +412,8 @@ resume/verification. If admission created no output root, retry the initial comm
 
 Strict coverage is default. Set `"coverage_policy":"allow_partial"` **before**
 starting to permit partial coverage after geometry gates pass. READY and PARTIAL
-are distinct final markers; only READY certifies the declared supported ROI at
-the recorded tolerance. Verification exits 0 for verified READY, 2 for verified
+are distinct final markers; only READY passes the exporter's coverage checks for
+the declared supported ROI at the recorded tolerance. Verification exits 0 for verified READY, 2 for verified
 PARTIAL; resource blocks exit 75. Neither proves physical-sheet correctness.
 macOS production runtime is unsupported. No whole-W throughput guarantee is made.
 

@@ -85,7 +85,8 @@ def main(argv=None):
     p.add_argument("--timeout", type=float, default=1800)
     p.add_argument("--reserve-gib", type=float, default=10)
     p.add_argument("command", nargs=argparse.REMAINDER)
-    a = p.parse_args(argv)
+    from .cli_settings import parse_options
+    a = parse_options(p,argv)
     cmd = a.command[1:] if a.command[:1] == ["--"] else a.command
     if not cmd or a.timeout <= 0 or a.reserve_gib < 0:
         p.error("require command, positive timeout and nonnegative reserve")

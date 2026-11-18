@@ -12,6 +12,7 @@ import math
 import os
 from pathlib import Path
 import shutil
+import sys
 import threading
 
 import numpy as np
@@ -28,30 +29,33 @@ LAUNCHER_SHA='c1e0ca2ea1616967f6da5907c60ea3fe114e840834154ccde758856f85510517'
 BINARY_SHA='d724cf0cc6940d7c959e36c73ed1a9a977d3b90bab60fc97d519fe370cc63f38'
 NATIVE_RECIPES={'historical':BINARY_SHA,
     'installed-2f89bfc9':'2f89bfc96512bebf7ef44b25de01c5afd01c7af058e452515b03bc52cf6afd6a'}
+CHECKPOINT_RECIPES=('installed-2f89bfc9','historical')
 
 
 def settings(request,*,native_required=True):
     from .original_pipeline import settings as frame_settings
     if not isinstance(request,dict):raise ValueError('patch settings must be an object')
     allowed={'output_frame','pitch_um','app_run','max_patch_faces','max_depth','max_charts','tile_size',
-             'memory_gib','timeout_seconds','cache_dir','cache_mib','cache_gib','native_recipe','ct_sampler',
+             'memory_gib','timeout_seconds','cache_dir','cache_mib','cache_gib','native_recipe',
              'workers','raster_workers','ct_workers','native_cpus','reuse_export','reuse_identity_sha256','process_tree_gib','disk_reserve_gib'}
     if set(request)-allowed:raise ValueError('unknown patch settings: '+str(sorted(set(request)-allowed)))
     frame_settings({'output_frame':request.get('output_frame')})
     cfg=dict(pitch_um=19.2,max_patch_faces=4096,max_depth=3,max_charts=4096,tile_size=1024,
              memory_gib=2.,timeout_seconds=120.,cache_mib=64,cache_gib=2.,
-               cache_dir='~/.cache/winding-field/patch-ct',native_recipe='historical',ct_sampler='native-float64',workers=1,raster_workers=1,ct_workers=1,
+               cache_dir='~/.cache/winding-field/patch-ct',native_recipe='historical',workers=1,raster_workers=1,ct_workers=1,
              native_cpus=None,reuse_export=None,reuse_identity_sha256=None,process_tree_gib=11.,disk_reserve_gib=8.)
     cfg.update(request)
-    if cfg['ct_sampler'] not in ('scalar','native-float64'):raise ValueError('invalid ct_sampler')
     if not isinstance(cfg['native_recipe'],str) or cfg['native_recipe'] not in NATIVE_RECIPES:raise ValueError('unknown native_recipe')
     if native_required or cfg.get('app_run') is not None:
         if not isinstance(cfg.get('app_run'),str) or not cfg['app_run']:raise ValueError('patch app_run required')
-    for key in ('pitch_um','memory_gib','timeout_seconds','cache_gib','process_tree_gib','disk_reserve_gib'):
+    if type(cfg['cache_gib']) not in (int,float) or not math.isfinite(cfg['cache_gib']) or cfg['cache_gib']<0:raise ValueError('invalid patch cache_gib')
+    for key in ('pitch_um','memory_gib','timeout_seconds','process_tree_gib','disk_reserve_gib'):
+        if key in ('memory_gib','process_tree_gib') and cfg[key] is None:continue
         if type(cfg[key]) not in (int,float) or not math.isfinite(cfg[key]) or cfg[key]<=0:raise ValueError('invalid patch '+key)
     for key,lo,hi in (('workers',1,4),('raster_workers',1,4),('ct_workers',1,4),('max_patch_faces',1,100000),('max_depth',0,16),('max_charts',1,100000),('tile_size',2,2048),('cache_mib',0,8192)):
         if type(cfg[key]) is not int or not lo<=cfg[key]<=hi:raise ValueError('invalid patch '+key)
-    if raster_memory(cfg)>=cfg['memory_gib']*2**30:raise ValueError('patch memory budget cannot hold raster, CT cache and runtime reserve')
+    if cfg['memory_gib'] is not None and raster_memory(cfg)>=cfg['memory_gib']*2**30:
+        raise ValueError('patch memory budget cannot hold raster, CT cache and runtime reserve')
     cpus=cfg['native_cpus']
     if cpus is not None and (not isinstance(cpus,list) or not cpus or any(type(c) is not int or c<0 for c in cpus) or len(set(cpus))!=len(cpus)):
         raise ValueError('invalid native CPU set')
@@ -72,7 +76,7 @@ def ct_memory(chunks,dtype,cfg):
     decoded=math.prod(chunks)*np.dtype(dtype).itemsize
     # Native decode + codec workspace + new Python bytes + previous sampler chunk.
     reserved=4*decoded*(cfg.get('raster_workers',1)+(cfg.get('ct_workers',1) if cfg.get('ct_workers',1)>1 else 0))
-    if raster_memory(cfg)+reserved>=cfg['memory_gib']*2**30:
+    if cfg['memory_gib'] is not None and raster_memory(cfg)+reserved>=cfg['memory_gib']*2**30:
         raise ValueError('CT chunk memory exceeds whole patch memory budget')
     return reserved
 
@@ -498,19 +502,32 @@ def open_mesh(path):
             if file_sha(path/'RANGE.json')!=reader.receipt_sha:raise ValueError('range wrapper changed during export')
     else:
         with MeshReader(path) as reader:
-            kind=reader.manifest['identity']['kind']
+            kind=reader.manifest['identity'].get('kind','scalar_isosurface')
             if kind=='continuous_range':raise ValueError('patch continuous range requires its RANGE.json wrapper')
             yield reader,dict(kind=kind,storage_slot_semantics='each saved mesh level is exported independently')
 
 
-def read_level(reader,level,*,memory_gib):
+def read_level(reader,level,*,memory_gib,workspace=None):
     from .patch_mapping import SourceKeys
+    from .native_patches import admit_memory
     db=reader.db;nv=db.execute('SELECT COUNT(*) FROM vertices WHERE level=?',(level,)).fetchone()[0]
     nf=db.execute('SELECT COUNT(*) FROM faces WHERE level=?',(level,)).fetchone()[0]
-    # shortcut: conservative in-memory graph admission, use a disk graph for larger meshes.
-    estimate=(nv+nf)*2048
-    if estimate>memory_gib*2**30:raise ValueError(f'patch geometry admission exceeds {memory_gib:g} GiB ({nv} vertices, {nf} faces)')
-    vi=np.empty(nv,np.int64);v=np.empty((nv,3));fi=np.empty(nf,np.int64);f=np.empty((nf,3),np.int64)
+    # Two fetch batches can coexist with packed rows, search indices and masks.
+    row=sys.getsizeof((0,0,0,0))+4*sys.getsizeof(0)+np.dtype(np.intp).itemsize
+    temporary=2*min(4096,max(nv,nf))*(row+4*8+3*8+3)
+    storage=nv*(8+3*8)+nf*(8+3*8)
+    operator=None if memory_gib is None else int(memory_gib*2**30)
+    admit_memory(temporary+(storage if workspace is None else 0),phase='mesh numeric read',operator_bytes=operator)
+    if workspace is not None:
+        workspace=Path(workspace)
+        if any(p.is_symlink() for p in (workspace,*workspace.parents)):raise ValueError('mesh workspace symlink refused')
+        workspace.mkdir(exist_ok=False)
+        if shutil.disk_usage(workspace).free<storage:raise InterruptedError('mesh array scratch space unavailable')
+    def array(name,shape,dtype):
+        if workspace is None or not math.prod(shape):return np.empty(shape,dtype)
+        return np.lib.format.open_memmap(workspace/(name+'.npy'),mode='w+',shape=shape,dtype=dtype)
+    vi=array('vertex-ids',(nv,),np.int64);v=array('vertices',(nv,3),np.float64)
+    fi=array('face-ids',(nf,),np.int64);f=array('faces',(nf,3),np.int64)
     cursor=db.execute('SELECT id,x,y,z FROM vertices WHERE level=? ORDER BY id',(level,));offset=0
     while batch:=cursor.fetchmany(4096):
         count=len(batch)
@@ -545,7 +562,7 @@ def export_mesh(mesh_path,out,volume,request,*,export_tifxyz=False,stop=lambda:F
             ('patch_pipeline','native_ct_sampling','native_patches','patch_mapping','surface_export','surface_atlas','original_recipe','original_pipeline','original_tifxyz','surface_mesh','range_surface','io')}
         identity['runtime']={name:version(name) for name in ('numpy','scipy','Pillow')}
         identity['memory_admission']=dict(raster_cache_runtime_bytes=raster_memory(cfg),ct_chunk_workspace_bytes=ct_reserve,
-            geometry_budget_bytes=cfg['memory_gib']*2**30-raster_memory(cfg)-ct_reserve)
+            geometry_budget_bytes=None if cfg['memory_gib'] is None else cfg['memory_gib']*2**30-raster_memory(cfg)-ct_reserve)
         from .native_patches import NativeReuse,ResourceGuard
         reuse=NativeReuse(cfg['reuse_export'],cfg['reuse_identity_sha256'],identity) if cfg['reuse_export'] else None
         if reuse:identity['native_reuse']=dict(export=str(reuse.root),identity_sha256=reuse.identity_sha256,inventory=reuse.inventory)
@@ -560,7 +577,8 @@ def export_mesh(mesh_path,out,volume,request,*,export_tifxyz=False,stop=lambda:F
         records=[]
         try:
             for level,value in reader.db.execute('SELECT id,value FROM levels ORDER BY id'):
-                guard();v,f,vi,fi,vk,fk=read_level(reader,level,memory_gib=cfg['memory_gib']-(raster_memory(cfg)+ct_reserve)/2**30)
+                geometry_gib=None if cfg['memory_gib'] is None else cfg['memory_gib']-(raster_memory(cfg)+ct_reserve)/2**30
+                guard();v,f,vi,fi,vk,fk=read_level(reader,level,memory_gib=geometry_gib)
                 target=out/f'level-{level:04d}';target.mkdir()
                 world=frame_coordinates(v,frame,reader.metadata['voxel_um'])
                 cancelled.clear()
@@ -614,14 +632,12 @@ def export_mesh(mesh_path,out,volume,request,*,export_tifxyz=False,stop=lambda:F
 
 
 class PatchCT:
-    """Installed vc_reader transport and verified native or scalar interpolation.
+    """Checked native transport and interpolation with a decoded-byte ledger.
 
     Native shared disk cache is lossless and bounded; chunk provenance lives on disk.
     """
     def __init__(self,source,output,cfg,*,voxel_um=None,level=0,resume=False):
         from .io import Volume
-        from vc_reader.reader import open_zarr
-        from vc_reader import _reader
         import sqlite3
         self.volume=Volume(source,voxel_um=voxel_um,level=level,cache=cfg['cache_dir'],cache_bytes=int(cfg['cache_gib']*2**30),
                            reserve_bytes=int(cfg['disk_reserve_gib']*2**30))
@@ -633,75 +649,30 @@ class PatchCT:
         try:self.chunk_workspace_bytes=ct_memory(self.chunks,self.dtype,cfg)
         except Exception:
             self.volume.close();raise
-        self.db=None;self.native=None;self._ct_pool=None;self._sampler=None
+        self.db=None;self._ct_pool=None;self._sampler=None
         try:
             self.db=sqlite3.connect(Path(output)/'ct-chunks.sqlite',check_same_thread=False)
             self.db.execute('CREATE TABLE '+('IF NOT EXISTS ' if resume else '')+'chunks (key TEXT PRIMARY KEY,sha TEXT)')
-            url=self.volume.source.rstrip('/')+('/'+self.volume.array_path if self.volume.array_path else '')
-            self._local_source=None if self.volume.remote else Path(url)
-            self._chunk_layers=[]
-            if self.volume.remote:
-                self.native=open_zarr(url,threads=1,connections=cfg['ct_workers'],auth=None,memory_cache=0,
-                    cache_dir=str(Path(cfg['cache_dir']).expanduser()/'native'),cache_max_bytes=int(cfg['cache_gib']*2**30),
-                    compress_cache=False,allow_lossy_cache=False)
-                if self.native.meta.raw!=self.volume.metadata:raise ValueError('vc_reader metadata differs')
-                self._chunk_layers=[layer for layer in self.native.cache_layers if layer.kind=='decoded' and not layer.allow_lossy]
-                if not self._chunk_layers:raise ValueError('verified CT requires a lossless decoded cache')
             self._ct_pool=ThreadPoolExecutor(max_workers=cfg['ct_workers']) if cfg['ct_workers']>1 else None
-            if cfg.get('ct_sampler','native-float64')=='native-float64':
-                from .native_ct_sampling import NativeCTSampler
-                self._sampler=NativeCTSampler(self.volume.shape,self.chunks,self.dtype,self._chunk)
-            self.identity=dict(self.volume.identity,backend='vc_reader',extension_sha256=file_sha(_reader.__file__),
+            from .native_ct_sampling import NativeCTSampler
+            self._sampler=NativeCTSampler(self.volume.shape,self.chunks,self.dtype,self._chunk)
+            self.identity=dict(self.volume.identity,
                                threads=1,memory_cache_bytes=self._cache_limit,memory_cache_owner='verified-python-chunks',
                                 disk_cache_bytes=int(cfg['cache_gib']*2**30),chunk_workspace_bytes=self.chunk_workspace_bytes)
-            self.identity['sampler']='vc_reader-float64-support-v1' if self._sampler else 'scalar'
-            if self._sampler:
-                self.identity['sampler_sha256']=file_sha(Path(__file__).with_name('native_ct_sampling.py'))
-            libraries=Path(_reader.__file__).parent.parent/'lib'
-            self.identity['reader_libraries_sha256']={p.name:file_sha(p) for p in sorted(libraries.glob('libvc_reader_native.*')) if p.is_file()}
+            self.identity['sampler']='vc_reader-float64-support-v1'
+            self.identity['sampler_sha256']=file_sha(Path(__file__).with_name('native_ct_sampling.py'))
         except Exception:
             self.close();raise
 
     def _load_chunk(self,index):
         """Read whole stored chunks; a fill-valued sample cannot prove presence."""
         name=self.volume.metadata.get('dimension_separator','.').join(map(str,index))
-        def cached():
-            for layer in self._chunk_layers:
-                path=Path(layer.root)/name
-                if path.is_file():return path,layer.stored.raw
-                if Path(str(path)+'.missing').is_file():return None,layer.stored.raw
-            return False,None
-        if self._local_source is not None:
-            path,metadata=self._local_source/name,self.volume.metadata
-            if not path.exists():return None
-        else:
-            path,metadata=cached()
-            if path is False:
-                # A one-voxel read loads the complete chunk; flush makes its missing marker durable too.
-                start=np.asarray(index)*self.volume.chunks
-                self.native[tuple(slice(int(n),int(n)+1) for n in start)]
-                self.native._array.flush()
-                path,metadata=cached()
-                if path is False:raise RuntimeError('CT prefetch publication failed')
-            if path is None:return None
-        with path.open('rb') as handle:raw=handle.read((256<<20)+1)
-        if len(raw)>256<<20:raise ValueError('encoded CT chunk exceeds 256 MiB read budget')
-        return self._decode_chunk(raw,metadata,cache=self._local_source is None)
-
-    def _decode_chunk(self,raw,metadata,*,cache=False):
-        if metadata.get('compressor'):
-            from vc_reader.reader.writer import decompress_bytes
-            if cache and metadata['compressor'].get('id')=='vc-delta3d':
-                # shortcut: validate D3D1 v1/v2 headers; require native validation for newer wire formats.
-                if not (len(raw)>=20 and raw[:4]==b'D3D1' and raw[4] in (1,2) and raw[6]<=1):
-                    raise ValueError('CT cache payload is not verified lossless Delta3D')
-            raw=decompress_bytes(raw,metadata['compressor'],math.prod(self.volume.chunks)*self.volume.dtype.itemsize)
-        if metadata.get('filters'):
-            from numcodecs import get_codec
-            for spec in reversed(metadata['filters']):raw=get_codec(spec).decode(raw)
-        if metadata['order']!=self.volume.metadata['order']:
-            raw=np.frombuffer(raw,dtype=self.volume.dtype).reshape(self.volume.chunks,order=metadata['order']).tobytes(order=self.volume.metadata['order'])
-        return raw
+        key=self.volume.array_path+'/'+name if self.volume.array_path else name
+        try:data=self.volume.decoded_chunk(key)
+        except FileNotFoundError:
+            if self.volume.remote:raise
+            return None
+        return None if data is None else data.tobytes()
 
     def _chunk(self,index):
         import hashlib
@@ -721,7 +692,7 @@ class PatchCT:
             saved=self.db.execute('SELECT sha FROM chunks WHERE key=?',(key,)).fetchone()
             if saved is not None and saved[0]!=sha:raise ValueError('CT chunk changed during export: '+key)
             self.db.execute('INSERT OR IGNORE INTO chunks VALUES (?,?)',(key,sha))
-            value=None if raw is None else np.frombuffer(raw,dtype=v.dtype).reshape(v.chunks,order=v.metadata['order'])
+            value=None if raw is None else np.frombuffer(raw,dtype=v.dtype).reshape(v.chunks)
             if value is not None:value.flags.writeable=False
             size=512+(0 if value is None else value.nbytes)
             if size<=self._cache_limit:
@@ -729,7 +700,7 @@ class PatchCT:
             return value
 
     def _prefetch(self,indices):
-        # Publish bounded batches to SSD; the scalar demand path still verifies every hash.
+        # Publish bounded batches to the shared encoded cache; demand reads verify every hash.
         with self._lock:
             missing=[index for index in indices if ','.join(map(str,index)) not in self._chunks]
             needed=math.prod(self.volume.chunks)*self.volume.dtype.itemsize
@@ -744,13 +715,10 @@ class PatchCT:
                 wait(futures)
 
     def sample(self,xyz,frame):
-        from .original_recipe import sample_points
         v=self.volume
         grid=(xyz*frame['voxel_um']+np.asarray(frame['origin_xyz_um'])-v.origin_xyz)/v.spacing_xyz
         prefetch=self._prefetch if getattr(self,'_ct_pool',None) else None
-        sampler=getattr(self,'_sampler',None)
-        result=(sampler.sample(grid,prefetch=prefetch) if sampler else
-                sample_points(grid,v.shape,v.chunks,self._chunk,prefetch=prefetch))
+        result=self._sampler.sample(grid,prefetch=prefetch)
         with self._lock:self.db.commit()
         return result
 
@@ -763,13 +731,9 @@ class PatchCT:
         while rows:=cursor.fetchmany(256):
             for key,expected in rows:
                 guard();index=tuple(map(int,key.split(',')))
-                if self.volume.remote:
-                    name=self.volume.metadata.get('dimension_separator','.').join(map(str,index))
-                    if self.volume.array_path:name=self.volume.array_path+'/'+name
-                    raw=self.volume._chunk_bytes(name)
-                    if raw is not None:raw=self._decode_chunk(raw,self.volume.metadata)
-                    actual=None if raw is None else hashlib.sha256(raw).hexdigest()
-                    if actual!=expected:raise ValueError('CT chunk changed on resume: '+key)
+                raw=self._load_chunk(index)
+                actual=None if raw is None else hashlib.sha256(raw).hexdigest()
+                if actual!=expected:raise ValueError('CT chunk changed on resume: '+key)
                 self._chunk(index)
         self.db.commit()
 
@@ -779,15 +743,15 @@ class PatchCT:
         self._chunks.clear();self._cache_bytes=0
         if self.db:self.db.close();self.db=None
         self.volume.close()
-        if self.native:self.native.close();self.native=None
 
 
 def export_existing(args):
     import signal
-    if args.field_config:raise ValueError('patches requires --mesh-bundle; extract a mesh or join ranges first')
+    from .export_settings import field_request,flattening_request
+    if field_request(args):raise ValueError('patches requires --mesh-bundle; extract a mesh or join ranges first')
     if args.levels:raise ValueError('patch mesh identity already defines its levels; omit --levels')
     if args.resume:raise ValueError('patch export does not resume; use a fresh output (source meshes remain immutable)')
-    cfg=settings(json.loads(Path(args.flattening_config).read_bytes()));check_flatboi(cfg['app_run'],cfg['native_recipe'])
+    cfg=settings(flattening_request(args));check_flatboi(cfg['app_run'],cfg['native_recipe'])
     # Validate the wrapper before creating CT caches or output.
     with open_mesh(args.mesh_bundle):pass
     out=Path(args.output).expanduser().resolve();source=Path(args.mesh_bundle).expanduser().resolve()

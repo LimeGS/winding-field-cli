@@ -5,6 +5,14 @@ target winding density, with Qual V2 supplying fibres/splines. `--fibres` replac
 fibre inference/tracing with an external AFV. Explicit `--prediction sd2` also uses
 Lasagna; `--prediction classical` without an AFV uses the offline local baseline.
 
+Imported manifests/physical geometry can be supplied by named flags instead of
+authored JSON: `--fibres-source`, `--fibres-origin-xyz-um`,
+`--fibres-spacing-xyz-um`; Lasagna uses repeated
+`--lasagna-channel GROUP CHANNEL ZARR SCALEDOWN` and `--lasagna-crop` plus its
+frame/encoding declarations. [All input mappings](CLI-FLAGS.md#afvlasagna-input-declarations)
+also work through `--cli-config`, with explicit flags winning over file values.
+Actual prediction/AFV data, source pins and validity ledgers remain mandatory.
+
 ## One-time runtime setup
 
 The CLI/core retain Python 3.11/3.12. Pinned Villa Lasagna requires Python 3.14,
@@ -20,13 +28,42 @@ uv pip install --python ~/.cache/winding-field/lasagna-venv/bin/python \
 winding-field doctor
 winding-field models --prediction lasagna
 winding-field models --prediction qual-v2
+winding-field doctor --prediction qual-v2
 ```
 
-`doctor` reports the CLI runtime. A CT run additionally checks the selected
-Lasagna interpreter, pinned archive provenance, source inventory and checkpoint
-before creating its output directory. `plan` estimates storage without installing
-or running models. Use `--lasagna-python /another/venv/bin/python` to override the
-default interpreter. Keep the venv executable path, including its symlink.
+Bare `doctor` reports the CLI runtime, as before. Add `--prediction qual-v2` (or
+`sd2`/`classical`) to check the selected pipeline's required dependencies. These
+checks verify the Lasagna interpreter, pinned archive provenance/source inventory,
+and cached checkpoint hashes without installing anything, downloading weights,
+loading models or executing inference. JSON `preflight.ready` is false and the
+exit code is 1 when a required dependency is unavailable. Runtime checks distinguish
+`MISSING` from `INCOMPATIBLE`; checkpoints distinguish `MISSING` from `INVALID`.
+`READY` means that dependency passed these checks, not scientific acceptance or
+validation of CT geometry, imported manifests, GPU compatibility or disk budgets.
+
+Use the same explicit interpreter and local weights as the intended run:
+
+```bash
+winding-field doctor --prediction qual-v2 \
+  --lasagna-python /another/venv/bin/python \
+  --lasagna-model-path /data/models/lasagna.pt --model-path /data/models/qual-v2.pt
+```
+
+The isolated environment must be prepared explicitly using the setup commands
+above; the CLI never creates/installs it automatically. Keep the venv executable
+path, including its symlink. `plan` remains a storage/geometry estimate without
+installation or inference; it does not establish model-runtime readiness.
+
+A new CT run reserves a fresh output directory and writes the existing `RUN.json`
+contract before model/source startup checks. Early failures are recorded with
+`status: FAILED`, an `error`, `physical_acceptance: false` and empty `stages` when
+no stage ran. A failed run is not a prepared or scientifically accepted result.
+Existing output directories/files/symlinks are never adopted or overwritten.
+Invalid arguments or an output that cannot safely be created still produce a clear
+stderr diagnostic and nonzero exit code without inventing a receipt. Resume
+requires an existing `RUN.json` and retains strict configuration, implementation,
+source and model/runtime identity checks; correcting an identity mismatch requires
+the original environment or a new output, not a rewritten receipt.
 
 CUDA users must install a driver-compatible PyTorch build in this environment
 and check `torch.cuda.is_available()` there, independently of the CLI environment.
@@ -73,6 +110,17 @@ winding-field field /path/to/run    # build the field; also finishes fibres if n
 winding-field resume /path/to/run   # finish the saved output branch
 ```
 
+## External Lasagna predictions
+
+Local inputs with `--lasagna-geometry` or embedded `original_ct`/physical frame use
+[calibrated trilinear interpolation](LASAGNA-CALIBRATED.md#external-lasagna-predictions).
+The base-grid route below preserves pooled-cell semantics, remote reads and
+bounded preparation. These contracts are deliberately distinct: adding a
+physical frame selects interpolation rather than silently changing its density scale.
+Remote manifests declaring embedded physical frames are rejected: download the
+manifest and its channels locally to use calibrated interpolation. Bounded
+preparation accepts only pooled base-grid imports, not calibrated physical frames.
+
 ### Import local, custom or community Lasagna predictions
 
 `--lasagna-input /path/to/scroll.lasagna.json` or an HTTP(S)/S3 manifest URL
@@ -81,6 +129,18 @@ download is required. Relative channel and provenance paths resolve against the
 manifest. The default Qual fibre provider still needs its own checkpoint; use
 `--prediction classical` for CT-derived fibres or `--fibres` for existing AFV.
 `--lasagna-input` conflicts with `--lasagna-python` / `--lasagna-model-path`.
+
+The same dependency bypass applies to read-only diagnostics:
+
+```bash
+winding-field doctor --prediction classical --lasagna-input /data/scroll.lasagna.json
+winding-field doctor --prediction qual-v2 --lasagna-input /data/scroll.lasagna.json \
+  --model-path /data/models/qual-v2.pt
+```
+
+Lasagna runtime/checkpoint checks report `NOT_REQUIRED` for imported surfaces.
+Qual V2 still requires its own checkpoint unless `--fibres` supplies an AFV; this
+does not validate the imported data themselves or weaken retained-input checks.
 
 ```bash
 winding-field run --source "$CT" --voxel-um 8.64 \
@@ -234,6 +294,8 @@ annotations and available family labels survive export; unlabeled fibres remain
 family column is missing, empty or `unknown`; an existing family takes precedence.
 `FIBRES.json` reports source/imported/excluded counts. Exported imported
 curves have `automatically_traced=false` and their source AFV hash.
+
+For large inputs, see [bounded AFV batches, durable progress and benchmarks](AFV-IMPORT.md).
 
 ## Products, units and recovery
 

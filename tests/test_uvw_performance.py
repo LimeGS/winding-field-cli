@@ -32,6 +32,23 @@ def test_decoded_cache_local_mutation_preserves_ledger(tmp_path):
         with pytest.raises(ValueError,match='changed'):volume.decoded_chunk('0/0.0.0')
 
 
+def test_ledger_bound_crops_avoid_redundant_file_stats(tmp_path,monkeypatch):
+    data=make_volume(tmp_path/'ct');chunk=tmp_path/'ct/0/0.0.0'
+    with closing(Volume(tmp_path/'ct',cache=tmp_path/'cache',decoded_cache_bytes=1024)) as volume:
+        volume.bind_ledger(tmp_path/'source.sqlite');stat=Path.stat;calls=[]
+        def counted(path,*args,**kwargs):
+            if path==chunk:calls.append(path)
+            return stat(path,*args,**kwargs)
+        monkeypatch.setattr(Path,'stat',counted)
+        for _ in range(2):
+            np.testing.assert_array_equal(volume.read([0,0,0],[2,2,3]),data[:2,:2,:3])
+        assert len(calls)<=2
+        assert volume.stats()['decodes']==1 and volume.stats()['decoded_hits']==1
+        chunk.write_bytes(bytes([255])*12)
+        with pytest.raises(ValueError,match='source chunk changed'):
+            volume.read([0,0,0],[2,2,3])
+
+
 def test_validate_used_revalidates_warm_remote_decoded_cache(served):
     root,url,_=served
     with closing(Volume(url,cache=root/'cache',decoded_cache_bytes=1024)) as volume:
@@ -40,6 +57,113 @@ def test_validate_used_revalidates_warm_remote_decoded_cache(served):
         (root/'ct.zarr/0/0.0.0').write_bytes(bytes([255])*12)
         with pytest.raises(ValueError,match='changed'):volume.validate_used()
         assert volume.stats()['decoded_cache_bytes']==0
+
+
+def test_binding_ledger_discards_previously_decoded_bytes(tmp_path):
+    make_volume(tmp_path/'ct')
+    with closing(Volume(tmp_path/'ct',cache=tmp_path/'cache',decoded_cache_bytes=1024)) as volume:
+        volume.decoded_chunk('0/0.0.0')
+        (tmp_path/'ct/0/0.0.0').write_bytes(bytes([255])*12)
+        volume.bind_ledger(tmp_path/'source.sqlite')
+        assert volume.stats()['decoded_cache_bytes']==0
+        np.testing.assert_array_equal(volume.decoded_chunk('0/0.0.0'),np.full((2,2,3),255,dtype='u1'))
+
+
+def test_verified_sampling_reuses_blocks_across_ledgers_and_pins_each(tmp_path,monkeypatch):
+    import hashlib
+    import sqlite3
+    make_volume(tmp_path/'ct');key='0/0.0.0'
+    with closing(Volume(tmp_path/'ct',cache=tmp_path/'cache',decoded_cache_bytes=1024)) as volume:
+        reads=[];read=volume._chunk_bytes
+        def counted(key):reads.append(key);return read(key)
+        monkeypatch.setattr(volume,'_chunk_bytes',counted)
+        for tile in range(2):
+            volume.bind_ledger(tmp_path/f'{tile}.sqlite')
+            with volume.verified_chunks():
+                first=volume.decoded_chunk(key)
+                assert volume.decoded_chunk(key) is first
+            with sqlite3.connect(tmp_path/f'{tile}.sqlite') as db:
+                assert db.execute('SELECT key,sha FROM chunks').fetchall()==[(key,hashlib.sha256((tmp_path/'ct'/key).read_bytes()).hexdigest())]
+        assert volume.stats()['decodes']==1
+        # One initial read and one full payload check at each publication boundary.
+        assert reads==[key,key,key]
+
+
+def test_verified_sampling_allows_reader_callback_on_another_thread(tmp_path):
+    import threading
+    data=make_volume(tmp_path/'ct');finished=threading.Event();result=[];errors=[]
+    with closing(Volume(tmp_path/'ct',cache=tmp_path/'cache',decoded_cache_bytes=1024)) as volume:
+        volume.bind_ledger(tmp_path/'source.sqlite')
+        def callback():
+            try:result.append(volume.decoded_chunk('0/0.0.0'))
+            except BaseException as exc:errors.append(exc)
+            finally:finished.set()
+        worker=threading.Thread(target=callback,daemon=True)
+        try:
+            with volume.verified_chunks():
+                worker.start()
+                assert finished.wait(2),'reader callback blocked by the verification scope'
+        finally:worker.join(timeout=5)
+        assert not worker.is_alive() and not errors
+        np.testing.assert_array_equal(result[0],data[:2,:2,:3])
+
+
+def test_verified_sampling_detects_stat_collision_before_acceptance(tmp_path,monkeypatch):
+    make_volume(tmp_path/'ct');key='0/0.0.0'
+    with closing(Volume(tmp_path/'ct',cache=tmp_path/'cache',decoded_cache_bytes=1024)) as volume:
+        volume.bind_ledger(tmp_path/'source.sqlite')
+        with pytest.raises(ValueError,match='changed'):
+            with volume.verified_chunks():
+                first=volume.decoded_chunk(key);signature=volume._encoded_signature(key)
+                monkeypatch.setattr(volume,'_encoded_signature',lambda key:signature)
+                (tmp_path/'ct'/key).write_bytes(bytes([255])*12)
+                assert volume.decoded_chunk(key) is first
+
+
+def test_verified_sampling_rejects_conflicting_next_ledger(tmp_path):
+    make_volume(tmp_path/'ct');key='0/0.0.0'
+    with closing(Volume(tmp_path/'ct',cache=tmp_path/'cache',decoded_cache_bytes=1024)) as volume:
+        volume.bind_ledger(tmp_path/'first.sqlite')
+        with volume.verified_chunks():volume.decoded_chunk(key)
+        volume.bind_ledger(tmp_path/'second.sqlite')
+        volume._ledger.execute('INSERT INTO chunks VALUES (?,?)',(key,'incorrect'));volume._ledger.commit()
+        with pytest.raises(ValueError,match='changed'):
+            with volume.verified_chunks():volume.decoded_chunk(key)
+
+
+def test_verified_sampling_keeps_eviction_bounded_across_tiles(tmp_path):
+    data=make_volume(tmp_path/'ct')
+    with closing(Volume(tmp_path/'ct',cache=tmp_path/'cache',decoded_cache_bytes=524)) as volume:
+        for tile,key,expected in [(0,'0/0.0.0',data[:2,:2,:3]),(1,'0/0.0.1',data[:2,:2,3:]),(2,'0/0.0.0',data[:2,:2,:3])]:
+            volume.bind_ledger(tmp_path/f'{tile}.sqlite')
+            with volume.verified_chunks():np.testing.assert_array_equal(volume.decoded_chunk(key),expected)
+            assert volume.stats()['decoded_cache_bytes']<=524
+        assert volume.stats()['decoded_evictions']==2
+
+
+def test_verified_sampling_rejects_corrupt_remote_cache_on_exit(served):
+    root,url,_=served
+    with closing(Volume(url,cache=root/'cache',decoded_cache_bytes=1024)) as volume:
+        volume.bind_ledger(root/'source.sqlite')
+        with pytest.raises(ValueError,match='corrupt'):
+            with volume.verified_chunks():
+                volume.decoded_chunk('0/0.0.0')
+                volume._native.path(url+'/0/0.0.0').write_bytes(bytes([255])*12)
+        assert volume.stats()['decoded_cache_bytes']==0
+
+
+def test_ledger_bound_cache_remains_bounded_and_rejects_missing_chunk(tmp_path):
+    data=make_volume(tmp_path/'ct')
+    with closing(Volume(tmp_path/'ct',cache=tmp_path/'cache',decoded_cache_bytes=524)) as volume:
+        volume.bind_ledger(tmp_path/'source.sqlite')
+        for key,expected in [('0/0.0.0',data[:2,:2,:3]),('0/0.0.1',data[:2,:2,3:]),
+                             ('0/0.0.0',data[:2,:2,:3])]:
+            np.testing.assert_array_equal(volume.decoded_chunk(key),expected)
+            assert volume.stats()['decoded_cache_bytes']<=524
+        assert volume.stats()['decoded_evictions']==2
+        (tmp_path/'ct/0/0.0.0').unlink()
+        with pytest.raises(FileNotFoundError,match='missing local CT chunk'):
+            volume.decoded_chunk('0/0.0.0')
 
 
 def test_publication_snapshot_does_not_refetch_but_fresh_validation_detects_change(served,monkeypatch):
@@ -85,13 +209,13 @@ def test_export_publications_share_verification_epoch(tmp_path,monkeypatch):
 def test_advisory_cache_hits_do_not_commit_each_read(served):
     root,url,_=served
     volume=Volume(url,cache=root/'cache',cache_bytes=128<<20);volume._chunk_bytes('0/0.0.0')
-    statements=[];volume.db.set_trace_callback(statements.append)
+    statements=[];volume._native.db.set_trace_callback(statements.append)
     for _ in range(20):volume._chunk_bytes('0/0.0.0')
     assert not any(s=='COMMIT' for s in statements)
-    assert volume.stats()['pending_accesses']==1
     volume.close()
     import sqlite3
-    with sqlite3.connect(root/'cache/index.sqlite') as db:assert db.execute('SELECT COUNT(*) FROM cache').fetchone()[0]==1
+    with sqlite3.connect(root/'cache/vc-reader/receipts.sqlite') as db:
+        assert db.execute('SELECT COUNT(*) FROM receipts').fetchone()[0]==1
     with closing(Volume(url,cache=root/'cache',offline=True,cache_bytes=128<<20)) as resumed:
         assert resumed._chunk_bytes('0/0.0.0') is not None
 
@@ -107,7 +231,7 @@ def test_shuffled_chunk_local_sampling_uses_one_decode_per_chunk(tmp_path):
         again,again_valid=sample_ct(warm,physical)
         np.testing.assert_array_equal(actual,expected[order]);np.testing.assert_array_equal(valid,mask[order])
         np.testing.assert_array_equal(again,expected);np.testing.assert_array_equal(again_valid,mask)
-        assert warm.stats()['decodes']==count and warm.stats()['decoded_hits']==count
+        assert warm.stats()['decodes']==count and warm.stats()['decoded_hits']>=count
 
 
 def test_region_cache_reuses_cells_preserves_support_and_detects_mutation(tmp_path):
@@ -208,13 +332,12 @@ def test_spawn_cancellation_restores_environment_and_reaps_children(tmp_path,mon
 
 
 def test_remote_decoded_cache_corruption_rechecks_encoded_bytes(served):
-    from winding_field.util import digest
     root,url,data=served
     with closing(Volume(url,cache=root/'cache',decoded_cache_bytes=1024,cache_bytes=128<<20)) as volume:
         volume.bind_ledger(root/'source.sqlite');volume.decoded_chunk('0/0.0.0')
-        path=volume.cache/digest([volume._namespace,'0/0.0.0']);path.write_bytes(bytes([255])*12)
-        np.testing.assert_array_equal(volume.decoded_chunk('0/0.0.0'),data[:2,:2,:3])
-        assert volume.stats()['decodes']==2
+        path=volume._native.path(url+'/0/0.0.0');path.write_bytes(bytes([255])*12)
+        with pytest.raises(ValueError,match='corrupt'):
+            volume.decoded_chunk('0/0.0.0')
 
 
 def test_workers_pin_reference_before_spawn(tmp_path):

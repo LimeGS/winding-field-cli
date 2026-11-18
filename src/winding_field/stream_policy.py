@@ -1,6 +1,8 @@
-"""Trust boundary for Studio-managed HF channel streams; legacy inputs are unchanged."""
-import math
+"""Trust boundary for Studio-managed HF channels; legacy reads are unchanged."""
 import ipaddress
+import math
+from functools import partial
+from http.client import HTTPSConnection
 from http.server import BaseHTTPRequestHandler, HTTPServer
 import os
 import secrets
@@ -9,7 +11,7 @@ import struct
 import threading
 from urllib.error import HTTPError
 from urllib.parse import urljoin, urlsplit
-from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_opener
+from urllib.request import HTTPRedirectHandler, HTTPSHandler, ProxyHandler, Request, build_opener
 
 import numpy as np
 from numcodecs import Blosc
@@ -28,37 +30,62 @@ def validate_url(url,*,redirect=False):
     addresses=socket.getaddrinfo(host,443,type=socket.SOCK_STREAM)
     if not addresses or any(not ipaddress.ip_address(a[4][0]).is_global for a in addresses):
         raise ValueError('unsafe streaming URL address')
+    return addresses
+
+
+class _PinnedHTTPSConnection(HTTPSConnection):
+    def __init__(self,*args,addresses,**kwargs):
+        super().__init__(*args,**kwargs)
+        # Keep the hostname for Host/SNI/certificate checks; never resolve it again.
+        def connect(address,timeout,source_address=None):
+            for family,kind,protocol,_,destination in addresses:
+                sock=socket.socket(family,kind,protocol)
+                try:
+                    sock.settimeout(timeout)
+                    if source_address:sock.bind(source_address)
+                    sock.connect(destination)
+                    return sock
+                except OSError as error:
+                    sock.close();last_error=error
+                except BaseException:
+                    sock.close();raise
+            raise last_error
+        self._create_connection=connect
+
+
+class _PinnedHTTPSHandler(HTTPSHandler):
+    def __init__(self,addresses):
+        super().__init__();self.addresses=addresses
+
+    def https_open(self,request):
+        return self.do_open(partial(_PinnedHTTPSConnection,addresses=self.addresses),
+                            request,context=self._context)
 
 
 class _NoRedirect(HTTPRedirectHandler):
-    def redirect_request(self,*args,**kwargs):
-        return None
+    def redirect_request(self,*args,**kwargs):return None
 
 
 def open_stream(url,headers):
-    validate_url(url)
-    opener=build_opener(ProxyHandler({}),_NoRedirect())
-    for _ in range(6):
-        validate_url(url,redirect=True)
+    for hop in range(6):
+        addresses=validate_url(url,redirect=hop>0)
+        opener=build_opener(ProxyHandler({}),_NoRedirect(),_PinnedHTTPSHandler(addresses))
         try:
             return opener.open(Request(url,headers={**headers,'Accept-Encoding':'identity'}),timeout=60)
         except HTTPError as error:
             if error.code not in (301,302,303,307,308):raise
-            url=urljoin(url,error.headers.get('Location',''))
-            error.close()
+            url=urljoin(url,error.headers.get('Location',''));error.close()
     raise ValueError('streaming redirect limit exceeded')
 
 
 class ChunkRelay:
-    """The pinned native GET follows redirects; only this loopback hop may reach it."""
+    """Only validated bytes reach the native downloader's loopback hop."""
     def __init__(self):
         owner=self
         self.token='/'+secrets.token_urlsafe(32);self.raw=None
         class Handler(BaseHTTPRequestHandler):
             timeout=60
-
             def log_message(self,*args):pass
-
             def do_GET(self):
                 raw=owner.raw
                 if self.path!=owner.token or raw is None:
@@ -67,18 +94,16 @@ class ChunkRelay:
                     self.send_response(200)
                     self.send_header('Content-Length',str(len(raw)))
                     self.end_headers();self.wfile.write(raw)
-                except (BrokenPipeError,ConnectionResetError):
-                    pass  # A native retry does not invalidate already-validated upstream bytes.
+                except (BrokenPipeError,ConnectionResetError):pass
         self.server=HTTPServer(('127.0.0.1',0),Handler)
         self.thread=threading.Thread(target=self.server.serve_forever,daemon=True)
         self.thread.start()
 
     def location(self,url):
         from .io import fetch
-        # Finish upstream I/O before native starts its shorter loopback stall timer.
+        # Complete upstream I/O before the native downloader's shorter stall timer.
         self.raw,_=fetch(url,stream_policy=True)
         if self.raw is None:raise ValueError('unexpected streaming 304')
-        # libcurl honors lowercase no_proxy first; both forms must bypass local hops.
         effective=os.environ.get('no_proxy') or os.environ.get('NO_PROXY','')
         for name in ('no_proxy','NO_PROXY'):
             hosts=(os.environ.get(name) or effective).split(',')
@@ -109,8 +134,7 @@ def validate_array(metadata):
 
 
 def decode_chunk(raw,metadata):
-    expected=math.prod(metadata['chunks'])
-    codec=metadata.get('compressor')
+    expected=math.prod(metadata['chunks']);codec=metadata.get('compressor')
     if codec is None:
         if len(raw)!=expected:raise ValueError('corrupt streaming raw chunk')
         return raw

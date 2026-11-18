@@ -35,7 +35,8 @@ def tifxyz_settings(out,request=None,*,resume=False):
 
 
 def validate_observations(config,volume,shape):
-    if not config.get('lasagna_input') and (config.get('fibres') or config.get('prediction','classical')!='classical') and volume.dtype not in (np.dtype('uint8'),np.dtype('uint16')):
+    if (not config.get('lasagna_input') and (config.get('fibres') or config.get('prediction','classical')!='classical')
+            and volume.dtype not in (np.dtype('uint8'),np.dtype('uint16'))):
         raise ValueError('Lasagna requires uint8 or uint16 CT')
     if config.get('prediction')=='qual-v2' and not config.get('fibres'):
         spacing=np.asarray(volume.spacing_xyz)*config.get('stride',1)
@@ -69,35 +70,72 @@ def field_geometry(meta,spacing_um=None):
     return geometry
 
 
+LASAGNA_DOWNSAMPLE={'cos':2,'grad_mag':4,'nx':4,'ny':4}
+
+
+def lasagna_downsamples(config):
+    factors={name:config.get('lasagna_'+name+'_downsample',default)
+             for name,default in LASAGNA_DOWNSAMPLE.items()}
+    if any(type(v) is not int or v not in (1,2,4,8) for v in factors.values()):
+        raise ValueError('Lasagna downsample factors must be1,2,4 or8')
+    if factors['nx']!=factors['ny']:
+        raise ValueError('Lasagna nx and ny must share the same downsample factor')
+    return factors
+
+
+def validate_field_cpu(config,*,convergence=False):
+    workers=config.get('field_cpu_workers',0);budget=config.get('field_cpu_buffer_bytes',0)
+    if (type(workers) is not int or workers<0 or type(budget) is not int or budget<0
+            or bool(workers)!=bool(budget)):
+        raise ValueError('CPU workers require an explicit positive CPU buffer budget; both default to zero')
+    if workers and (convergence or config.get('bounded_preparation')):
+        raise ValueError('CPU preparation pool supports only ordinary static providers')
+
+
 def validate_config(config):
-    if config.get('nonconvergence_policy','fail') not in ('fail','continue'):
-        raise ValueError('invalid nonconvergence_policy')
-    if config.get('lasagna_input'):
-        if not isinstance(config['lasagna_input'],str) or not config['lasagna_input'].strip():
-            raise ValueError('--lasagna-input must name a local or remote v2 manifest')
-        if config.get('lasagna_model_path') or config.get('lasagna_python'):
-            raise ValueError('--lasagna-input conflicts with Lasagna inference runtime/checkpoint options')
+    validate_field_cpu(config)
+    if type(config.get('field_advice',False)) is not bool:raise ValueError('field_advice must be boolean')
+    if config.get('preconditioner','jacobi')!='jacobi':
+        raise ValueError("block workflows require preconditioner='jacobi'")
+    lasagna_downsamples(config)
+    if config.get('lasagna_input') and any('lasagna_'+n+'_downsample' in config for n in LASAGNA_DOWNSAMPLE):
+        raise ValueError('--lasagna-input conflicts with Lasagna generation downsample flags')
+    factor=config.get('fibre_downsample',2)
+    if type(factor) is not int or factor not in (2,4):raise ValueError('fibre_downsample must be2 or4')
+    if factor!=2 and not config.get('bounded_preparation'):
+        raise ValueError('4x fibre downsampling requires --bounded-preparation')
     if type(config.get('bounded_preparation',False)) is not bool:
         raise ValueError('bounded_preparation must be boolean')
     if config.get('bounded_preparation'):
+        if config.get('lasagna_geometry'):
+            raise ValueError('--bounded-preparation requires base-grid imports without --lasagna-geometry')
         if (not config.get('fibres') and config.get('prediction')!='qual-v2') or config.get('stride',1)!=1:
             raise ValueError('bounded preparation requires Qual V2 or imported AFV with stride1')
         if config.get('fibres') and not config.get('lasagna_input'):
             raise ValueError('bounded imported AFV requires imported Lasagna')
         if config.get('field_spacing_um') is None:
             raise ValueError('bounded preparation requires --field-spacing-um')
-        if not config.get('fibres') and any(v%4 for v in config.get('roi_lo',[0,0,0])):
-            raise ValueError('bounded ROI origin must be a multiple of4 to preserve global seed parity')
+        if not config.get('fibres') and any(v%(2*factor) for v in config.get('roi_lo',[0,0,0])):
+            raise ValueError(f'bounded ROI origin must be a multiple of{2*factor} to preserve global seed parity')
         budget=config.get('bounded_bytes',12<<30)
         if type(budget) is not int or budget<16<<20:raise ValueError('bounded allowance must be at least16MiB')
+    if config.get('lasagna_geometry') and not config.get('lasagna_input'):
+        raise ValueError('--lasagna-geometry requires --lasagna-input')
+    if config.get('lasagna_input') and (config.get('lasagna_model_path') or config.get('lasagna_python')):
+        raise ValueError('--lasagna-input conflicts with --lasagna-model-path and --lasagna-python')
     if config.get('fibres_geometry') and not config.get('fibres'):
         raise ValueError('--fibres-geometry requires --fibres')
     if config.get('fibres') and config.get('model_path'):
         raise ValueError('external AFV --fibres conflicts with a fibre --model-path')
-    integers={'stride':(1,8),'chunk':(4,128),'field_chunk':(4,256),'level':(0,None),
+    stride=config.get('stride',1)
+    if (type(stride) is not int or not (1<=stride<=8 or
+            (stride in (16,32) and config.get('fibres') and config.get('lasagna_input')))):
+        raise ValueError('stride must be 1..8; 16 or 32 require both --fibres and --lasagna-input')
+    integers={'import_workers':(0,None),'chunk':(4,128),'field_chunk':(4,256),'level':(0,None),
               'sweeps':(1,None),'maxiter':(1,None),'seed_stride':(1,None),
               'mesh_tile':(1,256),'chart_faces':(1,8192),'threads':(1,None),
-              'cache_bytes':(0,None),'reserve_bytes':(0,None),'bounded_bytes':(16<<20,None)}
+              'cache_bytes':(0,None),'reserve_bytes':(0,None),'bounded_bytes':(16<<20,None),
+              'prepared_cache_bytes':(0,None),'constraint_cache_bytes':(0,None)}
     for name,(low,high) in integers.items():
         if name in config:
             value=config[name]

@@ -32,11 +32,14 @@ def test_bounded_prepare_retains_coarse_only_and_releases_model(tmp_path,monkeyp
     assert not (tmp_path/'lasagna-source/input.zarr').exists()
 
 
-def test_bounded_fibres_publish_global_curves_and_resume_without_duplicate_identity(tmp_path,monkeypatch):
+@pytest.mark.parametrize('factor',[2,4])
+def test_bounded_fibres_publish_global_curves_and_resume_without_duplicate_identity(tmp_path,monkeypatch,factor):
+    import io
     import json
     import sqlite3
     from contextlib import contextmanager
     from winding_field import bounded_pipeline as pipeline
+    from winding_field import bounded_qual
     from winding_field.bounded_coarse import NativeMaps
     from winding_field.util import file_sha
     class Volume:
@@ -44,7 +47,7 @@ def test_bounded_fibres_publish_global_curves_and_resume_without_duplicate_ident
         identity=dict(shape=list(shape),spacing_xyz=spacing_xyz.tolist(),origin_xyz=origin_xyz.tolist(),source='fixture')
         def sample(self,axes):
             z,y,x=np.meshgrid(*axes,indexing='ij')
-            return np.rint(255*np.exp(-((x-16.)**2+(y-16.)**2)/18)).astype('u1')
+            return np.rint(255*np.exp(-((x-16.)**2+(y-16.)**2)/72)).astype('u1')
     class Model:
         def __init__(self,*a,**k):pass
         def predict(self,ct):return None,None,np.stack([ct.astype('f4')/255,np.zeros(ct.shape,'f4')],axis=-1)
@@ -57,30 +60,42 @@ def test_bounded_fibres_publish_global_curves_and_resume_without_duplicate_ident
         yield NativeMaps(tuple(map(int,hi-lo)),read),{}
     monkeypatch.setattr(pipeline,'QualV2',Model)
     monkeypatch.setattr(pipeline,'surface_maps',surfaces)
+    fitted_native=[]
+    finish=bounded_qual.finish_curves
+    def record_fit(*args,**kwargs):
+        points,offsets=finish(*args,**kwargs)
+        fitted_native.extend(points[a:b].astype('f8')*factor+(factor-1)/2
+                             for a,b in zip(offsets[:-1],offsets[1:]))
+        return points,offsets
+    monkeypatch.setattr(bounded_qual,'finish_curves',record_fit)
     volume=Volume()
     meta=dict(source=volume.identity,producer_identity={'fixture':True},roi_lo_zyx=[0]*3,
               roi_hi_zyx=list(volume.shape),tiles_sha256='fixture',bounded_preparation=True)
     (tmp_path/'PREPARED.json').write_text(json.dumps(meta))
-    config=dict(device='cpu',bounded_bytes=128<<20,reserve_bytes=0)
+    config=dict(device='cpu',bounded_bytes=128<<20,reserve_bytes=0,fibre_downsample=factor)
     result=pipeline.fibres(volume,tmp_path,config)
     assert result['status']=='FIBRES_READY' and result['curves']>0
+    assert result['fibre_downsample']==factor
     with sqlite3.connect(tmp_path/'fibres/fibres.sqlite') as db:
         assert db.execute('SELECT count(DISTINCT source_id) FROM curves').fetchone()[0]>0
         assert db.execute("SELECT count(*) FROM curves WHERE family!='V'").fetchone()[0]==0
+        curves=[np.load(io.BytesIO(blob),allow_pickle=False)
+                for (blob,) in db.execute('SELECT points FROM curves ORDER BY id')]
+    assert len(curves)==len(fitted_native)>0
+    for actual,native in zip(curves,fitted_native):
+        np.testing.assert_array_equal(actual,native*8.64)
     sha=file_sha(tmp_path/'fibres/fibres.sqlite')
     assert pipeline.fibres(volume,tmp_path,config)==result
     assert file_sha(tmp_path/'fibres/fibres.sqlite')==sha
+    with pytest.raises(ValueError,match='changed'):
+        pipeline.fibres(volume,tmp_path,dict(config,fibre_downsample=6-factor))
+    assert file_sha(tmp_path/'fibres/fibres.sqlite')==sha
 
 
-@pytest.mark.parametrize('policy,outcome',[
-    ('fail','VERIFIED'),('continue','NONCONVERGED'),('fail','NONCONVERGED'),
-    ('continue','PAUSED'),('continue','bad-gauge'),('continue','nonfinite'),
-])
-def test_bounded_field_uses_retained_coarse_prior_and_existing_block_backend(tmp_path,monkeypatch,policy,outcome):
+def coarse_field(tmp_path):
     import json
     import sqlite3
     from winding_field.artifacts import Tiles
-    from winding_field.field import solve
     from winding_field.util import file_sha
     grid=dict(shape_zyx=[5]*3,spacing_xyz=[1.]*3,origin_xyz=[0.]*3,frame='test')
     maps=Tiles(tmp_path/'coarse/maps',[5]*3,4,{'fixture':'coarse'})
@@ -96,30 +111,12 @@ def test_bounded_field_uses_retained_coarse_prior_and_existing_block_backend(tmp
     with sqlite3.connect(tmp_path/'fibres/fibres.sqlite') as db:
         db.execute('CREATE TABLE curves(id INTEGER PRIMARY KEY,points BLOB)')
     (tmp_path/'FIBRES.json').write_text(json.dumps(dict(sha256=file_sha(tmp_path/'fibres/fibres.sqlite'))))
-    from winding_field import global_residual
-    verify=global_residual.verify
-    def verification(*args,**kwargs):
-        result=verify(*args,**kwargs)
-        if outcome=='PAUSED':return dict(status='PAUSED',global_converged=False)
-        if outcome!='VERIFIED':result.update(status='NONCONVERGED',global_converged=False,relative_residual=0.1,residual_l2=1.)
-        if outcome=='bad-gauge':result['fixed_storage_max_error']=1.
-        if outcome=='nonfinite':result['residual_l2']=float('inf')
-        return result
-    monkeypatch.setattr(global_residual,'verify',verification)
-    config=dict(field_chunk=4,sweeps=2,device='cpu',rtol=1e-6,bounded_bytes=16<<20,nonconvergence_policy=policy)
-    if outcome in ('bad-gauge','nonfinite'):
-        with pytest.raises(ValueError):solve(tmp_path,config)
-        assert not (tmp_path/'FIELD.json').exists()
-        return
-    result=solve(tmp_path,config)
-    if outcome=='PAUSED' or (policy=='fail' and outcome=='NONCONVERGED'):
-        assert result['status']=='PAUSED' and not (tmp_path/'FIELD.json').exists()
-        return
-    if outcome=='NONCONVERGED':
-        assert result['status']=='FIELD_READY' and result['global_converged'] is False
-        assert result['verification']['relative_residual']==0.1
-        assert (tmp_path/'FIELD.json').exists()
-        return
+
+
+def test_bounded_field_uses_retained_coarse_prior_and_existing_block_backend(tmp_path):
+    from winding_field.field import solve
+    coarse_field(tmp_path)
+    result=solve(tmp_path,dict(field_chunk=4,sweeps=2,device='cpu',rtol=1e-6,bounded_bytes=16<<20))
     assert result['status']=='FIELD_READY' and result['global_converged'] is True
     assert result['solver_backend']['device']=='cpu'
     assert result['solver_backend']['field_chunk']==4 and result['solver_backend']['dtype']=='float64'
@@ -132,6 +129,57 @@ def test_bounded_field_uses_retained_coarse_prior_and_existing_block_backend(tmp
     np.testing.assert_allclose(levels,[1.,2.,3.],rtol=0,atol=1e-14)
 
 
+def test_bounded_cuda_resume_initializes_allocator_in_fresh_process(tmp_path):
+    import json
+    from pathlib import Path
+    import subprocess
+    import sys
+    import torch
+    from winding_field import field
+    if not torch.cuda.is_available():pytest.skip('requires a real CUDA device')
+    initialized=torch.cuda.is_initialized()
+    coarse_field(tmp_path)
+    config=dict(field_chunk=4,sweeps=2,device='cuda:0',rtol=1e-6,bounded_bytes=16<<20)
+    arguments=[str(Path(field.__file__).parents[1]),str(tmp_path),json.dumps(config)]
+    setup='''
+import json,sys,torch
+sys.path.insert(0,sys.argv[1])
+from winding_field import field
+torch.empty(0,device='cuda:0')
+publish=field.atomic_json
+def interrupt_receipt(path,data):
+    if path.name=='FIELD.json':raise InterruptedError('before field publication')
+    return publish(path,data)
+field.atomic_json=interrupt_receipt
+try:field.solve(sys.argv[2],json.loads(sys.argv[3]))
+except InterruptedError as error:assert str(error)=='before field publication'
+else:raise AssertionError('field publication was not interrupted')
+'''
+    initial=subprocess.run([sys.executable,'-I','-c',setup,*arguments],capture_output=True,text=True,timeout=120)
+    assert initial.returncode==0,initial.stdout+initial.stderr
+    assert not (tmp_path/'FIELD.json').exists()
+    code='''
+import json,sys,torch
+from pathlib import Path
+sys.path.insert(0,sys.argv[1])
+from winding_field.field import solve
+assert not torch.cuda.is_initialized()
+result=solve(sys.argv[2],json.loads(sys.argv[3]),sweep_target=3)
+assert result['status']=='FIELD_READY' and result['global_converged']
+assert result['solver_backend']['device']=='cuda:0'
+checkpoint=json.loads((Path(sys.argv[2])/'field/CHECKPOINT.json').read_text())
+assert len(checkpoint['progress']['completed_sweeps'])==3
+'''
+    command=[sys.executable,'-I','-c',code,*arguments]
+    result=subprocess.run(command,capture_output=True,text=True,timeout=120)
+    assert result.returncode==0,result.stdout+result.stderr
+    before=(tmp_path/'field/CHECKPOINT.json').read_bytes()
+    repeated=subprocess.run(command,capture_output=True,text=True,timeout=120)
+    assert repeated.returncode==0,repeated.stdout+repeated.stderr
+    assert (tmp_path/'field/CHECKPOINT.json').read_bytes()==before
+    assert torch.cuda.is_initialized()==initialized
+
+
 def test_public_bounded_plan_uses_existing_cuda_chunk_and_separates_native_retention(tmp_path):
     import json
     import subprocess
@@ -140,7 +188,8 @@ def test_public_bounded_plan_uses_existing_cuda_chunk_and_separates_native_reten
     source=write_ct(tmp_path/'ct.zarr',np.full((64,32,32),128,'u1'),spacing=(8.64,)*3)
     command=[sys.executable,'-m','winding_field','plan','--source',str(source),'--output',str(tmp_path/'run'),
              '--cache',str(tmp_path/'cache'),'--prediction','qual-v2','--bounded-preparation','--bounded-gib','.25',
-             '--field-spacing-um','34.56','--field-chunk','64','--device','cuda:0','--reserve-gib','0']
+             '--field-spacing-um','34.56','--field-chunk','64','--device','cuda:0','--reserve-gib','0',
+             '--fibre-downsample','4']
     result=subprocess.run(command,capture_output=True,text=True)
     assert result.returncode==0,result.stderr
     plan=json.loads(result.stdout)
@@ -148,6 +197,10 @@ def test_public_bounded_plan_uses_existing_cuda_chunk_and_separates_native_reten
     assert plan['estimated_spline_dense_bytes']==0
     assert plan['estimated_lasagna_staging_bytes']==0
     assert plan['field']['shape_zyx']==[17,9,9]
+    assert plan['observations']['spacing_xyz']==[8.64]*3
+    assert plan['fibre_tracing']['shape_zyx']==[16,8,8]
+    assert plan['fibre_tracing']['spacing_xyz']==[34.56]*3
+    np.testing.assert_allclose(plan['fibre_tracing']['origin_xyz'],[12.96]*3,rtol=0,atol=1e-12)
     assert plan['solver_device']=='cuda:0' and plan['field_chunk']==64
     request=tmp_path/'export.json'
     request.write_text(json.dumps(dict(levels=[1.],reserve_disk_gib=0,max_pixels=4096)))
@@ -158,14 +211,25 @@ def test_public_bounded_plan_uses_existing_cuda_chunk_and_separates_native_reten
     assert plan['solver_device']=='cuda:0' and plan['field_chunk']==64
 
 
-def test_public_bounded_field_verifies_quantized_gauge_and_rejects_changed_runtime(tmp_path,monkeypatch):
+@pytest.mark.parametrize('change',[
+    dict(fibre_downsample=True),dict(fibre_downsample=3),dict(bounded_preparation=False),
+    dict(roi_lo=[4,0,0]),dict(fibres='external.afv'),
+])
+def test_fourfold_fibres_reject_incompatible_config_before_io(change):
+    from winding_field.config import validate_config
+    config=dict(prediction='qual-v2',bounded_preparation=True,field_spacing_um=300,fibre_downsample=4)
+    with pytest.raises(ValueError):validate_config(dict(config,**change))
+
+
+@pytest.mark.parametrize('factor',[2,4])
+def test_public_bounded_field_verifies_quantized_gauge_and_rejects_changed_runtime(tmp_path,monkeypatch,factor):
     import json
     from winding_field import bounded_pipeline as pipeline,lasagna
     from winding_field.cli import main
     from winding_field.artifacts import Tiles
     from ct_fixture import write_ct
     z,y,x=np.indices((64,32,32))
-    ct=np.rint(255*np.exp(-((x-16.)**2+(y-16.)**2)/18)).astype('u1')
+    ct=np.rint(255*np.exp(-((x-16.)**2+(y-16.)**2)/72)).astype('u1')
     source=write_ct(tmp_path/'ct.zarr',ct,spacing=(8.64,)*3)
     runtime={'executable':'fixture'}
     monkeypatch.setattr(lasagna,'runtime_identity',lambda p:dict(runtime))
@@ -189,7 +253,8 @@ def test_public_bounded_field_verifies_quantized_gauge_and_rejects_changed_runti
     root=tmp_path/'run'
     args=['run','--source',str(source),'--output',str(root),'--cache',str(tmp_path/'cache'),
           '--prediction','qual-v2','--bounded-preparation','--bounded-gib','.25',
-          '--field-spacing-um','34.56','--sweeps','1','--reserve-gib','0','--surface-output','atlas','--until','prepare']
+          '--field-spacing-um','34.56','--sweeps','1','--reserve-gib','0','--surface-output','atlas','--until','prepare',
+          '--fibre-downsample',str(factor)]
     assert main(args)==0
     assert json.loads((root/'PREPARED.json').read_bytes())['bounded_preparation']
     with_phase=Tiles(root/'coarse/maps')

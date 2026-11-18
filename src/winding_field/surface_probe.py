@@ -19,7 +19,7 @@ from scipy.spatial import cKDTree
 from .surface_export import MAX_FIELD_VOXELS, _metadata, _seed_distances, _sha, mesh_geometry
 
 from dataset_config import frame as validate_frame
-from dataset_config import load_dataset, open_source, positive
+from dataset_config import open_source, positive
 from paris_data import sample_source
 
 LEGACY_RULE = (
@@ -323,14 +323,7 @@ def context_image(path, ct, ct_meta, selection, vertices):
     out.save(path, pnginfo=png)
 
 
-def prepare_inputs(dataset, field, metadata, work, support=None):
-    """Freeze a geometry/prior seed and exact native CT crop using declared grids."""
-    origin, spacing, unit = _metadata(metadata, field.shape)
-    if metadata["frame"] != dataset["frame"] or unit != dataset["voxel_um"]:
-        raise ValueError("field and dataset frame/units differ")
-    work = Path(work)
-    if any((work / name).exists() for name in ("prior_plane.npy", "seed.json", "ct.npy", "ct_metadata.json")):
-        raise FileExistsError("probe input artifacts must be new")
+def render_settings(supplied=None):
     render = dict(
         seed_margin=16,
         ct_padding_samples=16,
@@ -339,7 +332,7 @@ def prepare_inputs(dataset, field, metadata, work, support=None):
         mesh_step=2,
         ct_window=[0, 255],
     )
-    supplied = dataset.get("context", {}).get("surface", {})
+    supplied = supplied or {}
     if set(supplied) - set(render):
         raise ValueError("unknown surface rendering settings")
     render.update(supplied)
@@ -356,6 +349,19 @@ def prepare_inputs(dataset, field, metadata, work, support=None):
         or (not np.isfinite(window).all() or window[1] <= window[0])
     ):
         raise ValueError("invalid depth offsets or CT window")
+    return render
+
+
+def prepare_inputs(dataset, field, metadata, work, support=None):
+    """Freeze a geometry/prior seed and exact native CT crop using declared grids."""
+    origin, spacing, unit = _metadata(metadata, field.shape)
+    if metadata["frame"] != dataset["frame"] or unit != dataset["voxel_um"]:
+        raise ValueError("field and dataset frame/units differ")
+    work = Path(work)
+    if any((work / name).exists() for name in ("prior_plane.npy", "seed.json", "ct.npy", "ct_metadata.json")):
+        raise FileExistsError("probe input artifacts must be new")
+    render=render_settings(dataset.get("context",{}).get("surface",{}))
+    window=np.asarray(render["ct_window"],float)
     plane_origin = origin.copy()
     plane_origin[2] += (field.shape[0] // 2) * spacing[2]
     reads = []
@@ -437,7 +443,7 @@ def load_field_support(field, field_path, metadata):
 def main(argv=None):
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--field", type=Path, required=True)
-    p.add_argument("--metadata", type=Path, required=True)
+    p.add_argument("--metadata", type=Path)
     p.add_argument("--work", type=Path, required=True)
     p.add_argument("--output", type=Path, required=True)
     p.add_argument("--app-run", type=Path, required=True)
@@ -446,16 +452,27 @@ def main(argv=None):
     p.add_argument("--patch-voxel-um", type=float, help="explicit units for a legacy patch lacking voxel_um")
     p.add_argument("--config", type=Path, help="CT/prior dataset configuration; required unless reusing frozen inputs")
     p.add_argument("--reuse-inputs", type=Path)
-    args = p.parse_args(argv)
+    from .tool_settings import metadata_arguments,dataset_arguments,metadata_request,dataset_request,materialize_metadata,check_sources
+    from .cli_settings import parse_options
+    metadata_arguments(p)
+    dataset_arguments(p)
+    args = parse_options(p,argv,paths=('ct_source','prior_source'))
+    try:
+        meta=metadata_request(args,require_pin=True)
+        dataset=None if args.reuse_inputs else dataset_request(args,meta)
+    except (ValueError,OSError,KeyError,TypeError) as error:
+        print(f"probe input error: {error}",file=sys.stderr)
+        return 2
     args.work.mkdir(exist_ok=False)
+    materialize_metadata(args,args.work,meta)
     result = dict(
         status="FAILED",
         source_sha256=_sha(__file__),
         exporter_sha256=_sha(Path(__file__).with_name("surface_export.py")),
+        request_sources=getattr(args,'_request_sources',{}),
     )
     code = 2
     try:
-        meta = json.loads(args.metadata.read_text())
         field = np.load(args.field, mmap_mode="r", allow_pickle=False)
         origin, spacing, um = _metadata(meta, field.shape)
         if args.patch is not None:
@@ -479,9 +496,6 @@ def main(argv=None):
             write_json(args.work / "seed.json", selection)
             inputs["reused_from"] = str(args.reuse_inputs)
         else:
-            if args.config is None:
-                raise ValueError("--config is required to declare CT/prior sources")
-            dataset = load_dataset(args.config)
             selection, inputs = prepare_inputs(dataset, field, meta, args.work, support)
             inputs.update(field_sha256=field_hash, metadata_sha256=_sha(args.metadata))
         ct_meta = json.loads(Path(inputs["ct_metadata"]).read_text())
@@ -559,6 +573,7 @@ def main(argv=None):
                 selection,
                 vertices,
             )
+        check_sources(args)
         result["status"] = receipt["status"]
         code = run.returncode
     except Exception as error:

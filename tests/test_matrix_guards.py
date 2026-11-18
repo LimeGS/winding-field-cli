@@ -2,6 +2,7 @@
 from functools import partial
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 import threading
+import sys
 
 import numpy as np
 import pytest
@@ -11,7 +12,10 @@ from test_flattening_matrix import request, source_bundle
 
 
 @pytest.mark.parametrize('was_missing',[False,True])
-def test_remote_resume_detects_change_despite_retained_native_cache(tmp_path,was_missing):
+def test_remote_resume_detects_change_despite_retained_native_cache(tmp_path,was_missing,monkeypatch):
+    from types import SimpleNamespace
+    # This tiny fixture tests source mutation, not the host's free disk space.
+    monkeypatch.setattr('shutil.disk_usage',lambda path:SimpleNamespace(free=16<<30))
     from winding_field.patch_pipeline import PatchCT
     from winding_field.flattening_matrix import settings
     _,source=source_bundle(tmp_path);chunk=source/'0.0.0';raw=chunk.read_bytes()
@@ -34,6 +38,7 @@ def test_remote_resume_detects_change_despite_retained_native_cache(tmp_path,was
     finally:server.shutdown();server.server_close();thread.join()
 
 
+@pytest.mark.skipif(sys.platform!='linux',reason='Linux process-tree resource guard')
 def test_field_extraction_honors_export_stop_and_reserve(tmp_path,monkeypatch):
     from winding_field.cli import main
     from winding_field import surface_mesh
@@ -55,6 +60,7 @@ def test_field_extraction_honors_export_stop_and_reserve(tmp_path,monkeypatch):
     assert not (out/'meshes/MESH.json').exists()
 
 
+@pytest.mark.skipif(sys.platform!='linux',reason='Linux process-tree resource guard')
 def test_matrix_guard_interrupts_native_before_next_checkpoint(tmp_path,monkeypatch):
     from winding_field import flatboi_checkpoint as native
     from winding_field.flattening_matrix import build_map, settings

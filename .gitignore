@@ -3,6 +3,7 @@
 .superpowers/
 .sdd/
 superpowers/
+/docs/superpowers/
 verification/
 __pycache__/
 .pytest_cache/

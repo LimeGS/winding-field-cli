@@ -16,6 +16,15 @@ def export_fixture(root):
     return root
 
 
+def stop_after_records(count):
+    calls=0
+    def stop():
+        nonlocal calls
+        calls+=1
+        return calls>count
+    return stop
+
+
 def test_lasagna_stops_after_one_chunk_resumes_and_checks_retained_bytes(tmp_path,monkeypatch):
     import winding_field.exports as exports
     root=export_fixture(tmp_path/'run'); writes=[]; original=exports.atomic_bytes
@@ -39,10 +48,7 @@ def test_afv_pauses_at_record_and_resumes_without_reinserting(tmp_path):
     from winding_field.exports import export_afv
     from winding_field.util import file_sha
     root=export_fixture(tmp_path/'run'); pending=root/'fibres/fibres.partial.afv'
-    def stop():
-        if not pending.exists(): return False
-        with sqlite3.connect(pending) as db:
-            return db.execute('SELECT count(*) FROM fibers').fetchone()[0]>=1
+    stop=stop_after_records(1)
     assert export_afv(root,stop) is None
     assert not (root/'fibres/fibres.afv').exists()
     with sqlite3.connect(pending) as db:
@@ -78,10 +84,7 @@ def test_interrupted_afv_rejects_changed_source(tmp_path):
 def test_afv_resume_rejects_corrupted_retained_inventory(tmp_path,mutation):
     from winding_field.exports import export_afv
     root=export_fixture(tmp_path/'run'); pending=root/'fibres/fibres.partial.afv'
-    def stop():
-        if not pending.exists(): return False
-        with sqlite3.connect(pending) as db:
-            return db.execute('SELECT count(*) FROM fibers').fetchone()[0]>=2
+    stop=stop_after_records(2)
     assert export_afv(root,stop) is None
     with sqlite3.connect(pending) as db:
         db.execute(mutation)
@@ -132,10 +135,7 @@ def test_qual_afv_preserves_families_transform_and_bounded_blocks(tmp_path):
     from winding_field.splines import afv_points
     root=qual_export_fixture(tmp_path/'run')
     pending=root/'fibres/fibres.partial.afv'
-    def stop():
-        if not pending.exists(): return False
-        with sqlite3.connect(pending) as db:
-            return db.execute('SELECT count(*) FROM fibers').fetchone()[0]>=1
+    stop=stop_after_records(1)
     assert export_afv(root,stop) is None
     with sqlite3.connect(pending) as db:
         assert db.execute('SELECT count(*) FROM blocks').fetchone()==(2,)
@@ -158,10 +158,7 @@ def test_qual_afv_preserves_families_transform_and_bounded_blocks(tmp_path):
 def test_qual_afv_resume_checks_later_blocks(tmp_path):
     from winding_field.exports import export_afv
     root=qual_export_fixture(tmp_path/'run'); pending=root/'fibres/fibres.partial.afv'
-    def stop():
-        if not pending.exists(): return False
-        with sqlite3.connect(pending) as db:
-            return db.execute('SELECT count(*) FROM fibers').fetchone()[0]>=1
+    stop=stop_after_records(1)
     assert export_afv(root,stop) is None
     with sqlite3.connect(pending) as db:
         assert db.execute('SELECT count(*) FROM blocks').fetchone()==(2,)

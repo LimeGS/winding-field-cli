@@ -1,0 +1,151 @@
+# Plantilla completa de opciones para winding-field run / plan.
+#
+# 1. Copia este archivo y reemplaza rutas, geometría y hashes por los reales.
+# 2. Primero: winding-field plan --cli-config mi-receta.yaml
+# 3. Después: winding-field run --cli-config mi-receta.yaml
+#
+# Las claves son nombres de opciones con "_" (no se escribe "command: run").
+# Los flags explícitos ganan al YAML; los caminos relativos parten del YAML.
+# Las opciones comentadas son ejemplos disponibles, NO valores activos.
+# No descomentes todas las secciones: hay modos mutuamente incompatibles.
+# Los números son ejemplos/defaults, NO una calibración ni un presupuesto medido.
+# Omitir una opción permite su default; null solo sirve donde se indica.
+# JSON y YAML aceptan las mismas opciones por --cli-config. Los archivos de
+# datos, recetas nativas JSON, checkpoints y recibos conservan sus formatos.
+
+# ── Fuente CT y salida ────────────────────────────────────────────────────────
+source: "/data/scroll.zarr" # Opciones: ruta local Zarr v2 | URL HTTP/HTTPS | s3://; alternativa a scroll/scan.
+# scroll: "PHerc0175A" # Opciones: identificador del catálogo público; omitir si se usa source.
+# scan: "20250521115057" # Opciones: identificador real de scan del scroll; no inventar ni mezclar con source.
+output: "../runs/scroll-field" # Opciones: ruta local NUEVA para run; plan no la crea. Continuar con resume, no con run.
+# local: "/data/mirror.zarr" # Opciones: ruta local a un espejo compatible de chunks CT | null/omitir.
+cache: "../cache/ct" # Opciones: ruta local de caché CT | null/omitir para la ubicación automática.
+cache_gib: 2.0 # Opciones: número finito >= 0, GiB de caché CT; 0 desactiva retención. No es RAM total.
+reserve_gib: 1.0 # Opciones: número finito >= 0, GiB libres de reserva en disco; 0 no reserva espacio.
+ct_mode: auto # Opciones: auto | download | stream; auto decide según estimación de disco.
+offline: false # Opciones: true | false; true prohíbe acceso CT de red; modelos/runtime deben estar provisionados.
+# voxel_um: 9.6 # Opciones: número finito > 0 en µm; calibración CT real si falta en metadatos | null/omitir.
+level: 0 # Opciones: entero >= 0 de pirámide CT; NO es W ni una isosuperficie.
+# roi: [0, 128, 0, 128, 0, 128] # Opciones: [Z0, Z1, Y0, Y1, X0, X1], enteros en CT seleccionado, límites [inicio, fin) | null/omitir para todo.
+stride: 1 # Opciones: enteros 1..8; 16 | 32 SOLO con fibres + lasagna_input. Es muestreo CT, no resolución de textura.
+
+# ── Preparación y rejilla de campo ────────────────────────────────────────────
+# field_spacing_um: 300.0 # Opciones: número finito > 0 en µm | null/omitir para pitch de observaciones; mínimo 2 nodos/eje.
+bounded_preparation: false # Opciones: true | false; true requiere qual-v2, stride=1, field_spacing_um y ninguna AFV externa.
+bounded_gib: 12.0 # Opciones: GiB finitos >= 0.015625 (16 MiB); productos/scratch bounded, excluye caché CT y reserva.
+fibre_downsample: 2 # Opciones: 2 | 4; 4 requiere bounded_preparation. ROI alineada a múltiplos de 2*fibre_downsample.
+chunk: 64 # Opciones: entero 4..128, borde de tile de observaciones en muestras; no un tamaño en µm.
+
+# ── Predictor de fibras y dispositivo ─────────────────────────────────────────
+prediction: qual-v2 # Opciones: classical | sd2 | qual-v2; classical es baseline local; los aprendidos usan superficies Lasagna.
+# Qual V2 requiere observaciones uint8 isotrópicas calibradas entre 8.64 y 9.6 µm.
+# model_path: "/models/qual-v2.pth" # Opciones: ruta local al checkpoint fijado del predictor | null/omitir para caché; incompatible con fibres.
+device: auto # Opciones: auto | cpu | cuda:0 (CUDA visible) | mps (si soporta operaciones FP64); sin fallback tras iniciar.
+threads: 4 # Opciones: entero >= 1; threads CPU PyTorch, no un límite global de procesos.
+# threshold: 128.0 # Opciones: número finito de intensidad CT | null/omitir para Otsu; solo classical, no ajuste para modelos aprendidos.
+# invalid_value: 0.0 # Opciones: número finito de relleno CT a excluir | null/omitir para no excluir por valor; 0 es dato válido si se omite.
+
+# ── Fibras AFV ya calculadas (alternativa al predictor) ────────────────────────
+# Para esta ruta: activar fibres, desactivar model_path; conserva CT y su marco.
+# fibres: "/data/fibres.afv" # Opciones: ruta local a AFV real; reemplaza inferencia/trazado | null/omitir.
+# fibres_geometry: "/data/fibres-geometry.json" # Opciones: receta JSON nativa de geometría AFV | null/omitir si embebida o declarada abajo; requiere fibres.
+# fibres_source: "/data/scroll.zarr" # Opciones: ruta/URL CT que identifica el marco físico AFV; debe coincidir con la fuente seleccionada.
+# fibres_origin_xyz_um: [0.0, 0.0, 0.0] # Opciones: 3 números finitos [X,Y,Z], origen físico AFV en µm; no inferir del ejemplo.
+# fibres_spacing_xyz_um: [9.6, 9.6, 9.6] # Opciones: 3 números finitos > 0 [X,Y,Z], espaciado físico AFV en µm.
+import_workers: 1 # Opciones: entero >= 0; 1 serial, 0 auto admitido, >1 importación local paralela; publica el padre.
+
+# ── Generación oficial Lasagna (omitir al importar lasagna_input) ──────────────
+# lasagna_python: "/opt/lasagna-venv/bin/python" # Opciones: ruta al Python 3.14 aislado oficial | null/omitir para descubrimiento; conservar symlink del venv.
+# lasagna_model_path: "/models/lasagna.pth" # Opciones: ruta local al checkpoint Lasagna fijado | null/omitir para caché.
+# Los siguientes factores son reducciones por eje, NO exponentes scaledown.
+# No descomentarlos al importar un manifest: generación e importación se excluyen.
+# lasagna_cos_downsample: 2 # Opciones: 1 | 2 | 4 | 8; default 2.
+# lasagna_grad_mag_downsample: 4 # Opciones: 1 | 2 | 4 | 8; default 4.
+# lasagna_nx_downsample: 4 # Opciones: 1 | 2 | 4 | 8; default 4; debe igualar lasagna_ny_downsample.
+# lasagna_ny_downsample: 4 # Opciones: 1 | 2 | 4 | 8; default 4; debe igualar lasagna_nx_downsample.
+
+# ── Importación Lasagna existente (alternativa a generación) ──────────────────
+# Desactivar lasagna_python/model_path y todos los *_downsample de generación.
+# Se puede usar manifest real, declaraciones inline, o manifest + overrides.
+# Sin marco físico explícito se mantiene el binding a la rejilla base CT;
+# con geometría explícita/embebida se usa interpolación calibrada LOCAL.
+# lasagna_input: "/data/lasagna/manifest.json" # Opciones: ruta local | URL HTTP/HTTPS | s3:// a manifest v2 | null/omitir si se declara inline.
+# lasagna_geometry: "/data/lasagna-geometry.json" # Opciones: receta JSON nativa de marco físico | null/omitir; requiere inputs Lasagna.
+# lasagna_source: "/data/scroll.zarr" # Opciones: ruta/URL CT del marco físico Lasagna; debe coincidir con CT seleccionado.
+# lasagna_origin_xyz_um: [0.0, 0.0, 0.0] # Opciones: 3 números finitos [X,Y,Z], origen en µm del marco físico.
+# lasagna_spacing_xyz_um: [9.6, 9.6, 9.6] # Opciones: 3 números finitos > 0 [X,Y,Z], espaciado en µm del marco físico.
+# lasagna_base_shape_zyx: [128, 128, 128] # Opciones: 3 enteros > 0 [Z,Y,X], forma REAL de la rejilla base CT.
+# lasagna_source_to_base: 1.0 # Opciones: número finito > 0; factor físico fuente/base; default inline 1.0.
+# lasagna_grad_mag_encode_scale: 1000.0 # Opciones: número finito > 0; escala de codificación real; default inline 1000.0.
+# lasagna_grad_mag_factor: 1.0 # Opciones: número finito > 0; factor de densidad real; default inline 1.0, no reescalar por downsample.
+# lasagna_channel: [[grad_mag, grad_mag, "/data/grad_mag/2", 2], [nx, nx, "/data/nx/2", 2], [ny, ny, "/data/ny/2", 2], [cos, cos, "/data/cos/1", 1]] # Opciones: lista de [GRUPO,CANAL,ZARR,SCALEDOWN]; grad_mag/nx/ny/cos requeridos; mask | validity opcional (solo uno); entero scaledown 0..16 = exponente 2^n.
+# lasagna_channel_metadata_sha256: [[cos, "0000000000000000000000000000000000000000000000000000000000000000"]] # Opciones: lista de [GRUPO,SHA256 real de metadatos del canal]; 64 hex minúsculas, reemplazar ceros; omitir si no se fija.
+# lasagna_crop: [[0, 0, 0, 128, 128, 128]] # Opciones: lista de [X,Y,Z,ANCHO,ALTO,PROFUNDIDAD]; origen entero >=0, tamaños >0 dentro de base; [] sin crops cubiertos.
+# lasagna_provenance: "/data/producer-receipt.json" # Opciones: ruta local a recibo real del productor; no inventar hashes/identidades; omitir si no existe.
+# lasagna_required_transport: vc_reader.DiskCache # Opciones: vc_reader.DiskCache; omitir para no exigir ese transporte.
+# lasagna_metadata_pin: [["https://example.org/data/.zattrs", "0000000000000000000000000000000000000000000000000000000000000000"]] # Opciones: lista de [RUTA_O_URL,SHA256 real]; 64 hex minúsculas; [] borra el mapa heredado.
+
+# Binding CT derivado de datos reales: no copiar identidades/backend a mano.
+# lasagna_ct_source: "/data/scroll.zarr" # Opciones: fuente CT real local/HTTP/S3 para derivar identidad; necesaria con lasagna_ct_level/voxel_um o marco embebido.
+# lasagna_ct_level: 0 # Opciones: entero >=0 de la fuente CT declarada; default 0; debe describir la base real del manifest.
+# lasagna_ct_voxel_um: 9.6 # Opciones: número finito >0 en µm si faltan unidades en el CT declarado; omitir si constan.
+# lasagna_embedded_origin_xyz_um: [0.0, 0.0, 0.0] # Opciones: 3 números finitos [X,Y,Z] en µm; activar junto con embedded_spacing y ct_source para variante física embebida.
+# lasagna_embedded_spacing_xyz_um: [9.6, 9.6, 9.6] # Opciones: 3 números finitos >0 [X,Y,Z] en µm; exige embedded_origin y ct_source.
+
+# ── Solver de campo ──────────────────────────────────────────────────────────
+field_chunk: 64 # Opciones: entero 4..256, borde de bloque en muestras de campo.
+sweeps: 4 # Opciones: entero >=1; presupuesto de barridos, NO garantía de convergencia.
+# field_advice: true # Opciones: true|false; diagnóstico consultivo opt-in; requiere core de desarrollo con observer; no cambia barridos, parada ni verificaciones.
+prepared_cache_bytes: 0 # Opciones: entero >=0 en bytes de workspaces retenidos; 0 desactiva; no es tope de memoria pico.
+constraint_cache_bytes: 0 # Opciones: entero >=0 en bytes de restricciones retenidas; 0 desactiva.
+maxiter: 2000 # Opciones: entero >=1, iteraciones máximas por solve local.
+rtol: 0.000001 # Opciones: número finito >0 de tolerancia relativa; default 1e-6.
+preconditioner: jacobi # Opciones: jacobi; spectral aparece en el parser pero ES RECHAZADO para workflows por bloques.
+seed_stride: 8 # Opciones: entero >=1; separación de semillas de fibras en muestras de observaciones.
+fibre_weight: 1.0 # Opciones: número finito >=0; peso de restricciones de fibras.
+
+# ── Superficies y salida ──────────────────────────────────────────────────────
+# levels: [-31.0] # Opciones: lista NO vacía de isovalores raw phi finitos, únicos; NO W nominal ni nivel CT. Omitir para selección existente.
+mesh_tile: 64 # Opciones: entero 1..256, borde del tile en celdas del campo.
+chart_faces: 1024 # Opciones: entero 1..8192, caras por chart local native/atlas, no global original.
+previews: true # Opciones: true | false; previews de atlas legacy; false no elimina renders CT finales.
+surface_output: native # Opciones: native | atlas | tifxyz; tifxyz es directo del campo, no muestrea CT.
+flattening_method: slim # Opciones: slim | default | original; slim solo native; default conserva mapping legacy; original = global LSCM.
+coverage_target: 1.0 # Opciones: número finito en (0,1], fracción de área mallada native; no cobertura CT observada.
+surface_time_limit_s: 1800.0 # Opciones: segundos finitos >0 activos acumulados por W native; flag --surface-time-limit.
+export_tifxyz: false # Opciones: true | false; TIFF XYZ derivados de malla en native/original, distinto de surface_output=tifxyz.
+until: field # Opciones: prepare | fibres | field | mesh | flatten | assemble | render | tifxyz | original; omitir para etapa terminal de la rama seleccionada.
+
+# ── Mapping original (alternativa: flattening_method=original) ─────────────────
+# No combinar original con surface_output=tifxyz. La salida exige marco explícito.
+# Activar output_frame_id/origin/voxel abajo O proporcionarlos por receta nativa.
+# flattening_config: "/data/original.json" # Opciones: receta nativa JSON con output_frame, pitch y memory_gib; opcional si se declaran flags/YAML; solo original.
+# pitch: auto # Opciones: auto | null | número finito >0 en WORLD units; NO µm. auto/null conserva muestreo automático original.
+# original_memory_gib: 4.0 # Opciones: GiB finitos >0 para admisión del mapping original; default 4.0, no memoria del solver.
+
+# Marco de salida: para original, SOLO los tres primeros campos; para TIFXYZ
+# directo, usar selected-source O los cinco campos explícitos completos.
+# output_frame_id: "my-scroll/world" # Opciones: cadena no vacía de identidad del marco; no una ruta ni un hash implícito.
+# output_origin_xyz_um: [0.0, 0.0, 0.0] # Opciones: 3 números finitos [X,Y,Z], origen del marco de salida en µm.
+# output_voxel_um: 9.6 # Opciones: número finito >0, µm por unidad de coordenadas de salida; independiente del pitch y de la rejilla CT.
+# output_frame: selected-source # Opciones: selected-source, solo TIFXYZ directo; excluye TODOS los campos explícitos del marco.
+# output_shape_zyx: [128, 128, 128] # Opciones: 3 enteros >0 [Z,Y,X] del marco explícito; solo TIFXYZ directo.
+# output_source_identity_sha256: "0000000000000000000000000000000000000000000000000000000000000000" # Opciones: SHA256 REAL de identidad de la fuente, 64 hex minúsculas; no hash arbitrario de archivo; solo marco TIFXYZ explícito.
+
+# ── TIFXYZ directo (alternativa: surface_output=tifxyz) ─────────────────────────
+# Requiere Linux/admisión runtime. Quitar flattening_method=slim/original.
+# Activar levels o tifxyz_levels; si se dan ambos, deben concordar.
+# Sin marco explícito se usa selected-source, nunca un marco inventado.
+# tifxyz_config: "/data/direct-tifxyz.json" # Opciones: receta nativa JSON opcional de exportación directa; overrides abajo prevalecen.
+# tifxyz_levels: [-31.0] # Opciones: lista de 1..4096 raw phi finitos, únicos; debe coincidir con levels cuando se da; reemplaza niveles de tifxyz_config.
+# tifxyz_pitch_um: auto # Opciones: auto | null | número finito >0 en µm; auto usa menor espaciado físico del campo.
+# tifxyz_tolerance_um: auto # Opciones: auto | null | número finito >0 en µm; auto usa mayor espaciado físico del campo.
+# tifxyz_memory_gib: 3.0 # Opciones: GiB finitos >0 representables en bytes <2^63; default 3.0.
+# tifxyz_scratch_gib: 16.0 # Opciones: GiB finitos >0 representables en bytes <2^63; default 16.0.
+# tifxyz_reserve_disk_gib: 12.25 # Opciones: GiB finitos >=0 representables en bytes <2^63; default 12.25; 0 es reserva explícita cero.
+# tifxyz_roi_lo_zyx: [0, 0, 0] # Opciones: 3 enteros >=0 [Z,Y,X], inicio inclusivo en nodos de CAMPO; dar junto con hi.
+# tifxyz_roi_hi_zyx: [128, 128, 128] # Opciones: 3 enteros >=0 [Z,Y,X], fin exclusivo dentro del CAMPO; >=2 nodos/eje respecto a lo.
+# tifxyz_whole_field: true # Opciones: true | false; true borra ROI heredada; incompatible con lo/hi explícitos.
+# tifxyz_max_pixels: 64000000 # Opciones: entero 4..(2^63-1), máximo de píxeles; default 64000000; no resolución deseada.
+# tifxyz_audit_backend: numpy # Opciones: numpy | cpu | cuda; default numpy; disponibilidad/runtime siguen validándose.
+# tifxyz_coverage_policy: strict # Opciones: strict | allow_partial; default strict; allow_partial NO implica aceptación científica completa.

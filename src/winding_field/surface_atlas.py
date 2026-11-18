@@ -10,6 +10,7 @@ Pitch/offsets are in the declared world units. This is NOT blind autonomous reco
 
 import argparse
 import json
+import sys
 import time
 from datetime import UTC, datetime
 from pathlib import Path
@@ -354,7 +355,7 @@ def build_atlas(
 def main(argv=None):
     p = argparse.ArgumentParser(description=__doc__)
     for name in ("field", "metadata", "inputs", "app-run", "output"):
-        p.add_argument("--" + name, type=Path, required=True)
+        p.add_argument("--" + name, type=Path, required=name not in ('metadata','inputs'))
     p.add_argument(
         "--patch", type=Path, help="optional human-seed patch; otherwise use the frozen prior seed in inputs"
     )
@@ -363,21 +364,32 @@ def main(argv=None):
     p.add_argument("--max-depth", type=int, default=3)
     p.add_argument("--max-charts", type=int, default=8)
     p.add_argument("--budget-seconds", type=float, default=540)
-    args = p.parse_args(argv)
+    from .tool_settings import atlas_arguments,metadata_request,metadata_identity,atlas_inputs,materialize_metadata,check_sources
+    from .cli_settings import parse_options
+    atlas_arguments(p)
+    args = parse_options(p,argv)
+    try:
+        meta=metadata_request(args,require_pin=True);meta_identity=metadata_identity(args,meta)
+        inputs,ct_meta=atlas_inputs(args,meta)
+    except (ValueError,OSError,KeyError,TypeError) as error:
+        print(f"atlas input error: {error}",file=sys.stderr)
+        return 2
     args.output.mkdir(exist_ok=False)
+    materialize_metadata(args,args.output,meta,ct_meta)
+    if ct_meta is not None:
+        inputs.update(ct_metadata=str(args.ct_metadata),ct_metadata_sha256=_sha(args.ct_metadata))
     result = dict(
         status="FAILED",
         human_seed=args.patch is not None,
         source_sha256=_sha(__file__),
         source_hashes={n: _sha(Path(__file__).with_name(n)) for n in ("surface_export.py", "surface_probe.py")},
+        request_sources=getattr(args,'_request_sources',{}),
     )
     try:
         import tifffile
 
         from patch_check import sample_field
 
-        meta = json.loads(args.metadata.read_text())
-        inputs = json.loads(args.inputs.read_text())
         validate_frame(meta.get("frame"))
         positive(meta.get("voxel_um"), "voxel_um")
         render = inputs.get("render", {})
@@ -395,7 +407,7 @@ def main(argv=None):
         )
         write_json(args.output / "plan.json", plan)
         field = np.load(args.field, mmap_mode="r", allow_pickle=False)
-        if _sha(args.field) != meta["field_sha256"] or _sha(args.metadata) != inputs["metadata_sha256"]:
+        if _sha(args.field) != meta["field_sha256"] or meta_identity != inputs["metadata_sha256"]:
             raise ValueError("frozen field/metadata hash mismatch")
         if inputs["field_sha256"] != meta["field_sha256"]:
             raise ValueError("frozen input field identity mismatch")
@@ -496,6 +508,7 @@ def main(argv=None):
         else:
             result["validation"] = dict(status="NOT_EVALUATED", reason="no human reference supplied")
         context_image(args.output / "ct_context.png", ct, ct_meta, selection, vertices)
+        check_sources(args)
         result["status"] = "EXPORTED_UNCERTIFIED" if atlas["atlas_status"] == "PASS" else "ATLAS_FAILED"
     except Exception as error:
         result["error"] = f"{type(error).__name__}: {error}"

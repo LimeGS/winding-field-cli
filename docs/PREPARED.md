@@ -1,10 +1,76 @@
 # Prepared fields, surfaces and rendering
 
-These workflows live in **winding-field-cli** and call the installed original
-`winding-field-experiments` library. The library owns numerical operators,
-constraints, block storage and observation sources. The CLI owns recipes,
-command dispatch, prepared execution, field readers for postprocessing,
-geometric extraction, surface exports and PNG rendering.
+Use `prepared` when you already have observation arrays, a field or a mesh.
+For raw CT and model inference, use [the main pipeline](../README.md) instead.
+
+| Input | Command | Result |
+| --- | --- | --- |
+| Target gradients, weights and support arrays | `prepared build` | Block field checkpoint |
+| NPY/chunk/remote Zarr v2 field or OBJ/NPZ mesh | `prepared surfaces` | Indexed mesh and geometry previews |
+| Existing indexed mesh | `prepared render` | Geometry PNGs, not CT images |
+
+The CLI owns these workflows and calls the installed `winding-field` numerical
+library. Install them together using [the installation guide](../README.md).
+
+Every recipe setting also has a typed flag; recipes are optional. See
+[all mappings and precedence](CLI-FLAGS.md). Keep generated
+`OUTPUT.request-SHA256.json` siblings with their outputs: CLI resume/verify and
+parallel/supervised workers use these immutable, output-bound snapshots.
+
+## Flag-first Paris4 example
+
+Equivalent to the pinned native example below, with no authored config:
+
+```bash
+winding-field prepared mesh \
+  --field-kind zarr-v2 \
+  --field-url 'https://huggingface.co/datasets/LimeGS/winding-field-PHerc.Paris.4-307.2um/resolve/6753c9812ec8c455401da69b4e758769e565e39f/field.json' \
+  --field-sha256 8f148279de9fc0bc9a877c84e3209a7d0bda8d17cd9d7175820ce075512835be \
+  --field-complete-sha256 57df0ad0358b3f6963b165fd155f91b22da2d37f3d8b996e6a018afd7dc133e9 \
+  --field-support-policy stored \
+  --field-frame 'PHercParis4/20260411134726:L2' --field-voxel-um 9.6 \
+  --field-origin-xyz 0 0 0 --field-spacing-xyz 32 32 32 \
+  --field-shape-zyx 593 256 256 --sheet-step 1.192497988541921 \
+  --levels -71.54987931251526 --tile 128 --cache-bytes 67108864 \
+  --output runs/paris4-flags-W-60
+winding-field prepared mesh --resume --output runs/paris4-flags-W-60
+```
+
+This is a real remote input, not a tiny demo; network/resource admission applies.
+The same options are in [paris4-cli.json](../examples/paris4-cli.json):
+`winding-field prepared mesh --cli-config examples/paris4-cli.json --output runs/paris4-from-config`.
+W−60 is raw phi **−71.54987931251526**, not `--levels -60`.
+9.6 µm calibrates WORLD units; do not multiply the spacing by 9.6 again.
+
+## Read a remote Zarr v2 field
+
+The [PHerc. Paris. 4 example](../examples/paris4-remote.json) reads the published
+coarse field over HTTPS, without staging the complete array:
+
+```bash
+winding-field prepared mesh --config examples/paris4-remote.json --output runs/paris4-remote-W-60
+# Repeat with --resume after interruption, using the same config/runtime.
+```
+
+`field.kind="zarr-v2"` requires an HTTPS `field.json` URL for a
+`winding-field-zarr-v1` export, its `sha256`, the sibling completion marker's
+`complete_sha256`, and `support_policy="stored"|"observed"`. Keep an immutable
+revision in the URL. Geometry must match the export. `HF_TOKEN` is optional for
+private HF datasets; it is never stored in recipes/receipts or forwarded to CDN
+redirect hosts. Do not put credentials in URLs.
+
+Only intersecting scalar/support chunks are fetched and decoded with `vc_reader`;
+completion, inventory, lengths and hashes are checked. Missing expected chunks
+are errors. `execution.cache_bytes` bounds decoded retention, not total working
+memory; requests also need a crop and one chunk. There is no offline/disk-cache
+mode. Cache hits still verify remote bytes; full extraction and resume validation
+may read all chunks and incur repeated network traffic.
+
+Use `stored` for Paris4: its `observed` array is an unavailable-support sentinel.
+`levels` remain **raw phi**: nominal W=-60 is `-60 * 1.192497988541921`, as in the
+example. Nothing rescales the source. Arbitrary Zarr arrays without these field
+export metadata/receipts are not supported by this interface. CT streaming uses
+the existing CT input route, not this field descriptor.
 
 ## Build and resume a prepared field
 
@@ -45,7 +111,7 @@ These commands accept prepared observations, not raw CT or prediction manifests.
   be finite and weights positive even where observed is false. Unsupported is
   not a measured zero or a physical boundary anchor.
 - `execution.chunk`, `halo`, `sweeps`; multiple cores require positive halo.
-  Optional `cache_bytes=0`, `read_workers=1`, `constraint_cache_bytes=0`,
+  Optional `cache_bytes=0`, `read_workers=1`, `constraint_cache_bytes=0`, `prepared_cache_bytes=0`,
   `reserve_bytes=0`, `max_bytes=null` retain the library's resource controls.
 - Optional `solver`: `device="cpu"`, `dtype="float64"`, `rtol=1e-5`,
   `maxiter=4000`; float32 also supported.
@@ -69,6 +135,16 @@ callers can provide `admit=` for their own policy.
 identity at first admission; `STATUS.json` records progress. Resume rejects
 changed inputs, geometry, calibration, numerical settings or implementation.
 Reader/cache budgets may change for direct resume.
+
+`prepared_cache_bytes` retains a first-fit subset of per-block CPU/device operators
+and work buffers across sweeps. `constraint_cache_bytes` retains static restriction
+templates. Both default to zero: measure before allocating memory. Neither bounds
+peak RAM, CUDA allocator reservation or resident input archives. Exterior targets,
+fixed values and observation validation remain live on every visit; caches are
+discarded on exit/resume. `STATUS.json.prepared_cache_stats` reports hits, builds
+and peak retained bytes. `--prefetch` still uses the existing bounded CPU observation
+worker and can be combined with these budgets; it does not prefetch live boundaries.
+See [solver performance](SOLVER-PERFORMANCE.md) for measurement commands.
 
 With `--supervised`, `OUTPUT.service/` holds source-bound state and worker logs.
 Automatic retry needs exit 75 and that child's resource receipt. Keep service
@@ -199,11 +275,51 @@ diagnostics do not establish physical sheet correctness. Disk admission measures
 free space; it cannot reserve it against other jobs. Additional working memory
 and Unix locking/fsync semantics are required.
 
-## Migration
+## Older runs
 
-Replace imports of `field_workflow`, `surface_workflow`, `surface_render` with
-their `winding_field.*` names and prefix former prepared commands with
-`winding-field prepared`. Install both distributions together; only the CLI
-registers the executable. Resume identities include the external library's code.
-Use the original packages to resume runs created before this separation, or start
-a new output. Existing receipts are never rewritten to bypass that check.
+Imports use `winding_field.field_workflow`, `winding_field.surface_workflow` and
+`winding_field.surface_render`; only the CLI provides the `winding-field` command.
+Resume identities include the numerical library's code. Use the original runtime
+for incompatible old runs, or start a fresh output. Do not edit receipts to bypass
+that check.
+## Parallel prepared levels
+
+Use the existing config's `levels` list (raw field values with your calibration):
+
+```bash
+winding-field prepared mesh --parallel-levels \
+  --config surface-run.json --output runs/parallel-surfaces
+# Use "surfaces" instead of "mesh" to render each selected level as well.
+```
+
+Each child owns its database and normal bundle under `level-0000/`,
+`level-0001/`, etc. `LEVELS.json` preserves config order, raw level values,
+child paths, product hashes, status, peak workers and resource observations.
+Child-local mesh level IDs are zero. Open/render/export each child bundle;
+the collection is not accepted as a single combined mesh by existing readers.
+`render.levels` selects raw values: unselected children are still extracted but
+not rendered. Imported meshes and render-only commands do not support this flag.
+Without the flag the existing single-bundle workflow is unchanged.
+
+Each process uses one numerical thread. Automatic admission respects CPU affinity
+and Linux cgroup quotas (including mounted v1/hybrid namespaces), available host/container RAM, field cache, tile workspace,
+render buffers and concurrent disk staging. It retains 2 GiB host RAM headroom,
+128 MiB coordinator/container margin and the configured `execution.reserve_bytes`
+once on the shared filesystem. Unknown memory observations disable fan-out, not
+the existing single-child resource checks. Estimates are conservative admission
+budgets, not hard per-process RSS caps or a guarantee that all future output fits.
+Competing workloads can change available resources after admission.
+
+Create `runs/parallel-surfaces/STOP` or send SIGINT/SIGTERM to the supervisor to
+stop scheduling and request tile-boundary checkpoints. Finalization or rendering
+already in progress may finish before shutdown. Started children are reaped;
+successful siblings are retained if another level fails. Logs stay under `logs/`.
+
+Remove a user-created STOP before resuming, then use the identical command plus
+`--resume`. Completed bundles are hash-verified read-only; compatible partial
+children continue. Corrupt, modified, missing committed or ambiguously initialized
+outputs reject without repair. Never add the flag to resume an old single bundle.
+CLI exit codes: 0 complete, 3 checkpointed stop, 75 resource unavailable, nonzero
+on failure. No geometry reduction, GPU backend or shared-database parallel writes
+are introduced. Extra readers compete for disk bandwidth, so speedup is not linear
+and parallel mode is not necessarily faster for small jobs or slow storage.
