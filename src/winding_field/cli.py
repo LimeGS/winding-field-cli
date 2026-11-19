@@ -649,12 +649,15 @@ def main(argv=None):
         help="historical recipe; cannot combine with --flattening-solver/--scope",
     )
     p.add_argument(
-        "--flattening-solver", choices=list(SOLVERS), help="explicit algorithm; requires --scope"
+        "--flattening-solver",
+        choices=list(SOLVERS),
+        help="lscm-slim (default on Linux x86_64: global LSCM seed, then Flatboi SLIM), "
+        "lscm, or slim (Flatboi from a mean-value seed); default lscm elsewhere",
     )
     p.add_argument(
         "--scope",
         choices=list(SCOPES),
-        help="independent patches or whole connected sheets; requires --flattening-solver",
+        help="independent patches or whole connected sheets (default: sheet)",
     )
     p.add_argument(
         "--export-tifxyz",
@@ -1001,20 +1004,21 @@ def main(argv=None):
                         args.level = 0
             if args.run:
                 from .flattening.run_sheet_export import export_run as export_existing
-            elif args.flattening_solver is not None or args.scope is not None:
-                if args.flattening_method or not (args.flattening_solver and args.scope):
+            elif args.flattening_method:
+                if args.flattening_solver is not None or args.scope is not None:
                     raise ValueError(
-                        "flattening selection requires --flattening-solver and --scope together, without --flattening-method"
+                        "--flattening-method cannot combine with --flattening-solver/--scope"
                     )
-                from .flattening.matrix_pipeline import export_existing
-            elif args.flattening_method == "patches":
-                from .flattening.patches import export_existing
-            elif args.flattening_method == "original":
-                from .flattening.original_pipeline import export_existing
+                if args.flattening_method == "patches":
+                    from .flattening.patches import export_existing
+                else:
+                    from .flattening.original_pipeline import export_existing
             else:
-                raise ValueError(
-                    "flattening selection required: --flattening-solver with --scope, or historical --flattening-method"
-                )
+                from .flattening.selection import DEFAULT_SCOPE, default_solver
+
+                args.flattening_solver = args.flattening_solver or default_solver()
+                args.scope = args.scope or DEFAULT_SCOPE
+                from .flattening.matrix_pipeline import export_existing
             from .export_settings import field_request, flattening_request
             from .cli_settings import field_overrides
 

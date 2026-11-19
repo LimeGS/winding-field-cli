@@ -16,6 +16,7 @@ from ..native_patches import ResourceGuard
 from .original_pipeline import frame_coordinates
 from .patch_mapping import write_key_mapping
 from .sheet_atlas import _arrays, _json, _path, _verified
+from .selection import FLATBOI_SOLVERS
 from ..util import atomic_json, file_sha
 
 
@@ -61,7 +62,7 @@ def export_existing(args):
         raise ValueError("matrix output must be separate from source mesh")
     stages = getattr(args, "stages", "all")
     native = None
-    if cfg["flattening_solver"] == "slim" and stages != "ct":
+    if cfg["flattening_solver"] in FLATBOI_SOLVERS and stages != "ct":
         from .flatboi_checkpoint import require_cgroup
 
         native = p.check_flatboi(cfg.get("app_run"), cfg["native_recipe"])

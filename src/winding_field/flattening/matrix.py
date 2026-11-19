@@ -14,7 +14,7 @@ from .original import face_quality, scale_uv_to_world
 from .sheet_atlas import _arrays, _json, _verified
 from ..surface_atlas import face_components, local_chart, split_faces
 from ..util import atomic_json, file_sha
-from .selection import SCOPES, SOLVERS
+from .selection import FLATBOI_SOLVERS, SCOPES, SOLVERS
 
 
 def settings(request, solver, scope):
@@ -39,7 +39,7 @@ def settings(request, solver, scope):
         allowed |= {"max_patch_faces", "max_charts"}
     else:
         allowed |= {"centerline", "reference_z"}
-    if solver == "slim":
+    if solver in FLATBOI_SOLVERS:
         allowed |= {"app_run", "native_recipe"}
     if set(request) - allowed:
         raise ValueError(
@@ -58,25 +58,46 @@ def settings(request, solver, scope):
         raise ValueError("reference_z requires centerline and a finite height")
     base = dict(memory_gib=None, process_tree_gib=None, native_recipe="historical")
     base.update({k: v for k, v in request.items() if k not in extra})
-    cfg = p.settings(base, native_required=solver == "slim")
-    if solver == "slim" and cfg["native_recipe"] not in p.CHECKPOINT_RECIPES:
+    cfg = p.settings(base, native_required=solver in FLATBOI_SOLVERS)
+    if solver in FLATBOI_SOLVERS and cfg["native_recipe"] not in p.CHECKPOINT_RECIPES:
         raise ValueError("native_recipe is not checkpoint-qualified")
     cfg.update(extra, flattening_solver=solver, scope=scope)
     return cfg
+
+
+def _global_lscm(cut):
+    from .lscm import lscm
+
+    v, f, b = cut["vertices"], cut["faces"], cut["boundary"]
+    first = int(b[0])
+    second = int(b[np.argmax(np.linalg.norm(v[b] - v[first], axis=1))])
+    # Pin length is measured on the uncentered mesh, the solve on the centered one.
+    length = float(np.linalg.norm(v[second] - v[first]))
+    return lscm(v - v.mean(0), f, first, second, length=length)
+
+
+def _lscm_seed(cut, guard, diagnostics):
+    """Global LSCM as the SLIM seed; mean-value when LSCM folds (Flatboi needs a valid seed)."""
+    uv, pins, _ = _global_lscm(cut)
+    tri = uv[cut["faces"]]
+    signed = (tri[:, 1, 0] - tri[:, 0, 0]) * (tri[:, 2, 1] - tri[:, 0, 1]) - (
+        tri[:, 1, 1] - tri[:, 0, 1]
+    ) * (tri[:, 2, 0] - tri[:, 0, 0])
+    if signed.sum() < 0:
+        uv[:, 0] *= -1
+        signed = -signed
+    folded = int((signed <= 0).sum())
+    if np.isfinite(uv).all() and folded == 0:
+        return uv, dict(method="LSCM", backend="libigl", pins=pins.tolist())
+    uv, initialization = mean_value_map(cut, guard, diagnostics=diagnostics)
+    return uv, dict(initialization, lscm_rejected=dict(folded_faces=folded))
 
 
 def solve(cut, output, cfg, guard):
     v, f = cut["vertices"], cut["faces"]
     guard()
     if cfg["flattening_solver"] == "lscm":
-        from .lscm import lscm
-
-        b = cut["boundary"]
-        first = int(b[0])
-        second = int(b[np.argmax(np.linalg.norm(v[b] - v[first], axis=1))])
-        # Pin length is measured on the uncentered mesh, the solve on the centered one.
-        length = float(np.linalg.norm(v[second] - v[first]))
-        uv, pins, fixed = lscm(v - v.mean(0), f, first, second, length=length)
+        uv, pins, fixed = _global_lscm(cut)
         guard()
         return uv, dict(
             algorithm="LSCM",
@@ -100,7 +121,8 @@ def solve(cut, output, cfg, guard):
         np.testing.assert_array_equal(data["faces"], f)
         initialization = record["initialization"]
     else:
-        uv, initialization = mean_value_map(cut, guard, diagnostics=output / "initialization")
+        seed = _lscm_seed if cfg["flattening_solver"] == "lscm-slim" else mean_value_map
+        uv, initialization = seed(cut, guard, diagnostics=output / "initialization")
         np.savez_compressed(initial, world=v, faces=f, uv=uv)
         with obj.open("w") as stream:
             np.savetxt(stream, v, fmt="v %.17g %.17g %.17g")
