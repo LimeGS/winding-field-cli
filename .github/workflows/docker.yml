@@ -69,6 +69,7 @@ jobs:
           docker run --rm --init --user "$(id -u):$(id -g)" --memory=6g --memory-swap=6g \
             -e MATRIX_NATIVE_APP=/opt/vc3d/AppRun -e MATRIX_NATIVE_RECIPE=historical \
             -e WINDING_LASAGNA_PYTHON=/opt/lasagna/bin/python \
+            -e WINDING_REQUIRE_FLATBOI=1 \
             --mount "type=bind,src=$PWD/tests,dst=/tests,readonly" \
             --mount "type=bind,src=$PWD/examples,dst=/examples,readonly" \
             --mount "type=bind,src=$PWD/tools,dst=/tools,readonly" \

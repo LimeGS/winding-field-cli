@@ -123,17 +123,19 @@ def verify_ct_snapshot(root, volume):
             volume._ledger = previous
 
 
-def _geometry_and_render(reader, store, volume, settings, pitch, until):
-    from .native_geometry import flatten_mesh, assemble, summary
+def _geometry_and_render(reader, store, volume, settings, pitch, until, *, offline=False):
+    from .native_geometry import SLIM_BATCH_FACES, flatten_mesh, assemble, summary
     from .native_render import render
 
     target = settings["coverage_target"]
-    method = "slim" if settings["parameterizer"]["solver"] == "libigl-slim" else "default"
+    method = "slim" if settings["parameterizer"]["solver"] == "flatboi-slim" else "default"
     available = target
     if until in ("flatten", "assemble"):
         if store.get("render_identity") is not None:
             return None
-        flatten_mesh(reader, store, settings["chart_faces"], until=available, method=method)
+        flatten_mesh(
+            reader, store, settings["chart_faces"], until=available, method=method, offline=offline
+        )
         if until == "assemble":
             assemble(store, target)
         return None
@@ -148,8 +150,12 @@ def _geometry_and_render(reader, store, volume, settings, pitch, until):
                 store,
                 settings["chart_faces"],
                 until=available,
-                max_batches=4,
+                # SLIM amortizes Flatboi startup over a full face group per call.
+                max_batches=4
+                if method == "default"
+                else max(4, SLIM_BATCH_FACES // settings["chart_faces"]),
                 method=method,
+                offline=offline,
             )
             mapped = assemble(store, target)
             if (
@@ -218,7 +224,15 @@ def render_mesh(reader, output, volume, config, stop=None):
         output, identity, stop, settings["surface_time_limit_s"], config.get("reserve_bytes", 0)
     ) as store:
         try:
-            result = _geometry_and_render(reader, store, volume, settings, pitch, "render")
+            result = _geometry_and_render(
+                reader,
+                store,
+                volume,
+                settings,
+                pitch,
+                "render",
+                offline=config.get("offline", False),
+            )
             result["timing_scope"] = "existing-mesh-to-render"
             atomic_json(store.path("LEVEL.json"), result)
             store.register("LEVEL.json")
@@ -348,7 +362,13 @@ def work(run, config, until="render", stop=None, token=None, started_epoch=None)
                         if reader.manifest["identity"]["source"] != source.identity:
                             raise ValueError("native mesh source differs")
                         result = _geometry_and_render(
-                            reader, store, volume, settings, float(min(source.spacing)), until
+                            reader,
+                            store,
+                            volume,
+                            settings,
+                            float(min(source.spacing)),
+                            until,
+                            offline=config.get("offline", False),
                         )
                     if result is None:
                         continue
