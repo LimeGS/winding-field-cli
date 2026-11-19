@@ -64,7 +64,7 @@ def export_existing(args):
     if cfg["flattening_solver"] == "slim" and stages != "ct":
         from .flatboi_checkpoint import require_cgroup
 
-        native = p.check_flatboi(cfg["app_run"], cfg["native_recipe"])
+        native = p.check_flatboi(cfg.get("app_run"), cfg["native_recipe"])
         require_cgroup()
     # Validate mesh provenance before creating output or caches.
     mesh_sha = None

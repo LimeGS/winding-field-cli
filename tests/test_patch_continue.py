@@ -158,7 +158,7 @@ def test_continue_export_reuses_map_and_inherits_ct_ledger(tmp_path, monkeypatch
             disk_reserve_gib=0.001,
         )
     )
-    monkeypatch.setattr(p, "check_flatboi", lambda *args: dict(test=True))
+    monkeypatch.setattr(p, "check_flatboi", lambda app, *args: dict(test=True, app_run=app))
     monkeypatch.setattr(p, "flatten_native", lambda v, f, app, path, **kw: planar(v, f, path))
 
     class CT:

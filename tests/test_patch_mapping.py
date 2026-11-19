@@ -127,7 +127,7 @@ def test_large_key_export_never_materializes_unicode(tmp_path, monkeypatch):
         yield reader, dict(kind="test_mesh")
 
     monkeypatch.setattr(p, "open_mesh", opened)
-    monkeypatch.setattr(p, "check_flatboi", lambda *args: {})
+    monkeypatch.setattr(p, "check_flatboi", lambda app, *args: dict(app_run=app))
     monkeypatch.setattr(
         p, "flatten_native", lambda v, f, *args, **kwargs: (v[:, :2].copy(), dict(status="test"))
     )
@@ -217,7 +217,7 @@ def test_shared_vertex_export_falls_back_before_repeated_key_gather(tmp_path, mo
         yield reader, dict(kind="test_mesh")
 
     monkeypatch.setattr(p, "open_mesh", opened)
-    monkeypatch.setattr(p, "check_flatboi", lambda *args: {})
+    monkeypatch.setattr(p, "check_flatboi", lambda app, *args: dict(app_run=app))
     monkeypatch.setattr(
         p, "flatten_native", lambda v, f, *args, **kwargs: (v[:, :2].copy(), dict(status="test"))
     )
