@@ -101,7 +101,9 @@ def payload(field, manifest, label="0-0-0"):
     return Path(field["path"]).parent / manifest["chunks"][label]["path"]
 
 
-@pytest.mark.parametrize("dtype,order", [(np.float32, "C"), (np.float64, "F"), (">f8", "F"), (np.int16, "C")])
+@pytest.mark.parametrize(
+    "dtype,order", [(np.float32, "C"), (np.float64, "F"), (">f8", "F"), (np.int16, "C")]
+)
 def test_npy_crops_keep_geometry_precision_support_and_owned_storage(tmp_path, dtype, order):
     values = np.array(np.arange(45).reshape(3, 3, 5), dtype=dtype, order=order)
     field, meta = npy(tmp_path, values), geometry()
@@ -112,7 +114,9 @@ def test_npy_crops_keep_geometry_precision_support_and_owned_storage(tmp_path, d
         assert source.origin.dtype == source.spacing.dtype == np.float64
         assert (source.frame, source.voxel_um, source.sheet_step) == (meta["frame"], 7.25, 6.0)
         result, valid = source.read((1, 1, 2), (3, 3, 5))
-        np.testing.assert_array_equal(result, [[[22, 23, 24], [27, 28, 29]], [[37, 38, 39], [42, 43, 44]]])
+        np.testing.assert_array_equal(
+            result, [[[22, 23, 24], [27, 28, 29]], [[37, 38, 39], [42, 43, 44]]]
+        )
         assert result.dtype == np.float64 and valid.dtype == np.bool_
         assert result.flags.owndata and valid.flags.owndata
         assert result.flags.c_contiguous and valid.all()
@@ -136,7 +140,11 @@ def test_npy_mask_and_nonfinite_holes_survive_cropping(tmp_path):
         result, valid = source.read((1, 1, 2), (3, 3, 5))
         np.testing.assert_array_equal(result, values[1:, 1:, 2:])
         np.testing.assert_array_equal(
-            valid, [[[False, False, False], [True, True, True]], [[True, True, True], [False, True, True]]]
+            valid,
+            [
+                [[False, False, False], [True, True, True]],
+                [[True, True, True], [False, True, True]],
+            ],
         )
         assert np.isfinite(result[valid]).all()
 
@@ -179,7 +187,12 @@ def test_native_and_public_share_crop_and_support_contract(tmp_path, policy, obs
             bv, bm = b.read(lo, hi)
             np.testing.assert_array_equal(av, bv)
             np.testing.assert_array_equal(am, bm)
-            assert av.dtype == np.float64 and am.dtype == bool and av.flags.owndata and am.flags.owndata
+            assert (
+                av.dtype == np.float64
+                and am.dtype == bool
+                and av.flags.owndata
+                and am.flags.owndata
+            )
         v, m = a.read((0, 0, 0), (3, 3, 5))
         assert v[0, 0, 0] == 1e12 and v[2, 2, 4] == 1e12 + 224
         assert m.sum() == (9 if policy == "stored" else 5 if observed else 0)
@@ -301,10 +314,23 @@ def test_invalid_descriptors_are_rejected(tmp_path, change):
 
 
 @pytest.mark.parametrize(
-    "change", ["complex", "object", "boolean", "shape", "mask_dtype", "mask_shape", "npz", "trailing", "truncated"]
+    "change",
+    [
+        "complex",
+        "object",
+        "boolean",
+        "shape",
+        "mask_dtype",
+        "mask_shape",
+        "npz",
+        "trailing",
+        "truncated",
+    ],
 )
 def test_hash_does_not_excuse_invalid_npy_header_dtype_or_length(tmp_path, change):
-    values = np.ones((3, 3, 5), dtype={"complex": complex, "object": object, "boolean": bool}.get(change, float))
+    values = np.ones(
+        (3, 3, 5), dtype={"complex": complex, "object": object, "boolean": bool}.get(change, float)
+    )
     if change == "shape":
         values = values[:, :, :2]
     mask = np.ones((3, 3, 5), np.uint8) if change == "mask_dtype" else None
@@ -355,7 +381,9 @@ def test_all_manifest_paths_sizes_and_keys_are_checked_before_first_output(tmp_p
         path.rename(other)
         path.symlink_to(other)
     elif change in ("key", "out_of_bounds"):
-        manifest["chunks"]["01-1-2" if change == "key" else "2-1-2"] = manifest["chunks"].pop("1-1-2")
+        manifest["chunks"]["01-1-2" if change == "key" else "2-1-2"] = manifest["chunks"].pop(
+            "1-1-2"
+        )
     elif change == "bytes":
         record["bytes"] += 1
     elif change == "oversize":
@@ -435,7 +463,7 @@ def test_immutable_sources_reject_changes_even_with_restored_mtime(tmp_path, bac
             if clock.stat().st_ctime_ns > before.st_ctime_ns:
                 break
             assert time.monotonic() < deadline, "filesystem ctime did not advance"
-            time.sleep(.001)
+            time.sleep(0.001)
         if change == "replace":
             replacement = path.with_suffix(".replacement")
             replacement.write_bytes(raw)
@@ -494,7 +522,9 @@ def test_npy_hash_and_memmap_share_open_inode(tmp_path, monkeypatch):
 
 
 @pytest.mark.parametrize("cache_bytes", [0, 1, 600, 1200])
-def test_default_retains_nothing_and_optional_lru_bounds_live_chunks(tmp_path, monkeypatch, cache_bytes):
+def test_default_retains_nothing_and_optional_lru_bounds_live_chunks(
+    tmp_path, monkeypatch, cache_bytes
+):
     field, _ = native(tmp_path, all_chunks=True)
     refs, loads = [], []
     decode = field_store._decode

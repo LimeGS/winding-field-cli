@@ -18,7 +18,14 @@ from pathlib import Path
 import numpy as np
 from scipy.sparse import coo_matrix
 from scipy.sparse.csgraph import connected_components
-from .surface_export import _metadata, _sha, extract_surface, flatten_native, rasterize_surface, sample_ct_stack
+from .surface_export import (
+    _metadata,
+    _sha,
+    extract_surface,
+    flatten_native,
+    rasterize_surface,
+    sample_ct_stack,
+)
 from .surface_probe import (
     context_image,
     evaluate_patch,
@@ -83,7 +90,7 @@ def face_components(faces, ids):
     equal = np.empty(max(0, len(edges) - 1), bool)
     for start in range(0, len(equal), 65536):
         stop = min(start + 65536, len(equal))
-        equal[start:stop] = (edges[start + 1:stop + 1] == edges[start:stop]).all(1)
+        equal[start:stop] = (edges[start + 1 : stop + 1] == edges[start:stop]).all(1)
     del edges
     a, b = owners[:-1][equal], owners[1:][equal]
     del owners, equal
@@ -151,11 +158,14 @@ def chart_preview(path, stack, valid, layer, *, pitch_um, window=(0, 255)):
     lo, hi = window
     if not np.isfinite(window).all() or hi <= lo:
         raise ValueError("invalid CT display window")
-    gray = np.rint(255 * np.clip((np.nan_to_num(stack[layer]) - lo) / (hi - lo), 0, 1)).astype(np.uint8)
+    gray = np.rint(255 * np.clip((np.nan_to_num(stack[layer]) - lo) / (hi - lo), 0, 1)).astype(
+        np.uint8
+    )
     rgba = np.dstack([gray, gray, gray, valid[layer].astype(np.uint8) * 255])
     info = PngImagePlugin.PngInfo()
     info.add_text(
-        "Description", f"CT texture, not ink; {pitch_um:g}um/pixel; fixed [{lo:g},{hi:g}] window; invalid transparent"
+        "Description",
+        f"CT texture, not ink; {pitch_um:g}um/pixel; fixed [{lo:g},{hi:g}] window; invalid transparent",
     )
     Image.fromarray(rgba).save(path, pnginfo=info)
 
@@ -210,7 +220,13 @@ def build_atlas(
         directory = output / name
         directory.mkdir()
         v, f, vi = local_chart(vertices, faces, ids)
-        np.savez(directory / "chart.npz", vertices_xyz=v, faces=f, global_vertex_ids=vi, global_face_ids=ids)
+        np.savez(
+            directory / "chart.npz",
+            vertices_xyz=v,
+            faces=f,
+            global_vertex_ids=vi,
+            global_face_ids=ids,
+        )
         node = dict(
             directory=name,
             depth=depth,
@@ -237,7 +253,9 @@ def build_atlas(
         )
         (output / "progress.json").write_text(json.dumps(state, indent=2, allow_nan=False) + "\n")
 
-    raw = np.cross(vertices[faces[:, 1]] - vertices[faces[:, 0]], vertices[faces[:, 2]] - vertices[faces[:, 0]])
+    raw = np.cross(
+        vertices[faces[:, 1]] - vertices[faces[:, 0]], vertices[faces[:, 2]] - vertices[faces[:, 0]]
+    )
     global_normals = np.zeros_like(vertices)
     for col in range(3):
         np.add.at(global_normals, faces[:, col], raw)
@@ -286,7 +304,13 @@ def build_atlas(
                     uv_origin=raster["uv_origin"],
                 )
                 stack, mask, sampled = sample_ct_stack(
-                    ct, ct_metadata, points, normals, offsets, frame=metadata["frame"], voxel_um=metadata["voxel_um"]
+                    ct,
+                    ct_metadata,
+                    points,
+                    normals,
+                    offsets,
+                    frame=metadata["frame"],
+                    voxel_um=metadata["voxel_um"],
                 )
                 np.savez(
                     directory / "ct_stack.npz",
@@ -321,7 +345,10 @@ def build_atlas(
                 for ids in parts:
                     add(ids, node["depth"] + 1, node["directory"])
             else:
-                node.update(status="FAIL", reason="required_chart_failed_at_frozen_budget_or_native_unavailable")
+                node.update(
+                    status="FAIL",
+                    reason="required_chart_failed_at_frozen_budget_or_native_unavailable",
+                )
         write_json(directory / "receipt.json", public(node))
         progress()
     leaves = list(active.values())
@@ -355,35 +382,48 @@ def build_atlas(
 def main(argv=None):
     p = argparse.ArgumentParser(description=__doc__)
     for name in ("field", "metadata", "inputs", "app-run", "output"):
-        p.add_argument("--" + name, type=Path, required=name not in ('metadata','inputs'))
+        p.add_argument("--" + name, type=Path, required=name not in ("metadata", "inputs"))
     p.add_argument(
-        "--patch", type=Path, help="optional human-seed patch; otherwise use the frozen prior seed in inputs"
+        "--patch",
+        type=Path,
+        help="optional human-seed patch; otherwise use the frozen prior seed in inputs",
     )
     p.add_argument("--patch-frame")
     p.add_argument("--patch-voxel-um", type=float)
     p.add_argument("--max-depth", type=int, default=3)
     p.add_argument("--max-charts", type=int, default=8)
     p.add_argument("--budget-seconds", type=float, default=540)
-    from .tool_settings import atlas_arguments,metadata_request,metadata_identity,atlas_inputs,materialize_metadata,check_sources
+    from .tool_settings import (
+        atlas_arguments,
+        metadata_request,
+        metadata_identity,
+        atlas_inputs,
+        materialize_metadata,
+        check_sources,
+    )
     from .cli_settings import parse_options
+
     atlas_arguments(p)
-    args = parse_options(p,argv)
+    args = parse_options(p, argv)
     try:
-        meta=metadata_request(args,require_pin=True);meta_identity=metadata_identity(args,meta)
-        inputs,ct_meta=atlas_inputs(args,meta)
-    except (ValueError,OSError,KeyError,TypeError) as error:
-        print(f"atlas input error: {error}",file=sys.stderr)
+        meta = metadata_request(args, require_pin=True)
+        meta_identity = metadata_identity(args, meta)
+        inputs, ct_meta = atlas_inputs(args, meta)
+    except (ValueError, OSError, KeyError, TypeError) as error:
+        print(f"atlas input error: {error}", file=sys.stderr)
         return 2
     args.output.mkdir(exist_ok=False)
-    materialize_metadata(args,args.output,meta,ct_meta)
+    materialize_metadata(args, args.output, meta, ct_meta)
     if ct_meta is not None:
-        inputs.update(ct_metadata=str(args.ct_metadata),ct_metadata_sha256=_sha(args.ct_metadata))
+        inputs.update(ct_metadata=str(args.ct_metadata), ct_metadata_sha256=_sha(args.ct_metadata))
     result = dict(
         status="FAILED",
         human_seed=args.patch is not None,
         source_sha256=_sha(__file__),
-        source_hashes={n: _sha(Path(__file__).with_name(n)) for n in ("surface_export.py", "surface_probe.py")},
-        request_sources=getattr(args,'_request_sources',{}),
+        source_hashes={
+            n: _sha(Path(__file__).with_name(n)) for n in ("surface_export.py", "surface_probe.py")
+        },
+        request_sources=getattr(args, "_request_sources", {}),
     )
     try:
         import tifffile
@@ -418,7 +458,9 @@ def main(argv=None):
             xyz = np.stack([tifffile.imread(args.patch / f"{a}.tif") for a in "xyz"], axis=-1)
             selection, excluded = choose_human_seed(xyz, meta)
             selection["patch_coordinates"] = coordinates
-            selection["patch_sha256"] = {n: _sha(args.patch / n) for n in ("meta.json", "x.tif", "y.tif", "z.tif")}
+            selection["patch_sha256"] = {
+                n: _sha(args.patch / n) for n in ("meta.json", "x.tif", "y.tif", "z.tif")
+            }
             np.save(args.output / "excluded_human_uv.npy", excluded)
         else:
             if _sha(inputs["seed"]) != inputs["seed_sha256"]:
@@ -431,7 +473,9 @@ def main(argv=None):
                 raise ValueError("frozen seed and field identities differ")
             selection = dict(selection, human_seed=False)
         write_json(args.output / "seed_geometry.json", selection)
-        value = sample_field(field, np.array([selection["seed_xyz"]]), meta["origin_xyz"], meta["spacing_xyz"])[0]
+        value = sample_field(
+            field, np.array([selection["seed_xyz"]]), meta["origin_xyz"], meta["spacing_xyz"]
+        )[0]
         if not np.isfinite(value):
             raise ValueError("seed has no field support")
         if args.patch is None:
@@ -442,7 +486,9 @@ def main(argv=None):
         selection = {
             **selection,
             "level": float(value),
-            "level_method": "raw field at frozen human seed" if args.patch else "unchanged frozen prior-seed level",
+            "level_method": "raw field at frozen human seed"
+            if args.patch
+            else "unchanged frozen prior-seed level",
             "field_sha256": meta["field_sha256"],
         }
         write_json(args.output / "seed.json", selection)
@@ -452,7 +498,11 @@ def main(argv=None):
         if support is not None:
             extraction_meta["support"] = support
         vertices, faces, extraction = extract_surface(
-            field, extraction_meta, value, selection["seed_xyz"], step_size=render.get("mesh_step", 2)
+            field,
+            extraction_meta,
+            value,
+            selection["seed_xyz"],
+            step_size=render.get("mesh_step", 2),
         )
         np.savez(args.output / "surface.npz", vertices_xyz=vertices, faces=faces)
         write_json(args.output / "extraction.json", extraction)
@@ -506,10 +556,14 @@ def main(argv=None):
                 patch_voxel_um=args.patch_voxel_um,
             )
         else:
-            result["validation"] = dict(status="NOT_EVALUATED", reason="no human reference supplied")
+            result["validation"] = dict(
+                status="NOT_EVALUATED", reason="no human reference supplied"
+            )
         context_image(args.output / "ct_context.png", ct, ct_meta, selection, vertices)
         check_sources(args)
-        result["status"] = "EXPORTED_UNCERTIFIED" if atlas["atlas_status"] == "PASS" else "ATLAS_FAILED"
+        result["status"] = (
+            "EXPORTED_UNCERTIFIED" if atlas["atlas_status"] == "PASS" else "ATLAS_FAILED"
+        )
     except Exception as error:
         result["error"] = f"{type(error).__name__}: {error}"
     write_json(args.output / "result.json", result)

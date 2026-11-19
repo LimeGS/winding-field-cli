@@ -18,11 +18,15 @@ def module():
 def source(tmp_path, values, mask=None, origin=(11.0, -4.0, 19.0), spacing=(2.0, 3.0, 5.0)):
     path = tmp_path / "field.npy"
     np.save(path, np.asarray(values, np.float64))
-    descriptor = dict(kind="npy", path=str(path), sha256=hashlib.sha256(path.read_bytes()).hexdigest())
+    descriptor = dict(
+        kind="npy", path=str(path), sha256=hashlib.sha256(path.read_bytes()).hexdigest()
+    )
     if mask is not None:
         path = tmp_path / "support.npy"
         np.save(path, mask)
-        descriptor["mask"] = dict(path=str(path), sha256=hashlib.sha256(path.read_bytes()).hexdigest())
+        descriptor["mask"] = dict(
+            path=str(path), sha256=hashlib.sha256(path.read_bytes()).hexdigest()
+        )
     geometry = dict(
         frame="synthetic/world",
         voxel_um=8.64,
@@ -37,7 +41,8 @@ def source(tmp_path, values, mask=None, origin=(11.0, -4.0, 19.0), spacing=(2.0,
 def geometry(root, level=0):
     with sqlite3.connect(root / "mesh.sqlite") as db:
         vertices = dict(
-            (row[0], row[1:]) for row in db.execute("SELECT id,x,y,z FROM vertices WHERE level=?", (level,))
+            (row[0], row[1:])
+            for row in db.execute("SELECT id,x,y,z FROM vertices WHERE level=?", (level,))
         )
         faces = list(db.execute("SELECT a,b,c FROM faces WHERE level=? ORDER BY id", (level,)))
     return np.array([[vertices[i] for i in face] for face in faces], float).reshape(-1, 3, 3)
@@ -73,11 +78,13 @@ def test_masked_cell_does_not_invent_a_bridge(tmp_path):
 
 def test_multiple_components_and_empty_levels_are_preserved(tmp_path):
     z, y, x = np.indices((9, 9, 16))
-    values = np.minimum((x - 4) ** 2 + (y - 4) ** 2 + (z - 4) ** 2, (x - 11) ** 2 + (y - 4) ** 2 + (z - 4) ** 2).astype(
-        float
-    )
+    values = np.minimum(
+        (x - 4) ** 2 + (y - 4) ** 2 + (z - 4) ** 2, (x - 11) ** 2 + (y - 4) ** 2 + (z - 4) ** 2
+    ).astype(float)
     with source(tmp_path, values, origin=(0, 0, 0), spacing=(1, 1, 1)) as field:
-        result = module().extract_mesh(field, tmp_path / "mesh", [3.5, -100.0], tile=3, level_batch=1)
+        result = module().extract_mesh(
+            field, tmp_path / "mesh", [3.5, -100.0], tile=3, level_batch=1
+        )
     assert result["levels"][0]["components"] == 2
     assert result["levels"][1]["faces"] == 0 and result["levels"][1]["components"] == 0
     assert result["levels"][0]["nonmanifold_edges"] == 0
@@ -100,8 +107,12 @@ def test_stopped_resume_matches_full_and_rejects_changed_problem(tmp_path):
             api.extract_mesh(field, tmp_path / "split", [2.0], tile=2, resume=True)
         api.extract_mesh(field, tmp_path / "split", [1.5, 3.5], tile=2, resume=True)
     for level in range(2):
-        np.testing.assert_array_equal(geometry(tmp_path / "full", level), geometry(tmp_path / "split", level))
-    assert (tmp_path / "full/level-0000.obj").read_bytes() == (tmp_path / "split/level-0000.obj").read_bytes()
+        np.testing.assert_array_equal(
+            geometry(tmp_path / "full", level), geometry(tmp_path / "split", level)
+        )
+    assert (tmp_path / "full/level-0000.obj").read_bytes() == (
+        tmp_path / "split/level-0000.obj"
+    ).read_bytes()
 
 
 @pytest.mark.parametrize(

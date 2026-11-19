@@ -66,7 +66,10 @@ def probe(output, repetitions=2):
     options = case_options(output / "inputs")
     shape = options["shape"]
     target, weights, _, _ = options["load_observations"]([0] * 3, shape)
-    target, weights = torch.as_tensor(target, dtype=torch.float64), torch.as_tensor(weights, dtype=torch.float64)
+    target, weights = (
+        torch.as_tensor(target, dtype=torch.float64),
+        torch.as_tensor(weights, dtype=torch.float64),
+    )
     rows = options["constraints"].restrict([0] * 3, shape, lambda nodes: np.zeros(nodes.shape))
     workspace = PreparedField()
     prepared_runs = []

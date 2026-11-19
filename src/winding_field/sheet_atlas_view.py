@@ -1,18 +1,34 @@
 """Dependency-free local-file canvas viewer for immutable sheet-atlas tiles."""
+
 import json
 
 
-def write_viewer(root,atlas,renders):
-    sheets=[]
-    for s,r in zip(atlas['sheets'],renders):
-        prefix=s['render'].rsplit('/',1)[0]
-        sheets.append(dict(s,tiles=[dict(x=t['canvas']['column_offset'],y=t['canvas']['row_offset'],
-            width=t['canvas']['width'],height=t['canvas']['height'],src=prefix+'/render/'+t['directory']+'/image.png') for t in r['tiles']]))
-    data=json.dumps(dict(shape=atlas['shape_yx'],pitch=atlas['pitch_um'],sheets=sheets),allow_nan=False).replace('<','\\u003c')
-    (root/'index.html').write_text(HTML.replace('__DATA__',data))
+def write_viewer(root, atlas, renders):
+    sheets = []
+    for s, r in zip(atlas["sheets"], renders):
+        prefix = s["render"].rsplit("/", 1)[0]
+        sheets.append(
+            dict(
+                s,
+                tiles=[
+                    dict(
+                        x=t["canvas"]["column_offset"],
+                        y=t["canvas"]["row_offset"],
+                        width=t["canvas"]["width"],
+                        height=t["canvas"]["height"],
+                        src=prefix + "/render/" + t["directory"] + "/image.png",
+                    )
+                    for t in r["tiles"]
+                ],
+            )
+        )
+    data = json.dumps(
+        dict(shape=atlas["shape_yx"], pitch=atlas["pitch_um"], sheets=sheets), allow_nan=False
+    ).replace("<", "\\u003c")
+    (root / "index.html").write_text(HTML.replace("__DATA__", data))
 
 
-HTML='''<!doctype html><html lang="es"><meta charset="utf-8">
+HTML = """<!doctype html><html lang="es"><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Atlas de hojas W constantes</title>
 <style>
@@ -61,4 +77,4 @@ for(const s of data.sheets){const b=document.createElement('button');b.textConte
 function resize(){const r=canvas.getBoundingClientRect(),d=Math.min(devicePixelRatio||1,2);cw=r.width;ch=r.height;canvas.width=Math.round(cw*d);canvas.height=Math.round(ch*d);schedule()}
 window.addEventListener('resize',resize);resize();fit();
 })();
-</script></html>'''
+</script></html>"""

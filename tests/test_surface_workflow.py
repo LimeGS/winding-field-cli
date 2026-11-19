@@ -40,7 +40,10 @@ def prepared(tmp_path):
         render=dict(
             width=64,
             height=48,
-            views=[dict(name="front", azimuth=0, elevation=0), dict(name="oblique", azimuth=35, elevation=20)],
+            views=[
+                dict(name="front", azimuth=0, elevation=0),
+                dict(name="oblique", azimuth=35, elevation=20),
+            ],
         ),
     )
     path = tmp_path / "run.json"
@@ -72,8 +75,12 @@ def test_pipeline_stop_then_resume_and_render_existing_bundle(tmp_path):
     assert api().run_surfaces(path, tmp_path / "output", stop=stop)["status"] == "CHECKPOINTED_STOP"
     assert not (tmp_path / "output/renders").exists()
     assert api().run_surfaces(path, tmp_path / "output", resume=True)["status"] == "SURFACES_READY"
-    result = api().render_bundle(tmp_path / "output", tmp_path / "new-render", settings=dict(width=32, height=32))
-    assert result["status"] == "RENDERED_DIAGNOSTIC" and (tmp_path / "new-render/front.png").is_file()
+    result = api().render_bundle(
+        tmp_path / "output", tmp_path / "new-render", settings=dict(width=32, height=32)
+    )
+    assert (
+        result["status"] == "RENDERED_DIAGNOSTIC" and (tmp_path / "new-render/front.png").is_file()
+    )
 
 
 @pytest.mark.parametrize(
@@ -125,7 +132,9 @@ def test_existing_mesh_import_preserves_two_components_and_renders(tmp_path, kin
     faces = np.array([[0, 1, 2], [3, 4, 5]])
     mesh = tmp_path / ("source." + kind)
     if kind == "obj":
-        mesh.write_text("".join(f"v {p[0]} {p[1]} {p[2]}\n" for p in vertices) + "f 1 2 3\nf -3 -2 -1\n")
+        mesh.write_text(
+            "".join(f"v {p[0]} {p[1]} {p[2]}\n" for p in vertices) + "f 1 2 3\nf -3 -2 -1\n"
+        )
     else:
         np.savez(mesh, vertices_xyz=vertices, faces=faces)
     config.pop("field")
@@ -137,7 +146,9 @@ def test_existing_mesh_import_preserves_two_components_and_renders(tmp_path, kin
     summary = json.loads((tmp_path / "output/MESH.json").read_text())["levels"][0]
     assert summary["components"] == 2 and summary["faces"] == 2
     with sqlite3.connect(tmp_path / "output/mesh.sqlite") as db:
-        np.testing.assert_array_equal(np.array(list(db.execute("SELECT x,y,z FROM vertices ORDER BY id"))), vertices)
+        np.testing.assert_array_equal(
+            np.array(list(db.execute("SELECT x,y,z FROM vertices ORDER BY id"))), vertices
+        )
 
 
 def test_empty_levels_are_honest_transparent_renders(tmp_path):
@@ -158,7 +169,11 @@ def test_actual_checkout_cli_surface_mesh_render_and_invalid_exit(tmp_path):
 
     def run(*args):
         return subprocess.run(
-            [sys.executable, str(tool), *map(str, args)], env=env, capture_output=True, text=True, timeout=30
+            [sys.executable, str(tool), *map(str, args)],
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=30,
         )
 
     result = run("mesh", "--config", path, "--output", tmp_path / "mesh")
@@ -178,12 +193,16 @@ def test_chunk_checkpoint_pipeline_uses_readonly_generic_geometry(tmp_path):
     root = tmp_path / "chunks"
     shape = (5, 6, 7)
     values = np.broadcast_to(np.arange(7.0) + 1.0, shape).copy()
-    with BlockStore(root, shape, 3, dict(frame=config["geometry"]["frame"], spacing_xyz=[2.0, 3.0, 5.0])) as store:
+    with BlockStore(
+        root, shape, 3, dict(frame=config["geometry"]["frame"], spacing_xyz=[2.0, 3.0, 5.0])
+    ) as store:
         for key in itertools.product(range(2), range(2), range(3)):
             low = np.asarray(key) * 3
             high = np.minimum(low + 3, shape)
             region = tuple(slice(a, b) for a, b in zip(low, high))
-            store.commit(key, values[region], dict(sweep=8, next_tile=1), np.ones(values[region].shape, bool))
+            store.commit(
+                key, values[region], dict(sweep=8, next_tile=1), np.ones(values[region].shape, bool)
+            )
     cp = root / "CHECKPOINT.json"
     before = cp.read_bytes()
     config["field"] = dict(
@@ -213,7 +232,10 @@ def test_installed_dispatch_function_reaches_mesh_pipeline(tmp_path):
     from winding_field import field_workflow
 
     path, _ = prepared(tmp_path)
-    assert field_workflow.main(["mesh", "--config", str(path), "--output", str(tmp_path / "mesh")]) == 0
+    assert (
+        field_workflow.main(["mesh", "--config", str(path), "--output", str(tmp_path / "mesh")])
+        == 0
+    )
     assert (tmp_path / "mesh/MESH.json").is_file()
 
 
@@ -235,7 +257,9 @@ def test_unused_imported_vertices_do_not_shrink_actual_surface_out_of_view(tmp_p
     assert result["renders"]["bounds_xyz"] == [[0.0, 0.0, 0.0], [0.0, 2.0, 2.0]]
 
 
-def test_prepared_extraction_batches_component_queries_without_changing_geometry(tmp_path, monkeypatch):
+def test_prepared_extraction_batches_component_queries_without_changing_geometry(
+    tmp_path, monkeypatch
+):
     from winding_field.surface_mesh import extract_mesh
     from winding_field.surface_sources import FieldSource
 
@@ -257,9 +281,13 @@ def test_prepared_extraction_batches_component_queries_without_changing_geometry
     monkeypatch.setattr(sqlite3, "connect", traced_connect)
     actual = api().run_surfaces(path, tmp_path / "actual", render=False)
     assert actual["levels"] == expected["levels"]
-    assert (tmp_path / "actual/level-0000.obj").read_bytes() == (tmp_path / "reference/level-0000.obj").read_bytes()
+    assert (tmp_path / "actual/level-0000.obj").read_bytes() == (
+        tmp_path / "reference/level-0000.obj"
+    ).read_bytes()
     parent_lookups = sum("SELECT parent FROM faces WHERE id=" in sql for sql in statements)
-    assert parent_lookups <= 8, f"component assembly still queries every face: {parent_lookups} lookups"
+    assert parent_lookups <= 8, (
+        f"component assembly still queries every face: {parent_lookups} lookups"
+    )
 
 
 @pytest.mark.parametrize("partial", [False, True])
@@ -312,7 +340,9 @@ def test_prepared_default_preserves_sensitive_geometry(tmp_path, case, tile):
     config["field"]["sha256"] = hashlib.sha256((tmp_path / "phi.npy").read_bytes()).hexdigest()
     if mask is not None:
         np.save(tmp_path / "mask.npy", mask)
-        config["field"]["mask"] = dict(path="mask.npy", sha256=hashlib.sha256((tmp_path / "mask.npy").read_bytes()).hexdigest())
+        config["field"]["mask"] = dict(
+            path="mask.npy", sha256=hashlib.sha256((tmp_path / "mask.npy").read_bytes()).hexdigest()
+        )
     config["geometry"]["shape_zyx"] = list(values.shape)
     config["levels"] = [level]
     config["execution"]["tile"] = tile
@@ -332,8 +362,15 @@ def test_prepared_default_preserves_sensitive_geometry(tmp_path, case, tile):
         assert summary["faces"] == faces
     if mask is None:
         assert summary["boundary_edges"] == 0
-    assert summary["nonmanifold_edges"] == summary["inconsistent_edges"] == summary["duplicate_faces"] == 0
-    assert (tmp_path / "actual/level-0000.obj").read_bytes() == (tmp_path / "reference/level-0000.obj").read_bytes()
+    assert (
+        summary["nonmanifold_edges"]
+        == summary["inconsistent_edges"]
+        == summary["duplicate_faces"]
+        == 0
+    )
+    assert (tmp_path / "actual/level-0000.obj").read_bytes() == (
+        tmp_path / "reference/level-0000.obj"
+    ).read_bytes()
 
 
 @pytest.mark.parametrize("corruption", ["cursor", "vertices", "faces", "obj", "manifest"])
@@ -346,12 +383,21 @@ def test_prepared_default_rejects_corruption_without_overwriting(tmp_path, corru
         calls[0] += 1
         return calls[0] > 3
 
-    api().run_surfaces(path, root, render=False, stop=stop if corruption in {"cursor", "vertices", "faces"} else None)
+    api().run_surfaces(
+        path,
+        root,
+        render=False,
+        stop=stop if corruption in {"cursor", "vertices", "faces"} else None,
+    )
     if corruption in {"cursor", "vertices", "faces"}:
         with sqlite3.connect(root / "mesh.sqlite") as db:
-            db.execute({"cursor": "UPDATE meta SET value='999' WHERE key='next_tile'",
-                        "vertices": "UPDATE vertices SET x=x+100",
-                        "faces": "UPDATE faces SET area=area+1"}[corruption])
+            db.execute(
+                {
+                    "cursor": "UPDATE meta SET value='999' WHERE key='next_tile'",
+                    "vertices": "UPDATE vertices SET x=x+100",
+                    "faces": "UPDATE faces SET area=area+1",
+                }[corruption]
+            )
     else:
         target = root / ("level-0000.obj" if corruption == "obj" else "MESH.json")
         target.write_text("user changed it" if corruption == "obj" else '{"foreign":true}')
@@ -361,7 +407,9 @@ def test_prepared_default_rejects_corruption_without_overwriting(tmp_path, corru
     assert {name: (root / name).read_bytes() for name in before} == before
 
 
-@pytest.mark.parametrize("binding", ["malformed", "unknown-algorithm", "symlink", "dangling-symlink"])
+@pytest.mark.parametrize(
+    "binding", ["malformed", "unknown-algorithm", "symlink", "dangling-symlink"]
+)
 def test_prepared_resume_rejects_invalid_binding_without_overwriting(tmp_path, binding):
     path, _ = prepared(tmp_path)
     root = tmp_path / "output"
@@ -383,7 +431,9 @@ def test_prepared_resume_rejects_invalid_binding_without_overwriting(tmp_path, b
     before = {p.name: p.read_bytes() for p in root.iterdir() if p.is_file() and not p.is_symlink()}
     with pytest.raises((ValueError, FileNotFoundError)):
         api().run_surfaces(path, root, resume=True, render=False)
-    assert {p.name: p.read_bytes() for p in root.iterdir() if p.is_file() and not p.is_symlink()} == before
+    assert {
+        p.name: p.read_bytes() for p in root.iterdir() if p.is_file() and not p.is_symlink()
+    } == before
     if "symlink" in binding:
         assert run.is_symlink() and run.readlink() == target
         assert target.exists() == (binding == "symlink")

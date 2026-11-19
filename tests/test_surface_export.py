@@ -8,7 +8,11 @@ import pytest
 
 def metadata(shape, origin=(10, 20, 30), spacing=(2, 3, 4)):
     return dict(
-        frame="synthetic:L2", origin_xyz=list(origin), spacing_xyz=list(spacing), shape_zyx=list(shape), voxel_um=9.6
+        frame="synthetic:L2",
+        origin_xyz=list(origin),
+        spacing_xyz=list(spacing),
+        shape_zyx=list(shape),
+        voxel_um=9.6,
     )
 
 
@@ -23,7 +27,8 @@ def test_actual_level_and_non_cubic_xyz_coordinates(axis, sign):
     for index in (1.25, 3.5):
         v, f, receipt = extract_surface(field, meta, sign * index)
         np.testing.assert_allclose(
-            v[:, world_axis], meta["origin_xyz"][world_axis] + index * meta["spacing_xyz"][world_axis]
+            v[:, world_axis],
+            meta["origin_xyz"][world_axis] + index * meta["spacing_xyz"][world_axis],
         )
         assert f.min() == 0 and f.max() == len(v) - 1
         assert receipt["level"] == sign * index
@@ -37,7 +42,8 @@ def test_seed_component_is_reindexed_and_largest_is_explicit():
 
     z, y, x = np.indices((12, 14, 22))
     field = np.minimum(
-        (x - 5) ** 2 + (y - 6) ** 2 + (z - 5) ** 2 - 9, (x - 16) ** 2 + (y - 6) ** 2 + (z - 5) ** 2 - 4
+        (x - 5) ** 2 + (y - 6) ** 2 + (z - 5) ** 2 - 9,
+        (x - 16) ** 2 + (y - 6) ** 2 + (z - 5) ** 2 - 4,
     ).astype(float)
     meta = metadata(field.shape, (0, 0, 0), (1, 1, 1))
     v, f, r = extract_surface(field, meta, 0, seed_xyz=[18, 6, 5])
@@ -70,15 +76,21 @@ def test_planar_projection_raster_and_coordinate_coded_ct():
         pairs = np.take(valid, np.arange(valid.shape[axis] - 1), axis=axis) & np.take(
             valid, np.arange(1, valid.shape[axis]), axis=axis
         )
-        np.testing.assert_allclose(np.linalg.norm(np.diff(points, axis=axis), axis=-1)[pairs], 0.25, atol=1e-10)
+        np.testing.assert_allclose(
+            np.linalg.norm(np.diff(points, axis=axis), axis=-1)[pairs], 0.25, atol=1e-10
+        )
     np.testing.assert_allclose((points[valid] - 20) @ [-0.6, 0, 0.8], 0, atol=1e-10)
-    np.testing.assert_allclose(normals[valid], np.tile([-0.6, 0, 0.8], (valid.sum(), 1)), atol=1e-10)
+    np.testing.assert_allclose(
+        normals[valid], np.tile([-0.6, 0, 0.8], (valid.sum(), 1)), atol=1e-10
+    )
     # A CT stored at finer, anisotropic spacing in the SAME world frame.
     z, y, x = np.indices((40, 40, 48))
     cm = metadata(z.shape, (10, 10, 10), (0.5, 0.75, 1.25))
     ct = 2 * (10 + x * 0.5) + 3 * (10 + y * 0.75) + 5 * (10 + z * 1.25)
     offsets = np.array([-0.5, 0, 0.75])
-    stack, mask, receipt = sample_ct_stack(ct, cm, points, normals, offsets, frame="synthetic:L2", voxel_um=9.6)
+    stack, mask, receipt = sample_ct_stack(
+        ct, cm, points, normals, offsets, frame="synthetic:L2", voxel_um=9.6
+    )
     for i, offset in enumerate(offsets):
         q = points[valid] + offset * np.array([-0.6, 0, 0.8])
         np.testing.assert_allclose(stack[i][valid], q @ [2, 3, 5], atol=1e-5)
@@ -137,7 +149,9 @@ def test_supplied_global_normals_survive_chart_rasterization():
     vertices, faces = native_plane()
     uv = vertices[:, :2] - vertices[0, :2]
     global_normals = np.tile([0.6, 0, 0.8], (len(vertices), 1))
-    _, normals, valid, _ = rasterize_surface(vertices, faces, uv, 1, vertex_normals_xyz=global_normals)
+    _, normals, valid, _ = rasterize_surface(
+        vertices, faces, uv, 1, vertex_normals_xyz=global_normals
+    )
     np.testing.assert_allclose(normals[valid], np.tile([0.6, 0, 0.8], (valid.sum(), 1)))
 
 
@@ -156,7 +170,9 @@ def test_masked_field_hole_is_not_filled_by_extraction_or_raster():
     assert gate["status"] == "PASS"
     points, _, valid, _ = rasterize_surface(v, f, uv, 0.25)
     assert (~valid).any() and np.isnan(points[~valid]).all()
-    assert not ((points[..., 0] > 5) & (points[..., 0] < 8) & (points[..., 1] > 4) & (points[..., 1] < 7)).any()
+    assert not (
+        (points[..., 0] > 5) & (points[..., 0] < 8) & (points[..., 1] > 4) & (points[..., 1] < 7)
+    ).any()
     assert r["unsupported_voxels"] == int((~support).sum())
 
 
@@ -168,7 +184,9 @@ def test_ct_outside_nan_support_and_frame_mismatch():
     meta = metadata(ct.shape, (0, 0, 0), (1, 1, 1))
     points = np.array([[[1.0, 1, 1], [1.5, 1.5, 1.5], [-0.1, 1, 1], [np.nan] * 3]])
     normals = np.broadcast_to([0.0, 0, 1], points.shape).copy()
-    stack, mask, _ = sample_ct_stack(ct, meta, points, normals, [0], frame="synthetic:L2", voxel_um=9.6)
+    stack, mask, _ = sample_ct_stack(
+        ct, meta, points, normals, [0], frame="synthetic:L2", voxel_um=9.6
+    )
     assert mask.tolist() == [[[True, False, False, False]]]
     assert stack[0, 0, 0] == 21 and np.isnan(stack[~mask]).all()
     with pytest.raises(ValueError, match="frame"):
@@ -209,7 +227,9 @@ def test_ct_float32_overflow_is_invalid_nan_and_integer_ct_interpolates():
     meta = metadata(ct.shape, (0, 0, 0), (1, 1, 1))
     points = np.array([[[0.25, 0.25, 0.25]]])
     normals = np.array([[[0.0, 0, 1]]])
-    values, mask, _ = sample_ct_stack(ct, meta, points, normals, [0], frame="synthetic:L2", voxel_um=9.6)
+    values, mask, _ = sample_ct_stack(
+        ct, meta, points, normals, [0], frame="synthetic:L2", voxel_um=9.6
+    )
     assert mask.all() and values.item() == 5.25
     values, mask, _ = sample_ct_stack(
         ct.astype(float) * 1e100, meta, points, normals, [0], frame="synthetic:L2", voxel_um=9.6
@@ -226,19 +246,28 @@ def test_native_ct_conversion_is_explicit_and_support_is_not_air():
     meta = metadata(ct.shape, (10, 20, 30), (0.25, 0.25, 0.25))
     points = np.array([[[10.125, 20.125, 30.125]]])
     normals = np.array([[[0.0, 0, 1]]])
-    values, valid, receipt = sample_ct_stack(ct, meta, points, normals, [0, 0.25], frame="synthetic:L2", voxel_um=9.6)
+    values, valid, receipt = sample_ct_stack(
+        ct, meta, points, normals, [0, 0.25], frame="synthetic:L2", voxel_um=9.6
+    )
     np.testing.assert_allclose(values[:, 0, 0], [55.5, 155.5])
     np.testing.assert_allclose(receipt["depth_offsets_um"], [0, 2.4])
     from vc_reader import _reader
     from winding_field import native_ct_sampling
     from winding_field.util import file_sha
-    assert receipt['native_runtime']['extension_sha256']==file_sha(_reader.__file__)
-    assert receipt['sampler_sha256']==file_sha(native_ct_sampling.__file__)
+
+    assert receipt["native_runtime"]["extension_sha256"] == file_sha(_reader.__file__)
+    assert receipt["sampler_sha256"] == file_sha(native_ct_sampling.__file__)
     assert valid.all()
     support = np.ones(ct.shape, bool)
     support[0, 0, 0] = False
     values, valid, _ = sample_ct_stack(
-        ct, {**meta, "support": support}, points, normals, [0, 0.25], frame="synthetic:L2", voxel_um=9.6
+        ct,
+        {**meta, "support": support},
+        points,
+        normals,
+        [0, 0.25],
+        frame="synthetic:L2",
+        voxel_um=9.6,
     )
     assert np.isnan(values[0, 0, 0]) and not valid[0, 0, 0]
     assert values[1, 0, 0] == 155.5 and valid[1, 0, 0]
@@ -302,7 +331,21 @@ def test_failed_projection_keeps_receipt_not_fake_image(tmp_path):
     mp.write_text(json.dumps(metadata(field.shape, (0, 0, 0), (1, 1, 1))))
     out = tmp_path / "rejected"
     assert (
-        main(["--field", str(fp), "--metadata", str(mp), "--level", "6.25", "--output", str(out), "--pitch", ".5"]) == 2
+        main(
+            [
+                "--field",
+                str(fp),
+                "--metadata",
+                str(mp),
+                "--level",
+                "6.25",
+                "--output",
+                str(out),
+                "--pitch",
+                ".5",
+            ]
+        )
+        == 2
     )
     receipt = json.loads((out / "receipt.json").read_text())
     assert receipt["status"] == "FAILED"
@@ -315,7 +358,9 @@ def write_flat_obj(path, vertices, faces, uv, mode="indexed"):
     lines = ["v " + " ".join(map(str, row)) for row in vertices]
     lines += ["vt " + " ".join(map(str, row)) for row in uv]
     for face in faces:
-        lines.append("f " + " ".join(f"{i + 1}/{i + 1}" if mode == "indexed" else str(i + 1) for i in face))
+        lines.append(
+            "f " + " ".join(f"{i + 1}/{i + 1}" if mode == "indexed" else str(i + 1) for i in face)
+        )
     path.write_text("\n".join(lines) + "\n")
 
 
@@ -340,7 +385,9 @@ def test_flatboi_obj_binding_and_single_physical_scale(tmp_path, mode):
     assert validate_uv(vertices, faces, scaled)["status"] == "FAIL"
 
 
-@pytest.mark.parametrize("damage", ["xyz", "topology", "seam", "missing_uv", "nonfinite", "bad_index"])
+@pytest.mark.parametrize(
+    "damage", ["xyz", "topology", "seam", "missing_uv", "nonfinite", "bad_index"]
+)
 def test_flatboi_obj_rejects_unbound_or_unsupported_uv(tmp_path, damage):
     from winding_field.surface_export import read_flatboi_uv
 
@@ -374,7 +421,9 @@ def test_observed_native_per_corner_indices_bind_only_exact_uv_aliases(tmp_path,
     vertices, faces = native_plane()
     # Real native format observed: 3 vt records per face, identical coordinates
     # for repeated XYZ vertices. This is not a geometric UV seam.
-    uv = np.array([[608.6471655820776, 383.4354435450956], [612.0, 383.0], [612.0, 386.0], [608.0, 386.0]])
+    uv = np.array(
+        [[608.6471655820776, 383.4354435450956], [612.0, 383.0], [612.0, 386.0], [608.0, 386.0]]
+    )
     corner_uv = uv[faces].reshape(-1, 2).copy()
     corner_uv[3, 0] += delta
     obj = tmp_path / "flat.obj"
@@ -424,7 +473,9 @@ output.write_text('\\n'.join(lines+uv)+'\\n')
 
 
 def native_plane():
-    return np.array([[10.0, 20, 30], [14, 20, 30], [14, 23, 30], [10, 23, 30]]), np.array([[0, 1, 2], [0, 2, 3]])
+    return np.array([[10.0, 20, 30], [14, 20, 30], [14, 23, 30], [10, 23, 30]]), np.array(
+        [[0, 1, 2], [0, 2, 3]]
+    )
 
 
 def test_native_adapter_command_hashes_logs_and_scaled_uv(tmp_path):
@@ -449,14 +500,23 @@ def test_native_adapter_command_hashes_logs_and_scaled_uv(tmp_path):
     assert "native stdout" in (out / "stdout.log").read_text()
     assert "native stderr" in (out / "stderr.log").read_text()
     for name in ("inputmesh.obj", "inputmesh_flatboi.obj", "stdout.log", "stderr.log"):
-        assert receipt["artifacts"][name]["sha256"] == hashlib.sha256((out / name).read_bytes()).hexdigest()
+        assert (
+            receipt["artifacts"][name]["sha256"]
+            == hashlib.sha256((out / name).read_bytes()).hexdigest()
+        )
     assert (out / "receipt.json").is_file()
     np.testing.assert_allclose(uv, [[0, 0], [4, 0], [4, 3], [0, 3]], atol=1e-12)
 
 
 @pytest.mark.parametrize(
     "action,status",
-    [("exit", "FAIL"), ("timeout", "TIMEOUT"), ("tamper", "FAIL"), ("wrong_hash", "FAIL"), ("missing", "UNAVAILABLE")],
+    [
+        ("exit", "FAIL"),
+        ("timeout", "TIMEOUT"),
+        ("tamper", "FAIL"),
+        ("wrong_hash", "FAIL"),
+        ("missing", "UNAVAILABLE"),
+    ],
 )
 def test_native_failures_never_pass_and_leave_receipts(tmp_path, action, status):
     from winding_field.surface_export import flatten_native
@@ -466,7 +526,9 @@ def test_native_failures_never_pass_and_leave_receipts(tmp_path, action, status)
         native_fixture(app, action)
     kwargs = {"expected_sha256": "0" * 64} if action == "wrong_hash" else {}
     out = tmp_path / "native"
-    uv, receipt = flatten_native(*native_plane(), app, out, timeout=0.3 if action == "timeout" else 5, **kwargs)
+    uv, receipt = flatten_native(
+        *native_plane(), app, out, timeout=0.3 if action == "timeout" else 5, **kwargs
+    )
     assert uv is None and receipt["status"] == status
     assert json.loads((out / "receipt.json").read_text())["status"] == status
     if action in ("wrong_hash", "missing"):
@@ -622,7 +684,13 @@ def test_probe_heldout_distance_is_labeled_upper_bound_and_normals_are_measured(
     owner = np.zeros((64, 64, 64), dtype=np.int8)
     meta = metadata(owner.shape, (0, 0, 0), (1, 1, 1))
     r = evaluate_patch(
-        tmp_path, vertices, faces, meta, owner, patch_frame=meta["frame"], patch_voxel_um=meta["voxel_um"]
+        tmp_path,
+        vertices,
+        faces,
+        meta,
+        owner,
+        patch_frame=meta["frame"],
+        patch_voxel_um=meta["voxel_um"],
     )
     assert r["covered_human_points"] == 25
     assert r["human_to_mesh_vertex_upper_bound_um"]["p50"] > 0  # all lie on the actual triangles

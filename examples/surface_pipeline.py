@@ -66,7 +66,9 @@ def main():
         )
         (root / "import.json").write_text(json.dumps(imported, indent=2) + "\n")
         second = run_surfaces(
-            root / "import.json", root / "imported", resume=args.resume and (root / "imported").exists()
+            root / "import.json",
+            root / "imported",
+            resume=args.resume and (root / "imported").exists(),
         )
         assert second["mesh"]["levels"][0]["components"] == 2
         assert all(v["nonempty_pixels"] > 0 for v in second["renders"]["outputs"])

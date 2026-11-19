@@ -11,8 +11,17 @@ from winding_field.util import file_sha as sha256
 
 
 def arguments(case, name="run"):
-    return ["ct-visuals", "--case", str(case["case"]), "--field", str(case["field"]),
-            "--metadata", str(case["metadata"]), "--output", str(case["root"] / name)]
+    return [
+        "ct-visuals",
+        "--case",
+        str(case["case"]),
+        "--field",
+        str(case["field"]),
+        "--metadata",
+        str(case["metadata"]),
+        "--output",
+        str(case["root"] / name),
+    ]
 
 
 @pytest.fixture
@@ -21,32 +30,70 @@ def visual_case(tmp_path):
     field = np.broadcast_to(np.arange(80, dtype=float) / 30, (5, 6, 80))
     field_path = tmp_path / "field.npy"
     np.save(field_path, field)
-    meta = dict(frame=frame, voxel_um=9.6, origin_xyz=[0, 0, 0], spacing_xyz=[1, 1, 1],
-                shape_zyx=list(field.shape), step=2.0, field_sha256=sha256(field_path))
+    meta = dict(
+        frame=frame,
+        voxel_um=9.6,
+        origin_xyz=[0, 0, 0],
+        spacing_xyz=[1, 1, 1],
+        shape_zyx=list(field.shape),
+        step=2.0,
+        field_sha256=sha256(field_path),
+    )
     metadata = tmp_path / "field.npy.json"
     metadata.write_text(json.dumps(meta))
     archive = tmp_path / "visual-archive"
     archive.mkdir()
     ct = (np.arange(field.size).reshape(field.shape) % 256).astype(np.uint8)
-    receipt = dict(frame=frame, step=2.0, voxel_um=9.6, ct_level=2, native_l0_scale=4,
-                   origin_xyz=[0, 0, 0], size_xyz=list(field.shape[::-1]), ct_url="synthetic",
-                   input_ct={}, field_sha256={"coarse": "b" * 64}, ct_window=[0, 255],
-                   contour_levels=[-1, 0, 1, 2, 3], planes=[], synthetic=True)
+    receipt = dict(
+        frame=frame,
+        step=2.0,
+        voxel_um=9.6,
+        ct_level=2,
+        native_l0_scale=4,
+        origin_xyz=[0, 0, 0],
+        size_xyz=list(field.shape[::-1]),
+        ct_url="synthetic",
+        input_ct={},
+        field_sha256={"coarse": "b" * 64},
+        ct_window=[0, 255],
+        contour_levels=[-1, 0, 1, 2, 3],
+        planes=[],
+        synthetic=True,
+    )
     for name, axis in [("XY", 2), ("XZ", 1), ("YZ", 0)]:
         index = field.shape[2 - axis] // 2
         ct_plane = np.take(ct, index, axis=2 - axis)
         reference = np.take(field, index, axis=2 - axis)
-        np.savez_compressed(archive / (name + "-samples.npz"), ct=ct_plane, coarse=reference,
-                            coarse_valid=np.ones(reference.shape, bool))
-        receipt["planes"].append(dict(name=name, fixed_axis_xyz=axis, fixed_position_l2=index,
-                                      ct_pixels=ct_plane.size, coarse_covered=ct_plane.size))
+        np.savez_compressed(
+            archive / (name + "-samples.npz"),
+            ct=ct_plane,
+            coarse=reference,
+            coarse_valid=np.ones(reference.shape, bool),
+        )
+        receipt["planes"].append(
+            dict(
+                name=name,
+                fixed_axis_xyz=axis,
+                fixed_position_l2=index,
+                ct_pixels=ct_plane.size,
+                coarse_covered=ct_plane.size,
+            )
+        )
     (archive / "RECEIPT.json").write_text(json.dumps(receipt))
     manifest = archive / "MANIFEST.json"
     manifest.write_text(json.dumps({p.name: sha256(p) for p in archive.iterdir()}))
-    descriptor = dict(schema="winding-benchmark-case-v1", frame=frame, step=2.0, voxel_um=9.6,
-                      visualization=dict(schema="ct-winding-overlays-v1",
-                          archive_manifest=dict(path=str(manifest), sha256=sha256(manifest)),
-                          reference_key="coarse", reference_label="Frozen reference"))
+    descriptor = dict(
+        schema="winding-benchmark-case-v1",
+        frame=frame,
+        step=2.0,
+        voxel_um=9.6,
+        visualization=dict(
+            schema="ct-winding-overlays-v1",
+            archive_manifest=dict(path=str(manifest), sha256=sha256(manifest)),
+            reference_key="coarse",
+            reference_label="Frozen reference",
+        ),
+    )
     case = tmp_path / "case.json"
     case.write_text(json.dumps(descriptor))
     return dict(root=tmp_path, case=case, field=field_path, metadata=metadata, archive=archive)
@@ -103,7 +150,9 @@ def test_visual_preflight_rejects_bad_ct_or_geometry(visual_case, problem):
         path = archive / "XY-samples.npz"
         path.write_bytes(path.read_bytes() + b"changed")
     elif problem == "shape":
-        np.savez_compressed(archive / "XY-samples.npz", ct=np.zeros((2, 2), np.uint8), coarse=np.zeros((2, 2)))
+        np.savez_compressed(
+            archive / "XY-samples.npz", ct=np.zeros((2, 2), np.uint8), coarse=np.zeros((2, 2))
+        )
     else:
         if problem == "frame":
             receipt["frame"] = "another-scan"
@@ -114,7 +163,9 @@ def test_visual_preflight_rejects_bad_ct_or_geometry(visual_case, problem):
         receipt_path.write_text(json.dumps(receipt))
     if problem != "hash":
         manifest = archive / "MANIFEST.json"
-        manifest.write_text(json.dumps({p.name: sha256(p) for p in archive.iterdir() if p != manifest}))
+        manifest.write_text(
+            json.dumps({p.name: sha256(p) for p in archive.iterdir() if p != manifest})
+        )
         descriptor = json.loads(visual_case["case"].read_text())
         descriptor["visualization"]["archive_manifest"]["sha256"] = sha256(manifest)
         visual_case["case"].write_text(json.dumps(descriptor))
@@ -156,12 +207,16 @@ def test_empty_visual_coverage_is_explicit_without_a_reference_column(visual_cas
     output = visual_case["root"] / "run"
     report = json.loads((output / "VISUALS.json").read_text())
     assert report["reference_field_sha256"] is None
-    assert all(p["candidate_covered"] == 0 and p["candidate_range"] is None for p in report["planes"])
+    assert all(
+        p["candidate_covered"] == 0 and p["candidate_range"] is None for p in report["planes"]
+    )
     with np.load(output / "ct-winding-samples.npz") as samples:
         assert np.isnan(samples["XY_candidate"]).all() and "XY_reference" not in samples
 
 
-def test_visual_archive_replacement_during_read_cannot_change_frozen_settings(visual_case, monkeypatch):
+def test_visual_archive_replacement_during_read_cannot_change_frozen_settings(
+    visual_case, monkeypatch
+):
     manifest = visual_case["archive"] / "MANIFEST.json"
     receipt = visual_case["archive"] / "RECEIPT.json"
     original_open = Path.open
@@ -206,7 +261,21 @@ def test_visual_reference_requires_a_source_field_identity(visual_case, identity
     assert main(arguments(visual_case) + ["--check-only"]) == 2
 
 
-@pytest.mark.parametrize("problem", ["hash", "frame", "step", "spacing", "shape", "nonfinite", "missing_support", "support_hash", "solver", "pilot"])
+@pytest.mark.parametrize(
+    "problem",
+    [
+        "hash",
+        "frame",
+        "step",
+        "spacing",
+        "shape",
+        "nonfinite",
+        "missing_support",
+        "support_hash",
+        "solver",
+        "pilot",
+    ],
+)
 def test_visual_command_rejects_invalid_candidate(visual_case, problem):
     meta = json.loads(visual_case["metadata"].read_text())
     extra = []
@@ -242,7 +311,11 @@ def test_visual_command_rejects_invalid_candidate(visual_case, problem):
 
 @pytest.mark.parametrize("frame", [None, "", "   "])
 def test_visual_command_rejects_matching_but_undeclared_frames(visual_case, frame):
-    for path in (visual_case["case"], visual_case["metadata"], visual_case["archive"] / "RECEIPT.json"):
+    for path in (
+        visual_case["case"],
+        visual_case["metadata"],
+        visual_case["archive"] / "RECEIPT.json",
+    ):
         value = json.loads(path.read_text())
         value["frame"] = frame
         path.write_text(json.dumps(value))
@@ -272,11 +345,15 @@ def test_legacy_visual_case_uses_explicit_hashed_configuration(visual_case, prob
     visual_case["case"].write_text(json.dumps(case))
     config = configuration("different" if problem == "frame" else case["frame"])
     config["voxel_um"] = unit if problem != "units" else 12
-    config["afv"]["native_voxel_um"] = (np.array(config["afv"]["scale_xyz"]) * config["voxel_um"]).tolist()
+    config["afv"]["native_voxel_um"] = (
+        np.array(config["afv"]["scale_xyz"]) * config["voxel_um"]
+    ).tolist()
     path = visual_case["root"] / "dataset.json"
     path.write_text(json.dumps(config))
     before = {p: p.read_bytes() for p in (path, visual_case["case"], visual_case["metadata"])}
-    assert main(arguments(visual_case) + ["--config", str(path), "--check-only"]) == (0 if problem is None else 2)
+    assert main(arguments(visual_case) + ["--config", str(path), "--check-only"]) == (
+        0 if problem is None else 2
+    )
     assert all(p.read_bytes() == raw for p, raw in before.items())
     if problem is None:
         receipt = json.loads((visual_case["root"] / "run/PREFLIGHT.json").read_text())
@@ -296,5 +373,8 @@ def test_figures_are_visibly_labeled_synthetic(visual_case, monkeypatch):
     monkeypatch.setattr(Figure, "savefig", save_and_inspect)
     assert main(arguments(visual_case)) == 0
     assert len(titles) == 4
-    assert all(any("synthetic CT-like data" in title for title in figure_titles) for figure_titles, _ in titles)
+    assert all(
+        any("synthetic CT-like data" in title for title in figure_titles)
+        for figure_titles, _ in titles
+    )
     assert all("Synthetic CT-like data" in panel_title for _, panel_title in titles)

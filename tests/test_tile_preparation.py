@@ -18,7 +18,9 @@ def test_extract_prepares_each_tile_once_for_all_levels(tmp_path, monkeypatch):
 
     monkeypatch.setattr(mesh, "_prepare_tile", counted)
     with source(tmp_path, values) as field:
-        info = mesh.extract_mesh(field, tmp_path / "mesh", [-1, 0, 1.5, 2, 3.5, 4, 5], tile=2, level_batch=2)
+        info = mesh.extract_mesh(
+            field, tmp_path / "mesh", [-1, 0, 1.5, 2, 3.5, 4, 5], tile=2, level_batch=2
+        )
     assert len(calls) == info["total_tiles"] == 8
     assert [item["level"] for item in info["levels"]] == [-1, 0, 1.5, 2, 3.5, 4, 5]
     assert info["levels"][0]["faces"] == info["levels"][-1]["faces"] == 0
@@ -31,7 +33,11 @@ def test_prepared_geometry_matches_each_level_separately(partial):
     if partial:
         valid[1, 1, 1] = False
     prepared = mesh._prepare_tile(values, valid)
-    low, origin, spacing = np.array([4, 5, 6]), np.array([11.0, 17.0, 19.0]), np.array([2.0, 3.0, 5.0])
+    low, origin, spacing = (
+        np.array([4, 5, 6]),
+        np.array([11.0, 17.0, 19.0]),
+        np.array([2.0, 3.0, 5.0]),
+    )
     for level in (-10, values.min(), 0.0, values[2, 2, 2], values.max(), 10):
         expected = mesh._tile_mesh(values, valid, low, level, origin, spacing)
         actual = mesh._tile_mesh(values, valid, low, level, origin, spacing, prepared=prepared)
