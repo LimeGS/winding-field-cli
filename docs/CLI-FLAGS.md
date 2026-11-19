@@ -69,7 +69,7 @@ The corresponding family tests must compare maximal file and flag requests.
 | `prepared build/resume/verify` | `field_workflow.load_run_config` | Frame/voxel/grid/sheet/calibration; target, weights, observed, fixed, constraints and order artifacts+SHA; solver; execution; GPU lease; source identity |
 | `prepared mesh/surfaces` | `surface_workflow.load_surface_config` | Field or mesh descriptor; field geometry; raw levels; extraction execution; render settings; parallel levels; resume |
 | `prepared render` | `surface_workflow._render_settings` | Mesh path, output, dimensions, views, triangle batch, levels, reserve |
-| `export-sheets` | `original_pipeline.settings`, `patch_pipeline.settings`, `flattening_matrix.settings` | Run/field/mesh exclusivity, levels, CT and selected level, output frame, mode-specific pitch, budgets, cache/workers, backend/native settings, centerline/reference controls, TIFF and resume |
+| `export-sheets` | `flattening.original_pipeline.settings`, `flattening.patches.settings`, `flattening.matrix.settings` | Run/field/mesh exclusivity, levels, CT and selected level, output frame, mode-specific pitch, budgets, cache/workers, backend/native settings, centerline/reference controls, TIFF and resume |
 | `extract-range` | `range_surface._recipe`, `_bounds` | Field+geometry, repeated umbilicus points, handedness, W/theta reference, samples per W, maximum edge, exact decimal W bounds |
 | `join-ranges` | `range_surface` | Actual input range artifacts and output; no extra settings recipe |
 | `export-uvw` | `uvw_pipeline`, field descriptors | Field+geometry, reference-sheet data, levels, CT/calibration/selected level, canvas, workers, cache, output and resume |

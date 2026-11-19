@@ -32,7 +32,7 @@ def _root(run):
 
 
 def _settings(config):
-    from .native_geometry import solver_identity
+    from .flattening.native_charts import solver_identity
 
     result = dict(
         coverage_target=config.get("coverage_target", 1.0),
@@ -124,7 +124,7 @@ def verify_ct_snapshot(root, volume):
 
 
 def _geometry_and_render(reader, store, volume, settings, pitch, until, *, offline=False):
-    from .native_geometry import SLIM_BATCH_FACES, flatten_mesh, assemble, summary
+    from .flattening.native_charts import SLIM_BATCH_FACES, flatten_mesh, assemble, summary
     from .native_render import render
 
     target = settings["coverage_target"]

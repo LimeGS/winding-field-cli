@@ -54,7 +54,7 @@ The optional `tifxyz` extra uses separately installed libigl 2.6.3 and tifffile
 
 ## Native shared-edge assembly
 
-`winding_field.native_geometry.weld` adapts the bounded cotangent-displacement
+`winding_field.flattening.native_charts.weld` adapts the bounded cotangent-displacement
 seam welding from this project's Paris4 experiment:
 `vesuvius-challenge/experiments/winding-field-exp/six-surfaces-opt-20261016/global_sheet.py`.
 The native implementation keeps a disk-backed frontier and explicit cycle cuts;
@@ -65,7 +65,7 @@ The shared project's MIT notice is in `licenses/winding-field-MIT.txt`.
 
 ## Original global CT recipe
 
-`original_recipe.py` and `original_tifxyz.py` port this project's frozen
+`flattening/original.py` and `flattening/original_tifxyz.py` port this project's frozen
 `whole-code-05` global LSCM, robust barycentric raster, positive-weight CT sampling,
 and November 3 mesh-derived TIFXYZ adapter. Provenance and the frozen entry-point
 SHA256 are in `provenance/original-recipe.json`, included in installed distributions.

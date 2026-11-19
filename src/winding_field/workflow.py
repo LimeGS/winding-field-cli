@@ -507,7 +507,7 @@ def _validate_products(root, state, stop=None, volume=None, *, verified_fibres=N
         reader = MeshReader(root / "meshes")
         reader.close()
     if "original" in state["stages"] and volume is not None:
-        from .original_pipeline import verify_missing_ct
+        from .flattening.original_pipeline import verify_missing_ct
 
         for record in json.loads((root / "ORIGINAL.json").read_bytes())["levels"]:
             verify_missing_ct(volume, record)
@@ -663,7 +663,7 @@ def run(
     ):
         raise ValueError("field sweep target requires a bounded resume and positive integer")
     if config.get("flattening_method") == "original":
-        from .original_pipeline import settings
+        from .flattening.original_pipeline import settings
 
         settings(config.get("original_request"))
     elif config.get("surface_output") == "native":
@@ -776,7 +776,7 @@ def run(
             from .fibres import trace
             from .field import solve
             from .meshes import mesh
-            from .flatten import flatten
+            from .flattening.legacy_charts import flatten
             from .exports import export_lasagna, export_afv
 
             torch.set_num_threads(config.get("threads", min(4, os.cpu_count() or 1)))
@@ -931,7 +931,7 @@ def run(
                     elif stage == "mesh":
                         result = mesh(root, config, stop)
                     elif stage == "original":
-                        from .original_pipeline import run_original
+                        from .flattening.original_pipeline import run_original
 
                         result = run_original(root, config, volume, stop)
                     elif stage == "tifxyz":

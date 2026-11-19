@@ -17,7 +17,7 @@ import zipfile
 import numpy as np
 from PIL import Image
 
-from .original_pipeline import (
+from .flattening.original_pipeline import (
     settings as original_settings,
     verify_level,
     sample_ct,

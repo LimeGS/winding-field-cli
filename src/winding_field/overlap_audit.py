@@ -8,7 +8,7 @@ import zlib
 
 import numpy as np
 
-from .flatten import iter_overlap_blocks
+from .flattening.legacy_charts import iter_overlap_blocks
 from .util import atomic_json
 
 PREDICATE = "triangle-clip-area-v1"
