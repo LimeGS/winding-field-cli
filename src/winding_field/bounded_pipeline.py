@@ -26,7 +26,7 @@ from .util import atomic_json,digest,file_sha
 def surface_maps(volume,root,config,lo,hi,stop=None):
     if config.get('lasagna_input'):
         from .lasagna_input import prepare as prepare_import,read_observations,streamed
-        if config.get('lasagna_geometry') or not config.get('fibres'):
+        if config.get('lasagna_geometry'):
             raise ValueError('bounded preparation cannot use calibrated physical-frame imports')
         if streamed(config):
             geometry=dict(shape_zyx=(hi-lo).tolist(),roi_lo_zyx=lo.tolist(),stride=1,frame=digest(volume.identity))
@@ -37,6 +37,8 @@ def surface_maps(volume,root,config,lo,hi,stop=None):
                 maps.calibration=maps;maps.calibration_factor=1;maps.calibration_first=lo
                 yield maps,reader.identity
         else:
+            if not config.get('fibres'):
+                raise ValueError('bounded preparation cannot use calibrated physical-frame imports')
             geometry=dict(shape_zyx=(hi-lo).tolist(),spacing_xyz=np.asarray(volume.spacing_xyz).tolist(),
                           origin_xyz=(np.asarray(volume.origin_xyz)+lo[::-1]*volume.spacing_xyz).tolist(),
                           frame=digest(volume.identity),roi_lo_zyx=lo.tolist(),roi_hi_zyx=hi.tolist(),stride=1)
