@@ -68,7 +68,7 @@ def test_readme_badges_credits_and_code_license_are_explicit():
         in readme
     )
     assert "[![Coverage (local):" in readme
-    assert "[![Code license: MIT]" in readme
+    assert "[![License: MIT]" in readme
     credits = readme.split("## Credits", 1)[1].split("## License", 1)[0]
     for tool in ["Lasagna", "Qual", "vc_reader", "Flatboi", "Villa", "libigl", "tifffile"]:
         assert tool in credits
