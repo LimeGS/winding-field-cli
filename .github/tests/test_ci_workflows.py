@@ -112,9 +112,12 @@ def test_pull_requests_reuse_vc_reader_and_main_resolves_the_real_wheel():
     steps = workflow('tests.yml')['jobs']['installed-package']['steps']
     full = [step for step in steps if 'python -m pip install dist/*.whl' in step.get('run', '')]
     assert len(full) == 1 and full[0]['if'] == "github.event_name != 'pull_request'"
-    cache = next(step for step in steps if step.get('uses', '').startswith('actions/cache@'))
+    cache = next(step for step in steps if step.get('uses', '').startswith('actions/cache/restore@'))
     assert cache['if'] == "github.event_name == 'pull_request'"
     assert '${{ steps.vc.outputs.key }}' in cache['with']['key'] and '${{ matrix.python }}' in cache['with']['key']
+    save = next(step for step in steps if step.get('uses', '').startswith('actions/cache/save@'))
+    assert save['with']['key'] == '${{ steps.vc-cache.outputs.cache-primary-key }}'
+    assert steps.index(save) < next(i for i, step in enumerate(steps) if step.get('run', '').startswith('python -m pytest'))
     fast = next(step for step in steps if step.get('name') == 'Install wheel with cached vc-reader (pull requests)')
     assert '--no-deps dist/*.whl' in fast['run'] and 'vc-reader-wheel' in fast['run']
     assert any(step.get('run') == 'python -m pip check' for step in steps)
