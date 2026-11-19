@@ -10,7 +10,10 @@ from scipy.sparse.linalg import spsolve
 
 from .flatten import components, cross2, overlap_pairs, parameterize
 
-SLIM_ITERATIONS = 10
+SLIM_ITERATIONS = 200
+SLIM_TOLERANCE = 1e-6
+# Charts per Flatboi call are bounded by faces; one call costs ~1.8 s of startup.
+SLIM_BATCH_FACES = 65536
 
 
 @lru_cache(maxsize=1)
@@ -25,10 +28,10 @@ def _solver():
 def solver_identity(method="default"):
     if method not in ("default", "slim"):
         raise ValueError("invalid native flattening method")
-    if method == "slim" and _solver() is None:
-        raise ValueError(
-            "SLIM flattening requires libigl==2.6.3; reinstall winding-field-cli with its base dependencies"
-        )
+    if method == "slim":
+        from .flattening.flatboi import require_supported_platform
+
+        require_supported_platform()
     result = dict(
         solver="scipy-lsqr" if _solver() is None else "libigl-lscm",
         numpy=np.__version__,
@@ -36,11 +39,18 @@ def solver_identity(method="default"):
         libigl=None if _solver() is None else version("libigl"),
     )
     if method == "slim":
+        from .patch_pipeline import LAUNCHER_SHA, NATIVE_RECIPES
+
         result.update(
-            solver="libigl-slim",
+            solver="flatboi-slim",
+            recipe="historical",
+            launcher_sha256=LAUNCHER_SHA,
+            binary_sha256=NATIVE_RECIPES["historical"],
             iterations=SLIM_ITERATIONS,
+            tolerance=SLIM_TOLERANCE,
             energy="symmetric-dirichlet",
             initialization="tangent-projection-or-lscm",
+            batch_faces=SLIM_BATCH_FACES,
         )
     return result
 
@@ -117,10 +127,6 @@ def _pieces(v, f, face_ids, vertex_ids, minimum=64, *, method="default", check=N
             uv, quality = _project(vertices, faces)
         except ValueError:
             uv, quality = _lscm(vertices, faces)
-        if method == "slim":
-            initialization = quality.get("method", "LSCM")
-            uv, quality = _slim(vertices, faces, uv, check)
-            quality["initialization"] = initialization
     except (ValueError, RuntimeError) as error:
         if len(f) > minimum:
             mid = len(f) // 2
@@ -159,43 +165,151 @@ def _project(vertices, faces):
     return uv, dict(quality, method="tangent-projection")
 
 
-def _slim(
-    vertices: np.ndarray, faces: np.ndarray, uv: np.ndarray, check=None
-) -> tuple[np.ndarray, dict]:
-    """Bounded symmetric-Dirichlet optimization; invalid seeds/results never bypass native gates."""
-    _validate(vertices, faces, uv)
-    igl = _solver()
-    if igl is None:
-        raise ValueError("SLIM flattening requires libigl")
-    if check:
-        check()
-    data = igl.slim_precompute(
-        vertices.astype(float),
-        faces.astype(np.int32),
-        uv.copy(),
-        igl.MappingEnergyType.SYMMETRIC_DIRICHLET,
-        np.empty(0, np.int32),
-        np.empty((0, 2)),
-        0.0,
-    )
-    for _ in range(SLIM_ITERATIONS):
-        if check:
-            check()
-        result = igl.slim_solve(data, 1).copy()
-    if check:
-        check()
-    result -= result.min(0)
-    quality = _validate(vertices, faces, result)
-    return result, dict(quality, method="SLIM", iterations=SLIM_ITERATIONS)
+def _slim_batch(items, app_run, check=None, minimum=64):
+    """Flatboi SLIM for many seeded charts at once; invalid outputs are split and retried.
+
+    ``items`` are ``(component, piece)`` pairs whose ``_pieces`` tuple has a valid seed UV. A chart whose Flatboi result fails
+    the native gates is split in halves, reseeded and solved in a follow-up call; charts that
+    cannot be split further are returned with an empty UV and the error, never the seed.
+    """
+    from .flattening.flatboi import solve_batch
+
+    done = []
+    queue = [items] if items else []
+    while queue:
+        items = queue.pop()
+        try:
+            uvs, receipt = solve_batch(
+                [(v, f, uv) for _, (v, f, uv, *_) in items],
+                app_run,
+                iterations=SLIM_ITERATIONS,
+                tolerance=SLIM_TOLERANCE,
+                check=check,
+            )
+        except RuntimeError as error:
+            # A native failure (e.g. PaStiX negative diagonal) is isolated by bisecting the
+            # batch; a single failing chart takes the split/FAILED path below.
+            if len(items) > 1:
+                mid = len(items) // 2
+                queue += [items[:mid], items[mid:]]
+                continue
+            uvs, receipt = [None], dict(steps=0, converged=False, error=str(error))
+        retry = []
+        for (component, (v, f, seed, ids, source_ids, seed_quality)), uv in zip(items, uvs):
+            try:
+                if uv is None:
+                    raise ValueError(receipt["error"])
+                if not np.isfinite(uv).all():
+                    raise ValueError("Flatboi returned non-finite UVs")
+                uv = uv - uv.min(0)
+                quality = dict(
+                    _validate(v, f, uv),
+                    method="SLIM",
+                    backend="flatboi",
+                    iterations=receipt["steps"],
+                    converged=receipt["converged"],
+                    initialization=seed_quality.get("method", "LSCM"),
+                )
+                done.append((component, (v, f, uv, ids, source_ids, quality)))
+            except ValueError as error:
+                if len(f) <= minimum:
+                    failed = (v, f, np.empty((0, 2)), ids, source_ids, {"error": str(error)})
+                    done.append((component, failed))
+                    continue
+                mid = len(f) // 2
+                for half in (slice(None, mid), slice(mid, None)):
+                    for piece in _pieces(v, f[half], ids[half], source_ids, minimum, check=check):
+                        (retry if len(piece[2]) else done).append((component, piece))
+        if retry:
+            queue.append(retry)
+    return done
+
+
+def _save_pieces(store, items):
+    """Persist (component, piece) chart results; returns chart records and boundary edges."""
+    records, edges = [], []
+    for component, (v, f, uv, ids, source_ids, quality) in items:
+        store.check()
+        name = f"chart-{int(ids.min()):012d}"
+        area2 = np.linalg.norm(np.cross(v[f[:, 1]] - v[f[:, 0]], v[f[:, 2]] - v[f[:, 0]]), axis=1)
+        store.save_arrays(
+            "charts/" + name + ".npz",
+            vertices=v,
+            faces=f,
+            uv=uv,
+            face_ids=ids,
+            vertex_ids=source_ids,
+        )
+        status = "LOCAL" if len(uv) else "FAILED"
+        records.append(
+            (
+                name,
+                int(component),
+                float(area2.sum() / 2),
+                len(f),
+                status,
+                json.dumps({"local": quality}),
+                quality.get("error"),
+            )
+        )
+        if len(uv):
+            local = np.concatenate([f[:, [0, 1]], f[:, [1, 2]], f[:, [2, 0]]])
+            source = source_ids[local]
+            orientation = np.where(source[:, 0] < source[:, 1], 1, -1)
+            order = np.argsort(source, axis=1)
+            local = np.take_along_axis(local, order, axis=1)
+            source = np.take_along_axis(source, order, axis=1)
+            _, first, counts = np.unique(source, axis=0, return_index=True, return_counts=True)
+            for index in first[counts == 1]:
+                a, b = source[index]
+                ia, ib = local[index]
+                edges.append((int(a), int(b), name, int(ia), int(ib), int(orientation[index])))
+    return records, edges
+
+
+def _commit(store, records, edges, cursor, last):
+    with store.db:
+        store.db.executemany(
+            "INSERT OR IGNORE INTO charts(name,component,area,faces,status,quality,reason) VALUES (?,?,?,?,?,?,?)",
+            records,
+        )
+        store.db.executemany("INSERT OR IGNORE INTO edges VALUES (?,?,?,?,?,?)", edges)
+        for record in records:
+            _queue(store, record[0], child=True)
+        store.set("face_cursor", cursor)
+        if cursor == last:
+            store.set("flatten_complete", True)
+        store.set("elapsed_s", store.elapsed)
 
 
 def flatten_mesh(
-    reader, store, chart_faces=1024, until=None, max_batches=None, *, method="default"
+    reader,
+    store,
+    chart_faces=1024,
+    until=None,
+    max_batches=None,
+    *,
+    method="default",
+    app_run=None,
+    offline=False,
 ):
+    """Chart the source mesh in face-ID order.
+
+    ``default`` seeds (tangent projection or LSCM) are committed per face batch. ``slim``
+    accumulates seeded charts over face batches (up to ``SLIM_BATCH_FACES``) and optimizes
+    them with one Flatboi call before committing the whole group and its cursor.
+    """
     if type(chart_faces) is not int or not 1 <= chart_faces <= 8192:
         raise ValueError("chart_faces must be1..8192")
     if method not in ("default", "slim"):
         raise ValueError("invalid native flattening method")
+    if method == "slim":
+        from .flattening.flatboi import resolve_app_run
+        from .patch_pipeline import check_flatboi
+
+        app_run = check_flatboi(str(resolve_app_run(app_run, offline=offline)), "historical")[
+            "app_run"
+        ]
     _schema(store)
     total, area, last = store.get("source_faces"), store.get("source_area"), store.get("last_face")
     if total is None:
@@ -211,10 +325,11 @@ def flatten_mesh(
     store.phase = "flatten"
     cursor = store.get("face_cursor", 0)
     batches = 0
+    pending, pending_faces = [], 0
     while max_batches is None or batches < max_batches:
         store.check()
         reader.validate()
-        if until is not None:
+        if until is not None and not pending:
             available = store.db.execute(
                 "SELECT coalesce(sum(area),0) FROM charts WHERE status!='FAILED'"
             ).fetchone()[0]
@@ -225,8 +340,9 @@ def flatten_mesh(
             (cursor, chart_faces),
         ).fetchall()
         if not rows:
-            with store.db:
-                store.set("flatten_complete", True)
+            if not pending:
+                with store.db:
+                    store.set("flatten_complete", True)
             break
         rows = np.asarray(rows, np.int64)
         vi, faces = np.unique(rows[:, 1:4], return_inverse=True)
@@ -237,75 +353,39 @@ def flatten_mesh(
             ]
         )
         faces = faces.reshape(-1, 3)
-        records = []
-        edges = []
+        items = []
         for component in np.unique(rows[:, 4]):
             selection = np.flatnonzero(rows[:, 4] == component)
             for connected in components(faces[selection]):
                 subset = selection[connected]
-                for v, f, uv, ids, source_ids, quality in _pieces(
-                    vertices, faces[subset], rows[subset, 0], vi, method=method, check=store.check
+                for piece in _pieces(
+                    vertices, faces[subset], rows[subset, 0], vi, check=store.check
                 ):
-                    store.check()
-                    name = f"chart-{int(ids.min()):012d}"
-                    area2 = np.linalg.norm(
-                        np.cross(v[f[:, 1]] - v[f[:, 0]], v[f[:, 2]] - v[f[:, 0]]), axis=1
-                    )
-                    store.save_arrays(
-                        "charts/" + name + ".npz",
-                        vertices=v,
-                        faces=f,
-                        uv=uv,
-                        face_ids=ids,
-                        vertex_ids=source_ids,
-                    )
-                    status = "LOCAL" if len(uv) else "FAILED"
-                    records.append(
-                        (
-                            name,
-                            int(component),
-                            float(area2.sum() / 2),
-                            len(f),
-                            status,
-                            json.dumps({"local": quality}),
-                            quality.get("error"),
-                        )
-                    )
-                    if len(uv):
-                        local = np.concatenate([f[:, [0, 1]], f[:, [1, 2]], f[:, [2, 0]]])
-                        source = source_ids[local]
-                        orientation = np.where(source[:, 0] < source[:, 1], 1, -1)
-                        order = np.argsort(source, axis=1)
-                        local = np.take_along_axis(local, order, axis=1)
-                        source = np.take_along_axis(source, order, axis=1)
-                        _, first, counts = np.unique(
-                            source, axis=0, return_index=True, return_counts=True
-                        )
-                        for index in first[counts == 1]:
-                            a, b = source[index]
-                            ia, ib = local[index]
-                            edges.append(
-                                (int(a), int(b), name, int(ia), int(ib), int(orientation[index]))
-                            )
-        with store.db:
-            store.db.executemany(
-                "INSERT OR IGNORE INTO charts(name,component,area,faces,status,quality,reason) VALUES (?,?,?,?,?,?,?)",
-                records,
-            )
-            store.db.executemany("INSERT OR IGNORE INTO edges VALUES (?,?,?,?,?,?)", edges)
-            for record in records:
-                _queue(store, record[0], child=True)
-            store.set("face_cursor", int(rows[-1, 0]))
-            if int(rows[-1, 0]) == last:
-                store.set("flatten_complete", True)
-            store.set("elapsed_s", store.elapsed)
+                    items.append((component, piece))
         cursor = int(rows[-1, 0])
         batches += 1
+        if method == "default":
+            _commit(store, *_save_pieces(store, items), cursor, last)
+            continue
+        pending.extend(items)
+        pending_faces += len(rows)
+        if pending_faces >= SLIM_BATCH_FACES:
+            _flush_slim(store, pending, app_run, cursor, last)
+            pending, pending_faces = [], 0
+    if pending:
+        _flush_slim(store, pending, app_run, cursor, last)
     return dict(
         source_faces=total,
         source_area=area,
         processed_faces=store.db.execute("SELECT coalesce(sum(faces),0) FROM charts").fetchone()[0],
     )
+
+
+def _flush_slim(store, items, app_run, cursor, last):
+    seeded = [item for item in items if len(item[1][2])]
+    failed = [item for item in items if not len(item[1][2])]
+    solved = _slim_batch(seeded, app_run, check=store.check)
+    _commit(store, *_save_pieces(store, failed + solved), cursor, last)
 
 
 def weld(uv, faces, fixed, target, vertices):

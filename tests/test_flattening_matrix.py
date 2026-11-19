@@ -53,9 +53,8 @@ def test_settings_select_native_recipe_only_for_slim(tmp_path):
     req = request(tmp_path)
     assert m.settings(req, "lscm", "sheet")["flattening_solver"] == "lscm"
     slim = m.settings(req, "slim", "sheet")
-    assert slim["native_recipe"] == "installed-2f89bfc9" and slim["app_run"].endswith(
-        "_native/vc3d/AppRun"
-    )
+    # SLIM defaults to the pinned historical AppImage, resolved (and verified) when it runs.
+    assert slim["native_recipe"] == "historical" and slim.get("app_run") is None
     with pytest.raises(ValueError, match="native_recipe"):
         m.settings(dict(req, native_recipe="unknown"), "slim", "sheet")
     for extra in ({"max_patch_faces": 32}, {"max_depth": 2}, {"iterations": 10}):

@@ -168,6 +168,22 @@ def test_pull_requests_reuse_vc_reader_and_main_resolves_the_real_wheel():
     assert "-n auto --dist loadfile" in pytest_step
 
 
+def test_linux_jobs_provision_and_require_flatboi():
+    steps = workflow("tests.yml")["jobs"]["installed-package"]["steps"]
+    provision = [
+        s for s in steps if "winding_field.flattening.flatboi --provision" in s.get("run", "")
+    ]
+    assert len(provision) == 1 and "runner.os == 'Linux'" in provision[0]["if"]
+    pytest_step = next(s for s in steps if s.get("run", "").startswith("python -m pytest"))
+    assert (
+        pytest_step["env"]["WINDING_REQUIRE_FLATBOI"] == "${{ runner.os == 'Linux' && '1' || '0' }}"
+    )
+    assert steps.index(provision[0]) < steps.index(pytest_step)
+    docker = workflow("docker.yml")
+    commands = "\n".join(step.get("run", "") for step in docker["jobs"]["cpu"]["steps"])
+    assert "-e WINDING_REQUIRE_FLATBOI=1" in commands
+
+
 def test_installed_sdist_checks_have_their_build_dependencies():
     steps = workflow("tests.yml")["jobs"]["installed-package"]["steps"]
     setup = next(

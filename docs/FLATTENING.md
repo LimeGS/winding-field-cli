@@ -31,8 +31,8 @@ winding-field export-sheets --mesh-bundle runs/paris4-flags-W-60 \
 Replace CT path/level with the **actual calibrated dataset**, not the field's
 coarse Zarr. The pitch/memory above are an explicit example, not measured
 full-scroll settings or the user's production flattening recipe. Reuse your
-approved values. LSCM needs no native Flatboi; SLIM still requires its pinned
-binary and Linux admission. Complete mappings, automatic values and file/flag
+approved values. LSCM needs no native Flatboi; SLIM always runs Flatboi (Linux
+x86_64; see [SLIM runtime](#slim-runtime-flatboi)) with Linux admission. Complete mappings, automatic values and file/flag
 precedence are in [CLI-FLAGS](CLI-FLAGS.md).
 
 ## Export from a saved run
@@ -90,34 +90,60 @@ Remote field exports can use the same `zarr-v2` field descriptor documented in
 still supplied with `--levels` in raw phi units. This adds remote **field** reads,
 not CT texturing or a different flattening algorithm.
 
+## SLIM runtime (Flatboi)
+
+SLIM means Flatboi's symmetric-Dirichlet optimizer in every pipeline (native runs,
+`export-sheets` patches and sheets). The default runtime is the hash-pinned VC3D
+AppImage in [native provenance](../provenance/flatboi.json) (recipe `historical`),
+which bundles its own libraries and loader. When no `app_run` is given it is
+resolved in this order:
+
+1. `WINDING_FLATBOI_APP_RUN` (an extracted `AppRun`);
+2. `/opt/vc3d/AppRun` (the container image);
+3. the user cache (`~/.cache/winding-field/flatboi`, or `WINDING_FLATBOI_CACHE`);
+4. a one-time verified download and extraction of the AppImage
+   (`python -m winding_field.flattening.flatboi --provision` does it ahead of time).
+
+Downloads are disabled with `--offline` runs or `WINDING_FLATBOI_OFFLINE=1`. The launcher
+and binary SHA256 are verified on every use. Flatboi is Linux x86_64 only: on other
+platforms SLIM is rejected before a run is created and native runs default to LSCM.
+The vendored `installed-2f89bfc9` binary lacks its runtime libraries, so that recipe
+requires an explicit `app_run` from an installation that provides them.
+
 ## Native run flattening
 
 New `winding-field run` and `plan` requests with `--surface-output native`
-default to `--flattening-method slim`. Each bounded local chart uses the existing
-near-planar projection or LSCM initialization, then **10 libigl SLIM iterations**
-with symmetric-Dirichlet energy. The base package requires `libigl==2.6.3`;
-`.[tifxyz]` adds TIFF export only. No Flatboi executable or external export
-pipeline is involved.
+default to `--flattening-method slim` on Linux x86_64 (`default` elsewhere). Each
+bounded local chart gets the existing near-planar projection or LSCM seed; seeded
+charts from consecutive face batches (up to 65,536 faces) are then optimized together
+by **one Flatboi call** (symmetric Dirichlet, at most 200 iterations, tolerance 1e−6).
+Charts are laid out in disjoint UV boxes for the call; translation does not change
+the energy, and overlapping seeds would make the solve ~30× slower.
 
 Seeds and optimized UVs must pass the unchanged finite, positive-area,
-non-overlap and edge-stretch gates (0.25–4). Failed charts remain accounted for;
-there is no silent fallback to unoptimized UVs. Exact source geometry/IDs and
-the existing seam welding, cuts, recovery and rendering remain unchanged.
-This is local optimization, not a whole-sheet or globally injective SLIM map.
-Ten iterations are a work bound, not a convergence or physical-acceptance claim.
+non-overlap and edge-stretch gates (0.25–4). A chart whose Flatboi result fails is
+split and re-solved; one that cannot be split further is recorded as failed. A native
+failure (for example PaStiX's negative diagonal) bisects the batch until the failing
+chart is isolated. There is no silent fallback to seed UVs. Exact source geometry/IDs
+and the existing seam welding, cuts, recovery and rendering remain unchanged (the
+bounded weld recovery step still uses libigl). This is local optimization, not a
+whole-sheet or globally injective SLIM map.
 
-`--flattening-method default` retains historical local mapping;
+Measured on 120 curved 1,024-face charts: Flatboi reached the same symmetric-Dirichlet
+energy as 10 libigl SLIM iterations (mean 4.00057, no flips) in 9.7 s versus 3.1 s, i.e.
+about 80 µs per face including process startup.
+
+`--flattening-method default` keeps projection/LSCM charts;
 `--flattening-method original --flattening-config FILE` retains global LSCM.
 Explicit `slim` is rejected for `--surface-output atlas|tifxyz`; omitting the
 method on those branches keeps their historical behavior. `--export-tifxyz`
 still adds mesh-derived TIFFs to native renders.
 
 The CLI saves the resolved method in `RUN.json`; native identities bind the
-algorithm, initialization, energy and iteration bound. Resume uses the saved
-method without backfilling missing fields: historical configs with no method
-still use historical mapping. As before, implementation/runtime changes require
-the original package or a new output. Completed charts are verified/reused;
-interruption within SLIM restarts only the uncommitted chart on continuation.
+solver (`flatboi-slim`), recipe, launcher/binary hashes, iteration bound, tolerance
+and batch size. Implementation/runtime changes require the original package or a new
+output. Completed charts are verified/reused; interruption within a SLIM group restarts
+only that uncommitted group on continuation.
 
 ## Explicit solver × scope matrix
 
@@ -147,11 +173,10 @@ Minimal `matrix.json` for LSCM:
 }
 ```
 
-For SLIM, add `"app_run": "/opt/vc3d/AppRun"`. The default is the pinned
-`installed-2f89bfc9` Flatboi binary used by `constant-sheet`. To select the
-official Villa stable release recorded in [native provenance](../provenance/flatboi.json),
-also add `"native_recipe": "historical"`. Both launcher and binary hashes
-must match the selected recipe. Its settings remain cap200, batches10, two threads, symmetric
+For SLIM, `app_run` is optional: the pinned `historical` AppImage is resolved as in
+[SLIM runtime](#slim-runtime-flatboi). To use the `installed-2f89bfc9` binary instead,
+set `"native_recipe": "installed-2f89bfc9"` and an `app_run` whose installation
+provides its libraries. Both launcher and binary hashes must match the selected recipe. Its settings remain cap200, batches10, two threads, symmetric
 Dirichlet and tolerance1e−6. SLIM runs require a cgroup v2 envelope:
 
 ```sh
