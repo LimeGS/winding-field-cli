@@ -130,7 +130,7 @@ def _write_obj(path, vertices, uv, faces):
 
 
 def solve_batch(
-    charts, app_run, *, iterations=200, tolerance=1e-6, check=None, threads=2, timeout=1800.0
+    charts, app_run, *, iterations=200, tolerance=1e-6, check=None, threads=1, timeout=1800.0
 ):
     """Run one Flatboi SLIM solve over many disconnected charts.
 
@@ -138,6 +138,11 @@ def solve_batch(
     keeps its own seed; Flatboi's energy is separable across components. Returns per-chart
     UV arrays and the shared solver receipt. Raises on native failure, ignored warm starts or
     a non-monotone energy history; per-chart validity is the caller's gate.
+
+    One PaStiX thread by default: multithreaded factorization is not bitwise reproducible
+    (every chart of a 300-chart batch differed by up to 3e-7 between identical runs), and a
+    resumed run must recompute an interrupted group to the same bytes. It costs no time at
+    the native batch size (65k faces: 2.7 s with one thread, 2.8-3.1 s with two).
     """
     from ..surface_export import read_flatboi_uv
 

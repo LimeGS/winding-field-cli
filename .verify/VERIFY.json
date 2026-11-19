@@ -1,0 +1,71 @@
+{
+ "baseline": {
+  "ref": "origin/main",
+  "sha": "db59e6cb53d65c433a08779d957e3f5c420c1c0a"
+ },
+ "dirty": true,
+ "head": "db59e6cb53d65c433a08779d957e3f5c420c1c0a",
+ "status": "PASS",
+ "steps": {
+  "cross-version": {
+   "resume_baseline_run": "resumed",
+   "reuse_modes": {
+    "fibres": "reused",
+    "field": "run",
+    "prepare": "reused"
+   },
+   "seconds": 13.9,
+   "status": "PASS"
+  },
+  "e2e-demo": {
+   "files": 135,
+   "resume_changed": [
+    "RUN.json"
+   ],
+   "seconds": 9.0,
+   "status": "PASS"
+  },
+  "e2e-native": {
+   "levels": 7,
+   "method": "slim",
+   "seconds": 15.1,
+   "solver": "flatboi-slim",
+   "status": "PASS"
+  },
+  "flags": {
+   "added": [],
+   "approved_removals": [],
+   "options": 994,
+   "seconds": 3.6,
+   "status": "PASS"
+  },
+  "golden": {
+   "identical": [
+    "field.solve.chunks",
+    "legacy.parameterize",
+    "matrix.lscm.patches",
+    "matrix.lscm.sheet",
+    "native._lscm",
+    "native._pieces",
+    "native.pipeline.default.charts",
+    "native.pipeline.slim.charts",
+    "native_sheet.mean_value_map",
+    "original.make_map"
+   ],
+   "seconds": 6.3,
+   "status": "PASS"
+  },
+  "review": {
+   "changed_files": 10,
+   "checklist": [
+    "R7: The container and sdist suites only run on pushes to main: check mounts, packaged files and test-image dependencies before merging",
+    "R10: Changes to the verifier, its approvals or these rules carry a reason in the PR body; approvals name the baseline they apply to and are removed once merged"
+   ],
+   "seconds": 0.0,
+   "status": "WARN",
+   "warnings": [
+    "REVIEW.md is not on the baseline yet; using the working tree copy"
+   ]
+  }
+ }
+}

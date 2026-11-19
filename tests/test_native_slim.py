@@ -92,6 +92,25 @@ def test_batched_charts_match_individual_solves(flatboi_app):
         np.testing.assert_allclose(uv - uv.min(0), single[0] - single[0].min(0), atol=1e-6)
 
 
+def test_large_batches_are_bitwise_reproducible(flatboi_app):
+    """A resumed run recomputes an interrupted group and must get the same bytes."""
+    from winding_field.flattening.flatboi import solve_batch
+
+    from test_meshes import curved_strip
+
+    from winding_field.native_geometry import _lscm
+
+    vertices, faces = curved_strip()
+    seed, _ = _lscm(vertices, faces)
+    rng = np.random.default_rng(0)
+    charts = [
+        (vertices * (1 + 0.1 * rng.random()) + [3.0 * k, 0, 0], faces, seed) for k in range(300)
+    ]
+    first, _ = solve_batch(charts, flatboi_app)
+    second, _ = solve_batch(charts, flatboi_app)
+    assert all(np.array_equal(a, b) for a, b in zip(first, second))
+
+
 def test_slim_native_pipeline_records_flatboi_and_reuses_completed_charts(tmp_path, flatboi_app):
     from test_native_runtime import field_case
     from winding_field.native_pipeline import work
