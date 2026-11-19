@@ -347,7 +347,7 @@ See [flattening setup and advanced reference](docs/FLATTENING.md) for details.
 
 | Task | Command / guide |
 | --- | --- |
-| Choose LSCM/SLIM and patches/whole sheet | `export-sheets --flattening-solver lscm\|slim --scope patches\|sheet` — [configuration](docs/FLATTENING.md#explicit-solver--scope-matrix) |
+| Choose LSCM/SLIM and patches/whole sheet | `export-sheets --flattening-solver lscm-slim\|lscm\|slim --scope patches\|sheet` — [configuration](docs/FLATTENING.md#explicit-solver--scope-matrix) |
 | Extract and join continuous W ranges | `extract-range`, `join-ranges` — [recipe](docs/RANGES.md) |
 | Align neighbouring W levels on one UV grid | `export-uvw` — [reference map and settings](docs/UVW.md) |
 | Prepare, flatten and resume a constant-W sheet | `constant-sheet` — [stages](docs/CONSTANT-SHEET.md) |

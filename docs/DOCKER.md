@@ -187,7 +187,7 @@ does not remove that cost.
 | Custom Lasagna | Independently add `--lasagna-input /data/surface.lasagna.json` and, when needed, `--lasagna-geometry`; see [Lasagna imports](LASAGNA.md) |
 | Reused fields / prepared workflows | `prepared surfaces`, `export-sheets --field-config`, or `extract-range`; see [README](../README.md) |
 | Level/range extraction | Preserve the existing field config and supported holes; use the [mesh/range recipes](../README.md) |
-| LSCM or SLIM, patches or sheet | `export-sheets --flattening-solver lscm\|slim --scope patches\|sheet`; see [matrix settings](FLATTENING.md) |
+| LSCM or SLIM, patches or sheet | `export-sheets --flattening-solver lscm-slim\|lscm\|slim --scope patches\|sheet`; see [matrix settings](FLATTENING.md) |
 | Original mapping / historical patches | Existing `--flattening-method original\|patches` routes; do not combine with solver/scope selection |
 | Constant-W stages | Existing [constant-sheet](CONSTANT-SHEET.md) commands, with `--native-recipe historical` for flatten/import |
 | Atlas, TIFXYZ, probes and verification | Existing commands are installed in both images; run `wf --help` |
