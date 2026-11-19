@@ -9,6 +9,7 @@ import sys
 
 from . import __version__
 from .io import Volume, resolve_source
+from .flattening.selection import EXPORT_METHODS, RUN_METHODS, SCOPES, SOLVERS
 
 TOOLS = {
     "field-advice": (
@@ -449,7 +450,7 @@ def main(argv=None):
         )
         p.add_argument(
             "--flattening-method",
-            choices=["slim", "default", "original"],
+            choices=list(RUN_METHODS),
             help="slim: Flatboi SLIM (default for new native runs on Linux x86_64), default: tangent projection/LSCM charts, original: global LSCM; independent of field resolution",
         )
         p.add_argument(
@@ -637,15 +638,15 @@ def main(argv=None):
     )
     p.add_argument(
         "--flattening-method",
-        choices=["original", "patches"],
+        choices=list(EXPORT_METHODS),
         help="historical recipe; cannot combine with --flattening-solver/--scope",
     )
     p.add_argument(
-        "--flattening-solver", choices=["lscm", "slim"], help="explicit algorithm; requires --scope"
+        "--flattening-solver", choices=list(SOLVERS), help="explicit algorithm; requires --scope"
     )
     p.add_argument(
         "--scope",
-        choices=["patches", "sheet"],
+        choices=list(SCOPES),
         help="independent patches or whole connected sheets; requires --flattening-solver",
     )
     p.add_argument(
@@ -842,7 +843,7 @@ def main(argv=None):
                 if flag in config
             }
             if config["flattening_method"] == "original":
-                from .original_pipeline import settings
+                from .flattening.original_pipeline import settings
 
                 if any(
                     name in config
@@ -992,17 +993,17 @@ def main(argv=None):
                     if args.level is None:
                         args.level = 0
             if args.run:
-                from .run_sheet_export import export_run as export_existing
+                from .flattening.run_sheet_export import export_run as export_existing
             elif args.flattening_solver is not None or args.scope is not None:
                 if args.flattening_method or not (args.flattening_solver and args.scope):
                     raise ValueError(
                         "flattening selection requires --flattening-solver and --scope together, without --flattening-method"
                     )
-                from .matrix_pipeline import export_existing
+                from .flattening.matrix_pipeline import export_existing
             elif args.flattening_method == "patches":
-                from .patch_pipeline import export_existing
+                from .flattening.patches import export_existing
             elif args.flattening_method == "original":
-                from .original_pipeline import export_existing
+                from .flattening.original_pipeline import export_existing
             else:
                 raise ValueError(
                     "flattening selection required: --flattening-solver with --scope, or historical --flattening-method"

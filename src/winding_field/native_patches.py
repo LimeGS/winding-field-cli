@@ -48,7 +48,7 @@ def admit_memory(required_bytes, *, phase, operator_bytes=None):
                 memory["known"] = False
                 memory["errors"].append(str(error))
     else:
-        from .original_pipeline import available_memory
+        from .flattening.original_pipeline import available_memory
 
         available = available_memory()
         memory = dict(

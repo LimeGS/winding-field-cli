@@ -4,6 +4,7 @@ import math
 from pathlib import Path
 
 import numpy as np
+from .flattening.selection import RUN_METHODS
 
 
 def read_tifxyz_request(path):
@@ -222,7 +223,7 @@ def validate_config(config):
         ("prediction", ("classical", "sd2", "qual-v2")),
         ("ct_mode", ("auto", "download", "stream")),
         ("surface_output", ("atlas", "tifxyz", "native")),
-        ("flattening_method", ("default", "original", "slim")),
+        ("flattening_method", RUN_METHODS),
     ]:
         if name in config and config[name] not in choices:
             raise ValueError("invalid " + name)

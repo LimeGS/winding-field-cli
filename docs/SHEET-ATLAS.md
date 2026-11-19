@@ -34,7 +34,7 @@ Each `SHEET.json` uses schema `winding-atlas-sheet-v1` and contains:
   A bound `CT-IDENTITY.json`, when present, must agree with `ct` and `frame`.
 - `map.npz` contains exact `world`, oriented `faces`, per-vertex `uv`, preserved
   `source_vertex_ids`, and per-face `source_face_rows` and `source_face_ids`.
-- `RENDER.json` and `render/tile-*/TILE.json` come from `patch_pipeline.render_map`:
+- `RENDER.json` and `render/tile-*/TILE.json` come from `flattening.patches.render_map`:
   window 0–255, rows decreasing in UV V, PNG/mask/XYZ payload hashes and global
   lattice coordinates. Every expected tile and matching halo must be present.
 

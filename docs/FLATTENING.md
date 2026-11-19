@@ -447,3 +447,25 @@ macOS production runtime is unsupported. No whole-W throughput guarantee is made
 - [Original mapping and coordinate conventions](FORMATS.md#original-recipe-products)
 - [Native masks, time and coverage](FORMATS.md#native-global-surfaces)
 - [Direct request, resource and verification contracts](FORMATS.md#direct-tifxyz-experimental)
+
+### Code layout
+
+All parameterization code lives in `src/winding_field/flattening/`. The old top-level
+module names (`winding_field.patch_pipeline`, `python -m winding_field.patch_continue`, …)
+remain importable aliases of the same module objects.
+
+| Module | Was | Role |
+|---|---|---|
+| `selection` | — | Valid `--flattening-method`, `--flattening-solver`, `--scope` and export method names |
+| `lscm` | — | Shared libigl LSCM primitive; every LSCM solve goes through it |
+| `flatboi`, `flatboi_checkpoint` | `flatboi_checkpoint` | Flatboi SLIM runtime, batched solves, checkpointed batches (only SLIM backend) |
+| `native_charts` | `native_geometry` | Native-run local charts, seam welding, assembly |
+| `native_sheet` | `native_global` | Cut-to-disk, mean-value and ARAP whole-sheet maps |
+| `matrix`, `matrix_pipeline` | `flattening_matrix`, `matrix_pipeline` | `export-sheets` solver × scope matrix |
+| `patches`, `patch_mapping`, `patch_continue`, `patch_visuals` | `patch_pipeline`, … | Historical Flatboi patches |
+| `original`, `original_pipeline`, `original_tifxyz` | `original_recipe`, … | Original global LSCM recipe |
+| `sheet_prepare`, `sheet_finish`, `sheet_atlas*`, `constant_sheet`, `run_sheet_export` | same | Whole-sheet preparation, publication, atlases |
+| `legacy_charts` | `flatten` | Legacy linked-chart LSCM for `--surface-output atlas` |
+
+Kernel and code identities hash the moved files, so the refactor changes recorded code
+hashes but not numerical outputs.

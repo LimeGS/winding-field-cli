@@ -3,6 +3,8 @@ import sys
 from pathlib import Path
 import numpy as np
 import pytest
+
+from winding_field.flattening import module_file
 from winding_field import patch_pipeline as p
 from winding_field.util import atomic_json, file_sha
 
@@ -179,7 +181,7 @@ def test_continue_export_reuses_map_and_inherits_ct_ledger(tmp_path, monkeypatch
     CT.identity = dict(
         CT.identity,
         sampler="vc_reader-float64-support-v1",
-        sampler_sha256=file_sha(Path(p.__file__).with_name("native_ct_sampling.py")),
+        sampler_sha256=file_sha(module_file("native_ct_sampling")),
         backend="vc_reader-zarr-v2-checked-v1",
         native_runtime=runtime_identity(),
     )

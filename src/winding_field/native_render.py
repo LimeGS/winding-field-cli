@@ -14,7 +14,7 @@ import zlib
 import numpy as np
 from PIL import Image
 
-from .flatten import cross2
+from .flattening.legacy_charts import cross2
 from .preview import sample_ct
 from .util import atomic_json, digest
 
