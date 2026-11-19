@@ -85,6 +85,8 @@ def test_full_suites_and_optional_gpu_checks_are_preserved_and_timed():
     docker = workflow('docker.yml')
     commands = '\n'.join(step.get('run', '') for step in docker['jobs']['cpu']['steps'])
     assert '--durations=30 -o pythonpath=' in commands and '/tests' in commands
+    assert 'dst=/benchmarks,readonly' in commands
+    assert 'build==' in (ROOT / 'docker/testing.Dockerfile').read_text()
     suite = next(step for step in docker['jobs']['cpu']['steps']
                  if step.get('name') == 'Installed suite with official native checkpoint qualification')
     assert suite['if'] == "github.event_name != 'pull_request'"
