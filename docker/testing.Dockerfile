@@ -5,7 +5,7 @@ USER root
 RUN apt-get update -o APT::Update::Error-Mode=any && \
     apt-get install -y --no-install-recommends git && \
     rm -rf /var/lib/apt/lists/* && \
-    uv pip install --python /opt/winding-field/bin/python pytest==8.4.2 && \
+    uv pip install --python /opt/winding-field/bin/python pytest==8.4.2 build==1.2.2.post1 wheel==0.45.1 && \
     mkdir /src && \
     ln -s /opt/winding-field/lib/python3.12/site-packages/winding_field /src/winding_field
 USER 10001:10001

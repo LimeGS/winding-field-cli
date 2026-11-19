@@ -63,7 +63,9 @@ def _derived_sha(db, summary):
         _rows_sha(db, "SELECT * FROM edges ORDER BY level,a,b"),
         _rows_sha(db, "SELECT * FROM components ORDER BY level,root"),
     ]
-    return hashlib.sha256(json.dumps([parts, summary], sort_keys=True, allow_nan=False).encode()).hexdigest()
+    return hashlib.sha256(
+        json.dumps([parts, summary], sort_keys=True, allow_nan=False).encode()
+    ).hexdigest()
 
 
 def _manifest(metadata, identity, summary, total, database_sha):
@@ -85,7 +87,13 @@ class MeshDB:
     """One SQLite writer; metadata, all geometry and tile cursor commit together."""
 
     def __init__(
-        self, path: str | Path, metadata: dict, identity: dict, *, resume: bool = False, reserve_bytes: int = 0
+        self,
+        path: str | Path,
+        metadata: dict,
+        identity: dict,
+        *,
+        resume: bool = False,
+        reserve_bytes: int = 0,
     ):
         self.root = Path(path)
         self.db = None
@@ -124,7 +132,11 @@ class MeshDB:
                         raise ValueError("mesh derived state checksum differs")
                     manifest = self.root / "MESH.json"
                     if manifest.exists() and json.loads(manifest.read_bytes()) != _manifest(
-                        metadata, identity, self.get("summary"), identity["total_tiles"], sha(dbpath)
+                        metadata,
+                        identity,
+                        self.get("summary"),
+                        identity["total_tiles"],
+                        sha(dbpath),
                     ):
                         raise ValueError("completed mesh database/manifest changed")
                 else:
@@ -151,7 +163,9 @@ class MeshDB:
                 self.set("binding", self.binding)
                 self.set("next_tile", 0)
                 self.set("complete", False)
-                self.db.executemany("INSERT INTO levels VALUES(?,?)", enumerate(identity.get("levels", [0.0])))
+                self.db.executemany(
+                    "INSERT INTO levels VALUES(?,?)", enumerate(identity.get("levels", [0.0]))
+                )
                 self.db.commit()
             s = dbpath.stat()
             self.db_inode = s.st_dev, s.st_ino
@@ -162,13 +176,20 @@ class MeshDB:
             raise
 
     def get(self, key):
-        return json.loads(self.db.execute("SELECT value FROM meta WHERE key=?", (key,)).fetchone()[0])
+        return json.loads(
+            self.db.execute("SELECT value FROM meta WHERE key=?", (key,)).fetchone()[0]
+        )
 
     def set(self, key, value):
-        self.db.execute("INSERT OR REPLACE INTO meta VALUES(?,?)", (key, json.dumps(value, allow_nan=False)))
+        self.db.execute(
+            "INSERT OR REPLACE INTO meta VALUES(?,?)", (key, json.dumps(value, allow_nan=False))
+        )
 
     def check(self):
-        for path, expected in ((self.root / "mesh.sqlite", self.db_inode), (self.root / ".mesh.lock", self.lock_inode)):
+        for path, expected in (
+            (self.root / "mesh.sqlite", self.db_inode),
+            (self.root / ".mesh.lock", self.lock_inode),
+        ):
             if path.is_symlink() or (path.stat().st_dev, path.stat().st_ino) != expected:
                 raise ValueError("mesh writer path identity changed")
         if sha(self.root / "RUN.json") != self.run_sha:
@@ -212,13 +233,17 @@ class MeshDB:
     def row_digest(self, table, first, last):
         fields = "id,level,key,x,y,z,local" if table == "vertices" else "id,level,a,b,c,area,key"
         return _rows_sha(
-            self.db, "SELECT " + fields + " FROM " + table + " WHERE id>? AND id<=? ORDER BY id", (first, last)
+            self.db,
+            "SELECT " + fields + " FROM " + table + " WHERE id>? AND id<=? ORDER BY id",
+            (first, last),
         )
 
     def checkpoint_tile(self, index):
         if index != self.get("next_tile"):
             raise ValueError("nonsequential mesh tile commit")
-        row = self.db.execute("SELECT vertex_last,face_last FROM tiles ORDER BY id DESC LIMIT 1").fetchone()
+        row = self.db.execute(
+            "SELECT vertex_last,face_last FROM tiles ORDER BY id DESC LIMIT 1"
+        ).fetchone()
         first_v, first_f = row if row else (0, 0)
         last_v, last_f = self.last_id("vertices"), self.last_id("faces")
         self.db.execute(
@@ -238,15 +263,20 @@ class MeshDB:
         for i, j in ((a, b), (b, c), (c, a)):
             lo, hi = sorted((i, j))
             sign = 1 if i < j else -1
-            row = self.db.execute("SELECT face FROM edges WHERE level=? AND a=? AND b=?", (level, lo, hi)).fetchone()
+            row = self.db.execute(
+                "SELECT face FROM edges WHERE level=? AND a=? AND b=?", (level, lo, hi)
+            ).fetchone()
             if row:
                 r1, r2 = self.find(identity), self.find(row[0])
                 self.db.execute("UPDATE faces SET parent=? WHERE id=?", (min(r1, r2), max(r1, r2)))
                 self.db.execute(
-                    "UPDATE edges SET count=count+1,sign=sign+? WHERE level=? AND a=? AND b=?", (sign, level, lo, hi)
+                    "UPDATE edges SET count=count+1,sign=sign+? WHERE level=? AND a=? AND b=?",
+                    (sign, level, lo, hi),
                 )
             else:
-                self.db.execute("INSERT INTO edges VALUES(?,?,?,?,1,?)", (level, lo, hi, identity, sign))
+                self.db.execute(
+                    "INSERT INTO edges VALUES(?,?,?,?,1,?)", (level, lo, hi, identity, sign)
+                )
 
     def rebuild_topology(self):
         self.db.execute("DELETE FROM edges")
@@ -262,7 +292,9 @@ class MeshDB:
     def find(self, identity):
         trail = []
         while True:
-            parent = self.db.execute("SELECT parent FROM faces WHERE id=?", (identity,)).fetchone()[0]
+            parent = self.db.execute("SELECT parent FROM faces WHERE id=?", (identity,)).fetchone()[
+                0
+            ]
             if parent == identity:
                 break
             if parent is None or parent > identity:
@@ -285,12 +317,16 @@ class MeshDB:
             or (len(faces) and (faces.min() < 0 or faces.max() >= len(vertices)))
         ):
             raise ValueError("invalid mesh arrays")
-        local = self.db.execute("SELECT COALESCE(MAX(local),0)+1 FROM vertices WHERE level=?", (level,)).fetchone()[0]
+        local = self.db.execute(
+            "SELECT COALESCE(MAX(local),0)+1 FROM vertices WHERE level=?", (level,)
+        ).fetchone()[0]
         ids = []
         for index, (key, point) in enumerate(zip(keys, vertices)):
             if index % 256 == 0:
                 self.admit()
-            found = self.db.execute("SELECT id,x,y,z FROM vertices WHERE level=? AND key=?", (level, key)).fetchone()
+            found = self.db.execute(
+                "SELECT id,x,y,z FROM vertices WHERE level=? AND key=?", (level, key)
+            ).fetchone()
             if found:
                 if tuple(point) != found[1:]:
                     raise ValueError("shared lattice vertex coordinates differ")
@@ -339,11 +375,12 @@ class MeshDB:
                     )
         summary = []
         for level, value in self.db.execute("SELECT id,value FROM levels ORDER BY id"):
-            n = lambda table: self.db.execute("SELECT COUNT(*) FROM " + table + " WHERE level=?", (level,)).fetchone()[
-                0
-            ]
+            n = lambda table: self.db.execute(
+                "SELECT COUNT(*) FROM " + table + " WHERE level=?", (level,)
+            ).fetchone()[0]
             edges = self.db.execute(
-                "SELECT SUM(count=1),SUM(count>2),SUM(count=2 AND sign!=0) FROM edges WHERE level=?", (level,)
+                "SELECT SUM(count=1),SUM(count>2),SUM(count=2 AND sign!=0) FROM edges WHERE level=?",
+                (level,),
             ).fetchone()
             duplicates = self.db.execute(
                 "SELECT COALESCE(SUM(n-1),0) FROM (SELECT COUNT(*) n FROM faces "
@@ -504,7 +541,9 @@ def _tile_mesh(values, valid, low, level, origin, spacing, *, prepared=None):
                 if not axes:
                     continue
                 try:
-                    return _tile_mesh_once(values, valid, low, level, origin, spacing, axes, prepared=prepared)
+                    return _tile_mesh_once(
+                        values, valid, low, level, origin, spacing, axes, prepared=prepared
+                    )
                 except _LatticePrecisionError:
                     continue
             raise
@@ -537,7 +576,11 @@ def extract_mesh(
     tile, level_batch = _integer(tile, "tile"), _integer(level_batch, "level_batch")
     reserve_bytes = _integer(reserve_bytes, "reserve_bytes", 0)
     levels = _levels(levels)
-    if type(resume) is not bool or (stop is not None and not callable(stop)) or min(source.shape) < 2:
+    if (
+        type(resume) is not bool
+        or (stop is not None and not callable(stop))
+        or min(source.shape) < 2
+    ):
         raise ValueError("invalid extraction callback/resume/grid")
     if tile > 256:
         raise ValueError("tile exceeds bounded256-cell extraction; use smaller tiles")
@@ -570,7 +613,12 @@ def extract_mesh(
             if index < first:
                 continue
             if (output / "STOP").exists() or (stop is not None and stop()):
-                result = dict(status="CHECKPOINTED_STOP", next_tile=index, total_tiles=total, physical_acceptance=False)
+                result = dict(
+                    status="CHECKPOINTED_STOP",
+                    next_tile=index,
+                    total_tiles=total,
+                    physical_acceptance=False,
+                )
                 atomic_json(output / "STATUS.json", result)
                 return result
             store.check()
@@ -583,12 +631,21 @@ def extract_mesh(
                 for start in range(0, len(levels), level_batch):
                     for j in range(start, min(start + level_batch, len(levels))):
                         keys, vertices, faces = _tile_mesh(
-                            values, valid, low, levels[j], source.origin, source.spacing, prepared=prepared
+                            values,
+                            valid,
+                            low,
+                            levels[j],
+                            source.origin,
+                            source.spacing,
+                            prepared=prepared,
                         )
                         if len(faces):
                             store.add(j, keys, vertices, faces)
                 store.checkpoint_tile(index)
-            atomic_json(output / "STATUS.json", dict(status="EXTRACTING", next_tile=index + 1, total_tiles=total))
+            atomic_json(
+                output / "STATUS.json",
+                dict(status="EXTRACTING", next_tile=index + 1, total_tiles=total),
+            )
         source.validate()
         details = store.finish()
     result = _manifest(metadata, identity, details, total, sha(output / "mesh.sqlite"))
@@ -617,7 +674,11 @@ def _npz_geometry(stream, max_bytes):
                 else:
                     raise ValueError("unsupported mesh NPY header")
                 header = member.tell()
-            if len(shape) != 2 or shape[1] != 3 or dtype.kind not in ("iu" if name == "faces.npy" else "iuf"):
+            if (
+                len(shape) != 2
+                or shape[1] != 3
+                or dtype.kind not in ("iu" if name == "faces.npy" else "iuf")
+            ):
                 raise ValueError("invalid mesh NPZ header shape/dtype")
             size = math.prod(shape) * dtype.itemsize
             charge += size
@@ -677,11 +738,21 @@ def import_mesh(
                         for start in range(0, len(vertices), 8192):
                             part = vertices[start : start + 8192]
                             store.add(
-                                0, [f"input:{i}" for i in range(start, start + len(part))], part, np.empty((0, 3), int)
+                                0,
+                                [f"input:{i}" for i in range(start, start + len(part))],
+                                part,
+                                np.empty((0, 3), int),
                             )
                         for start in range(0, len(faces), 8192):
-                            vertex_ids, remap = np.unique(faces[start : start + 8192], return_inverse=True)
-                            store.add(0, [f"input:{i}" for i in vertex_ids], vertices[vertex_ids], remap.reshape(-1, 3))
+                            vertex_ids, remap = np.unique(
+                                faces[start : start + 8192], return_inverse=True
+                            )
+                            store.add(
+                                0,
+                                [f"input:{i}" for i in vertex_ids],
+                                vertices[vertex_ids],
+                                remap.reshape(-1, 3),
+                            )
                     else:
                         count = 0
                         while raw := stream.readline(1024**2 + 1):
@@ -694,7 +765,9 @@ def import_mesh(
                                 if len(words) != 4:
                                     raise ValueError("OBJ requires XYZ vertices")
                                 point = np.array([float(v) for v in words[1:]])
-                                store.add(0, [f"input:{count}"], point[None, :], np.empty((0, 3), int))
+                                store.add(
+                                    0, [f"input:{count}"], point[None, :], np.empty((0, 3), int)
+                                )
                                 count += 1
                             elif words[0] == "f":
                                 if len(words) != 4:
@@ -706,12 +779,15 @@ def import_mesh(
                                 points = np.array(
                                     [
                                         store.db.execute(
-                                            "SELECT x,y,z FROM vertices WHERE level=0 AND key=?", (f"input:{i}",)
+                                            "SELECT x,y,z FROM vertices WHERE level=0 AND key=?",
+                                            (f"input:{i}",),
                                         ).fetchone()
                                         for i in ids
                                     ]
                                 )
-                                store.add(0, [f"input:{i}" for i in ids], points, np.array([[0, 1, 2]]))
+                                store.add(
+                                    0, [f"input:{i}" for i in ids], points, np.array([[0, 1, 2]])
+                                )
                             elif words[0] not in {"vt", "vn", "o", "g", "s", "usemtl", "mtllib"}:
                                 raise ValueError("unsupported OBJ directive: " + words[0])
                     if _signature(path) != signature:
@@ -730,15 +806,23 @@ class MeshReader:
     def __init__(self, path: str | Path):
         self.root = Path(path)
         self.manifest = json.loads((self.root / "MESH.json").read_bytes())
-        if self.manifest.get("schema") != "winding-mesh-v1" or self.manifest.get("status") != "MESH_READY":
+        if (
+            self.manifest.get("schema") != "winding-mesh-v1"
+            or self.manifest.get("status") != "MESH_READY"
+        ):
             raise ValueError("complete mesh bundle required")
         self.file = self.root / "mesh.sqlite"
         self.signature = _signature(self.file)
         self.manifest_sha = sha(self.root / "MESH.json")
-        if sha(self.file) != self.manifest["database_sha256"] or _signature(self.file) != self.signature:
+        if (
+            sha(self.file) != self.manifest["database_sha256"]
+            or _signature(self.file) != self.signature
+        ):
             raise ValueError("mesh database hash/identity differs")
         self.db = sqlite3.connect(self.file.resolve().as_uri() + "?mode=ro&immutable=1", uri=True)
-        get = lambda key: json.loads(self.db.execute("SELECT value FROM meta WHERE key=?", (key,)).fetchone()[0])
+        get = lambda key: json.loads(
+            self.db.execute("SELECT value FROM meta WHERE key=?", (key,)).fetchone()[0]
+        )
         binding = get("binding")
         if (
             not get("complete")
@@ -751,7 +835,10 @@ class MeshReader:
             raise ValueError("mesh manifest contradicts committed database binding")
         self.metadata = self.manifest["metadata"]
         aggregates = ",".join(
-            f"{op}({alias}.{axis})" for op in ("MIN", "MAX") for alias in ("a", "b", "c") for axis in "xyz"
+            f"{op}({alias}.{axis})"
+            for op in ("MIN", "MAX")
+            for alias in ("a", "b", "c")
+            for axis in "xyz"
         )
         row = self.db.execute(
             "SELECT " + aggregates + " FROM faces f JOIN vertices a ON a.id=f.a "
@@ -760,12 +847,18 @@ class MeshReader:
         self.bounds = (
             None
             if row[0] is None
-            else [np.array(row[:9]).reshape(3, 3).min(0).tolist(), np.array(row[9:]).reshape(3, 3).max(0).tolist()]
+            else [
+                np.array(row[:9]).reshape(3, 3).min(0).tolist(),
+                np.array(row[9:]).reshape(3, 3).max(0).tolist(),
+            ]
         )
         self.validate()
 
     def validate(self):
-        if _signature(self.file) != self.signature or sha(self.root / "MESH.json") != self.manifest_sha:
+        if (
+            _signature(self.file) != self.signature
+            or sha(self.root / "MESH.json") != self.manifest_sha
+        ):
             raise ValueError("mesh bundle changed during reading")
 
     def triangles(self, *, batch_size: int = 8192, level: int | None = None):

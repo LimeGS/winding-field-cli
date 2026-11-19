@@ -140,9 +140,10 @@ large maps omit these arrays explicitly and require the mapping reader:
 
 ```python
 from winding_field.patch_mapping import PatchMapping
+
 with PatchMapping(level_directory) as mapping:
-    xyz = mapping.arrays['field_xyz']
-    for source_id, key in mapping.iter_keys('vertices', batch_size=512):
+    xyz = mapping.arrays["field_xyz"]
+    for source_id, key in mapping.iter_keys("vertices", batch_size=512):
         pass  # consume keys incrementally; faces use iter_keys('faces')
 ```
 

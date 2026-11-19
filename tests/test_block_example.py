@@ -14,7 +14,11 @@ def test_offline_example_stops_resumes_and_prefetches_without_parent_repo(tmp_pa
     script = root / "examples/block_field.py"
     assert script.is_file(), "runnable block example is missing"
     env = dict(
-        os.environ, PYTHONPATH=str(root / "src"), CUDA_VISIBLE_DEVICES="", OPENBLAS_NUM_THREADS="1", OMP_NUM_THREADS="1"
+        os.environ,
+        PYTHONPATH=str(root / "src"),
+        CUDA_VISIBLE_DEVICES="",
+        OPENBLAS_NUM_THREADS="1",
+        OMP_NUM_THREADS="1",
     )
     output = tmp_path / "example"
     command = [sys.executable, str(script), "--output", str(output)]
@@ -43,7 +47,11 @@ def test_small_cycle_probe_reports_parity_without_a_timing_gate(tmp_path):
     script = root / "tools/benchmark_blocks.py"
     assert script.is_file(), "complete-cycle performance probe is missing"
     env = dict(
-        os.environ, PYTHONPATH=str(root / "src"), CUDA_VISIBLE_DEVICES="", OPENBLAS_NUM_THREADS="1", OMP_NUM_THREADS="1"
+        os.environ,
+        PYTHONPATH=str(root / "src"),
+        CUDA_VISIBLE_DEVICES="",
+        OPENBLAS_NUM_THREADS="1",
+        OMP_NUM_THREADS="1",
     )
     completed = subprocess.run(
         [sys.executable, str(script), "--output", str(tmp_path / "probe"), "--repetitions", "1"],
@@ -63,7 +71,11 @@ def test_small_cycle_probe_reports_parity_without_a_timing_gate(tmp_path):
 def test_example_supervisor_owns_a_real_worker_and_finishes_at_budget(tmp_path):
     root = Path(__file__).resolve().parents[1]
     env = dict(
-        os.environ, PYTHONPATH=str(root / "src"), CUDA_VISIBLE_DEVICES="", OPENBLAS_NUM_THREADS="1", OMP_NUM_THREADS="1"
+        os.environ,
+        PYTHONPATH=str(root / "src"),
+        CUDA_VISIBLE_DEVICES="",
+        OPENBLAS_NUM_THREADS="1",
+        OMP_NUM_THREADS="1",
     )
     result = subprocess.run(
         [

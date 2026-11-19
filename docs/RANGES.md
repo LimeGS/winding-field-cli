@@ -64,6 +64,7 @@ Python API:
 
 ```python
 from winding_field.range_surface import extract_range, join_ranges, RangeReader
+
 extract_range(recipe, ["-61", "-60.375"], "left", block_ticks=16)
 extract_range(recipe, ["-60.375", "-59"], "right", block_ticks=8)
 join_ranges(["right", "left"], "joined")

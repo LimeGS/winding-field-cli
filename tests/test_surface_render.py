@@ -59,7 +59,9 @@ def test_nearest_face_and_first_equal_depth_win_across_batch_boundaries(batch_si
     world[:, :, 0] = np.array([-0.5, 0.5, 0.5, -0.8])[:, None]
     world[2] = world[2, ::-1]
     colors = np.array([[1.0, 0, 0], [0, 1.0, 0], [0, 0, 1.0], [1.0, 1.0, 0]])
-    image, stats = surface_render.render_view(batches(world, colors, batch_size), BOUNDS, width=16, height=16)
+    image, stats = surface_render.render_view(
+        batches(world, colors, batch_size), BOUNDS, width=16, height=16
+    )
     visible = image[..., 3] != 0
     assert visible.sum() > 80
     assert (image[visible, 0] == 0).all() and (image[visible, 2] == 0).all()
@@ -111,7 +113,12 @@ def test_global_fit_is_invariant_under_translation_and_world_unit_scaling(factor
     transformed = world * factor + shift
     transformed_bounds = bounds * factor + shift
     actual, stats = surface_render.render_view(
-        batches(transformed, colors), transformed_bounds, width=37, height=29, azimuth=27, elevation=31
+        batches(transformed, colors),
+        transformed_bounds,
+        width=37,
+        height=29,
+        azimuth=27,
+        elevation=31,
     )
     np.testing.assert_array_equal(actual, expected)
     np.testing.assert_allclose(stats["camera"]["center_xyz"], np.array([4, -7, 17]) * factor)
@@ -119,7 +126,9 @@ def test_global_fit_is_invariant_under_translation_and_world_unit_scaling(factor
 
 def test_framing_uses_full_aabb_even_for_empty_or_partial_streams():
     world = rectangle(0, 0.5, 0, 0.5)
-    partial, stats = surface_render.render_view(batches(world, np.ones((2, 3))), BOUNDS, width=20, height=10)
+    partial, stats = surface_render.render_view(
+        batches(world, np.ones((2, 3))), BOUNDS, width=20, height=10
+    )
     empty, empty_stats = surface_render.render_view(lambda: iter(()), BOUNDS, width=20, height=10)
     assert 0 < np.count_nonzero(partial[..., 3]) < 25
     assert not empty.any()
@@ -128,7 +137,9 @@ def test_framing_uses_full_aabb_even_for_empty_or_partial_streams():
     assert empty_stats["transparent_pixels"] == 200
 
 
-@pytest.mark.parametrize("azimuth,elevation", [(0, 0), (53, 37), (19, 90), (-70, -90), (81, 89.999999)])
+@pytest.mark.parametrize(
+    "azimuth,elevation", [(0, 0), (53, 37), (19, 90), (-70, -90), (81, 89.999999)]
+)
 def test_both_windings_and_pole_camera_have_finite_orthonormal_basis(azimuth, elevation):
     # Three orthogonal faces keep some nonzero projected area at every view.
     yz = rectangle()
@@ -139,7 +150,12 @@ def test_both_windings_and_pole_camera_have_finite_orthonormal_basis(azimuth, el
         batches(world, colors), bounds, width=47, height=39, azimuth=azimuth, elevation=elevation
     )
     reversed_image, _ = surface_render.render_view(
-        batches(world[:, ::-1], colors, 4), bounds, width=47, height=39, azimuth=azimuth, elevation=elevation
+        batches(world[:, ::-1], colors, 4),
+        bounds,
+        width=47,
+        height=39,
+        azimuth=azimuth,
+        elevation=elevation,
     )
     np.testing.assert_array_equal(image, reversed_image)
     basis = np.array(stats["camera"]["basis_xyz"])
@@ -158,7 +174,9 @@ def test_geometric_normal_shading_is_two_sided_and_has_ambient_floor():
     colors = np.ones((2, 3))
     bounds = [[-2, 0, 0], [1, 2, 2]]
     dark_image, _ = surface_render.render_view(batches(dark, colors), bounds, width=32, height=32)
-    bright_image, _ = surface_render.render_view(batches(bright, colors), bounds, width=32, height=32)
+    bright_image, _ = surface_render.render_view(
+        batches(bright, colors), bounds, width=32, height=32
+    )
     dark_rgb = dark_image[dark_image[..., 3] > 0, :3]
     bright_rgb = bright_image[bright_image[..., 3] > 0, :3]
     assert dark_rgb.min() >= 128
@@ -169,7 +187,9 @@ def test_geometric_normal_shading_is_two_sided_and_has_ambient_floor():
 def test_large_projected_triangle_is_clipped_and_rasterized_in_full(footprint_scale):
     world = np.array([[[0.0, -100, -100], [0.0, 1000, -100], [0.0, -100, 1000]]])
     world[..., 1:] *= footprint_scale
-    image, stats = surface_render.render_view(batches(world, np.ones((1, 3))), BOUNDS, width=513, height=385)
+    image, stats = surface_render.render_view(
+        batches(world, np.ones((1, 3))), BOUNDS, width=513, height=385
+    )
     assert (image[..., 3] == 255).all()
     assert stats["nonempty_pixels"] == 513 * 385
     assert stats["transparent_pixels"] == 0

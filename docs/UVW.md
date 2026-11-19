@@ -187,9 +187,10 @@ For fixed physical-UV point benchmarks, use:
 ```python
 from winding_field.uvw_workers import GeometryWorkers
 
-jobs = [{"uv": uv_um_batch, "w": 32., "reference_data": None}]
-with GeometryWorkers(descriptor, reference_path, [30., 31., 32.], 512,
-                     workers=2, region_cache_bytes=64 << 20) as pool:
+jobs = [{"uv": uv_um_batch, "w": 32.0, "reference_data": None}]
+with GeometryWorkers(
+    descriptor, reference_path, [30.0, 31.0, 32.0], 512, workers=2, region_cache_bytes=64 << 20
+) as pool:
     cold = list(pool.map(jobs))
     warm = list(pool.map(jobs))
 # Each result is (numeric_arrays, timing_and_cache_metrics).

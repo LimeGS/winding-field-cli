@@ -8,121 +8,202 @@ import numpy as np
 import pytest
 
 
-def invoke(*args,cwd):
-    env=dict(os.environ,OMP_NUM_THREADS='2')
-    env.pop('PYTHONPATH',None)
-    return subprocess.run([sys.executable,'-m','winding_field',*map(str,args)],cwd=cwd,env=env,
-                           capture_output=True,text=True,timeout=180)
+def invoke(*args, cwd):
+    env = dict(os.environ, OMP_NUM_THREADS="2")
+    env.pop("PYTHONPATH", None)
+    return subprocess.run(
+        [sys.executable, "-m", "winding_field", *map(str, args)],
+        cwd=cwd,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=180,
+    )
 
 
-@pytest.mark.parametrize('command,phrases',[
-    ('run',['Start a new CT run','raw field isovalues','maximum in bounded preparation']),
-    ('plan',['Estimate source geometry and disk use','without creating the output','maximum in bounded preparation']),
-    ('resume',['Resume an existing run','published levels are unchanged']),
-    ('export-sheets',['Export flattened CT from a field or mesh','unavailable for historical patches','raw field isovalues']),
-    ('tifxyz',['Export XYZ directly from a saved field','does not sample CT']),
-    ('verify-tifxyz',['Verify a direct-field READY or PARTIAL publication','does not modify the export']),
-])
-def test_command_help_describes_current_contract(command,phrases,capsys):
+@pytest.mark.parametrize(
+    "command,phrases",
+    [
+        ("run", ["Start a new CT run", "raw field isovalues", "maximum in bounded preparation"]),
+        (
+            "plan",
+            [
+                "Estimate source geometry and disk use",
+                "without creating the output",
+                "maximum in bounded preparation",
+            ],
+        ),
+        ("resume", ["Resume an existing run", "published levels are unchanged"]),
+        (
+            "export-sheets",
+            [
+                "Export flattened CT from a field or mesh",
+                "unavailable for historical patches",
+                "raw field isovalues",
+            ],
+        ),
+        ("tifxyz", ["Export XYZ directly from a saved field", "does not sample CT"]),
+        (
+            "verify-tifxyz",
+            ["Verify a direct-field READY or PARTIAL publication", "does not modify the export"],
+        ),
+    ],
+)
+def test_command_help_describes_current_contract(command, phrases, capsys):
     from winding_field.cli import main
-    with pytest.raises(SystemExit) as result:main([command,'--help'])
-    assert result.value.code==0
-    text=' '.join(capsys.readouterr().out.split())
-    for phrase in phrases:assert phrase in text
+
+    with pytest.raises(SystemExit) as result:
+        main([command, "--help"])
+    assert result.value.code == 0
+    text = " ".join(capsys.readouterr().out.split())
+    for phrase in phrases:
+        assert phrase in text
 
 
-@pytest.mark.parametrize('available,device,expected',[
-    (False,None,'cpu'),
-    (True,None,'cuda:0'),
-    (True,'cpu','cpu'),
-    (False,'cuda:1','cuda:1'),
-])
-def test_demo_resolves_device_before_starting_work(tmp_path,monkeypatch,capsys,available,device,expected):
+@pytest.mark.parametrize(
+    "available,device,expected",
+    [
+        (False, None, "cpu"),
+        (True, None, "cuda:0"),
+        (True, "cpu", "cpu"),
+        (False, "cuda:1", "cuda:1"),
+    ],
+)
+def test_demo_resolves_device_before_starting_work(
+    tmp_path, monkeypatch, capsys, available, device, expected
+):
     from winding_field.cli import main
     from winding_field import workflow
 
     def cuda_available():
-        assert device is None, 'an explicit device must not be overridden by detection'
+        assert device is None, "an explicit device must not be overridden by detection"
         return available
 
-    monkeypatch.setattr('torch.cuda.is_available',cuda_available)
+    monkeypatch.setattr("torch.cuda.is_available", cuda_available)
     # Exercise parsing and synthetic CT creation without requiring a GPU on the test host.
-    monkeypatch.setattr(workflow,'run',lambda config:config)
-    command=['demo','--output',str(tmp_path/'demo')]
-    if device is not None:command+=['--device',device]
-    assert main(command)==0
-    result=json.loads(capsys.readouterr().out)
-    assert result['device']==expected
-    assert Path(result['source']).is_dir()
+    monkeypatch.setattr(workflow, "run", lambda config: config)
+    command = ["demo", "--output", str(tmp_path / "demo")]
+    if device is not None:
+        command += ["--device", device]
+    assert main(command) == 0
+    result = json.loads(capsys.readouterr().out)
+    assert result["device"] == expected
+    assert Path(result["source"]).is_dir()
 
 
 def test_installed_end_to_end_demo_and_resume_from_other_directory(tmp_path):
-    run=tmp_path/'demo'
-    result=invoke('demo','--output',run,cwd=tmp_path)
-    assert result.returncode==0,result.stdout+result.stderr
-    receipt=json.loads((run/'RUN.json').read_text())
-    assert receipt['status']=='COMPLETE'
-    assert receipt['physical_acceptance'] is False
-    assert (run/'index.html').exists()
-    assert list((run/'flat').glob('*.png'))
-    assert list((run/'meshes').glob('*.obj'))
-    assert (run/'fibres/fibres.afv').exists()
-    assert (run/'lasagna/fibres.lasagna.json').exists()
-    before=(run/'field/CHECKPOINT.json').read_bytes()
-    result=invoke('resume',run,cwd=tmp_path)
-    assert result.returncode==0,result.stderr
-    assert before==(run/'field/CHECKPOINT.json').read_bytes()
-    next((run/'meshes').glob('*.obj')).unlink()
-    result=invoke('resume',run,cwd=tmp_path)
-    assert result.returncode!=0
-    assert 'export' in result.stderr or 'product' in result.stderr
+    run = tmp_path / "demo"
+    result = invoke("demo", "--output", run, cwd=tmp_path)
+    assert result.returncode == 0, result.stdout + result.stderr
+    receipt = json.loads((run / "RUN.json").read_text())
+    assert receipt["status"] == "COMPLETE"
+    assert receipt["physical_acceptance"] is False
+    assert (run / "index.html").exists()
+    assert list((run / "flat").glob("*.png"))
+    assert list((run / "meshes").glob("*.obj"))
+    assert (run / "fibres/fibres.afv").exists()
+    assert (run / "lasagna/fibres.lasagna.json").exists()
+    before = (run / "field/CHECKPOINT.json").read_bytes()
+    result = invoke("resume", run, cwd=tmp_path)
+    assert result.returncode == 0, result.stderr
+    assert before == (run / "field/CHECKPOINT.json").read_bytes()
+    next((run / "meshes").glob("*.obj")).unlink()
+    result = invoke("resume", run, cwd=tmp_path)
+    assert result.returncode != 0
+    assert "export" in result.stderr or "product" in result.stderr
 
 
 def test_until_then_resume_and_refuse_changed_input(tmp_path):
     from ct_fixture import write_ct
-    x=np.indices((12,16,32))[2]
-    source=write_ct(tmp_path/'ct.zarr',(20+210*(np.cos(2*np.pi*x/8)>.4)).astype(np.uint8))
-    run=tmp_path/'run'
-    result=invoke('run','--source',source,'--output',run,'--prediction','classical','--reserve-gib','0','--until','prepare',cwd=tmp_path)
-    assert result.returncode==0,result.stdout+result.stderr
-    assert json.loads((run/'RUN.json').read_text())['status']=='PAUSED'
-    assert not (run/'FIELD.json').exists()
-    (source/'0/0.0.0').write_bytes(bytes([10])*32**3)
-    result=invoke('resume',run,cwd=tmp_path)
-    assert result.returncode!=0
-    assert 'changed' in result.stderr
+
+    x = np.indices((12, 16, 32))[2]
+    source = write_ct(
+        tmp_path / "ct.zarr", (20 + 210 * (np.cos(2 * np.pi * x / 8) > 0.4)).astype(np.uint8)
+    )
+    run = tmp_path / "run"
+    result = invoke(
+        "run",
+        "--source",
+        source,
+        "--output",
+        run,
+        "--prediction",
+        "classical",
+        "--reserve-gib",
+        "0",
+        "--until",
+        "prepare",
+        cwd=tmp_path,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert json.loads((run / "RUN.json").read_text())["status"] == "PAUSED"
+    assert not (run / "FIELD.json").exists()
+    (source / "0/0.0.0").write_bytes(bytes([10]) * 32**3)
+    result = invoke("resume", run, cwd=tmp_path)
+    assert result.returncode != 0
+    assert "changed" in result.stderr
 
 
 def test_empty_ct_records_failure_not_a_completed_reconstruction(tmp_path):
     from ct_fixture import write_ct
-    source=write_ct(tmp_path/'empty.zarr',np.zeros((8,8,16),np.uint8))
-    run=tmp_path/'run'
-    result=invoke('run','--source',source,'--output',run,'--prediction','classical','--reserve-gib','0',cwd=tmp_path)
-    assert result.returncode!=0
-    receipt=json.loads((run/'RUN.json').read_text())
-    assert receipt['status']=='FAILED'
-    assert 'supported' in receipt['error']
-    assert not (run/'FIELD.json').exists()
+
+    source = write_ct(tmp_path / "empty.zarr", np.zeros((8, 8, 16), np.uint8))
+    run = tmp_path / "run"
+    result = invoke(
+        "run",
+        "--source",
+        source,
+        "--output",
+        run,
+        "--prediction",
+        "classical",
+        "--reserve-gib",
+        "0",
+        cwd=tmp_path,
+    )
+    assert result.returncode != 0
+    receipt = json.loads((run / "RUN.json").read_text())
+    assert receipt["status"] == "FAILED"
+    assert "supported" in receipt["error"]
+    assert not (run / "FIELD.json").exists()
 
 
-def test_resume_admits_remaining_products_and_completed_runs(tmp_path,monkeypatch):
+def test_resume_admits_remaining_products_and_completed_runs(tmp_path, monkeypatch):
     from types import SimpleNamespace
     from winding_field.demo import synthetic
     from winding_field.workflow import run
-    source=synthetic(tmp_path/'ct.zarr'); output=tmp_path/'run'
-    config=dict(source=source,output=str(output),prediction='classical',chunk=64,
-                field_chunk=64,sweeps=1,seed_stride=4,reserve_bytes=4096,cache=str(tmp_path/'cache'))
-    state=run(config,until='prepare')
-    total=24*32*56*100
-    written=sum(p.stat().st_size for name in ('maps','lasagna') for p in (output/name).rglob('*') if p.is_file())
-    free=total-min(written,total//2)+4096
-    assert free<total+4096
-    monkeypatch.setattr('winding_field.workflow.shutil.disk_usage',lambda p:SimpleNamespace(free=free))
-    assert run(state['config'],resume=True,until='fibres')['status']=='PAUSED'
-    free=1<<30  # Mesh extraction separately reserves its transactional working space.
-    assert run(state['config'],resume=True)['status']=='COMPLETE'
-    free=8192
-    assert run(state['config'],resume=True)['status']=='COMPLETE'
+
+    source = synthetic(tmp_path / "ct.zarr")
+    output = tmp_path / "run"
+    config = dict(
+        source=source,
+        output=str(output),
+        prediction="classical",
+        chunk=64,
+        field_chunk=64,
+        sweeps=1,
+        seed_stride=4,
+        reserve_bytes=4096,
+        cache=str(tmp_path / "cache"),
+    )
+    state = run(config, until="prepare")
+    total = 24 * 32 * 56 * 100
+    written = sum(
+        p.stat().st_size
+        for name in ("maps", "lasagna")
+        for p in (output / name).rglob("*")
+        if p.is_file()
+    )
+    free = total - min(written, total // 2) + 4096
+    assert free < total + 4096
+    monkeypatch.setattr(
+        "winding_field.workflow.shutil.disk_usage", lambda p: SimpleNamespace(free=free)
+    )
+    assert run(state["config"], resume=True, until="fibres")["status"] == "PAUSED"
+    free = 1 << 30  # Mesh extraction separately reserves its transactional working space.
+    assert run(state["config"], resume=True)["status"] == "COMPLETE"
+    free = 8192
+    assert run(state["config"], resume=True)["status"] == "COMPLETE"
 
 
 def test_legacy_saved_config_is_not_backfilled_and_code_identity_stays_strict(tmp_path):
@@ -130,32 +211,45 @@ def test_legacy_saved_config_is_not_backfilled_and_code_identity_stays_strict(tm
     from winding_field.demo import synthetic
     from winding_field.workflow import run
     from winding_field.util import atomic_json
-    root=tmp_path/'run'
-    config=dict(source=synthetic(tmp_path/'ct.zarr'),output=str(root),prediction='classical',
-                reserve_bytes=0,cache=str(tmp_path/'cache'))
-    state=run(config,until='prepare')
-    assert state['config']==config
-    assert run(config,resume=True,until='prepare')['config']==config
-    state['implementation_sha256']='b'*64
-    atomic_json(root/'RUN.json',state)
-    before=(root/'RUN.json').read_bytes()
-    with pytest.raises(ValueError,match='implementation changed'):
-        run(config,resume=True)
-    assert (root/'RUN.json').read_bytes()==before
+
+    root = tmp_path / "run"
+    config = dict(
+        source=synthetic(tmp_path / "ct.zarr"),
+        output=str(root),
+        prediction="classical",
+        reserve_bytes=0,
+        cache=str(tmp_path / "cache"),
+    )
+    state = run(config, until="prepare")
+    assert state["config"] == config
+    assert run(config, resume=True, until="prepare")["config"] == config
+    state["implementation_sha256"] = "b" * 64
+    atomic_json(root / "RUN.json", state)
+    before = (root / "RUN.json").read_bytes()
+    with pytest.raises(ValueError, match="implementation changed"):
+        run(config, resume=True)
+    assert (root / "RUN.json").read_bytes() == before
 
 
 def test_resume_native_runtime_mismatch_preserves_run_and_stop(tmp_path):
     import pytest
     from winding_field.demo import synthetic
     from winding_field.workflow import run
-    from winding_field.util import atomic_json,file_sha
-    root=tmp_path/'run'
-    config=dict(source=synthetic(tmp_path/'ct.zarr'),output=str(root),prediction='classical',
-                reserve_bytes=0,cache=str(tmp_path/'cache'))
-    state=run(config,until='prepare')
-    state['source']['native_runtime']={'extension_sha256':'changed'}
-    atomic_json(root/'RUN.json',state);(root/'STOP').touch()
-    before={p.relative_to(root):file_sha(p) for p in root.rglob('*') if p.is_file()}
-    with pytest.raises(ValueError,match='native runtime'):
-        run(config,resume=True)
-    assert {p.relative_to(root):file_sha(p) for p in root.rglob('*') if p.is_file()}==before
+    from winding_field.util import atomic_json, file_sha
+
+    root = tmp_path / "run"
+    config = dict(
+        source=synthetic(tmp_path / "ct.zarr"),
+        output=str(root),
+        prediction="classical",
+        reserve_bytes=0,
+        cache=str(tmp_path / "cache"),
+    )
+    state = run(config, until="prepare")
+    state["source"]["native_runtime"] = {"extension_sha256": "changed"}
+    atomic_json(root / "RUN.json", state)
+    (root / "STOP").touch()
+    before = {p.relative_to(root): file_sha(p) for p in root.rglob("*") if p.is_file()}
+    with pytest.raises(ValueError, match="native runtime"):
+        run(config, resume=True)
+    assert {p.relative_to(root): file_sha(p) for p in root.rglob("*") if p.is_file()} == before

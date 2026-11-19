@@ -73,8 +73,8 @@ production CT scale, physical reconstruction accuracy or general hardware speedu
 
 ## CPU measurement (2026-11-07)
 
-Apple M2 Pro, macOS arm64, PyTorch 2.10.0, one Torch/BLAS thread. Baseline core `f750fd11` /
-CLI `2cee51a`; candidate core `f6387ec8` with the CLI integration described above.
+Apple M2 Pro, macOS arm64, PyTorch 2.10.0, one Torch/BLAS thread. Baseline core `aa3e0d24` /
+CLI `46f6910`; candidate core `59f81f4c` with the CLI integration described above.
 Two fresh processes per variant, reversed order in round two, three executions
 per process. Cold medians use the first execution; warm medians use the other four.
 The cached variant allows 64 MiB for each cache. Times below exclude profiling.

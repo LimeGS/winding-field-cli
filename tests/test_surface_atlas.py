@@ -46,7 +46,9 @@ def test_bisection_preserves_every_face_and_global_vertex_correspondence():
         np.testing.assert_array_equal(global_ids[f], faces[ids])
         np.testing.assert_array_equal(v, vertices[global_ids])
         mapped_vertices.append(set(global_ids))
-    assert mapped_vertices[0] & mapped_vertices[1]  # shared cut vertices are retained in both charts
+    assert (
+        mapped_vertices[0] & mapped_vertices[1]
+    )  # shared cut vertices are retained in both charts
     assert conservation(vertices, faces, [pieces[0]])["status"] == "FAIL"
     assert conservation(vertices, faces, [pieces[0], pieces[0], pieces[1]])["status"] == "FAIL"
 
@@ -54,7 +56,9 @@ def test_bisection_preserves_every_face_and_global_vertex_correspondence():
 def test_geometry_split_separates_disconnected_pieces_without_dropping_tiny_ones():
     from winding_field.surface_atlas import split_faces
 
-    vertices = np.array([[i * 10 + x, y, 0] for i in range(4) for x, y in [(0, 0), (1, 0), (0, 1)]], float)
+    vertices = np.array(
+        [[i * 10 + x, y, 0] for i in range(4) for x, y in [(0, 0), (1, 0), (0, 1)]], float
+    )
     faces = np.arange(12).reshape(-1, 3)
     pieces = split_faces(vertices, faces, np.arange(4))
     assert len(pieces) == 4
@@ -68,7 +72,9 @@ def test_point_to_triangle_search_uses_a_proven_bound_not_k_nearest_faces():
     # still enter the certified candidate set through its bounding radius.
     vertices = np.array([[0.0, 0, 0], [100, 0, 0], [0, 100, 0], [1, 1, 2], [2, 1, 2], [1, 2, 2]])
     faces = np.array([[0, 1, 2], [3, 4, 5]])
-    d, face_ids, receipt = exact_point_to_mesh(np.array([[1.0, 1, 0.1], [-1, -1, 0]]), vertices, faces)
+    d, face_ids, receipt = exact_point_to_mesh(
+        np.array([[1.0, 1, 0.1], [-1, -1, 0]]), vertices, faces
+    )
     np.testing.assert_allclose(d, [0.1, np.sqrt(2)])
     np.testing.assert_array_equal(face_ids, [0, 0])
     assert receipt["complete"] is True
@@ -112,7 +118,9 @@ def test_context_image_declares_actual_integer_ct_plane_and_human_supervision(tm
     ct = np.ones((32, 32, 32), np.uint8) * 100
     selection = dict(seed_xyz=[10, 10, 20.3], human_seed=True)
     out = tmp_path / "context.png"
-    context_image(out, ct, metadata(ct.shape, (0, 0, 0), (1, 1, 1)), selection, np.array([[10, 10, 20.3]]))
+    context_image(
+        out, ct, metadata(ct.shape, (0, 0, 0), (1, 1, 1)), selection, np.array([[10, 10, 20.3]])
+    )
     with Image.open(out) as image:
         assert image.info["CT_z_world"] == "20.0"
         assert "human seed" in image.info["Description"]
@@ -130,7 +138,9 @@ def test_atlas_renders_valid_charts_or_retains_every_failed_leaf(tmp_path, disto
     ct = (x + y + z).astype(np.uint8)
     meta = metadata(ct.shape, (0, 0, 0), (1, 1, 1))
     out = tmp_path / "atlas"
-    r = build_atlas(vertices, faces, meta, ct, meta, app, out, max_depth=1, max_charts=2, budget_seconds=30)
+    r = build_atlas(
+        vertices, faces, meta, ct, meta, app, out, max_depth=1, max_charts=2, budget_seconds=30
+    )
     assert r["conservation"]["status"] == "PASS"
     assert r["conservation"]["removed_faces"] == 0
     leaf_ids = [np.load(out / c["directory"] / "chart.npz")["global_face_ids"] for c in r["leaves"]]

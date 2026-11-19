@@ -1052,8 +1052,8 @@ tzdata==2026.6 \
 vc-reader @ https://github.com/LimeGS/villa/archive/84207424c3a988e6cafe6b50fe7d4d7e5f839929.tar.gz#subdirectory=vc_reader \
     --hash=sha256:430b9643f8bf2e54aeaf487830c9c3a420f5f2b3f700f902cae03c6221c9c00a
     # via winding-field-cli (pyproject.toml)
-winding-field @ https://github.com/LimeGS/winding-field/archive/c0649e338d046e3f422fdb41466faa48e72dc761.tar.gz \
-    --hash=sha256:2342d67bebbb07182c2bc870534000753e32b89fee8b39445c4c265d42e51707
+winding-field @ https://github.com/LimeGS/winding-field/archive/48eeb3473b4bc54944503b84997191e295b28245.tar.gz \
+    --hash=sha256:08f1c4fd14da57ead604cc2c3860cad5de0c388a5180cd4e828e9d8b4f7a8715
     # via
     #   -r docker/cli.in
     #   winding-field-cli (pyproject.toml)

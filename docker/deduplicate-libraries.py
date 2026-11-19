@@ -1,4 +1,5 @@
 """Share identical immutable libraries while assembling an image, before final COPY."""
+
 import argparse
 import hashlib
 import json
@@ -9,7 +10,7 @@ import tempfile
 
 
 def same_bytes(a, b):
-    with a.open('rb') as left, b.open('rb') as right:
+    with a.open("rb") as left, b.open("rb") as right:
         while True:
             chunk = left.read(1 << 20)
             if chunk != right.read(1 << 20):
@@ -22,15 +23,15 @@ def deduplicate(roots):
     roots = [Path(root).absolute() for root in roots]
     for root in roots:
         if any(path.is_symlink() for path in (root, *root.parents)):
-            raise ValueError(f'symlink root is not allowed: {root}')
+            raise ValueError(f"symlink root is not allowed: {root}")
         if not root.is_dir():
-            raise ValueError(f'not a directory: {root}')
+            raise ValueError(f"not a directory: {root}")
     groups = {}
     visited = set()
     for root in roots:
         for directory, _, names in os.walk(root, followlinks=False):
             for name in names:
-                if not (name.endswith(('.so', '.a')) or '.so.' in name):
+                if not (name.endswith((".so", ".a")) or ".so." in name):
                     continue
                 path = Path(directory) / name
                 if path in visited:
@@ -47,29 +48,29 @@ def deduplicate(roots):
         canonical = {}
         # Keep existing hardlink groups canonical regardless of traversal order.
         for path in sorted(paths, key=lambda path: -path.stat().st_nlink):
-            with path.open('rb') as stream:
-                digest = hashlib.file_digest(stream, 'sha256').digest()
+            with path.open("rb") as stream:
+                digest = hashlib.file_digest(stream, "sha256").digest()
             original = canonical.setdefault(digest, path)
             if path.samefile(original):
                 continue
             if not same_bytes(original, path):
-                raise ValueError(f'library digest collision: {path}')
+                raise ValueError(f"library digest collision: {path}")
             info = path.stat()
-            with tempfile.TemporaryDirectory(prefix='.deduplicate-', dir=path.parent) as temporary:
-                link = Path(temporary) / 'library'
+            with tempfile.TemporaryDirectory(prefix=".deduplicate-", dir=path.parent) as temporary:
+                link = Path(temporary) / "library"
                 os.link(original, link)
                 os.replace(link, path)
-            result['files'] += 1
+            result["files"] += 1
             if info.st_nlink == 1:
-                result['bytes'] += info.st_size
+                result["bytes"] += info.st_size
     return result
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('roots', nargs='+', type=Path)
+    parser.add_argument("roots", nargs="+", type=Path)
     args = parser.parse_args()
     try:
         print(json.dumps(deduplicate(args.roots), sort_keys=True))
     except (OSError, ValueError) as error:
-        parser.exit(1, f'{error}\n')
+        parser.exit(1, f"{error}\n")
