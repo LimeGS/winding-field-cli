@@ -10,11 +10,15 @@ import tifffile
 def test_tifxyz_keeps_l2_xyz_and_uses_minus_one_for_invalid_cells(tmp_path):
     from winding_field.surface_geometry_check import export_tifxyz
 
-    points = np.array([[[0.0, 2500, 10096], [4123.123456, 2600, 10100]], [[np.nan] * 3, [0.0, 0, 0]]])
+    points = np.array(
+        [[[0.0, 2500, 10096], [4123.123456, 2600, 10100]], [[np.nan] * 3, [0.0, 0, 0]]]
+    )
     valid = np.array([[True, True], [False, False]])
     grid = tmp_path / "grid.npz"
     np.savez(grid, points_xyz=points, valid=valid, pitch_um=[9.6, 9.6])
-    metadata = dict(frame="PHercParis4/20260411134726:L2", voxel_um=9.6, origin_xyz=[4088, 2500, 10096])
+    metadata = dict(
+        frame="PHercParis4/20260411134726:L2", voxel_um=9.6, origin_xyz=[4088, 2500, 10096]
+    )
     out = tmp_path / "tifxyz"
     receipt = export_tifxyz(grid, metadata, out)
     actual = np.stack([tifffile.imread(out / f"{a}.tif") for a in "xyz"], -1)
@@ -65,11 +69,28 @@ def test_conversion_rejects_invalid_declared_geometry(tmp_path, damage):
 def test_unmeasured_gate_is_not_pass_even_when_gate_cli_returns_zero():
     from winding_field.surface_geometry_check import gate_outcome
 
-    assert gate_outcome({"geometry_qc_state": "GEOMETRY_UNMEASURED", "measurement_complete": False}) == "UNMEASURED"
-    assert gate_outcome({"geometry_qc_state": "GEOMETRY_CERTIFIED", "measurement_complete": False}) == "UNMEASURED"
-    assert gate_outcome({"geometry_qc_state": "GEOMETRY_REJECTED_BRIDGE", "measurement_complete": True}) == "FAIL"
     assert (
-        gate_outcome({"geometry_qc_state": "GEOMETRY_CERTIFIED", "measurement_complete": True, "status": "PASS"})
+        gate_outcome({"geometry_qc_state": "GEOMETRY_UNMEASURED", "measurement_complete": False})
+        == "UNMEASURED"
+    )
+    assert (
+        gate_outcome({"geometry_qc_state": "GEOMETRY_CERTIFIED", "measurement_complete": False})
+        == "UNMEASURED"
+    )
+    assert (
+        gate_outcome(
+            {"geometry_qc_state": "GEOMETRY_REJECTED_BRIDGE", "measurement_complete": True}
+        )
+        == "FAIL"
+    )
+    assert (
+        gate_outcome(
+            {
+                "geometry_qc_state": "GEOMETRY_CERTIFIED",
+                "measurement_complete": True,
+                "status": "PASS",
+            }
+        )
         == "PASS"
     )
 

@@ -16,7 +16,11 @@ def supervise(command, output, timeout=1800, reserve_bytes=10 * 1024**3, interva
     output.mkdir(parents=False, exist_ok=False)
     started = time.time()
     state = dict(
-        state="starting", command=list(command), started_utc=started, timeout_s=timeout, supervisor_pid=os.getpid()
+        state="starting",
+        command=list(command),
+        started_utc=started,
+        timeout_s=timeout,
+        supervisor_pid=os.getpid(),
     )
 
     def record():
@@ -24,7 +28,9 @@ def supervise(command, output, timeout=1800, reserve_bytes=10 * 1024**3, interva
             updated_utc=time.time(),
             elapsed_s=time.time() - started,
             free_bytes=shutil.disk_usage(output).free,
-            log_bytes=(output / "stdout.log").stat().st_size if (output / "stdout.log").exists() else 0,
+            log_bytes=(output / "stdout.log").stat().st_size
+            if (output / "stdout.log").exists()
+            else 0,
         )
         temp = output / "status.tmp"
         temp.write_text(json.dumps(state, indent=2) + "\n")
@@ -37,7 +43,11 @@ def supervise(command, output, timeout=1800, reserve_bytes=10 * 1024**3, interva
         return state
     with (output / "stdout.log").open("xb") as log:
         child = subprocess.Popen(
-            command, stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT, start_new_session=True
+            command,
+            stdin=subprocess.DEVNULL,
+            stdout=log,
+            stderr=subprocess.STDOUT,
+            start_new_session=True,
         )
         state.update(state="running", pid=child.pid)
         try:
@@ -86,7 +96,8 @@ def main(argv=None):
     p.add_argument("--reserve-gib", type=float, default=10)
     p.add_argument("command", nargs=argparse.REMAINDER)
     from .cli_settings import parse_options
-    a = parse_options(p,argv)
+
+    a = parse_options(p, argv)
     cmd = a.command[1:] if a.command[:1] == ["--"] else a.command
     if not cmd or a.timeout <= 0 or a.reserve_gib < 0:
         p.error("require command, positive timeout and nonnegative reserve")

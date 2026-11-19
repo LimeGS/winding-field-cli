@@ -70,7 +70,9 @@ def create_case(folder):
     # Exercise certified input and the estimator separately from analytic solver truth.
     presence = folder / "presence"
     (presence / "0/0").mkdir(parents=True)
-    volume = np.broadcast_to(np.where(np.arange(88) % 16 < 2, 255, 0).astype(np.uint8), (88, 88, 88)).copy()
+    volume = np.broadcast_to(
+        np.where(np.arange(88) % 16 < 2, 255, 0).astype(np.uint8), (88, 88, 88)
+    ).copy()
     (presence / "0/0/0").write_bytes(volume.tobytes())
     atomic_json(
         presence / ".zarray",
@@ -144,7 +146,12 @@ def create_case(folder):
             constraints=dict(path="constraints.npz", sha256=sha(folder / "constraints.npz")),
             solver=dict(device="cpu", dtype="float64", rtol=1e-10, maxiter=1000),
             execution=dict(
-                chunk=4, halo=2, sweeps=2, cache_bytes=1 << 20, read_workers=2, constraint_cache_bytes=1 << 20
+                chunk=4,
+                halo=2,
+                sweeps=2,
+                cache_bytes=1 << 20,
+                read_workers=2,
+                constraint_cache_bytes=1 << 20,
             ),
         ),
     )
@@ -155,7 +162,9 @@ def case_options(folder, *, cache_bytes=0, read_workers=1, pair_cache_bytes=0):
     case = json.loads((folder / "CASE.json").read_text())
     if case.get("schema") != "synthetic-block-example-v1":
         raise ValueError("not a synthetic example case")
-    loader = NpyObservations(*(folder / (name + ".npy") for name in ("target", "weights", "observed")), case["hashes"])
+    loader = NpyObservations(
+        *(folder / (name + ".npy") for name in ("target", "weights", "observed")), case["hashes"]
+    )
     origin, spacing = np.asarray(case["origin_xyz"]), np.asarray(case["spacing_xyz"])
     constraints = StencilConstraints.pairs(
         origin + spacing * [[0.25, 1.0, 1.0]],
@@ -199,7 +208,9 @@ def case_options(folder, *, cache_bytes=0, read_workers=1, pair_cache_bytes=0):
 
 def read_result(root):
     metadata = json.loads((root / "CHECKPOINT.json").read_text())
-    with BlockStore(root, metadata["shape"], metadata["chunk"], metadata["identity"], resume=True) as store:
+    with BlockStore(
+        root, metadata["shape"], metadata["chunk"], metadata["identity"], resume=True
+    ) as store:
         return store.read([0] * 3, store.shape)
 
 
@@ -208,7 +219,9 @@ def main():
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--resume", action="store_true")
     parser.add_argument("--prefetch", action="store_true", help="one CPU observation worker")
-    parser.add_argument("--supervised", action="store_true", help="owned worker with resource-only retries")
+    parser.add_argument(
+        "--supervised", action="store_true", help="owned worker with resource-only retries"
+    )
     parser.add_argument("--stop-after-blocks", type=int)
     args = parser.parse_args()
     if args.stop_after_blocks is not None and args.stop_after_blocks < 1:
@@ -220,15 +233,24 @@ def main():
     source_before = sources()
     root = args.output / "field"
     if args.supervised:
-        command = [sys.executable, str(Path(__file__).resolve()), "--output", str(args.output.resolve())]
+        command = [
+            sys.executable,
+            str(Path(__file__).resolve()),
+            "--output",
+            str(args.output.resolve()),
+        ]
         if args.prefetch:
             command.append("--prefetch")
         if args.stop_after_blocks is not None:
             command += ["--stop-after-blocks", str(args.stop_after_blocks)]
-        inventory = {str(Path(module.__file__).resolve()): sha(module.__file__) for module in MODULES}
+        inventory = {
+            str(Path(module.__file__).resolve()): sha(module.__file__) for module in MODULES
+        }
         inventory[str(Path(__file__).resolve())] = sha(__file__)
         inventory[str((args.output / "CASE.json").resolve())] = sha(args.output / "CASE.json")
-        inventory[str((args.output / "field-run.json").resolve())] = sha(args.output / "field-run.json")
+        inventory[str((args.output / "field-run.json").resolve())] = sha(
+            args.output / "field-run.json"
+        )
         return run_supervised(
             command,
             [*command, "--resume"],
@@ -242,11 +264,17 @@ def main():
         if args.stop_after_blocks is None or not (root / "CHECKPOINT.json").exists():
             return False
         progress = json.loads((root / "CHECKPOINT.json").read_text())["progress"]
-        return (progress.get("sweep", 1) - 1) * 2 + progress.get("next_block", 0) >= args.stop_after_blocks
+        return (progress.get("sweep", 1) - 1) * 2 + progress.get(
+            "next_block", 0
+        ) >= args.stop_after_blocks
 
     try:
         receipt = field_workflow.run_field(
-            args.output / "field-run.json", root, resume=args.resume, stop=stop, prefetch=args.prefetch
+            args.output / "field-run.json",
+            root,
+            resume=args.resume,
+            stop=stop,
+            prefetch=args.prefetch,
         )
     except ResourceUnavailable:
         return 75

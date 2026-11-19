@@ -18,11 +18,12 @@ def main(argv=None):
     p.add_argument("--output", type=Path, required=True)
     p.add_argument("--step", type=float, help="fixed baseline step for a paired comparison")
     p.add_argument("--margin", type=int, default=8)
-    from .tool_settings import metadata_arguments,metadata_request,check_sources
+    from .tool_settings import metadata_arguments, metadata_request, check_sources
     from .cli_settings import parse_options
-    metadata_arguments(p,support=False,ownership=False)
-    args = parse_options(p,argv)
-    meta = metadata_request(args,world_units=False)
+
+    metadata_arguments(p, support=False, ownership=False)
+    args = parse_options(p, argv)
+    meta = metadata_request(args, world_units=False)
     if meta["frame"] != args.patch_frame:
         raise ValueError("patch/field coordinate frames differ")
     field = np.load(args.field, mmap_mode="r").astype(np.float32)
@@ -30,10 +31,13 @@ def main(argv=None):
         raise ValueError("field shape or finite-value check failed")
     step = args.step if args.step is not None else meta["step"]
     output = dict(
-        field=str(args.field), field_sha256=sha256(args.field), metadata=meta,
-        step_used=step, patches=[],
+        field=str(args.field),
+        field_sha256=sha256(args.field),
+        metadata=meta,
+        step_used=step,
+        patches=[],
         limitation="Same-sheet constancy and local jumps, not proof against collapse or merges.",
-        request_sources=getattr(args,'_request_sources',{}),
+        request_sources=getattr(args, "_request_sources", {}),
     )
     for patch in args.patch:
         pm, xyz = load_patch(patch)
@@ -41,7 +45,8 @@ def main(argv=None):
             field, xyz, meta["origin_xyz"], meta["spacing_xyz"], step, args.margin, min_component=30
         )
         result.update(
-            uuid=pm["uuid"], source=str(patch),
+            uuid=pm["uuid"],
+            source=str(patch),
             sha256={f: sha256(patch / f) for f in ("meta.json", "x.tif", "y.tif", "z.tif")},
         )
         output["patches"].append(result)
@@ -56,7 +61,9 @@ def main(argv=None):
             ax.set_title(f"{pm['uuid']} — deviation from each connected piece (sheets)")
             fig.colorbar(im, ax=ax)
             fig.tight_layout()
-            fig.savefig(args.output.with_name(args.output.stem + "_" + pm["uuid"] + ".png"), dpi=140)
+            fig.savefig(
+                args.output.with_name(args.output.stem + "_" + pm["uuid"] + ".png"), dpi=140
+            )
         finally:
             plt.close(fig)
     check_sources(args)

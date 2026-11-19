@@ -65,7 +65,10 @@ def chunks(tmp_path):
         store.commit((0, 0, 0), values, {}, np.ones(values.shape, bool))
     cp = root / "CHECKPOINT.json"
     descriptor = dict(
-        kind="chunks", path=str(cp), sha256=hashlib.sha256(cp.read_bytes()).hexdigest(), support_policy="observed"
+        kind="chunks",
+        path=str(cp),
+        sha256=hashlib.sha256(cp.read_bytes()).hexdigest(),
+        support_policy="observed",
     )
     return descriptor, geometry
 
@@ -144,7 +147,9 @@ def test_npz_declared_shape_is_bounded_before_numpy_allocation(tmp_path, monkeyp
     path = tmp_path / "bad.npz"
     header = io.BytesIO()
     faces = io.BytesIO()
-    np.lib.format.write_array_header_1_0(header, dict(descr="<f8", fortran_order=False, shape=(100_000_000, 3)))
+    np.lib.format.write_array_header_1_0(
+        header, dict(descr="<f8", fortran_order=False, shape=(100_000_000, 3))
+    )
     np.save(faces, np.empty((0, 3), np.int64))
     with ZipFile(path, "w") as archive:
         archive.writestr("vertices_xyz.npy", header.getvalue())
@@ -171,7 +176,8 @@ def test_import_reserve_covers_initial_database_growth(tmp_path, monkeypatch):
     path = tmp_path / "input.obj"
     path.write_text("v 0 0 0\nv 0 1 0\nv 0 0 1\nf 1 2 3\n")
     monkeypatch.setattr(
-        "field_runtime.shutil.disk_usage", lambda path: shutil._ntuple_diskusage(1_000_000, 899_999, 100_001)
+        "field_runtime.shutil.disk_usage",
+        lambda path: shutil._ntuple_diskusage(1_000_000, 899_999, 100_001),
     )
     with pytest.raises(ResourceUnavailable):
         import_mesh(
@@ -195,7 +201,10 @@ def test_near_node_plane_retains_float64_crossing_after_float32_rounding(tmp_pat
     np.testing.assert_allclose(vertices[:, 0], level, rtol=0, atol=1e-12)
     triangles = vertices[faces]
     area = (
-        np.linalg.norm(np.cross(triangles[:, 1] - triangles[:, 0], triangles[:, 2] - triangles[:, 0]), axis=1).sum() / 2
+        np.linalg.norm(
+            np.cross(triangles[:, 1] - triangles[:, 0], triangles[:, 2] - triangles[:, 0]), axis=1
+        ).sum()
+        / 2
     )
     assert area == pytest.approx(4.0)
 

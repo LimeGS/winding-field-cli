@@ -52,3 +52,11 @@ winding_field = ["native/predicates.h", "native/predicates.cpp", "native/predica
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
+
+[tool.ruff]
+line-length = 100
+extend-exclude = [
+  "src/winding_field/_vendor",
+  # Hash-pinned in provenance; must stay byte-identical.
+  "src/winding_field/surface_render.py",
+]
