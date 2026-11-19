@@ -450,7 +450,7 @@ def main(argv=None):
         p.add_argument(
             "--flattening-method",
             choices=["slim", "default", "original"],
-            help="native SLIM (default for new native runs), default: legacy local mapping, original: global LSCM; independent of field resolution",
+            help="slim: Flatboi SLIM (default for new native runs on Linux x86_64), default: tangent projection/LSCM charts, original: global LSCM; independent of field resolution",
         )
         p.add_argument(
             "--flattening-config",
@@ -827,8 +827,13 @@ def main(argv=None):
             config.update(declarations)
             config["device"] = resolve_device(config["device"])
             if config["flattening_method"] is None:
+                from .flattening.flatboi import supported_platform
+
+                # SLIM is Flatboi (Linux x86_64 only); elsewhere native runs default to LSCM.
                 config["flattening_method"] = (
-                    "slim" if config["surface_output"] == "native" else "default"
+                    "slim"
+                    if config["surface_output"] == "native" and supported_platform()
+                    else "default"
                 )
             original = config.pop("flattening_config")
             original_flags = {

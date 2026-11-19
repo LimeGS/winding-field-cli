@@ -89,9 +89,10 @@ def settings(request, *, native_required=True):
     cfg.update(request)
     if not isinstance(cfg["native_recipe"], str) or cfg["native_recipe"] not in NATIVE_RECIPES:
         raise ValueError("unknown native_recipe")
-    if native_required or cfg.get("app_run") is not None:
-        if not isinstance(cfg.get("app_run"), str) or not cfg["app_run"]:
-            raise ValueError("patch app_run required")
+    # app_run is optional: check_flatboi resolves the pinned historical AppImage when omitted.
+    if cfg.get("app_run") is not None:
+        if not isinstance(cfg["app_run"], str) or not cfg["app_run"]:
+            raise ValueError("patch app_run must be a nonempty path")
     if (
         type(cfg["cache_gib"]) not in (int, float)
         or not math.isfinite(cfg["cache_gib"])
@@ -177,22 +178,23 @@ def ct_memory(chunks, dtype, cfg):
 VENDORED_APP_RUN = Path(__file__).resolve().parent / "_native" / "vc3d" / "AppRun"
 
 
-def check_flatboi(app_run=None, recipe="historical"):
+def check_flatboi(app_run=None, recipe="historical", *, offline=False):
+    """Verify a Flatboi launcher/binary pair; resolve the pinned AppImage when app_run is None."""
     if recipe not in NATIVE_RECIPES:
         raise ValueError("unknown native_recipe")
     expected = NATIVE_RECIPES[recipe]
     if app_run is None:
-        if recipe != "installed-2f89bfc9":
-            raise ValueError("Flatboi app_run is required for recipe " + recipe)
-        app_run = VENDORED_APP_RUN
+        from .flattening.flatboi import resolve_app_run
+
+        app_run = resolve_app_run(None, recipe, offline=offline)
     app = Path(app_run).expanduser().resolve()
     binary = app.parent / "usr/bin/flatboi"
     if not app.is_file() or file_sha(app) != LAUNCHER_SHA:
-        raise ValueError("historical Flatboi launcher SHA256 mismatch or unavailable: " + str(app))
+        raise ValueError("Flatboi launcher SHA256 mismatch or unavailable: " + str(app))
     if not binary.is_file() or file_sha(binary) != expected:
         raise ValueError(recipe + " Flatboi binary SHA256 mismatch or unavailable: " + str(binary))
     if not os.access(app, os.X_OK):
-        raise ValueError("historical Flatboi launcher is not executable")
+        raise ValueError("Flatboi launcher is not executable: " + str(app))
     return dict(
         app_run=str(app),
         launcher_sha256=LAUNCHER_SHA,

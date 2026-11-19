@@ -33,7 +33,11 @@ def test_matrix_selects_only_checkpoint_qualified_recipes(tmp_path):
     from test_flattening_matrix import request
 
     req = dict(request(tmp_path), app_run="/opt/vc3d/AppRun")
-    assert settings(req, "slim", "sheet")["native_recipe"] == "installed-2f89bfc9"
+    assert settings(req, "slim", "sheet")["native_recipe"] == "historical"
+    assert (
+        settings(dict(req, native_recipe="installed-2f89bfc9"), "slim", "sheet")["native_recipe"]
+        == "installed-2f89bfc9"
+    )
     for scope in ("patches", "sheet"):
         assert (
             settings(dict(req, native_recipe="historical"), "slim", scope)["native_recipe"]

@@ -55,12 +55,8 @@ def settings(request, solver, scope):
         or not np.isfinite(extra["reference_z"])
     ):
         raise ValueError("reference_z requires centerline and a finite height")
-    base = dict(memory_gib=None, process_tree_gib=None, native_recipe="installed-2f89bfc9")
+    base = dict(memory_gib=None, process_tree_gib=None, native_recipe="historical")
     base.update({k: v for k, v in request.items() if k not in extra})
-    if solver == "slim" and not base.get("app_run"):
-        from .patch_pipeline import VENDORED_APP_RUN
-
-        base["app_run"] = str(VENDORED_APP_RUN)
     cfg = p.settings(base, native_required=solver == "slim")
     if solver == "slim" and cfg["native_recipe"] not in p.CHECKPOINT_RECIPES:
         raise ValueError("native_recipe is not checkpoint-qualified")

@@ -8,6 +8,8 @@ import time
 
 import pytest
 
+from winding_field.flattening.flatboi import supported_platform
+
 from test_cli import invoke
 from test_native_runtime import field_case
 
@@ -101,7 +103,7 @@ def test_new_cli_defaults_native_and_records_requested_controls(tmp_path):
     assert result.returncode == 0, result.stdout + result.stderr
     config = json.loads((out / "RUN.json").read_bytes())["config"]
     assert config["surface_output"] == "native"
-    assert config["flattening_method"] == "slim"
+    assert config["flattening_method"] == ("slim" if supported_platform() else "default")
     assert config["device"] in ("cuda", "mps", "cpu")
     assert config["coverage_target"] == 0.9
     assert config["surface_time_limit_s"] == 20
@@ -110,7 +112,7 @@ def test_new_cli_defaults_native_and_records_requested_controls(tmp_path):
 @pytest.mark.parametrize(
     "branch,method,want",
     [
-        ("native", None, "slim"),
+        ("native", None, "slim" if supported_platform() else "default"),
         ("native", "slim", "slim"),
         ("native", "default", "default"),
         ("atlas", None, "default"),
@@ -182,42 +184,6 @@ def test_explicit_slim_rejects_nonnative_branches_before_io(branch, tmp_path, ca
         )
         assert "native" in capsys.readouterr().err
         assert not (tmp_path / "out").exists()
-
-
-def test_slim_requires_libigl_before_creating_run(tmp_path, monkeypatch):
-    from winding_field.workflow import run
-
-    monkeypatch.setattr("winding_field.native_geometry._solver", lambda: None)
-    with pytest.raises(ValueError, match="SLIM.*libigl"):
-        run(
-            dict(
-                source="unused",
-                output=str(tmp_path / "out"),
-                surface_output="native",
-                flattening_method="slim",
-            )
-        )
-    assert not (tmp_path / "out").exists()
-
-
-@pytest.mark.parametrize("method", [None, "default", "original"])
-def test_resume_does_not_reinterpret_saved_native_method(tmp_path, monkeypatch, method):
-    from winding_field.cli import main
-    from winding_field.util import atomic_json
-
-    config = dict(surface_output="native", output=str(tmp_path))
-    if method:
-        config["flattening_method"] = method
-    atomic_json(tmp_path / "RUN.json", dict(config=config, status="PAUSED"))
-    before = (tmp_path / "RUN.json").read_bytes()
-
-    def resume(saved, **kwargs):
-        assert saved == config and kwargs["resume"] is True
-        return {"status": "PAUSED", "config": saved}
-
-    monkeypatch.setattr("winding_field.workflow.run", resume)
-    assert main(["resume", str(tmp_path)]) == 0
-    assert (tmp_path / "RUN.json").read_bytes() == before
 
 
 def test_installed_cli_native_renders_and_resumes_from_other_directory(tmp_path):

@@ -68,9 +68,7 @@ def require_cgroup():
         ) from error
 
 
-def identity_for(
-    source_map, input, app_run, batch_iterations=10, native_recipe="installed-2f89bfc9"
-):
+def identity_for(source_map, input, app_run, batch_iterations=10, native_recipe="historical"):
     native = check_flatboi(app_run, native_recipe)
     prepared = Path(source_map).absolute().parent / "PREPARED.json"
     return dict(
@@ -171,7 +169,7 @@ def publish_checkpoint(
 
 
 def import_checkpoint(
-    source, output, source_map, input, app_run, runner_sha256, native_recipe="installed-2f89bfc9"
+    source, output, source_map, input, app_run, runner_sha256, native_recipe="historical"
 ):
     source = Path(source).absolute()
     out = Path(output).absolute()
@@ -303,7 +301,7 @@ def _run_locked(args, root, external_guard):
                 start_iterations=done,
             ),
         )
-        app = Path(args.app_run).expanduser().resolve()
+        app = Path(check_flatboi(args.app_run, args.native_recipe)["app_run"])
         while done < args.iterations and not (record and record["converged"]):
             guard()
             if shutil.disk_usage(root).free < 8 * 2**30 + 6 * current.stat().st_size:
