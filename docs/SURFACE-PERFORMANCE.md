@@ -16,7 +16,7 @@ These measurements do not exercise remote Zarr reading.
 The unprofiled comparison saved 44% of elapsed time (1.79×). This is one
 sequential serial-then-candidate comparison on 2026-11-10, without flushing
 caches, not a cold-cache or repeated statistical benchmark. Both unprofiled runs
-use the same published image, source-mounted baseline `eccd904` or candidate,
+use the same published image, source-mounted baseline `819b3a8` or candidate,
 input, SSD, configuration and resource limits. Profiler overhead is substantial:
 do not compare a profiled baseline against an unprofiled candidate.
 
