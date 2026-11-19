@@ -1,0 +1,5 @@
+{
+ "_comment": "Intended differences from the baseline. Each entry needs a reason; REVIEW.md R10 applies. Remove entries once the baseline includes the change.",
+ "flags": {},
+ "golden": {}
+}
