@@ -74,12 +74,18 @@ jobs:
       - name: Cached vc-reader wheel
         if: github.event_name == 'pull_request'
         id: vc-cache
-        uses: actions/cache@v4
+        uses: actions/cache/restore@v4
         with:
           path: ~/vc-reader-wheel
           key: vc-reader-${{ runner.os }}-${{ runner.arch }}-py${{ matrix.python }}-${{ steps.vc.outputs.key }}
       - if: github.event_name == 'pull_request' && steps.vc-cache.outputs.cache-hit != 'true'
         run: python -m pip wheel --no-deps --wheel-dir ~/vc-reader-wheel "${{ steps.vc.outputs.spec }}"
+      # Save immediately so a later test failure does not discard the native build.
+      - if: github.event_name == 'pull_request' && steps.vc-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ~/vc-reader-wheel
+          key: ${{ steps.vc-cache.outputs.cache-primary-key }}
       - name: Install wheel with cached vc-reader (pull requests)
         if: github.event_name == 'pull_request'
         run: |

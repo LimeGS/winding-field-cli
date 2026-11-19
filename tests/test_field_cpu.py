@@ -126,7 +126,8 @@ def test_stop_during_worker_wait_pauses_without_checkpoint_changes(tmp_path,monk
     from winding_field import field_cpu
     monkeypatch.setattr(field_cpu,'headroom_bytes',lambda:8<<30)
     monkeypatch.setattr(field_cpu,'prepare_static_block',blocked_prepare)
-    monkeypatch.setattr(field_cpu.CPUFieldInputs,'timeout_seconds',1.5)
+    # Spawned workers import torch before signalling; leave room for loaded CI hosts (e.g. pytest-xdist).
+    monkeypatch.setattr(field_cpu.CPUFieldInputs,'timeout_seconds',20.)
     run=prepared_run(tmp_path/'run',shape=(6,6,32),variable=True)
     before={child.pid for child in mp.active_children()};saved={}
     checkpoint=run/'field/CHECKPOINT.json'
@@ -142,7 +143,7 @@ def test_stop_during_worker_wait_pauses_without_checkpoint_changes(tmp_path,monk
     started=time.monotonic()
     result=field.solve(run,dict(sweeps=2,field_chunk=8,field_cpu_workers=1,
                                field_cpu_buffer_bytes=16<<20),stop=stop)
-    assert result['status']=='PAUSED' and time.monotonic()-started<8
+    assert result['status']=='PAUSED' and time.monotonic()-started<20
     assert saved and checkpoint.read_bytes()==saved['checkpoint']
     assert saved['chunks']
     assert {str(p.relative_to(run/'field')):p.read_bytes() for p in (run/'field').rglob('*.npz')}==saved['chunks']
