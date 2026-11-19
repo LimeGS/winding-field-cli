@@ -3,9 +3,16 @@
 import argparse
 import importlib
 import json
+import os
 from pathlib import Path
 import signal
 import sys
+
+# OpenMP threads (PyTorch on CPU) that wait for work sleep instead of spinning, so several
+# runs on one host do not starve each other: five concurrent field stages with 4 threads
+# took 133-205 s with the default spin and 9 s with PASSIVE. Must be set before torch loads;
+# an explicit user setting wins. Worker processes inherit it.
+os.environ.setdefault("OMP_WAIT_POLICY", "PASSIVE")
 
 from . import __version__
 from .io import Volume, resolve_source

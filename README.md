@@ -487,7 +487,7 @@ inputs retain [calibrated interpolation](docs/LASAGNA-CALIBRATED.md).
 | `--tifxyz-config FILE` | Separate request for the Linux-only experimental direct route |
 | `--coverage-target 1 --surface-time-limit 1800` | Native mapped mesh-area target / cumulative active seconds per W |
 | `--cache-gib 2 --reserve-gib 1` | CT payload cache cap / free disk reserve, not RAM |
-| `--threads 4` | PyTorch threads, not a global worker limit |
+| `--threads 4` | PyTorch threads, not a global worker limit; idle threads sleep (`OMP_WAIT_POLICY=PASSIVE`) so concurrent runs share a host; set `OMP_WAIT_POLICY=ACTIVE` on a dedicated CPU host (~10% faster alone) |
 | `--device auto` | New-run default: usable CUDA → usable MPS → CPU; explicit PyTorch devices remain supported |
 | `--offline` | Disable CT networking; provision models/runtime separately |
 | `--invalid-value 0` | Explicitly exclude acquisition fill; otherwise zero CT is valid |
