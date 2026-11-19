@@ -44,19 +44,34 @@ def test_flag_inventory_sees_every_command_and_critical_option(tmp_path):
     assert not [entry for entry in CRITICAL if entry not in inventory]
 
 
+def _check_review_paths(root, items):
+    # A checkout has every path; the test image mounts a subset and also links /src.
+    full_checkout = (root / ".git").exists()
+    for item in items:
+        pattern = item["pattern"].strip(" `")
+        if pattern not in ("—", ""):
+            re.compile(pattern)
+        for glob in (p.strip(" `") for p in item["paths"].split(",")):
+            if full_checkout or (root / glob.split("/")[0]).exists():
+                assert any(root.glob(glob)) or (root / glob).exists(), (item["id"], glob)
+
+
 def test_review_items_parse_with_valid_triggers():
     items = verify.review_items(ROOT / "REVIEW.md")
     ids = [item["id"] for item in items]
     assert ids == [f"R{i}" for i in range(1, len(ids) + 1)] and len(ids) >= 10
     for item in items:
         assert item["check"] and item["origin"]
-        pattern = item["pattern"].strip(" `")
-        if pattern not in ("—", ""):
-            re.compile(pattern)
-        for glob in (p.strip(" `") for p in item["paths"].split(",")):
-            # The container suite mounts tests, tools and docs but installs src/ as a package.
-            if (ROOT / "src").is_dir() or (ROOT / glob.split("/")[0]).exists():
-                assert any(ROOT.glob(glob)) or (ROOT / glob).exists(), (item["id"], glob)
+    _check_review_paths(ROOT, items)
+
+
+def test_review_paths_skip_unmounted_image_paths(tmp_path):
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "a.py").write_text("")
+    (tmp_path / "REVIEW.md").write_text(
+        "| R1 | `src/*.py`, `.github/workflows/*` | — | path check | x |\n"
+    )
+    _check_review_paths(tmp_path, verify.review_items(tmp_path / "REVIEW.md"))
 
 
 def test_review_step_matches_paths_and_changed_lines_only(tmp_path):
