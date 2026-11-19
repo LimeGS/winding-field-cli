@@ -279,7 +279,8 @@ winding-field field-advice runs/prepared-field
 
 The report never runs a solver or verification, stops work or adds sweeps.
 Published core **1.5.2 does not support this opt-in**; new installations pin an
-observer-capable development core archive by exact revision and hash, recorded in
+observer-capable development core from git at its exact commit, verified after
+install by commit id and source hashes (`tools/verify-core.py`) as recorded in
 `provenance/core.json`. This is not a stable core release.
 See [scope, recovery and interpretation](docs/FIELD-ADVICE.md).
 

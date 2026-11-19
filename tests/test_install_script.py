@@ -30,8 +30,12 @@ def installer(tmp_path):
         p.parent.mkdir(exist_ok=True)
         p.write_text("# fixture\n")
     (work / "pyproject.toml").write_text('[project]\nname="fixture"\nversion="0.0.1"\n')
+    (work / "provenance").mkdir()
+    shutil.copyfile(ROOT / "provenance/core.json", work / "provenance/core.json")
     for name in (
         "tools/install-runtime.sh",
+        "tools/verify-core.py",
+        "provenance/core.json",
         "tools/ubuntu-packages.txt",
         "docker/lasagna.in",
         "docker/build-constraints.txt",
@@ -96,6 +100,8 @@ elif name=='python3.12':
     assert args[:2]==['-m','venv'];dest=Path(args[2]);(dest/'bin').mkdir(parents=True)
     (dest/'bin/python').symlink_to(Path(__file__).resolve())
     (dest/'bin/activate').write_text('export VIRTUAL_ENV='+shlex.quote(str(dest.absolute()))+'\\nexport PATH="$VIRTUAL_ENV/bin:$PATH"\\n')
+elif name=='python' and args and args[0].endswith('verify-core.py'):
+    if args[1]=='--install-url':print(json.load(open(args[2]))['install_url'])
 elif name=='python':
     assert args[:3]==['-m','pip','install']
     tool=Path(sys.argv[0]).with_name('uv');tool.unlink(missing_ok=True)
@@ -144,13 +150,30 @@ elif name!='apt-get':raise AssertionError((name,args))
     return run, work, home, log
 
 
+def assert_core_from_git(calls, work):
+    """The core is installed from git at the pinned commit, then verified, before the CLI wheel."""
+    provenance = json.loads((ROOT / "provenance/core.json").read_text())
+    expected = f"winding-field @ git+{provenance['origin']}@{provenance['revision']}"
+    core = [c for c in calls if c[:3] == ["uv", "pip", "install"] and c[-1] == expected]
+    assert len(core) == 1 and "--no-deps" in core[0]
+    verify = [c for c in calls if c[:1] == ["python"] and c[1].endswith("tools/verify-core.py")]
+    assert [c[2:] for c in verify] == [
+        ["--install-url", str(work / "provenance/core.json")],
+        [str(work / "provenance/core.json")],
+    ]
+    wheel = next(i for i, c in enumerate(calls) if c[-1].endswith(".whl"))
+    assert calls.index(core[0]) < calls.index(verify[1]) < wheel
+    assert not any("archive/" in part for c in calls for part in c)
+
+
 def test_shared_auto_runtime_installs_specs_extras_and_wheel(installer):
     run, work, home, log = installer
     result = run(content='bash "$INSTALL_RUNTIME" auto "$PWD/cli" "$HOME/lasagna"\n')
     assert result.returncode == 0, result.stderr
     calls = [json.loads(l) for l in log.read_text().splitlines()]
     installs = [c for c in calls if c[:3] == ["uv", "pip", "install"]]
-    assert len(installs) == 3
+    assert len(installs) == 4
+    assert_core_from_git(calls, work)
     cli = next(c for c in installs if "--extra" in c)
     assert cli[cli.index("--requirements") + 1] == str(work / "pyproject.toml")
     assert cli.count("--extra") == 2 and "plot" in cli and "tifxyz" in cli
@@ -190,6 +213,7 @@ def test_shared_locked_runtime_preserves_hashes_and_dependency_layer(installer, 
     assert not any(c[:3] == ["uv", "pip", "sync"] for c in later)
     assert not any(c[:2] == ["uv", "venv"] for c in later)
     assert list((work / "wheels").glob("*.whl")) and (work / "cli/bin/winding-field").exists()
+    assert_core_from_git(later, work)
 
 
 @pytest.mark.parametrize("backend", ["auto", "cpu", "cu128"])

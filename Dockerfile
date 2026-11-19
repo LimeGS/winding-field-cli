@@ -29,7 +29,7 @@ RUN mkdir -p /scratch && test "$TARGETARCH" = amd64 && \
     rm -rf /var/lib/apt/lists/*
 
 COPY docker/*-cpu.txt docker/*-cu128.txt docker/build-constraints.txt /opt/runtime-provenance/docker/
-COPY tools/install-runtime.sh /opt/runtime-provenance/tools/install-runtime.sh
+COPY tools/install-runtime.sh tools/verify-core.py /opt/runtime-provenance/tools/
 RUN bash /opt/runtime-provenance/tools/install-runtime.sh "$TORCH_VARIANT" /opt/winding-field /opt/lasagna dependencies
 COPY provenance /opt/runtime-provenance/sources
 RUN python -c 'import json,urllib.request; p=json.load(open("/opt/runtime-provenance/sources/flatboi.json")); urllib.request.urlretrieve(p["url"],"/scratch/vc3d.AppImage")' && \

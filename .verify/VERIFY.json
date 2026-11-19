@@ -8,14 +8,13 @@
  "status": "PASS",
  "steps": {
   "cross-version": {
-   "refusal": "winding-field: implementation changed; resume with the original package (v1.5.0 for pre-cutover runs) or use a new output",
-   "resume_baseline_run": "refused-cleanly",
+   "resume_baseline_run": "resumed",
    "reuse_modes": {
     "fibres": "reused",
     "field": "run",
     "prepare": "reused"
    },
-   "seconds": 11.5,
+   "seconds": 15.8,
    "status": "PASS"
   },
   "e2e-demo": {
@@ -23,13 +22,13 @@
    "resume_changed": [
     "RUN.json"
    ],
-   "seconds": 9.4,
+   "seconds": 11.1,
    "status": "PASS"
   },
   "e2e-native": {
    "levels": 7,
    "method": "slim",
-   "seconds": 14.1,
+   "seconds": 17.1,
    "solver": "flatboi-slim",
    "status": "PASS"
   },
@@ -37,7 +36,7 @@
    "added": [],
    "approved_removals": [],
    "options": 994,
-   "seconds": 3.3,
+   "seconds": 3.9,
    "status": "PASS"
   },
   "golden": {
@@ -53,12 +52,15 @@
     "native_sheet.mean_value_map",
     "original.make_map"
    ],
-   "seconds": 6.2,
+   "seconds": 7.2,
    "status": "PASS"
   },
   "review": {
-   "changed_files": 3,
-   "checklist": [],
+   "changed_files": 16,
+   "checklist": [
+    "R7: The container and sdist suites only run on pushes to main: check mounts, packaged files and test-image dependencies before merging",
+    "R9: Pins match `provenance/*.json`; `test_embedded_appimage_pin_matches_provenance` passes"
+   ],
    "seconds": 0.0,
    "status": "PASS"
   }

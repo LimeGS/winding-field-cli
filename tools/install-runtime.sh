@@ -71,6 +71,12 @@ if [[ "$phase" != dependencies ]]; then
         wheels=$(mktemp -d "${TMPDIR:-/tmp}/winding-field-wheels.XXXXXX")
         trap 'rm -rf "$wheels"' EXIT
     fi
+    # The numerical core comes from git at the exact commit in provenance/core.json and
+    # is verified by commit id and source hashes (no archive download, no unhashed tarball).
+    core="$PWD/provenance/core.json"
+    core_url=$("$cli/bin/python" "$root/tools/verify-core.py" --install-url "$core")
+    "$uv" pip install --python "$cli/bin/python" --no-deps "winding-field @ $core_url"
+    "$cli/bin/python" "$root/tools/verify-core.py" "$core"
     "$uv" build --wheel --python "$cli/bin/python" --build-constraints "$constraints" --out-dir "$wheels" "$PWD"
     "$uv" pip install --python "$cli/bin/python" --no-deps "$wheels"/*.whl
     "$uv" pip check --python "$cli/bin/python"
