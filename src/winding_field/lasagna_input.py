@@ -14,6 +14,7 @@ from common import decode_lasagna_normals
 from .artifacts import Tiles
 from .io import Volume, http_url, bounds
 from .lasagna import CHUNK, physical_observations
+from .lasagna_stream import LasagnaInput  # noqa: F401 - public re-export used by callers/tests
 from .splines import bind
 from .util import atomic_json, file_sha
 
