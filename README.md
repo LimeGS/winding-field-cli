@@ -2,7 +2,9 @@
 
 [![Audit](https://github.com/LimeGS/winding-field-cli/actions/workflows/tests.yml/badge.svg?branch=main&event=push)](https://github.com/LimeGS/winding-field-cli/actions/workflows/tests.yml)
 [![Coverage (local): 84.01%](https://img.shields.io/badge/coverage%20%28local%29-84.01%25-brightgreen)](#checks)
-[![Code license: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
+[![Python 3.11–3.12](https://img.shields.io/badge/python-3.11%E2%80%933.12-blue)](pyproject.toml)
+[![Release](https://img.shields.io/github/v/release/LimeGS/winding-field-cli?include_prereleases)](https://github.com/LimeGS/winding-field-cli/releases)
 
 ![Illustrated workflow: original CT → Lasagna surfaces + Qual V2 fibres/splines → winding field → 3D meshes → flattened charts](docs/assets/workflow-banner.png)
 
@@ -559,6 +561,21 @@ Built on tools and open work from the **Vesuvius Challenge community**:
 Thanks to their authors, maintainers and the community publishing scroll data
 and models. Exact source pins, adaptations and notices are in
 [THIRD_PARTY.md](THIRD_PARTY.md) and [provenance/](provenance/).
+
+## Related projects
+
+Part of the LimeGS toolchain for the [Vesuvius Challenge](https://scrollprize.org):
+
+- [winding-field](https://github.com/LimeGS/winding-field): winding-field core and reproducible evaluation.
+- [ink-sdk](https://github.com/LimeGS/ink-sdk): standalone ink inference on surface volumes, or on tifxyz meshes plus CT.
+- [helena-framework](https://github.com/LimeGS/helena-framework): reproducible, auditable orchestration of the volume → surface → ink → page pipeline.
+- [herculaneum-legibility-index](https://github.com/LimeGS/herculaneum-legibility-index): legibility triage over the official ink maps.
+- [herculaneum-legibility-v5](https://github.com/LimeGS/herculaneum-legibility-v5): corrected-label retraining of the legibility classifier.
+- [vesuvius-chat](https://github.com/LimeGS/vesuvius-chat): search the Discord research archive from a web chat or an AI agent.
+
+## Citation
+
+If you use this work, please cite it with the metadata in [CITATION.cff](CITATION.cff) (GitHub's **Cite this repository** button reads it).
 
 ## License
 

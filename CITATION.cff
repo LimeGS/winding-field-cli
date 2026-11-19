@@ -1,0 +1,17 @@
+cff-version: 1.2.0
+message: "If you use this work, please cite it using the metadata from this file."
+type: software
+title: "winding-field-cli"
+abstract: "Resumable research CLI: original CT to fibres, winding field, meshes and linked flat charts"
+authors:
+  - name: LimeGS
+repository-code: https://github.com/LimeGS/winding-field-cli
+license: MIT
+version: "1.5.8"
+keywords:
+  - cli
+  - herculaneum-scrolls
+  - python
+  - pytorch
+  - vesuvius-challenge
+  - volumetric-imaging
