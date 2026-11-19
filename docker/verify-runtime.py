@@ -38,6 +38,17 @@ assert (
     reader_source["url"]
     == "https://github.com/LimeGS/villa/archive/84207424c3a988e6cafe6b50fe7d4d7e5f839929.tar.gz"
 )
+core = subprocess.run(
+    [
+        sys.executable,
+        "/opt/runtime-provenance/tools/verify-core.py",
+        "/opt/runtime-provenance/sources/core.json",
+    ],
+    capture_output=True,
+    text=True,
+    check=False,
+)
+assert core.returncode == 0, "numerical core differs from provenance: " + core.stderr
 import numpy as np
 from numcodecs import Delta, Shuffle, Zlib
 from winding_field.io import Volume

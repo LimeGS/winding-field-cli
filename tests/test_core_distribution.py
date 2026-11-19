@@ -20,20 +20,69 @@ def test_core_dependency_and_provenance_use_renamed_distribution():
         for value in config["project"]["dependencies"]
         if Requirement(value).name == "winding-field"
     )
-    assert core.url == f"{provenance['origin']}/archive/{provenance['revision']}.tar.gz"
+    # A git commit, never a GitHub archive: archives are not served everywhere and
+    # carry no content identity of their own.
+    assert core.url == f"git+{provenance['origin']}@{provenance['revision']}"
+    assert core.url == provenance["install_url"]
+    assert "archive_sha256" not in provenance
     assert not any(
         "winding-field-experiments" in value for value in config["project"]["dependencies"]
     )
 
 
-def test_core_archive_constraint_matches_provenance():
+def test_core_constraint_matches_provenance_and_stays_out_of_hash_locks():
     provenance = json.loads((ROOT / "provenance/core.json").read_text())
-    archive = f"winding-field @ {provenance['origin']}/archive/{provenance['revision']}.tar.gz"
-    assert archive in (ROOT / "docker/cli.in").read_text().splitlines()
+    pinned = f"winding-field @ {provenance['install_url']}"
+    assert pinned in (ROOT / "docker/cli.in").read_text().splitlines()
     for variant in ("cpu", "cu128"):
-        lines = (ROOT / f"docker/cli-{variant}.txt").read_text().splitlines()
-        index = lines.index(archive + " \\")
-        assert lines[index + 1].strip() == "--hash=sha256:" + provenance["archive_sha256"]
+        text = (ROOT / f"docker/cli-{variant}.txt").read_text()
+        # A git source has no archive hash; install-runtime.sh installs and verifies it.
+        assert "--no-emit-package winding-field" in text.splitlines()[1]
+        assert not any(line.startswith("winding-field @") for line in text.splitlines())
+
+
+def test_core_verifier_reports_commit_source_and_origin_mismatches(monkeypatch, tmp_path):
+    spec = importlib.util.spec_from_file_location("verify_core", ROOT / "tools/verify-core.py")
+    verify_core = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(verify_core)
+    source = tmp_path / "field_runtime.py"
+    source.write_text("x = 1\n")
+    provenance = {
+        "distribution": "winding-field",
+        "version": "1.5.4",
+        "origin": "https://github.com/LimeGS/winding-field",
+        "revision": "a" * 40,
+        "source_sha256": {"field_runtime.py": hashlib.sha256(b"x = 1\n").hexdigest()},
+    }
+
+    class Dist:
+        version = "1.5.4"
+
+        def __init__(self, direct):
+            self.direct = direct
+
+        def read_text(self, name):
+            return json.dumps(self.direct)
+
+    def install(direct):
+        monkeypatch.setattr(verify_core.metadata, "distribution", lambda name: Dist(direct))
+
+    monkeypatch.setattr(
+        verify_core.importlib.util,
+        "find_spec",
+        lambda name: type("Spec", (), {"origin": str(source)})(),
+    )
+    good = {"url": provenance["origin"], "vcs_info": {"vcs": "git", "commit_id": "a" * 40}}
+    install(good)
+    assert verify_core.problems(provenance) == []
+    install({**good, "vcs_info": {"vcs": "git", "commit_id": "b" * 40}})
+    assert any("commit" in p for p in verify_core.problems(provenance))
+    archive = {"url": f"{provenance['origin']}/archive/{'a' * 40}.tar.gz", "archive_info": {}}
+    install(archive)
+    assert any("by git" in p for p in verify_core.problems(provenance))
+    install(good)
+    source.write_text("x = 2\n")
+    assert any("sha256" in p for p in verify_core.problems(provenance))
 
 
 def test_spline_dependency_matches_provenance_and_frozen_archives():

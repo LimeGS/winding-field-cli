@@ -1,9 +1,9 @@
 # Consultative field progress
 
 This advisory feature is **explicitly opt-in** and has no scientific control
-authority. The CLI now depends on an immutable observer-capable core archive,
-version `1.5.3`, with its revision, archive hash and module hashes recorded
-in `provenance/core.json`; the CPU/CUDA locks select that same archive.
+authority. The CLI now depends on an immutable observer-capable core, installed
+from git at the exact commit recorded in `provenance/core.json` and verified after
+install by that commit id and the module hashes recorded there.
 This pin selects the stable core release. Older core 1.5.2 lacks the hooks
 and is rejected clearly rather than approximating pre-encoding measurements.
 Existing installed runtimes are not upgraded automatically.
