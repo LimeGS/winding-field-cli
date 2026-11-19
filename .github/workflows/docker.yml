@@ -61,6 +61,8 @@ jobs:
             --entrypoint sh winding-field:cpu -ec \
             'python /opt/runtime-provenance/docker/verify-runtime.py --variant cpu && python /opt/runtime-provenance/docker/smoke.py --output /outputs/smoke'
       - name: Installed suite with official native checkpoint qualification
+        # The image build and offline smoke above still gate pull requests; the full in-image suite runs on main.
+        if: github.event_name != 'pull_request'
         run: |
           # Test-tool installation needs runner DNS; the runtime smoke above stays offline.
           docker build --network=host -f docker/testing.Dockerfile -t winding-field:cpu-tests .
@@ -70,6 +72,7 @@ jobs:
             --mount "type=bind,src=$PWD/tests,dst=/tests,readonly" \
             --mount "type=bind,src=$PWD/examples,dst=/examples,readonly" \
             --mount "type=bind,src=$PWD/tools,dst=/tools,readonly" \
+            --mount "type=bind,src=$PWD/benchmarks,dst=/benchmarks,readonly" \
             --mount "type=bind,src=$PWD/pyproject.toml,dst=/pyproject.toml,readonly" \
             --mount "type=bind,src=$PWD/README.md,dst=/README.md,readonly" \
             --mount "type=bind,src=$PWD/uv.toml,dst=/uv.toml,readonly" \
