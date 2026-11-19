@@ -206,7 +206,7 @@ existing selected-mode validator rejects flags not supported by that mode.
 | Native backend | `--app-run`, `--native-recipe`, historical `--native-cpus CPU...` / `--auto-native-cpus` |
 | Historical reuse binding | `--reuse-export`, `--reuse-identity-sha256`; both required together; clear both with `--no-reuse-export --no-reuse-identity` |
 
-`--flattening-solver lscm|slim --scope patches|sheet` remains distinct from
+`--flattening-solver lscm-slim|lscm|slim --scope patches|sheet` (default `lscm-slim` × `sheet` on Linux x86_64) remains distinct from
 historical `--flattening-method original|patches`. Native requirements, resource
 guards and Linux admission do not change. `--pitch` is not `--pitch-um`.
 CT still uses `--source`, `--voxel-um`, `--level` (pyramid index); no field/CT

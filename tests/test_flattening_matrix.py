@@ -3,6 +3,7 @@
 import importlib.util
 import json
 import os
+from pathlib import Path
 import sys
 
 import numpy as np
@@ -68,13 +69,13 @@ def test_settings_select_native_recipe_only_for_slim(tmp_path):
 @pytest.mark.parametrize(
     "flags",
     [
-        [],
-        ["--flattening-solver", "lscm"],
-        ["--scope", "sheet"],
         ["--flattening-solver", "slim", "--scope", "sheet", "--flattening-method", "original"],
+        ["--flattening-solver", "lscm", "--flattening-method", "patches"],
+        ["--scope", "patches", "--flattening-method", "original"],
     ],
 )
-def test_incomplete_or_mixed_cli_selection_fails_before_output(tmp_path, capsys, flags):
+def test_mixed_cli_selection_fails_before_output(tmp_path, capsys, flags):
+    """Omitted solver/scope default to lscm-slim/sheet; mixing with a method is an error."""
     from winding_field.cli import main
 
     assert (
@@ -94,7 +95,7 @@ def test_incomplete_or_mixed_cli_selection_fails_before_output(tmp_path, capsys,
         )
         == 1
     )
-    assert "selection" in capsys.readouterr().err
+    assert "cannot combine" in capsys.readouterr().err
     assert not (tmp_path / "out").exists()
 
 
@@ -279,12 +280,12 @@ def test_field_config_extracts_scalar_mesh_and_resumes_verified_export(tmp_path,
     assert all(file_sha(p) == sha for p, sha in before.items())
 
 
-@pytest.mark.parametrize("solver", ["lscm", "slim"])
+@pytest.mark.parametrize("solver", ["lscm", "slim", "lscm-slim"])
 @pytest.mark.parametrize("scope", ["patches", "sheet"])
 @pytest.mark.skipif(sys.platform != "linux", reason="Linux process-tree resource guard")
 def test_cli_matrix_ct_xyz_keys_and_completed_resume(tmp_path, capsys, solver, scope):
     app = os.environ.get("MATRIX_NATIVE_APP")
-    if solver == "slim" and not app:
+    if solver != "lscm" and not app:
         pytest.skip("native qualification requires MATRIX_NATIVE_APP and bounded Linux cgroup")
     from winding_field.cli import main
     from winding_field.patch_mapping import PatchMapping
@@ -293,7 +294,7 @@ def test_cli_matrix_ct_xyz_keys_and_completed_resume(tmp_path, capsys, solver, s
     req = request(tmp_path)
     if scope == "patches":
         req["max_patch_faces"] = 32
-    if solver == "slim":
+    if solver != "lscm":
         req["app_run"] = app
         req["native_recipe"] = os.environ.get("MATRIX_NATIVE_RECIPE", "installed-2f89bfc9")
     config = tmp_path / "config.json"
@@ -333,7 +334,7 @@ def test_cli_matrix_ct_xyz_keys_and_completed_resume(tmp_path, capsys, solver, s
             if scope == "sheet"
             else len(domains) > 2 and max(d["faces"] for d in domains) <= 32
         )
-        if solver == "slim":
+        if solver != "lscm":
             m = matrix()
             v, f = geometry()
             other = dict(req)
@@ -609,3 +610,37 @@ def test_render_contract_ignores_solver_and_runtime_identity():
     assert all(published.get(k) == v for k, v in contract.items())
     assert not all(dict(published, mesh_sha256="e" * 64).get(k) == v for k, v in contract.items())
     assert digest(contract) != digest(identity)
+
+
+def test_lscm_slim_seeds_flatboi_with_global_lscm_and_falls_back_when_it_folds(monkeypatch):
+    from winding_field.flattening import matrix as m
+    from winding_field.flattening.native_sheet import cut_component
+
+    v, f = geometry()
+    keep = np.unique(f[:-1])  # the main sheet, without the island
+    cut, _ = cut_component(*_compact(v, f[:-1]))
+    uv, init = m._lscm_seed(cut, lambda: None, diagnostics=None)
+    assert init["method"] == "LSCM" and uv.shape == (len(cut["vertices"]), 2)
+    assert len(keep)
+    folded = lambda cut: (np.zeros((len(cut["vertices"]), 2)), np.array([0, 1]), None)
+    monkeypatch.setattr(m, "_global_lscm", folded)
+    uv, init = m._lscm_seed(cut, lambda: None, diagnostics=None)
+    assert init["lscm_rejected"]["folded_faces"] == len(cut["faces"])
+    assert np.isfinite(uv).all()
+
+
+def _compact(v, f):
+    used, inverse = np.unique(f, return_inverse=True)
+    return v[used], inverse.reshape(-1, 3)
+
+
+def test_export_sheets_defaults_to_lscm_slim_whole_sheets(monkeypatch):
+    from winding_field.flattening import flatboi, selection
+
+    monkeypatch.setattr(flatboi, "supported_platform", lambda: True)
+    assert (selection.default_solver(), selection.DEFAULT_SCOPE) == ("lscm-slim", "sheet")
+    monkeypatch.setattr(flatboi, "supported_platform", lambda: False)
+    assert selection.default_solver() == "lscm"
+    m = matrix()
+    for solver in selection.FLATBOI_SOLVERS:
+        assert m.settings(request(Path("/tmp")), solver, "sheet")["native_recipe"] == "historical"

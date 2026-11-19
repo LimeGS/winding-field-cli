@@ -147,17 +147,25 @@ only that uncommitted group on continuation.
 
 ## Explicit solver × scope matrix
 
-`export-sheets` accepts **both** `--flattening-solver lscm|slim` and
-`--scope patches|sheet`. Follow the [installation guide](../README.md)
-and run on Linux. The four
-combinations use the same source-preserving preparation and tiled CT exporter:
+`export-sheets` selects `--flattening-solver lscm-slim|lscm|slim` and
+`--scope patches|sheet`. Without a selection (and without `--run` or a historical
+`--flattening-method`), it uses **`lscm-slim` on whole sheets** on Linux x86_64 and
+`lscm` elsewhere; an omitted `--scope` is `sheet`. Every combination uses the same
+source-preserving preparation and tiled CT exporter:
 
 | Selection | Domain | Algorithm |
 | --- | --- | --- |
+| `--flattening-solver lscm-slim --scope sheet` (default) | Whole connected component | Global libigl LSCM seed → native Flatboi/SLIM |
+| `--flattening-solver lscm-slim --scope patches` | Deterministic independent patches | LSCM seed per patch → native Flatboi/SLIM |
 | `--flattening-solver lscm --scope patches` | Deterministic independent patches | libigl LSCM |
-| `--flattening-solver slim --scope patches` | The same patches and cuts | Positive mean-value initialization → native Flatboi/SLIM |
 | `--flattening-solver lscm --scope sheet` | Whole connected component | libigl LSCM |
+| `--flattening-solver slim --scope patches` | The same patches and cuts | Positive mean-value initialization → native Flatboi/SLIM |
 | `--flattening-solver slim --scope sheet` | Whole connected component | Positive mean-value initialization → native Flatboi/SLIM |
+
+`lscm-slim` falls back to the mean-value seed for a domain whose LSCM map folds (Flatboi
+needs a valid seed) and records `lscm_rejected` in that domain's `INITIAL.json`. On a
+38k-face rolled sheet the LSCM seed converged in 8 Flatboi steps (p95 area distortion
+0.026) where the mean-value seed did not converge in 200 (0.041) and took 6x longer.
 
 Minimal `matrix.json` for LSCM:
 
