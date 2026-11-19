@@ -100,6 +100,9 @@ def test_full_suites_and_optional_gpu_checks_are_preserved_and_timed():
     commands = "\n".join(step.get("run", "") for step in docker["jobs"]["cpu"]["steps"])
     assert "--durations=30 -o pythonpath=" in commands and "/tests" in commands
     assert "dst=/benchmarks,readonly" in commands
+    # sdist tests copy the source layout; the container mounts every input they need.
+    for path in ("/MANIFEST.in", "/THIRD_PARTY.md", "/licenses", "/docs", "/README.md", "/uv.toml"):
+        assert f"dst={path},readonly" in commands
     assert "build==" in (ROOT / "docker/testing.Dockerfile").read_text()
     suite = next(
         step
