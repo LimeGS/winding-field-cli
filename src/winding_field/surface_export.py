@@ -405,6 +405,72 @@ def read_flatboi_uv(path, vertices_xyz, faces, *, vertex_atol=1e-6):
 
     with open(path) as stream:
         before = os.fstat(stream.fileno())
+        fast = _simple_obj(stream.read())
+        stream.seek(0)
+    if fast is not None:
+        after = os.stat(path)
+        if any(
+            getattr(before, k) != getattr(after, k)
+            for k in ("st_size", "st_mtime_ns", "st_ctime_ns")
+        ):
+            raise ValueError("OBJ changed while reading")
+        if len(fast[0]) != len(v) or len(fast[2]) != len(f):
+            raise ValueError("OBJ vertex/face counts disagree with original mesh")
+        positions, textures, of, tf = fast
+        admit_memory(
+            len(positions) * (3 + 1 + 2) * 8 + len(textures) * 2 * 8 + len(of) * (6 * 8 + 3),
+            phase="native OBJ binding arrays",
+        )
+        missing = np.zeros(of.shape, bool)
+    else:
+        positions, textures, of, tf, missing = _parse_obj(path, v, f, index)
+    return _bind_obj_uv(v, f, positions, textures, of, tf, missing, vertex_atol)
+
+
+_SIMPLE_FACE = None
+
+
+def _simple_obj(text):
+    """Vectorized parse of the plain OBJ Flatboi writes (v x y z / vt u v / f a/t b/t c/t).
+
+    Returns None for anything else (comments, other face syntax, 3-D vt, negative or zero
+    indices), which the general line parser then handles with its exact error messages.
+    """
+    import re
+
+    global _SIMPLE_FACE
+    if _SIMPLE_FACE is None:
+        _SIMPLE_FACE = re.compile(r"[1-9]\d*/[1-9]\d* [1-9]\d*/[1-9]\d* [1-9]\d*/[1-9]\d*")
+    if "#" in text:
+        return None
+    records = dict(v=[], vt=[], f=[])
+    for line in text.splitlines():
+        kind, _, rest = line.strip().partition(" ")
+        if kind in records:
+            records[kind].append(rest.strip())
+        elif kind and kind[0] in "vf":
+            return None
+    v, vt, f = records["v"], records["vt"], records["f"]
+    if not (v and vt and f) or not all(_SIMPLE_FACE.fullmatch(x) for x in f):
+        return None
+    try:
+        positions = np.array(" ".join(v).split(), float)
+        textures = np.array(" ".join(vt).split(), float)
+    except ValueError:
+        return None
+    if positions.size != 3 * len(v) or textures.size != 2 * len(vt):
+        return None
+    if any(len(x.split()) != 3 for x in v) or any(len(x.split()) != 2 for x in vt):
+        return None
+    corners = np.array(" ".join(f).replace("/", " ").split(), np.int64).reshape(-1, 3, 2) - 1
+    return positions.reshape(-1, 3), textures.reshape(-1, 2), corners[:, :, 0], corners[:, :, 1]
+
+
+def _parse_obj(path, v, f, index):
+    from .native_patches import admit_memory
+
+    with open(path) as stream:
+        before = os.fstat(stream.fileno())
         counts = dict(v=0, vt=0, f=0)
         for line in stream:
             parts = line.split("#", 1)[0].split(None, 1)
@@ -462,6 +528,10 @@ def read_flatboi_uv(path, vertices_xyz, faces, *, vertex_atol=1e-6):
             for k in ("st_size", "st_mtime_ns", "st_ctime_ns")
         ):
             raise ValueError("OBJ changed while reading")
+    return positions, textures, of, tf, missing
+
+
+def _bind_obj_uv(v, f, positions, textures, of, tf, missing, vertex_atol):
     if (
         positions.shape != v.shape
         or not np.isfinite(positions).all()
@@ -496,16 +566,16 @@ def read_flatboi_uv(path, vertices_xyz, faces, *, vertex_atol=1e-6):
             raise ValueError("mixed indexed/unindexed UVs are unsupported")
         if tf.min() < 0 or tf.max() >= len(textures):
             raise ValueError("OBJ texture index out of bounds")
+        # Corner order per vertex, as the former per-corner loop visited them.
+        vi, ti = of.ravel(), tf.ravel()
+        order = np.argsort(vi, kind="stable")
+        vi, ti = vi[order], ti[order]
+        change = (vi[1:] == vi[:-1]) & (ti[1:] != ti[:-1])
+        if not np.array_equal(textures[ti[1:][change]], textures[ti[:-1][change]]):
+            raise ValueError("unsupported UV seam: one XYZ vertex uses different per-corner UVs")
+        exact_aliases = int(change.sum())
         bindings = np.full(len(v), -1, dtype=np.int64)
-        for face, tface in zip(of, tf):
-            for vi, ti in zip(face, tface):
-                if bindings[vi] not in (-1, ti):
-                    if not np.array_equal(textures[bindings[vi]], textures[ti]):
-                        raise ValueError(
-                            "unsupported UV seam: one XYZ vertex uses different per-corner UVs"
-                        )
-                    exact_aliases += 1
-                bindings[vi] = ti
+        bindings[vi] = ti  # the last corner wins, as before
         if (bindings < 0).any():
             raise ValueError("unreferenced original vertices have no UV binding")
         uv, mode = textures[bindings], "indexed_v_vt"
