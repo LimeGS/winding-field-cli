@@ -198,7 +198,9 @@ def test_export_mesh_real_core_and_source_ids(tmp_path, monkeypatch, capsys):
             disk_reserve_gib=0.001,
         )
     )
-    monkeypatch.setattr(p, "check_flatboi", lambda app, recipe: dict(test_external=True))
+    monkeypatch.setattr(
+        p, "check_flatboi", lambda app, recipe: dict(test_external=True, app_run=app)
+    )
     monkeypatch.setattr(p, "flatten_native", lambda v, f, app, path, **kw: planar(v, f, path))
 
     class CT:
@@ -595,7 +597,7 @@ def test_ct_workspace_is_subtracted_from_geometry_admission(tmp_path, monkeypatc
         assert memory_gib == pytest.approx(1 - (p.raster_memory(cfg) + 4 * 256**3) / 2**30)
         raise StopProbe
 
-    monkeypatch.setattr(p, "check_flatboi", lambda app, recipe: {})
+    monkeypatch.setattr(p, "check_flatboi", lambda app, recipe: dict(app_run=app))
     monkeypatch.setattr(p, "open_mesh", reader)
     monkeypatch.setattr(p, "read_level", admission)
     with pytest.raises(StopProbe):

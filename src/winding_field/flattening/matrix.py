@@ -117,7 +117,7 @@ def solve(cut, output, cfg, guard):
             source_map=initial,
             input=obj,
             output=output / "native",
-            app_run=cfg["app_run"],
+            app_run=cfg.get("app_run"),
             batch_iterations=10,
             iterations=200,
             hours=12.0,

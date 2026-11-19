@@ -128,7 +128,7 @@ def test_export_releases_source_arrays_before_real_raster(tmp_path, monkeypatch)
         yield reader, dict(kind="test_mesh")
 
     monkeypatch.setattr(p, "open_mesh", opened)
-    monkeypatch.setattr(p, "check_flatboi", lambda *args: {})
+    monkeypatch.setattr(p, "check_flatboi", lambda app, *args: dict(app_run=app))
     monkeypatch.setattr(p, "flatten_native", lambda v, f, *args, **kwargs: (v[:, :2].copy(), {}))
     refs = []
     read = p.read_level

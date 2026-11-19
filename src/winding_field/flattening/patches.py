@@ -1085,7 +1085,7 @@ def read_level(reader, level, *, memory_gib, workspace=None):
 
 def export_mesh(mesh_path, out, volume, request, *, export_tifxyz=False, stop=lambda: False):
     cfg = settings(request)
-    native = check_flatboi(cfg["app_run"], cfg["native_recipe"])
+    native = check_flatboi(cfg.get("app_run"), cfg["native_recipe"])
     frame = cfg["output_frame"]
     out = Path(out)
     ct_reserve = ct_memory(volume.chunks, volume.dtype, cfg)
@@ -1193,7 +1193,7 @@ def export_mesh(mesh_path, out, volume, request, *, export_tifxyz=False, stop=la
 
                 def flatten(v, f, path):
                     native_guard()
-                    check_flatboi(cfg["app_run"], cfg["native_recipe"])
+                    check_flatboi(native["app_run"], cfg["native_recipe"])
                     saved = reuse.get(level, v, f, path) if reuse else None
                     if saved is not None:
                         uv, record = saved
@@ -1201,7 +1201,7 @@ def export_mesh(mesh_path, out, volume, request, *, export_tifxyz=False, stop=la
                         uv, record = flatten_native(
                             v,
                             f,
-                            cfg["app_run"],
+                            native["app_run"],
                             path,
                             iters=200,
                             timeout=cfg["timeout_seconds"],
@@ -1210,7 +1210,7 @@ def export_mesh(mesh_path, out, volume, request, *, export_tifxyz=False, stop=la
                             cpu_affinity=cfg["native_cpus"],
                             threads=1 if cfg["workers"] > 1 else None,
                         )
-                    check_flatboi(cfg["app_run"], cfg["native_recipe"])
+                    check_flatboi(native["app_run"], cfg["native_recipe"])
                     return uv, record
 
                 mapped = build_map(
@@ -1506,7 +1506,7 @@ def export_existing(args):
             "patch export does not resume; use a fresh output (source meshes remain immutable)"
         )
     cfg = settings(flattening_request(args))
-    check_flatboi(cfg["app_run"], cfg["native_recipe"])
+    check_flatboi(cfg.get("app_run"), cfg["native_recipe"])
     # Validate the wrapper before creating CT caches or output.
     with open_mesh(args.mesh_bundle):
         pass
