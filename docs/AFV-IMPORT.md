@@ -134,8 +134,8 @@ resource budgets are supplied; synthetic wins do not qualify production speedups
 
 ### Synthetic qualification (November 17, 2026)
 
-CLI v1.5.6 (`ff588ae7`) was compared with this branch using the same frozen
-task-1 benchmark instrumenter (`6a07be8`), published core 1.5.2, immutable tiny
+CLI v1.5.6 (`af4bb05c`) was compared with this branch using the same frozen
+task-1 benchmark instrumenter (`1734296`), published core 1.5.2, immutable tiny
 fixtures with 200 fibres, three sequential repetitions and warm OS caches.
 Times include prepare, fibre import and mandatory exports:
 
@@ -182,7 +182,7 @@ Freeze the old importer before testing, then install the candidate only in an
 isolated test environment. Never update or restart an active run/environment.
 
 ```bash
-git show b8ed5eb:src/winding_field/afv.py > /new-owned-directory/baseline-afv.py
+git show 36e5840:src/winding_field/afv.py > /new-owned-directory/baseline-afv.py
 
 # Same generated AFV/maps/config for old/new; independent worker processes/outputs.
 PYTHONPATH=src python tools/bench_afv_import.py \
