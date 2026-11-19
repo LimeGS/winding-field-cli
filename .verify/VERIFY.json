@@ -1,20 +1,21 @@
 {
  "baseline": {
   "ref": "origin/main",
-  "sha": "db59e6cb53d65c433a08779d957e3f5c420c1c0a"
+  "sha": "e60a1981e36bcd853c677d4f47dbc41b3656d498"
  },
  "dirty": true,
- "head": "db59e6cb53d65c433a08779d957e3f5c420c1c0a",
+ "head": "e60a1981e36bcd853c677d4f47dbc41b3656d498",
  "status": "PASS",
  "steps": {
   "cross-version": {
-   "resume_baseline_run": "resumed",
+   "refusal": "winding-field: implementation changed; resume with the original package (v1.5.0 for pre-cutover runs) or use a new output",
+   "resume_baseline_run": "refused-cleanly",
    "reuse_modes": {
     "fibres": "reused",
     "field": "run",
     "prepare": "reused"
    },
-   "seconds": 13.9,
+   "seconds": 11.5,
    "status": "PASS"
   },
   "e2e-demo": {
@@ -22,13 +23,13 @@
    "resume_changed": [
     "RUN.json"
    ],
-   "seconds": 9.0,
+   "seconds": 9.4,
    "status": "PASS"
   },
   "e2e-native": {
    "levels": 7,
    "method": "slim",
-   "seconds": 15.1,
+   "seconds": 14.1,
    "solver": "flatboi-slim",
    "status": "PASS"
   },
@@ -36,7 +37,7 @@
    "added": [],
    "approved_removals": [],
    "options": 994,
-   "seconds": 3.6,
+   "seconds": 3.3,
    "status": "PASS"
   },
   "golden": {
@@ -52,20 +53,14 @@
     "native_sheet.mean_value_map",
     "original.make_map"
    ],
-   "seconds": 6.3,
+   "seconds": 6.2,
    "status": "PASS"
   },
   "review": {
-   "changed_files": 10,
-   "checklist": [
-    "R7: The container and sdist suites only run on pushes to main: check mounts, packaged files and test-image dependencies before merging",
-    "R10: Changes to the verifier, its approvals or these rules carry a reason in the PR body; approvals name the baseline they apply to and are removed once merged"
-   ],
+   "changed_files": 3,
+   "checklist": [],
    "seconds": 0.0,
-   "status": "WARN",
-   "warnings": [
-    "REVIEW.md is not on the baseline yet; using the working tree copy"
-   ]
+   "status": "PASS"
   }
  }
 }
