@@ -5,18 +5,19 @@ Every edit is an exact-string replacement. A missing anchor aborts the run, so a
 different upstream revision can never be silently patched into something else.
 Usage: apply_patch.py <villa-checkout>
 """
+
 import sys
 from pathlib import Path
 
-INCLUDES_BEFORE = '''#include <cstdlib>
+INCLUDES_BEFORE = """#include <cstdlib>
 #include <cstring>
 #include <iostream>
 #include <stdexcept>
 #include <string>
 #include <thread>
 #include <vector>
-'''
-INCLUDES_AFTER = '''#include <algorithm>
+"""
+INCLUDES_AFTER = """#include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
@@ -28,13 +29,13 @@ INCLUDES_AFTER = '''#include <algorithm>
 #include <string>
 #include <thread>
 #include <vector>
-'''
+"""
 
-HELPERS_BEFORE = '''namespace igl {
+HELPERS_BEFORE = """namespace igl {
 
 class Pastix6LLT {
-'''
-HELPERS_AFTER = '''namespace igl {
+"""
+HELPERS_AFTER = """namespace igl {
 
 // PaStiX stage failures used to be ignored: a failed numeric factorization left the
 // factor holding garbage that the solve then published. Every stage is checked.
@@ -102,11 +103,11 @@ inline void pastix_dump_system(const char* directory, const Eigen::SparseMatrix<
 }
 
 class Pastix6LLT {
-'''
+"""
 
-MEMBERS_BEFORE = '''    std::vector<int> bindtab_;
-'''
-MEMBERS_AFTER = '''    std::vector<int> bindtab_;
+MEMBERS_BEFORE = """    std::vector<int> bindtab_;
+"""
+MEMBERS_AFTER = """    std::vector<int> bindtab_;
     std::uint64_t   pattern_hash_ = 0;
     pastix_int_t    pattern_n_ = 0;
     pastix_int_t    pattern_nnz_ = 0;
@@ -137,11 +138,11 @@ MEMBERS_AFTER = '''    std::vector<int> bindtab_;
         }
         std::cerr << "[pastix] diagonal range " << low << " .. " << high << std::endl;
     }
-'''
+"""
 
-ANALYZE_TAIL_BEFORE = '''        pastix_task_analyze(data_, &spm_);
-        analyzed_ = true;'''
-ANALYZE_TAIL_AFTER = '''        // The identity is taken from the caller's matrix before PaStiX may reorder or
+ANALYZE_TAIL_BEFORE = """        pastix_task_analyze(data_, &spm_);
+        analyzed_ = true;"""
+ANALYZE_TAIL_AFTER = """        // The identity is taken from the caller's matrix before PaStiX may reorder or
         // rewrite its internal copy, so a later call compares like with like.
         {
             const SparseMatrix lower = lower_triangle(L);
@@ -162,9 +163,9 @@ ANALYZE_TAIL_AFTER = '''        // The identity is taken from the caller's matri
             pattern_nnz_ = nnz;
         }
         pastix_require(pastix_task_analyze(data_, &spm_), "analyze");
-        analyzed_ = true;'''
+        analyzed_ = true;"""
 
-FACTORIZE_BEFORE = '''    void factorize(const SparseMatrix& L) {
+FACTORIZE_BEFORE = """    void factorize(const SparseMatrix& L) {
         if (!analyzed_) {
             throw std::runtime_error("Pastix6LLT: factorize() before analyzePattern()");
         }
@@ -177,8 +178,8 @@ FACTORIZE_BEFORE = '''    void factorize(const SparseMatrix& L) {
             dst[k] = src[value_src_idx_[k]];
         }
         pastix_task_numfact(data_, &spm_);
-    }'''
-FACTORIZE_AFTER = '''    void factorize(const SparseMatrix& L) {
+    }"""
+FACTORIZE_AFTER = """    void factorize(const SparseMatrix& L) {
         ++iteration_;
         try {
             check_coefficients(L);
@@ -236,14 +237,14 @@ FACTORIZE_AFTER = '''    void factorize(const SparseMatrix& L) {
             pastix_dump_system(dump_dir_, L, nullptr, "numfact", iteration_);
             pastix_require(code, "numeric factorization");
         }
-    }'''
+    }"""
 
-SOLVE_BEFORE = '''        VectorXd x = rhs;
+SOLVE_BEFORE = """        VectorXd x = rhs;
         const pastix_int_t nrhs = static_cast<pastix_int_t>(rhs.size() / n);
         // pastix_task_solve writes the answer in place over the rhs buffer.
         pastix_task_solve(data_, n, nrhs, x.data(), n);
-        return x;'''
-SOLVE_AFTER = '''        VectorXd x = rhs;
+        return x;"""
+SOLVE_AFTER = """        VectorXd x = rhs;
         const pastix_int_t nrhs = static_cast<pastix_int_t>(rhs.size() / n);
         if (equilibration_.size() != static_cast<std::size_t>(n))
             throw std::runtime_error("Pastix6LLT: solve() before factorize()");
@@ -257,11 +258,11 @@ SOLVE_AFTER = '''        VectorXd x = rhs;
             for (pastix_int_t i = 0; i < n; ++i)
                 x(static_cast<Eigen::Index>(r * n + i)) *= equilibration_[static_cast<std::size_t>(i)];
         if (!x.allFinite()) throw std::runtime_error("PaStiX: solve produced non-finite values");
-        return x;'''
+        return x;"""
 
-LOWER_HELPER_BEFORE = '''    void setThreads(int n) { iparm_[IPARM_THREAD_NBR] = n; }
-'''
-LOWER_HELPER_AFTER = '''    void setThreads(int n) { iparm_[IPARM_THREAD_NBR] = n; }
+LOWER_HELPER_BEFORE = """    void setThreads(int n) { iparm_[IPARM_THREAD_NBR] = n; }
+"""
+LOWER_HELPER_AFTER = """    void setThreads(int n) { iparm_[IPARM_THREAD_NBR] = n; }
 
     // PaStiX SpmSymmetric expects exactly one triangle, and so does the pattern hash.
     static SparseMatrix lower_triangle(const SparseMatrix& L) {
@@ -269,19 +270,19 @@ LOWER_HELPER_AFTER = '''    void setThreads(int n) { iparm_[IPARM_THREAD_NBR] = 
         lower.makeCompressed();
         return lower;
     }
-'''
+"""
 
-SLIM_INCLUDES_BEFORE = '''#include <unordered_map>
-'''
-SLIM_INCLUDES_AFTER = '''#include <algorithm>
+SLIM_INCLUDES_BEFORE = """#include <unordered_map>
+"""
+SLIM_INCLUDES_AFTER = """#include <algorithm>
 #include <atomic>
 #include <memory>
 #include <sstream>
 #include <stdexcept>
 #include <unordered_map>
-'''
+"""
 
-SLIM_BEFORE = '''      struct PastixCache {
+SLIM_BEFORE = """      struct PastixCache {
         igl::Pastix6LLT solver;
         Eigen::Index rows = -1;
         Eigen::Index cols = -1;
@@ -297,8 +298,8 @@ SLIM_BEFORE = '''      struct PastixCache {
         entry.nnz  = L_nnz;
       }
       entry.solver.factorize(L);
-      Uc = entry.solver.solve(s.rhs);'''
-SLIM_AFTER = '''      // The solver owns the pattern identity now: factorize() re-analyses whenever the
+      Uc = entry.solver.solve(s.rhs);"""
+SLIM_AFTER = """      // The solver owns the pattern identity now: factorize() re-analyses whenever the
       // full sparsity pattern changes, not merely when the nnz count does.
       static std::unordered_map<const igl::SLIMData*, std::unique_ptr<igl::Pastix6LLT>> cache;
       std::unique_ptr<igl::Pastix6LLT>& entry = cache[&s];
@@ -318,13 +319,13 @@ SLIM_AFTER = '''      // The solver owns the pattern identity now: factorize() r
         std::ostringstream message;
         message << "SLIM linear solve backward error " << backward << " exceeds 1e-10";
         throw std::runtime_error(message.str());
-      }'''
+      }"""
 
-FLATBOI_CHECK_BEFORE = '''    // Persist
+FLATBOI_CHECK_BEFORE = """    // Persist
     save_energies(obj_path, energies);
     fb.save_obj(uv_out);
-'''
-FLATBOI_CHECK_AFTER = '''    // A published UV must be a valid map: reject a final step with zero/inverted faces
+"""
+FLATBOI_CHECK_AFTER = """    // A published UV must be a valid map: reject a final step with zero/inverted faces
     // before it reaches the energies file or the checkpoint.
     {
       int invalid = 0;
@@ -346,22 +347,22 @@ FLATBOI_CHECK_AFTER = '''    // A published UV must be a valid map: reject a fin
     // Persist
     save_energies(obj_path, energies);
     fb.save_obj(uv_out);
-'''
+"""
 
 
 def replace(text, before, after, name):
     if text.count(before) != 1:
-        raise SystemExit(f'anchor not found exactly once in {name}: {before.splitlines()[0]}')
+        raise SystemExit(f"anchor not found exactly once in {name}: {before.splitlines()[0]}")
     return text.replace(before, after)
 
 
 def main():
     if len(sys.argv) != 2:
         raise SystemExit(__doc__)
-    root = Path(sys.argv[1]) / 'volume-cartographer/libs'
-    solver = root / 'libigl_changes/include/igl/pastix6_solver.h'
-    slim = root / 'libigl_changes/include/igl/slim.cpp'
-    flatboi = root / 'flatboi/flatboi.cpp'
+    root = Path(sys.argv[1]) / "volume-cartographer/libs"
+    solver = root / "libigl_changes/include/igl/pastix6_solver.h"
+    slim = root / "libigl_changes/include/igl/slim.cpp"
+    flatboi = root / "flatboi/flatboi.cpp"
     text = solver.read_text()
     text = replace(text, INCLUDES_BEFORE, INCLUDES_AFTER, solver.name)
     text = replace(text, HELPERS_BEFORE, HELPERS_AFTER, solver.name)
@@ -378,8 +379,8 @@ def main():
     text = flatboi.read_text()
     text = replace(text, FLATBOI_CHECK_BEFORE, FLATBOI_CHECK_AFTER, flatboi.name)
     flatboi.write_text(text)
-    print('patched', solver, slim, flatboi)
+    print("patched", solver, slim, flatboi)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

@@ -2,11 +2,11 @@
   "origin": "https://github.com/LimeGS/winding-field",
   "distribution": "winding-field",
   "version": "1.5.4",
-  "revision": "c0649e338d046e3f422fdb41466faa48e72dc761",
-  "archive_sha256": "2342d67bebbb07182c2bc870534000753e32b89fee8b39445c4c265d42e51707",
+  "revision": "48eeb3473b4bc54944503b84997191e295b28245",
+  "archive_sha256": "08f1c4fd14da57ead604cc2c3860cad5de0c388a5180cd4e828e9d8b4f7a8715",
   "changes": "Immutable stable 1.5.4 source: opt-in block-solver nonconvergence policy (continue commits maxiter-exhausted local solves, counts them in checkpointed progress and reports local_solves_converged; breakdowns always fail); default fail unchanged; scientific operators unchanged; no numerical core bundled in the CLI",
   "migrated_workflows": {
-    "revision": "769ed1b1587fc2a275a66059e15a36b8fa7acc93",
+    "revision": "baf8052ed7115bddd8cbba08b3197ea31695ac4b",
     "changes": "moved to winding_field with tests, examples and wrappers; package imports, prepared command routing and module-based supervised launch",
     "source_sha256": {
       "field_workflow.py": "f5a20f03c4cf1673f303c56cda407cd491f6287f4a446dac43e5506a5ce005f7",
@@ -15,7 +15,7 @@
     }
   },
   "migrated_postprocessing": {
-    "revision": "a7246af3cbd43bd88eb529b31b9eb22daf3a6885",
+    "revision": "07fccff2cb5186fd83bcbbd0925d0ed8f212c02e",
     "changes": "surface implementations, tools and tests moved to winding_field; patch visualization and synthetic CT demo split from numerical benchmarks; package imports and module-based subprocess launch",
     "source_sha256": {
       "src/surface_mesh.py": "6632c53cbf9a4d1818e509f960996478114fa53913cc51f2d89d6750e97c968f",

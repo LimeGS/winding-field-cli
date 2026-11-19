@@ -6,6 +6,7 @@ import pytest
 
 def implementation():
     from winding_field import ct_visuals as module
+
     return module
 
 

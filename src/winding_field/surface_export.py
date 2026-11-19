@@ -66,7 +66,9 @@ MAX_STACK_SAMPLES = 64_000_000
 def _vector(value, name, positive=False):
     a = np.asarray(value, dtype=float)
     if a.shape != (3,) or not np.isfinite(a).all() or (positive and (a <= 0).any()):
-        raise ValueError(f"{name}: expected three finite" + (" positive" if positive else "") + " values")
+        raise ValueError(
+            f"{name}: expected three finite" + (" positive" if positive else "") + " values"
+        )
     return a
 
 
@@ -116,13 +118,15 @@ def mesh_geometry(vertices_xyz, faces, bounds_xyz=None):
     ):
         return {**r, "status": "FAIL", "reason": "invalid vertices or face indices"}
     degenerate = 0
-    for first in range(0,len(f),8192):
-        tri=v[f[first:first+8192]]
-        area2=np.linalg.norm(np.cross(tri[:,1]-tri[:,0],tri[:,2]-tri[:,0]),axis=1)
-        degenerate+=int((area2<=1e-12).sum())
+    for first in range(0, len(f), 8192):
+        tri = v[f[first : first + 8192]]
+        area2 = np.linalg.norm(np.cross(tri[:, 1] - tri[:, 0], tri[:, 2] - tri[:, 0]), axis=1)
+        degenerate += int((area2 <= 1e-12).sum())
     duplicate = len(f) - len(np.unique(np.sort(f, axis=1), axis=0))
     edges = np.concatenate([f[:, [0, 1]], f[:, [1, 2]], f[:, [2, 0]]])
-    _, inverse, counts = np.unique(np.sort(edges, axis=1), axis=0, return_inverse=True, return_counts=True)
+    _, inverse, counts = np.unique(
+        np.sort(edges, axis=1), axis=0, return_inverse=True, return_counts=True
+    )
     direction = np.bincount(inverse, weights=np.where(edges[:, 0] < edges[:, 1], 1, -1))
     nonmanifold = int((counts > 2).sum())
     inconsistent = int(((counts == 2) & (direction != 0)).sum())
@@ -157,7 +161,9 @@ def _seed_distances(seed, triangles):
     u = (cc * dot(ap, ab) - bb * dot(ap, ac)) / den
     w = (aa * dot(ap, ac) - bb * dot(ap, ab)) / den
     interior = (u >= 0) & (w >= 0) & (u + w <= 1)
-    distance = np.where(interior, np.linalg.norm(ap - u[:, None] * ab - w[:, None] * ac, axis=1), np.inf)
+    distance = np.where(
+        interior, np.linalg.norm(ap - u[:, None] * ab - w[:, None] * ac, axis=1), np.inf
+    )
     for start, end in ((a, b), (b, c), (c, a)):
         edge = end - start
         t = np.clip(dot(seed - start, edge) / dot(edge, edge), 0, 1)
@@ -182,10 +188,14 @@ def extract_surface(field, metadata, level, seed_xyz=None, *, step_size=1):
     work = np.where(support, field, level).astype(np.float32)
     if not np.isfinite(work).all():
         raise ValueError("field must remain finite as marching-cubes float32")
-    vz, faces, _, _ = marching_cubes(work, level=float(level), step_size=step_size, allow_degenerate=False)
+    vz, faces, _, _ = marching_cubes(
+        work, level=float(level), step_size=step_size, allow_degenerate=False
+    )
     before = len(faces)
     # A coarse cube must retain ALL intervening support, not only sampled corners.
-    cube_ok = minimum_filter(support, size=step_size + 1, origin=-((step_size + 1) // 2), mode="constant", cval=False)
+    cube_ok = minimum_filter(
+        support, size=step_size + 1, origin=-((step_size + 1) // 2), mode="constant", cval=False
+    )
     last_sample = (np.array(field.shape) - 1) // step_size * step_size
     cell = np.minimum(np.floor(vz / step_size).astype(int) * step_size, last_sample - step_size)
     good_vertex = cube_ok[tuple(cell.T)]
@@ -197,7 +207,9 @@ def extract_surface(field, metadata, level, seed_xyz=None, *, step_size=1):
     # Swapping ZYX -> XYZ reverses handedness; retain the original oriented surface.
     faces = remap.reshape(-1, 3)[:, ::-1]
     edges = np.concatenate([faces[:, [0, 1]], faces[:, [1, 2]], faces[:, [2, 0]]])
-    graph = coo_matrix((np.ones(len(edges)), (edges[:, 0], edges[:, 1])), shape=(len(vertices),) * 2)
+    graph = coo_matrix(
+        (np.ones(len(edges)), (edges[:, 0], edges[:, 1])), shape=(len(vertices),) * 2
+    )
     nc, labels = connected_components(graph, directed=False)
     face_labels = labels[faces[:, 0]]
     tri = vertices[faces]
@@ -214,7 +226,9 @@ def extract_surface(field, metadata, level, seed_xyz=None, *, step_size=1):
     faces = faces[face_labels == chosen]
     ids, remap = np.unique(faces, return_inverse=True)
     vertices, faces = vertices[ids], remap.reshape(-1, 3)
-    geometry = mesh_geometry(vertices, faces, [origin, origin + (np.array(field.shape[::-1]) - 1) * spacing])
+    geometry = mesh_geometry(
+        vertices, faces, [origin, origin + (np.array(field.shape[::-1]) - 1) * spacing]
+    )
     receipt = dict(
         level=float(level),
         level_units="raw_field_value",
@@ -316,7 +330,9 @@ def validate_uv(vertices_xyz, faces, uv, *, max_distortion=0.02, max_pairs=2_000
     xyz_edges = np.stack([v[f[:, 1]] - v[f[:, 0]], v[f[:, 2]] - v[f[:, 0]]], axis=-1)
     singular = np.linalg.svd(xyz_edges @ np.linalg.inv(matrix), compute_uv=False)
     distortion = np.max(np.abs(singular - 1), axis=1)
-    r.update(max_distortion=float(distortion.max()), p95_distortion=float(np.percentile(distortion, 95)))
+    r.update(
+        max_distortion=float(distortion.max()), p95_distortion=float(np.percentile(distortion, 95))
+    )
     # The accepted policy is p95, not the maximum; retain the tail for disclosure.
     if r["p95_distortion"] > max_distortion + 1e-10:
         r["reasons"].append("metric_distortion")
@@ -373,7 +389,11 @@ def read_flatboi_uv(path, vertices_xyz, faces, *, vertex_atol=1e-6):
     vertex reordering and differing per-corner UV seams are rejected.
     """
     v, f = np.asarray(vertices_xyz, float), np.asarray(faces)
-    if not np.isfinite(vertex_atol) or vertex_atol < 0 or mesh_geometry(v, f)["basic_status"] != "PASS":
+    if (
+        not np.isfinite(vertex_atol)
+        or vertex_atol < 0
+        or mesh_geometry(v, f)["basic_status"] != "PASS"
+    ):
         raise ValueError("invalid original mesh or vertex_atol")
     from .native_patches import admit_memory
 
@@ -384,19 +404,24 @@ def read_flatboi_uv(path, vertices_xyz, faces, *, vertex_atol=1e-6):
         return value - 1 if value > 0 else count + value
 
     with open(path) as stream:
-        before=os.fstat(stream.fileno())
-        counts=dict(v=0,vt=0,f=0)
+        before = os.fstat(stream.fileno())
+        counts = dict(v=0, vt=0, f=0)
         for line in stream:
-            parts=line.split('#',1)[0].split(None,1)
-            if parts and parts[0] in counts:counts[parts[0]]+=1
-        if counts['v']!=len(v) or counts['f']!=len(f):
-            raise ValueError('OBJ vertex/face counts disagree with original mesh')
-        admit_memory(counts['v']*(3+1+2)*8+counts['vt']*2*8+counts['f']*(6*8+3),
-                     phase='native OBJ binding arrays')
-        positions=np.empty((counts['v'],3));textures=np.empty((counts['vt'],2))
-        of=np.empty((counts['f'],3),np.int64);tf=np.empty_like(of)
-        missing=np.empty(of.shape,bool)
-        seen=dict(v=0,vt=0,f=0)
+            parts = line.split("#", 1)[0].split(None, 1)
+            if parts and parts[0] in counts:
+                counts[parts[0]] += 1
+        if counts["v"] != len(v) or counts["f"] != len(f):
+            raise ValueError("OBJ vertex/face counts disagree with original mesh")
+        admit_memory(
+            counts["v"] * (3 + 1 + 2) * 8 + counts["vt"] * 2 * 8 + counts["f"] * (6 * 8 + 3),
+            phase="native OBJ binding arrays",
+        )
+        positions = np.empty((counts["v"], 3))
+        textures = np.empty((counts["vt"], 2))
+        of = np.empty((counts["f"], 3), np.int64)
+        tf = np.empty_like(of)
+        missing = np.empty(of.shape, bool)
+        seen = dict(v=0, vt=0, f=0)
         stream.seek(0)
         for line_number, line in enumerate(stream, 1):
             parts = line.split("#", 1)[0].split()
@@ -407,29 +432,36 @@ def read_flatboi_uv(path, vertices_xyz, faces, *, vertex_atol=1e-6):
                 if kind == "v":
                     if len(values) != 3:
                         raise ValueError("only XYZ vertex records are supported")
-                    positions[seen['v']]=[float(x) for x in values]
-                    seen['v']+=1
+                    positions[seen["v"]] = [float(x) for x in values]
+                    seen["v"] += 1
                 elif kind == "vt":
                     if len(values) not in (2, 3) or (len(values) == 3 and float(values[2]) != 0):
-                        raise ValueError("expected two-dimensional vt (optional zero third coordinate)")
-                    textures[seen['vt']]=[float(x) for x in values[:2]]
-                    seen['vt']+=1
+                        raise ValueError(
+                            "expected two-dimensional vt (optional zero third coordinate)"
+                        )
+                    textures[seen["vt"]] = [float(x) for x in values[:2]]
+                    seen["vt"] += 1
                 elif kind == "f":
                     if len(values) != 3:
                         raise ValueError("only triangular OBJ faces are supported")
                     corners = [x.split("/") for x in values]
                     if any(len(x) > 3 or not x[0] for x in corners):
                         raise ValueError("unsupported OBJ face syntax")
-                    row=seen['f']
-                    of[row]=[index(x[0],seen['v']) for x in corners]
-                    missing[row]=[len(x)<2 or not x[1] for x in corners]
-                    tf[row]=[index(x[1],seen['vt']) if len(x)>1 and x[1] else -1 for x in corners]
-                    seen['f']+=1
+                    row = seen["f"]
+                    of[row] = [index(x[0], seen["v"]) for x in corners]
+                    missing[row] = [len(x) < 2 or not x[1] for x in corners]
+                    tf[row] = [
+                        index(x[1], seen["vt"]) if len(x) > 1 and x[1] else -1 for x in corners
+                    ]
+                    seen["f"] += 1
             except (ValueError, IndexError) as error:
                 raise ValueError(f"OBJ line {line_number}: {error}") from error
-        after=os.fstat(stream.fileno())
-        if seen!=counts or any(getattr(before,k)!=getattr(after,k) for k in ('st_size','st_mtime_ns','st_ctime_ns')):
-            raise ValueError('OBJ changed while reading')
+        after = os.fstat(stream.fileno())
+        if seen != counts or any(
+            getattr(before, k) != getattr(after, k)
+            for k in ("st_size", "st_mtime_ns", "st_ctime_ns")
+        ):
+            raise ValueError("OBJ changed while reading")
     if (
         positions.shape != v.shape
         or not np.isfinite(positions).all()
@@ -440,12 +472,19 @@ def read_flatboi_uv(path, vertices_xyz, faces, *, vertex_atol=1e-6):
         raise ValueError("OBJ face indices/count disagree with original mesh")
 
     def topology(a):
-        rotations = np.take_along_axis(a, (np.argmin(a, axis=1)[:, None] + np.arange(3)) % 3, axis=1)
-        return rotations[np.lexsort((rotations[:,2],rotations[:,1],rotations[:,0]))]
+        rotations = np.take_along_axis(
+            a, (np.argmin(a, axis=1)[:, None] + np.arange(3)) % 3, axis=1
+        )
+        return rotations[np.lexsort((rotations[:, 2], rotations[:, 1], rotations[:, 0]))]
 
-    if not np.array_equal(topology(of),topology(f)):
+    if not np.array_equal(topology(of), topology(f)):
         raise ValueError("OBJ oriented topology differs from original mesh")
-    if textures.ndim != 2 or textures.shape[1] != 2 or not len(textures) or not np.isfinite(textures).all():
+    if (
+        textures.ndim != 2
+        or textures.shape[1] != 2
+        or not len(textures)
+        or not np.isfinite(textures).all()
+    ):
         raise ValueError("OBJ is missing finite two-dimensional UVs")
     exact_aliases = 0
     if missing.all():
@@ -462,7 +501,9 @@ def read_flatboi_uv(path, vertices_xyz, faces, *, vertex_atol=1e-6):
             for vi, ti in zip(face, tface):
                 if bindings[vi] not in (-1, ti):
                     if not np.array_equal(textures[bindings[vi]], textures[ti]):
-                        raise ValueError("unsupported UV seam: one XYZ vertex uses different per-corner UVs")
+                        raise ValueError(
+                            "unsupported UV seam: one XYZ vertex uses different per-corner UVs"
+                        )
                     exact_aliases += 1
                 bindings[vi] = ti
         if (bindings < 0).any():
@@ -482,9 +523,15 @@ def read_flatboi_uv(path, vertices_xyz, faces, *, vertex_atol=1e-6):
 def scale_uv_to_world(vertices_xyz, faces, uv):
     """One global scale from unique edge lengths; no per-axis/nonlinear fitting."""
     v, f, uv = np.asarray(vertices_xyz, float), np.asarray(faces), np.asarray(uv, float)
-    if mesh_geometry(v, f)["basic_status"] != "PASS" or uv.shape != (len(v), 2) or not np.isfinite(uv).all():
+    if (
+        mesh_geometry(v, f)["basic_status"] != "PASS"
+        or uv.shape != (len(v), 2)
+        or not np.isfinite(uv).all()
+    ):
         raise ValueError("invalid mesh or UVs for global scaling")
-    edges = np.unique(np.sort(np.concatenate([f[:, [0, 1]], f[:, [1, 2]], f[:, [2, 0]]]), axis=1), axis=0)
+    edges = np.unique(
+        np.sort(np.concatenate([f[:, [0, 1]], f[:, [1, 2]], f[:, [2, 0]]]), axis=1), axis=0
+    )
     xyz_lengths = np.linalg.norm(v[edges[:, 1]] - v[edges[:, 0]], axis=1)
     uv_lengths = np.linalg.norm(uv[edges[:, 1]] - uv[edges[:, 0]], axis=1)
     if (uv_lengths <= 0).any() or not np.isfinite(uv_lengths).all():
@@ -507,8 +554,19 @@ def scale_uv_to_world(vertices_xyz, faces, uv):
     )
 
 
-def flatten_native(vertices_xyz, faces, app_run, output_dir, *, iters=200, timeout=120, expected_sha256=None,
-                   guard=lambda: None, cpu_affinity=None, threads=None):
+def flatten_native(
+    vertices_xyz,
+    faces,
+    app_run,
+    output_dir,
+    *,
+    iters=200,
+    timeout=120,
+    expected_sha256=None,
+    guard=lambda: None,
+    cpu_affinity=None,
+    threads=None,
+):
     """Run local Flatboi in a new directory; return UV/receipt, including failures."""
     output_dir = Path(output_dir).resolve()
     output_dir.mkdir(exist_ok=False)
@@ -545,26 +603,39 @@ def flatten_native(vertices_xyz, faces, app_run, output_dir, *, iters=200, timeo
         receipt["app_run_sha256"] = _sha(app_run)
         if expected_sha256 is not None and receipt["app_run_sha256"] != expected_sha256:
             raise ValueError("AppRun SHA256 mismatch (this pins the launcher, not the AppImage)")
-        binary = app_run.parent / 'usr/bin/flatboi'
-        terminal_exit_known = binary.is_file() and _sha(binary) == '2f89bfc96512bebf7ef44b25de01c5afd01c7af058e452515b03bc52cf6afd6a'
+        binary = app_run.parent / "usr/bin/flatboi"
+        terminal_exit_known = (
+            binary.is_file()
+            and _sha(binary) == "2f89bfc96512bebf7ef44b25de01c5afd01c7af058e452515b03bc52cf6afd6a"
+        )
         with mesh.open("x") as stream:
             np.savetxt(stream, vertices_xyz, fmt="v %.17g %.17g %.17g")
             np.savetxt(stream, np.asarray(faces) + 1, fmt="f %d %d %d")
         receipt["input_mesh_sha256"] = _sha(mesh)
-        with (output_dir / "stdout.log").open("xb") as stdout, (output_dir / "stderr.log").open("xb") as stderr:
+        with (
+            (output_dir / "stdout.log").open("xb") as stdout,
+            (output_dir / "stderr.log").open("xb") as stderr,
+        ):
             launch = command
             if cpu_affinity is not None:
                 if not cpu_affinity or any(type(c) is not int or c < 0 for c in cpu_affinity):
-                    raise ValueError('invalid native CPU affinity')
-                launch = ['taskset', '-c', ','.join(map(str, cpu_affinity)), *command]
+                    raise ValueError("invalid native CPU affinity")
+                launch = ["taskset", "-c", ",".join(map(str, cpu_affinity)), *command]
             env = os.environ.copy()
             if threads is not None:
-                if type(threads) is not int or threads < 1:raise ValueError('invalid native threads')
-                for key in ('PASTIX_NUM_THREADS','OMP_NUM_THREADS','OPENBLAS_NUM_THREADS','MKL_NUM_THREADS','NUMEXPR_NUM_THREADS'):
+                if type(threads) is not int or threads < 1:
+                    raise ValueError("invalid native threads")
+                for key in (
+                    "PASTIX_NUM_THREADS",
+                    "OMP_NUM_THREADS",
+                    "OPENBLAS_NUM_THREADS",
+                    "MKL_NUM_THREADS",
+                    "NUMEXPR_NUM_THREADS",
+                ):
                     env[key] = str(threads)
-            receipt['launch_command'] = launch
-            receipt['cpu_affinity'] = cpu_affinity
-            receipt['threads'] = threads
+            receipt["launch_command"] = launch
+            receipt["cpu_affinity"] = cpu_affinity
+            receipt["threads"] = threads
             try:
                 process = subprocess.Popen(
                     launch,
@@ -581,22 +652,28 @@ def flatten_native(vertices_xyz, faces, app_run, output_dir, *, iters=200, timeo
             try:
                 deadline = time.monotonic() + timeout
                 while True:
-                    try:guard()
-                    except Exception as error:raise InterruptedError(str(error)) from error
+                    try:
+                        guard()
+                    except Exception as error:
+                        raise InterruptedError(str(error)) from error
                     if terminal_exit_known:
-                        with (output_dir / 'stderr.log').open('rb') as errors:
+                        with (output_dir / "stderr.log").open("rb") as errors:
                             errors.seek(max(0, os.fstat(errors.fileno()).st_size - 65536))
-                            terminal = b'Negative diagonal term' in errors.read().splitlines()
+                            terminal = b"Negative diagonal term" in errors.read().splitlines()
                         if terminal:
                             # This pinned binary prints the line then calls exit(1); threaded teardown can hang.
-                            receipt['terminal_native_error'] = 'Negative diagonal term'
-                            raise ValueError('native terminal error: Negative diagonal term (exit(1) teardown)')
+                            receipt["terminal_native_error"] = "Negative diagonal term"
+                            raise ValueError(
+                                "native terminal error: Negative diagonal term (exit(1) teardown)"
+                            )
                     remaining = deadline - time.monotonic()
-                    if remaining <= 0:raise subprocess.TimeoutExpired(command, timeout)
+                    if remaining <= 0:
+                        raise subprocess.TimeoutExpired(command, timeout)
                     try:
-                        receipt['returncode'] = process.wait(timeout=min(.1, remaining))
+                        receipt["returncode"] = process.wait(timeout=min(0.1, remaining))
                         break
-                    except subprocess.TimeoutExpired:pass
+                    except subprocess.TimeoutExpired:
+                        pass
             except subprocess.TimeoutExpired:
                 receipt["timed_out"], receipt["status"] = True, "TIMEOUT"
                 raise ValueError("native flattening timed out; owned process group terminated")
@@ -623,7 +700,7 @@ def flatten_native(vertices_xyz, faces, app_run, output_dir, *, iters=200, timeo
         receipt["status"] = receipt["uv_gate"]["status"]
         receipt["reasons"] = receipt["uv_gate"]["reasons"]
     except InterruptedError:
-        receipt['status'] = 'CANCELLED'
+        receipt["status"] = "CANCELLED"
         raise
     except (ValueError, OSError, RuntimeError) as error:
         uv = None
@@ -631,14 +708,25 @@ def flatten_native(vertices_xyz, faces, app_run, output_dir, *, iters=200, timeo
     finally:
         receipt["seconds"] = time.monotonic() - start
         receipt["artifacts"] = {
-            p.name: {"sha256": _sha(p), "bytes": p.stat().st_size} for p in sorted(output_dir.iterdir()) if p.is_file()
+            p.name: {"sha256": _sha(p), "bytes": p.stat().st_size}
+            for p in sorted(output_dir.iterdir())
+            if p.is_file()
         }
-        (output_dir / "receipt.json").write_text(json.dumps(receipt, indent=2, allow_nan=False) + "\n")
+        (output_dir / "receipt.json").write_text(
+            json.dumps(receipt, indent=2, allow_nan=False) + "\n"
+        )
     return uv, receipt
 
 
 def rasterize_surface(
-    vertices_xyz, faces, uv, pitch, *, max_distortion=0.02, max_pixels=MAX_PIXELS, vertex_normals_xyz=None
+    vertices_xyz,
+    faces,
+    uv,
+    pitch,
+    *,
+    max_distortion=0.02,
+    max_pixels=MAX_PIXELS,
+    vertex_normals_xyz=None,
 ):
     """Barycentric XYZ samples at uv_min + (column,row)*pitch; holes stay NaN."""
     if not np.isfinite(pitch) or pitch <= 0:
@@ -650,7 +738,11 @@ def rasterize_surface(
     low = uv.min(0)
     with np.errstate(over="ignore"):
         dimensions = np.ceil(np.ptp(uv, axis=0) / pitch) + 1
-    if not np.isfinite(dimensions).all() or (dimensions > max_pixels).any() or np.prod(dimensions) > max_pixels:
+    if (
+        not np.isfinite(dimensions).all()
+        or (dimensions > max_pixels).any()
+        or np.prod(dimensions) > max_pixels
+    ):
         raise ValueError("bounded raster exceeded max_pixels; crop or increase pitch")
     wh = dimensions.astype(np.int64)
     width, height = map(int, wh)
@@ -739,7 +831,9 @@ def sample_ct_stack(ct, metadata, points_xyz, normals_xyz, depth_offsets, *, fra
         raise ValueError("bounded stack exceeded 64M samples; crop, coarsen pitch or reduce depths")
     valid_surface = np.isfinite(points).all(-1)
     norm = np.linalg.norm(normals, axis=-1)
-    if not np.isfinite(norm[valid_surface]).all() or not np.allclose(norm[valid_surface], 1, atol=1e-7, rtol=0):
+    if not np.isfinite(norm[valid_surface]).all() or not np.allclose(
+        norm[valid_surface], 1, atol=1e-7, rtol=0
+    ):
         raise ValueError("covered surface normals must be finite unit vectors")
     support = metadata.get("support")
     if support is not None:
@@ -749,29 +843,39 @@ def sample_ct_stack(ct, metadata, points_xyz, normals_xyz, depth_offsets, *, fra
     stack = np.full((len(offsets),) + points.shape[:2], np.nan, dtype=np.float32)
     mask = np.zeros(stack.shape, bool)
     from .native_ct_sampling import NativeCTSampler
-    chunks=tuple(min(32,n) for n in ct.shape)
+
+    chunks = tuple(min(32, n) for n in ct.shape)
+
     def chunk(index):
-        start=np.asarray(index)*chunks
-        region=tuple(slice(int(a),int(min(a+c,n))) for a,c,n in zip(start,chunks,ct.shape))
+        start = np.asarray(index) * chunks
+        region = tuple(
+            slice(int(a), int(min(a + c, n))) for a, c, n in zip(start, chunks, ct.shape)
+        )
         # Float64 preserves source precision; only one bounded mmap crop is converted.
-        data=np.full(chunks,np.nan,np.float64);crop=ct[region]
-        data[tuple(slice(0,n) for n in crop.shape)]=crop if support is None else np.where(support[region],crop,np.nan)
+        data = np.full(chunks, np.nan, np.float64)
+        crop = ct[region]
+        data[tuple(slice(0, n) for n in crop.shape)] = (
+            crop if support is None else np.where(support[region], crop, np.nan)
+        )
         return data
-    sampler=NativeCTSampler(ct.shape,chunks,np.float64,chunk)
+
+    sampler = NativeCTSampler(ct.shape, chunks, np.float64, chunk)
     try:
         for layer, offset in enumerate(offsets):
-            grid=((points+offset*normals-origin)/spacing).reshape(-1,3)
-            for start in range(0,len(grid),100000):
-                sampled,good=sampler.sample(grid[start:start+100000])
-                good &= valid_surface.ravel()[start:start+100000]
-                stack[layer].ravel()[start:start+100000]=np.where(good,sampled,np.nan)
-                mask[layer].ravel()[start:start+100000]=good
-    finally:sampler.close()
+            grid = ((points + offset * normals - origin) / spacing).reshape(-1, 3)
+            for start in range(0, len(grid), 100000):
+                sampled, good = sampler.sample(grid[start : start + 100000])
+                good &= valid_surface.ravel()[start : start + 100000]
+                stack[layer].ravel()[start : start + 100000] = np.where(good, sampled, np.nan)
+                mask[layer].ravel()[start : start + 100000] = good
+    finally:
+        sampler.close()
     from .ct_reader import runtime_identity
+
     receipt = dict(
         status="SAMPLED" if mask.any() else "NO_COVERAGE",
         native_runtime=runtime_identity(),
-        sampler_sha256=_sha(Path(__file__).with_name('native_ct_sampling.py')),
+        sampler_sha256=_sha(Path(__file__).with_name("native_ct_sampling.py")),
         frame=frame,
         voxel_um=um,
         ct_origin_xyz=origin.tolist(),
@@ -801,7 +905,9 @@ def _preview(path, values, valid, window=None):
     if not np.isfinite([lo, hi]).all() or (window is not None and hi <= lo):
         raise ValueError("invalid declared CT display window")
     gray = np.zeros(values.shape, np.uint8)
-    gray[valid] = np.rint(255 * np.clip((values[valid] - lo) / max(hi - lo, 1e-12), 0, 1)).astype(np.uint8)
+    gray[valid] = np.rint(255 * np.clip((values[valid] - lo) / max(hi - lo, 1e-12), 0, 1)).astype(
+        np.uint8
+    )
     rgba = np.dstack([gray, gray, gray, valid.astype(np.uint8) * 255])
     text = PngImagePlugin.PngInfo()
     text.add_text("Description", "CT texture preview, not ink; transparent pixels are unobserved")
@@ -814,46 +920,79 @@ def _preview(path, values, valid, window=None):
 
 
 def main(argv=None):
-    p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    p = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     p.add_argument("--field", type=Path, required=True)
     p.add_argument("--metadata", type=Path)
-    p.add_argument("--level", type=float, required=True, help="actual RAW field isovalue, no automatic selection")
+    p.add_argument(
+        "--level",
+        type=float,
+        required=True,
+        help="actual RAW field isovalue, no automatic selection",
+    )
     p.add_argument("--seed-xyz", "--seedXYZ", type=float, nargs=3)
     p.add_argument("--output", type=Path, required=True, help="new directory, parent must exist")
-    p.add_argument("--voxel-um", type=float, help="explicit metadata voxel_um override (um per world unit)")
+    p.add_argument(
+        "--voxel-um", type=float, help="explicit metadata voxel_um override (um per world unit)"
+    )
     p.add_argument("--support", type=Path, help="optional bool ZYX field-support .npy")
-    p.add_argument("--mesh-step", type=int, default=1, help="marching-cubes stride; >1 reduces geometry resolution")
-    p.add_argument("--app-run", type=Path, help="local VC3D AppRun; omitted uses gated PCA projection")
-    p.add_argument("--app-run-sha256", help="optional expected SHA256 of AppRun itself, not the AppImage")
+    p.add_argument(
+        "--mesh-step",
+        type=int,
+        default=1,
+        help="marching-cubes stride; >1 reduces geometry resolution",
+    )
+    p.add_argument(
+        "--app-run", type=Path, help="local VC3D AppRun; omitted uses gated PCA projection"
+    )
+    p.add_argument(
+        "--app-run-sha256", help="optional expected SHA256 of AppRun itself, not the AppImage"
+    )
     p.add_argument("--flatten-iters", type=int, default=200)
-    p.add_argument("--flatten-timeout", type=float, default=120, help="native subprocess timeout in seconds")
+    p.add_argument(
+        "--flatten-timeout", type=float, default=120, help="native subprocess timeout in seconds"
+    )
     p.add_argument("--ct", type=Path, help="optional local CT ZYX .npy")
     p.add_argument("--ct-metadata", type=Path, help="CT frame/origin/spacing/voxel_um JSON")
     p.add_argument("--ct-support", type=Path, help="optional bool ZYX CT-support .npy")
     p.add_argument("--pitch", type=float, required=True, help="UV grid pitch in WORLD units")
-    p.add_argument("--depth-offsets", nargs="+", type=float, default=[0.0], help="normal offsets in WORLD units")
-    from .tool_settings import metadata_arguments,metadata_request,ct_request,materialize_metadata,check_sources
+    p.add_argument(
+        "--depth-offsets",
+        nargs="+",
+        type=float,
+        default=[0.0],
+        help="normal offsets in WORLD units",
+    )
+    from .tool_settings import (
+        metadata_arguments,
+        metadata_request,
+        ct_request,
+        materialize_metadata,
+        check_sources,
+    )
     from .cli_settings import parse_options
-    metadata_arguments(p,ct=True,ownership=False)
-    args = parse_options(p,argv)
+
+    metadata_arguments(p, ct=True, ownership=False)
+    args = parse_options(p, argv)
     if (args.ct_metadata and not args.ct) or (args.ct_support and not args.ct):
         p.error("CT metadata/support needs --ct")
     if args.app_run_sha256 and not args.app_run:
         p.error("--app-run-sha256 requires --app-run")
     try:
-        meta=metadata_request(args)
-        cm=ct_request(args) if args.ct else None
+        meta = metadata_request(args)
+        cm = ct_request(args) if args.ct else None
         if args.ct:
-            shape=np.load(args.ct,mmap_mode='r',allow_pickle=False).shape
-            _metadata(cm,shape)
-    except (ValueError,OSError,KeyError,TypeError) as error:
-        print(f"surface input error: {error}",file=sys.stderr)
+            shape = np.load(args.ct, mmap_mode="r", allow_pickle=False).shape
+            _metadata(cm, shape)
+    except (ValueError, OSError, KeyError, TypeError) as error:
+        print(f"surface input error: {error}", file=sys.stderr)
         return 2
     args.output.mkdir(exist_ok=False)
-    materialize_metadata(args,args.output,meta,cm)
+    materialize_metadata(args, args.output, meta, cm)
     receipt = dict(
         schema="winding.surface-export.v1",
-        request_sources=getattr(args,'_request_sources',{}),
+        request_sources=getattr(args, "_request_sources", {}),
         status="FAILED",
         argv=list(sys.argv[1:] if argv is None else argv),
         source_sha256=_sha(__file__),
@@ -865,7 +1004,14 @@ def main(argv=None):
     )
     code = 2
     try:
-        paths = [args.field, args.metadata, args.support, args.ct, args.ct_metadata, args.ct_support]
+        paths = [
+            args.field,
+            args.metadata,
+            args.support,
+            args.ct,
+            args.ct_metadata,
+            args.ct_support,
+        ]
         receipt["inputs_sha256"] = {str(path): _sha(path) for path in paths if path is not None}
         meta = json.loads(args.metadata.read_text())
         if args.voxel_um is not None:
@@ -873,7 +1019,9 @@ def main(argv=None):
         if args.support:
             meta["support"] = np.load(args.support, allow_pickle=False)
         field = np.load(args.field, mmap_mode="r", allow_pickle=False)
-        vertices, faces, extraction = extract_surface(field, meta, args.level, args.seed_xyz, step_size=args.mesh_step)
+        vertices, faces, extraction = extract_surface(
+            field, meta, args.level, args.seed_xyz, step_size=args.mesh_step
+        )
         receipt["extraction"] = extraction
         np.savez(args.output / "surface.npz", vertices_xyz=vertices, faces=faces)
         with (args.output / "surface.obj").open("x") as f:
@@ -915,7 +1063,13 @@ def main(argv=None):
                 cm["support"] = np.load(args.ct_support, allow_pickle=False)
             ct = np.load(args.ct, mmap_mode="r", allow_pickle=False)
             stack, coverage, sampled = sample_ct_stack(
-                ct, cm, points, normals, args.depth_offsets, frame=meta["frame"], voxel_um=meta["voxel_um"]
+                ct,
+                cm,
+                points,
+                normals,
+                args.depth_offsets,
+                frame=meta["frame"],
+                voxel_um=meta["voxel_um"],
             )
             receipt["ct"] = sampled
             np.savez(
@@ -930,11 +1084,18 @@ def main(argv=None):
             layer = int(np.argmin(np.abs(args.depth_offsets)))
             if coverage[layer].any():
                 receipt["preview"] = {
-                    **_preview(args.output / "ct_preview.png", stack[layer], coverage[layer], cm.get("display_window")),
+                    **_preview(
+                        args.output / "ct_preview.png",
+                        stack[layer],
+                        coverage[layer],
+                        cm.get("display_window"),
+                    ),
                     "layer": layer,
                     "depth_offset_world": args.depth_offsets[layer],
                 }
-        if receipt["inputs_sha256"] != {str(path): _sha(path) for path in paths if path is not None}:
+        if receipt["inputs_sha256"] != {
+            str(path): _sha(path) for path in paths if path is not None
+        }:
             raise ValueError("input bytes changed during export")
         check_sources(args)
         receipt["status"], code = "EXPORTED_UNCERTIFIED", 0
@@ -946,10 +1107,16 @@ def main(argv=None):
             for f in sorted(args.output.rglob("*"))
             if f.is_file()
         }
-        (args.output / "receipt.json").write_text(json.dumps(receipt, indent=2, allow_nan=False) + "\n")
+        (args.output / "receipt.json").write_text(
+            json.dumps(receipt, indent=2, allow_nan=False) + "\n"
+        )
     print(
         json.dumps(
-            {"status": receipt["status"], "receipt": str(args.output / "receipt.json"), "error": receipt.get("error")}
+            {
+                "status": receipt["status"],
+                "receipt": str(args.output / "receipt.json"),
+                "error": receipt.get("error"),
+            }
         )
     )
     return code

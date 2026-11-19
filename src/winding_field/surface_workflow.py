@@ -44,7 +44,10 @@ def _checkpoint_lease(path):
 
         def check():
             current = lock.lstat()
-            if not stat.S_ISREG(current.st_mode) or (current.st_dev, current.st_ino) != (opened.st_dev, opened.st_ino):
+            if not stat.S_ISREG(current.st_mode) or (current.st_dev, current.st_ino) != (
+                opened.st_dev,
+                opened.st_ino,
+            ):
                 raise ValueError("checkpoint writer lease changed")
 
         check()
@@ -58,13 +61,14 @@ def _keys(value, allowed):
         raise ValueError("unknown/invalid surface configuration fields")
 
 
-def _json(path,*,sources=None):
+def _json(path, *, sources=None):
     with Path(path).open("rb") as stream:
         raw = stream.read(1024**2 + 1)
     if len(raw) > 1024**2:
         raise ValueError("surface config exceeds1MiB")
-    result=json.loads(raw, object_pairs_hook=_object, parse_constant=_invalid)
-    if sources is not None:sources[str(Path(path).resolve())]=hashlib.sha256(raw).hexdigest()
+    result = json.loads(raw, object_pairs_hook=_object, parse_constant=_invalid)
+    if sources is not None:
+        sources[str(Path(path).resolve())] = hashlib.sha256(raw).hexdigest()
     return result
 
 
@@ -89,7 +93,10 @@ def _render_settings(value=None):
         "height": 1024,
         "triangle_batch": 8192,
         "reserve_bytes": 0,
-        "views": [dict(name="front", azimuth=0.0, elevation=0.0), dict(name="oblique", azimuth=35.0, elevation=20.0)],
+        "views": [
+            dict(name="front", azimuth=0.0, elevation=0.0),
+            dict(name="oblique", azimuth=35.0, elevation=20.0),
+        ],
         **value,
     }
     for key in ("width", "height", "triangle_batch"):
@@ -135,7 +142,8 @@ def load_surface_config(path: str | Path) -> dict[str, Any]:
         config = config["request"]
     config = validate_surface_config(config, base=path.parent)
     config.update(config_path=str(path), config_sha256=sha(path))
-    if sources:config["request_sources"] = sources
+    if sources:
+        config["request_sources"] = sources
     return config
 
 
@@ -145,7 +153,18 @@ def validate_surface_config(mapping: dict, *, base: Path) -> dict[str, Any]:
     if config.get("schema") != "winding-surfaces-v1" or ("field" in config) == ("mesh" in config):
         raise ValueError("surface schema and exactly one field/mesh source required")
     geometry = config.get("geometry")
-    _keys(geometry, {"frame", "voxel_um", "origin_xyz", "spacing_xyz", "shape_zyx", "sheet_step", "calibration"})
+    _keys(
+        geometry,
+        {
+            "frame",
+            "voxel_um",
+            "origin_xyz",
+            "spacing_xyz",
+            "shape_zyx",
+            "sheet_step",
+            "calibration",
+        },
+    )
     if (
         not isinstance(geometry.get("frame"), str)
         or not geometry["frame"].strip()
@@ -156,8 +175,8 @@ def validate_surface_config(mapping: dict, *, base: Path) -> dict[str, Any]:
         raise ValueError("explicit frame and positive voxel_um required")
     if "field" in config:
         field = config["field"]
-        if isinstance(field, dict) and field.get('kind') == 'zarr-v2':
-            _keys(field, {'kind', 'url', 'sha256', 'complete_sha256', 'support_policy'})
+        if isinstance(field, dict) and field.get("kind") == "zarr-v2":
+            _keys(field, {"kind", "url", "sha256", "complete_sha256", "support_policy"})
             descriptor = dict(field)
         else:
             _keys(field, {"kind", "path", "sha256", "mask", "support_policy"})
@@ -173,7 +192,10 @@ def validate_surface_config(mapping: dict, *, base: Path) -> dict[str, Any]:
         if "levels" in config:
             raise ValueError("imported meshes have group IDs, not declared isovalues")
         config["mesh"] = _artifact(config["mesh"], base)
-    _keys(config.get("execution", {}), {"tile", "level_batch", "cache_bytes", "reserve_bytes", "mesh_bytes"})
+    _keys(
+        config.get("execution", {}),
+        {"tile", "level_batch", "cache_bytes", "reserve_bytes", "mesh_bytes"},
+    )
     execution = {
         "tile": 128,
         "level_batch": 4,
@@ -211,22 +233,27 @@ def _publish_png(path, image):
 
 def _publish_json(path, value):
     if path.exists():
-        if path.is_symlink() or json.dumps(_json(path), sort_keys=True, allow_nan=False) != json.dumps(
-            value, sort_keys=True, allow_nan=False
-        ):
+        if path.is_symlink() or json.dumps(
+            _json(path), sort_keys=True, allow_nan=False
+        ) != json.dumps(value, sort_keys=True, allow_nan=False):
             raise ValueError("existing render receipt differs; preserve it")
     else:
         atomic_json(path, value)
 
 
-def render_bundle(mesh: str | Path, output: str | Path, *, settings: dict | None = None) -> dict[str, Any]:
+def render_bundle(
+    mesh: str | Path, output: str | Path, *, settings: dict | None = None
+) -> dict[str, Any]:
     """Render all components from an immutable bundle; geometry is never loaded globally."""
     from .surface_render import render_view
 
     settings = _render_settings(settings)
     output = Path(output)
     check_resources(
-        output.parent, reserve_bytes=settings["reserve_bytes"] + settings["width"] * settings["height"] * 4 + 1024**2
+        output.parent,
+        reserve_bytes=settings["reserve_bytes"]
+        + settings["width"] * settings["height"] * 4
+        + 1024**2,
     )
     with MeshReader(mesh) as reader:
         values = [item["level"] for item in reader.manifest["levels"]]
@@ -234,13 +261,21 @@ def render_bundle(mesh: str | Path, output: str | Path, *, settings: dict | None
         if any(v not in values for v in selected):
             raise ValueError("requested render level absent from bundle")
         allowed = {i for i, v in enumerate(values) if v in selected}
-        palette = np.array([colorsys.hsv_to_rgb((i * 0.618033988749895) % 1, 0.55, 0.9) for i in range(len(values))])
+        palette = np.array(
+            [
+                colorsys.hsv_to_rgb((i * 0.618033988749895) % 1, 0.55, 0.9)
+                for i in range(len(values))
+            ]
+        )
         binding = dict(
             schema="winding-render-plan-v1",
             mesh_sha256=reader.manifest["database_sha256"],
             settings=settings,
             metadata=reader.metadata,
-            code={name: sha(Path(__file__).with_name(name)) for name in ("surface_render.py", "surface_workflow.py")},
+            code={
+                name: sha(Path(__file__).with_name(name))
+                for name in ("surface_render.py", "surface_workflow.py")
+            },
         )
         plan = output / "PLAN.json"
         if output.exists():
@@ -262,7 +297,9 @@ def render_bundle(mesh: str | Path, output: str | Path, *, settings: dict | None
             for view in settings["views"]:
                 check_resources(
                     output,
-                    reserve_bytes=settings["reserve_bytes"] + settings["width"] * settings["height"] * 4 + 1024**2,
+                    reserve_bytes=settings["reserve_bytes"]
+                    + settings["width"] * settings["height"] * 4
+                    + 1024**2,
                 )
                 reader.validate()
                 if reader.bounds is None:
@@ -279,7 +316,13 @@ def render_bundle(mesh: str | Path, output: str | Path, *, settings: dict | None
                     )
                 target = output / (view["name"] + ".png")
                 _publish_png(target, image)
-                entry = dict(path=target.name, sha256=sha(target), bytes=target.stat().st_size, view=view, **stats)
+                entry = dict(
+                    path=target.name,
+                    sha256=sha(target),
+                    bytes=target.stat().st_size,
+                    view=view,
+                    **stats,
+                )
                 outputs.append(entry)
                 _publish_json(output / (view["name"] + ".json"), entry)
             reader.validate()
@@ -298,7 +341,12 @@ def render_bundle(mesh: str | Path, output: str | Path, *, settings: dict | None
 
 
 def run_surfaces(
-    config_path: str | Path, output: str | Path, *, resume: bool = False, render: bool = True, stop=None
+    config_path: str | Path,
+    output: str | Path,
+    *,
+    resume: bool = False,
+    render: bool = True,
+    stop=None,
 ) -> dict[str, Any]:
     """Build/import an agnostic mesh bundle and optionally render actual3D views."""
     if type(resume) is not bool or type(render) is not bool:
@@ -321,7 +369,10 @@ def run_surfaces(
                 raise ValueError("mesh RUN identity cannot be a symlink")
             saved = _json(binding)
             identity = saved.get("identity") if isinstance(saved, dict) else None
-            if isinstance(identity, dict) and identity.get("algorithm") == "lewiner-shifted-f32-adaptive-global-edges-v2":
+            if (
+                isinstance(identity, dict)
+                and identity.get("algorithm") == "lewiner-shifted-f32-adaptive-global-edges-v2"
+            ):
                 extractor = extract_mesh
         with ExitStack() as stack:
             lease = None
@@ -337,7 +388,9 @@ def run_surfaces(
                     lease()
                 return stop is not None and bool(stop())
 
-            with FieldSource(field, config["geometry"], cache_bytes=execution["cache_bytes"]) as source:
+            with FieldSource(
+                field, config["geometry"], cache_bytes=execution["cache_bytes"]
+            ) as source:
                 result = extractor(
                     source,
                     output,
@@ -363,103 +416,157 @@ def run_surfaces(
         raise ValueError("surface config changed during execution")
     if render:
         rendered = render_bundle(
-            output, output / "renders", settings={**config["render"], "reserve_bytes": execution["reserve_bytes"]}
+            output,
+            output / "renders",
+            settings={**config["render"], "reserve_bytes": execution["reserve_bytes"]},
         )
-        return dict(status="SURFACES_READY", mesh=result, renders=rendered, physical_acceptance=False)
+        return dict(
+            status="SURFACES_READY", mesh=result, renders=rendered, physical_acceptance=False
+        )
     return result
 
 
 def _surface_flags(parser):
     from .cli_settings import field_arguments
+
     field_arguments(parser)
-    group=parser.add_argument_group("surface request overrides",argument_default=argparse.SUPPRESS)
+    group = parser.add_argument_group(
+        "surface request overrides", argument_default=argparse.SUPPRESS
+    )
     group.add_argument("--mesh-sha256")
-    group.add_argument("--levels",type=float,nargs="+",help="raw field isovalues, NOT winding W labels")
-    for name in ("tile","level_batch","cache_bytes","reserve_bytes","mesh_bytes"):
-        group.add_argument("--"+name.replace("_","-"),type=int)
-    for name in ("width","height","triangle_batch","reserve_bytes"):
-        group.add_argument("--render-"+name.replace("_","-"),type=int)
-    group.add_argument("--render-levels",type=float,nargs="+",help="raw field isovalues to render")
-    view=group.add_argument("--render-view",nargs=3,action="append",metavar=("NAME","AZIMUTH","ELEVATION"),
-                            help="named view; azimuth/elevation in degrees; replaces file views")
-    view.element_types=(str,float,float)
+    group.add_argument(
+        "--levels", type=float, nargs="+", help="raw field isovalues, NOT winding W labels"
+    )
+    for name in ("tile", "level_batch", "cache_bytes", "reserve_bytes", "mesh_bytes"):
+        group.add_argument("--" + name.replace("_", "-"), type=int)
+    for name in ("width", "height", "triangle_batch", "reserve_bytes"):
+        group.add_argument("--render-" + name.replace("_", "-"), type=int)
+    group.add_argument(
+        "--render-levels", type=float, nargs="+", help="raw field isovalues to render"
+    )
+    view = group.add_argument(
+        "--render-view",
+        nargs=3,
+        action="append",
+        metavar=("NAME", "AZIMUTH", "ELEVATION"),
+        help="named view; azimuth/elevation in degrees; replaces file views",
+    )
+    view.element_types = (str, float, float)
 
 
 def _render_overrides(args):
-    result={name:vars(args)["render_"+name] for name in
-            ("width","height","triangle_batch","reserve_bytes","levels") if "render_"+name in vars(args)}
-    if hasattr(args,"render_view"):
-        result["views"]=[dict(name=name,azimuth=float(az),elevation=float(el)) for name,az,el in args.render_view]
+    result = {
+        name: vars(args)["render_" + name]
+        for name in ("width", "height", "triangle_batch", "reserve_bytes", "levels")
+        if "render_" + name in vars(args)
+    }
+    if hasattr(args, "render_view"):
+        result["views"] = [
+            dict(name=name, azimuth=float(az), elevation=float(el))
+            for name, az, el in args.render_view
+        ]
     return result
 
 
-def _surface_recipe(args,sources):
-    from .cli_settings import field_overrides,merge_explicit,persist_request
-    output=args.output.resolve()
-    path=args.config
-    reference=None
+def _surface_recipe(args, sources):
+    from .cli_settings import field_overrides, merge_explicit, persist_request
+
+    output = args.output.resolve()
+    path = args.config
+    reference = None
     if args.resume:
-        reference=(_json(output/"LEVELS.json")["binding"] if args.parallel_levels else
-                   _json(output/"REQUEST.json") if (output/"REQUEST.json").exists() else None)
-        if reference is not None and sha(reference["config_path"])!=reference["config_sha256"]:
+        reference = (
+            _json(output / "LEVELS.json")["binding"]
+            if args.parallel_levels
+            else _json(output / "REQUEST.json")
+            if (output / "REQUEST.json").exists()
+            else None
+        )
+        if reference is not None and sha(reference["config_path"]) != reference["config_sha256"]:
             raise ValueError("saved surface request changed")
         if path is None:
-            if reference is None:raise ValueError("resume requires a saved request or --config")
-            path=Path(reference["config_path"])
-            if sha(path)!=reference["config_sha256"]:raise ValueError("saved surface request changed")
+            if reference is None:
+                raise ValueError("resume requires a saved request or --config")
+            path = Path(reference["config_path"])
+            if sha(path) != reference["config_sha256"]:
+                raise ValueError("saved surface request changed")
     elif output.exists():
         raise ValueError("surface build requires a new output")
-    overrides=field_overrides(args)
-    if args.mesh is not None:overrides["mesh"]=dict(path=str(args.mesh.absolute()))
-    if hasattr(args,"mesh_sha256"):overrides.setdefault("mesh",{})["sha256"]=args.mesh_sha256
-    if hasattr(args,"levels"):overrides["levels"]=args.levels
-    for name in ("tile","level_batch","cache_bytes","reserve_bytes","mesh_bytes"):
-        if hasattr(args,name):overrides.setdefault("execution",{})[name]=getattr(args,name)
-    render=_render_overrides(args)
-    if render:overrides["render"]=render
-    base={};provenance=dict(sources)
+    overrides = field_overrides(args)
+    if args.mesh is not None:
+        overrides["mesh"] = dict(path=str(args.mesh.absolute()))
+    if hasattr(args, "mesh_sha256"):
+        overrides.setdefault("mesh", {})["sha256"] = args.mesh_sha256
+    if hasattr(args, "levels"):
+        overrides["levels"] = args.levels
+    for name in ("tile", "level_batch", "cache_bytes", "reserve_bytes", "mesh_bytes"):
+        if hasattr(args, name):
+            overrides.setdefault("execution", {})[name] = getattr(args, name)
+    render = _render_overrides(args)
+    if render:
+        overrides["render"] = render
+    base = {}
+    provenance = dict(sources)
     if path is not None:
-        document=_json(path,sources=provenance)
-        if document.get("schema")=="winding-field-cli-request-v1":
-            loaded=load_surface_config(path)
-            if document["output"]!=str(output):raise ValueError("saved request belongs to another output")
+        document = _json(path, sources=provenance)
+        if document.get("schema") == "winding-field-cli-request-v1":
+            loaded = load_surface_config(path)
+            if document["output"] != str(output):
+                raise ValueError("saved request belongs to another output")
             provenance.pop(str(path.resolve()))
-            provenance.update(loaded.get("request_sources",{}))
-            base={k:v for k,v in loaded.items() if k not in ("config_path","config_sha256","request_sources")}
+            provenance.update(loaded.get("request_sources", {}))
+            base = {
+                k: v
+                for k, v in loaded.items()
+                if k not in ("config_path", "config_sha256", "request_sources")
+            }
         else:
-            base=deepcopy(document)
-            entries=[base.get("field"),base.get("mesh")]
-            if isinstance(base.get("field"),dict):entries.append(base["field"].get("mask"))
+            base = deepcopy(document)
+            entries = [base.get("field"), base.get("mesh")]
+            if isinstance(base.get("field"), dict):
+                entries.append(base["field"].get("mask"))
             for entry in entries:
-                if not isinstance(entry,dict):continue
-                value=entry.get("path")
-                if isinstance(value,str) and value and "://" not in value:
-                    entry["path"]=str((path.resolve().parent/value).absolute())
+                if not isinstance(entry, dict):
+                    continue
+                value = entry.get("path")
+                if isinstance(value, str) and value and "://" not in value:
+                    entry["path"] = str((path.resolve().parent / value).absolute())
         if not overrides:
             load_surface_config(path)
             return path
-    config=validate_surface_config(merge_explicit({"schema":"winding-surfaces-v1",**base},overrides),base=Path.cwd())
+    config = validate_surface_config(
+        merge_explicit({"schema": "winding-surfaces-v1", **base}, overrides), base=Path.cwd()
+    )
     if reference is not None:
-        previous=load_surface_config(reference["config_path"])
-        previous={k:v for k,v in previous.items() if k not in ("config_path","config_sha256","request_sources")}
-        if config==previous:return Path(reference["config_path"])
+        previous = load_surface_config(reference["config_path"])
+        previous = {
+            k: v
+            for k, v in previous.items()
+            if k not in ("config_path", "config_sha256", "request_sources")
+        }
+        if config == previous:
+            return Path(reference["config_path"])
         # Parallel collections bind their complete recipe; serial cache/reader budgets remain operational.
-        scientific=deepcopy(config);old=deepcopy(previous)
+        scientific = deepcopy(config)
+        old = deepcopy(previous)
         if not args.parallel_levels:
-            for value in (scientific,old):
-                value["execution"]={k:v for k,v in value["execution"].items() if k=="tile"}
-        if scientific!=old:raise ValueError("surface request differs from retained problem")
+            for value in (scientific, old):
+                value["execution"] = {k: v for k, v in value["execution"].items() if k == "tile"}
+        if scientific != old:
+            raise ValueError("surface request differs from retained problem")
     if "field" in config:
-        with FieldSource(config["field"],config["geometry"],cache_bytes=0) as source:
-            source.validate(hashes=args.resume or config["field"].get("kind")!="zarr-v2")
-    elif sha(config["mesh"]["path"])!=config["mesh"]["sha256"]:
+        with FieldSource(config["field"], config["geometry"], cache_bytes=0) as source:
+            source.validate(hashes=args.resume or config["field"].get("kind") != "zarr-v2")
+    elif sha(config["mesh"]["path"]) != config["mesh"]["sha256"]:
         raise ValueError("mesh source hash differs")
-    check_resources(output.parent,reserve_bytes=config["execution"]["reserve_bytes"])
-    for source,pin in sources.items():
-        if sha(source)!=pin:raise ValueError("surface request source changed")
-    if path is not None and document.get("schema")!="winding-field-cli-request-v1":
-        if sha(path)!=provenance[str(path.resolve())]:raise ValueError("surface request source changed")
-    return persist_request(output,config,resume=False,sources=provenance)
+    check_resources(output.parent, reserve_bytes=config["execution"]["reserve_bytes"])
+    for source, pin in sources.items():
+        if sha(source) != pin:
+            raise ValueError("surface request source changed")
+    if path is not None and document.get("schema") != "winding-field-cli-request-v1":
+        if sha(path) != provenance[str(path.resolve())]:
+            raise ValueError("surface request source changed")
+    return persist_request(output, config, resume=False, sources=provenance)
 
 
 def main(argv=None) -> int:
@@ -469,33 +576,58 @@ def main(argv=None) -> int:
     parser.add_argument("--mesh", type=Path)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--resume", action="store_true")
-    parser.add_argument("--parallel-levels", action="store_true", help="independent per-level bundles; automatically bound CPU/RAM/disk concurrency")
+    parser.add_argument(
+        "--parallel-levels",
+        action="store_true",
+        help="independent per-level bundles; automatically bound CPU/RAM/disk concurrency",
+    )
     _surface_flags(parser)
-    from .cli_settings import parse_options,merge_explicit
-    sources={}
-    args = parse_options(parser,argv,sources=sources)
-    config_path=None
+    from .cli_settings import parse_options, merge_explicit
+
+    sources = {}
+    args = parse_options(parser, argv, sources=sources)
+    config_path = None
     try:
         if args.parallel_levels:
             if args.action == "render":
                 raise ValueError("--parallel-levels requires mesh/surfaces")
             from .surface_parallel import run_parallel_levels
-            config_path=_surface_recipe(args,sources)
-            result = run_parallel_levels(config_path, args.output, resume=args.resume, render=args.action == "surfaces")
+
+            config_path = _surface_recipe(args, sources)
+            result = run_parallel_levels(
+                config_path, args.output, resume=args.resume, render=args.action == "surfaces"
+            )
             print(json.dumps(result, allow_nan=False))
-            return {"LEVELS_READY": 0, "CHECKPOINTED_STOP": 3, "RESOURCE_UNAVAILABLE": 75}.get(result["status"], 1)
+            return {"LEVELS_READY": 0, "CHECKPOINTED_STOP": 3, "RESOURCE_UNAVAILABLE": 75}.get(
+                result["status"], 1
+            )
         if args.action == "render":
             from .cli_settings import field_overrides
-            if field_overrides(args) or any(hasattr(args,name) for name in
-                    ("levels","tile","level_batch","cache_bytes","reserve_bytes","mesh_bytes","mesh_sha256")):
+
+            if field_overrides(args) or any(
+                hasattr(args, name)
+                for name in (
+                    "levels",
+                    "tile",
+                    "level_batch",
+                    "cache_bytes",
+                    "reserve_bytes",
+                    "mesh_bytes",
+                    "mesh_sha256",
+                )
+            ):
                 raise ValueError("render accepts render settings, not extraction/source overrides")
             if args.mesh is None:
                 raise ValueError("render requires --mesh BUNDLE")
-            settings=merge_explicit(_json(args.config) if args.config else {},_render_overrides(args))
+            settings = merge_explicit(
+                _json(args.config) if args.config else {}, _render_overrides(args)
+            )
             result = render_bundle(args.mesh, args.output, settings=settings)
         else:
-            config_path=_surface_recipe(args,sources)
-            result = run_surfaces(config_path, args.output, resume=args.resume, render=args.action == "surfaces")
+            config_path = _surface_recipe(args, sources)
+            result = run_surfaces(
+                config_path, args.output, resume=args.resume, render=args.action == "surfaces"
+            )
     except ResourceUnavailable as error:
         print("resources unavailable: " + str(error), file=sys.stderr)
         return 75
@@ -506,10 +638,16 @@ def main(argv=None) -> int:
         print("surface processing failed: " + str(error), file=sys.stderr)
         return 1
     finally:
-        if config_path is not None and (args.output/"RUN.json").is_file():
-            document=_json(config_path)
-            if document.get("schema")=="winding-field-cli-request-v1" and not (args.output/"REQUEST.json").exists():
-                atomic_json(args.output/"REQUEST.json",dict(config_path=str(config_path),config_sha256=sha(config_path)))
+        if config_path is not None and (args.output / "RUN.json").is_file():
+            document = _json(config_path)
+            if (
+                document.get("schema") == "winding-field-cli-request-v1"
+                and not (args.output / "REQUEST.json").exists()
+            ):
+                atomic_json(
+                    args.output / "REQUEST.json",
+                    dict(config_path=str(config_path), config_sha256=sha(config_path)),
+                )
     print(json.dumps(result, allow_nan=False))
     return 0
 

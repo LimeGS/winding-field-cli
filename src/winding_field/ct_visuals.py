@@ -52,7 +52,9 @@ def sample_winding(field, meta, xyz, support=None):
     samples = field.ravel()[nodes]
     valid &= np.all((weights == 0) | np.isfinite(samples), axis=1)
     values = np.full(len(valid), np.nan)
-    values[valid] = np.sum(np.where(weights[valid] > 0, samples[valid], 0) * weights[valid], axis=1) / step
+    values[valid] = (
+        np.sum(np.where(weights[valid] > 0, samples[valid], 0) * weights[valid], axis=1) / step
+    )
     return values.reshape(xyz.shape[:-1])
 
 
@@ -74,7 +76,9 @@ def prepare(spec, case_directory, frame, step, *, voxel_um=None):
         return data
 
     manifest = json.loads(
-        checked_bytes(manifest_path, spec["archive_manifest"]["sha256"], "visual_manifest", 1024 * 1024)
+        checked_bytes(
+            manifest_path, spec["archive_manifest"]["sha256"], "visual_manifest", 1024 * 1024
+        )
     )
 
     def member(name):
@@ -100,7 +104,9 @@ def prepare(spec, case_directory, frame, step, *, voxel_um=None):
             or not 0 <= level <= 30
             or not np.isclose(2**level / positive(native_scale, "native scale"), 1)
         ):
-            raise ValueError("legacy visual archive needs explicit spacing_xyz for nonunit CT pixels")
+            raise ValueError(
+                "legacy visual archive needs explicit spacing_xyz for nonunit CT pixels"
+            )
         spacing = np.ones(3)
     else:
         raise ValueError("visual archive requires explicit spacing_xyz")
@@ -124,7 +130,11 @@ def prepare(spec, case_directory, frame, step, *, voxel_um=None):
     reference = spec.get("reference_key")
     if reference is not None:
         identity = receipt["field_sha256"].get(reference)
-        if not isinstance(identity, str) or len(identity) != 64 or any(c not in "0123456789abcdef" for c in identity):
+        if (
+            not isinstance(identity, str)
+            or len(identity) != 64
+            or any(c not in "0123456789abcdef" for c in identity)
+        ):
             raise ValueError("visual reference needs a valid source field SHA-256 identity")
     if [p["name"] for p in receipt["planes"]] != ["XY", "XZ", "YZ"]:
         raise ValueError("visual archive must declare ordered XY/XZ/YZ planes")
@@ -179,7 +189,9 @@ def prepare(spec, case_directory, frame, step, *, voxel_um=None):
     try:
         import matplotlib
     except ImportError as exc:
-        raise RuntimeError("CT pictures require matplotlib; install winding-field-cli[plot]") from exc
+        raise RuntimeError(
+            "CT pictures require matplotlib; install winding-field-cli[plot]"
+        ) from exc
     return dict(
         planes=planes,
         source=receipt,
@@ -192,7 +204,9 @@ def prepare(spec, case_directory, frame, step, *, voxel_um=None):
     )
 
 
-def draw_figures(planes, origin, voxel_mm, levels, window, columns, output, prefix=None, synthetic=False):
+def draw_figures(
+    planes, origin, voxel_mm, levels, window, columns, output, prefix=None, synthetic=False
+):
     import matplotlib
 
     matplotlib.use("Agg")
@@ -217,7 +231,12 @@ def draw_figures(planes, origin, voxel_mm, levels, window, columns, output, pref
                     pitch = np.asarray(plane.get("spacing_xyz", [1, 1, 1])) * voxel_mm
                     x = np.arange(plane["ct"].shape[1]) * pitch[a]
                     y = np.arange(plane["ct"].shape[0]) * pitch[b]
-                    extent = (-pitch[a] / 2, x[-1] + pitch[a] / 2, -pitch[b] / 2, y[-1] + pitch[b] / 2)
+                    extent = (
+                        -pitch[a] / 2,
+                        x[-1] + pitch[a] / 2,
+                        -pitch[b] / 2,
+                        y[-1] + pitch[b] / 2,
+                    )
                     for ax, (key, title) in zip(row, columns):
                         ax.imshow(
                             plane["ct"],
@@ -248,7 +267,13 @@ def draw_figures(planes, origin, voxel_mm, levels, window, columns, output, pref
                                     norm=norm,
                                     linewidths=0.65,
                                 )
-                                ax.clabel(contours, contours.levels[::2], inline=True, fontsize=5, fmt="%d")
+                                ax.clabel(
+                                    contours,
+                                    contours.levels[::2],
+                                    inline=True,
+                                    fontsize=5,
+                                    fmt="%d",
+                                )
                             if message:
                                 ax.text(
                                     0.5,
@@ -265,7 +290,8 @@ def draw_figures(planes, origin, voxel_mm, levels, window, columns, output, pref
                         ax.set_ylabel(f"{'XYZ'[b]} displacement (mm), origin {origin[b]} world")
                         ax.set_aspect("equal")
                         ax.set_title(
-                            f"{title}\n{plane['name']} at {'XYZ'[plane['axis']]}={plane['position']} world", fontsize=10
+                            f"{title}\n{plane['name']} at {'XYZ'[plane['axis']]}={plane['position']} world",
+                            fontsize=10,
                         )
                 fig.colorbar(
                     plt.cm.ScalarMappable(norm=norm, cmap=cmap),
@@ -286,7 +312,10 @@ def draw_figures(planes, origin, voxel_mm, levels, window, columns, output, pref
 
 def render(visual, field, meta, support, output):
     source = visual["source"]
-    if meta["frame"] != source["frame"] or meta.get("voxel_um", source["voxel_um"]) != source["voxel_um"]:
+    if (
+        meta["frame"] != source["frame"]
+        or meta.get("voxel_um", source["voxel_um"]) != source["voxel_um"]
+    ):
         raise ValueError("candidate and CT frame/units differ")
     samples, reports = {}, []
     for plane in visual["planes"]:
@@ -294,7 +323,11 @@ def render(visual, field, meta, support, output):
         plane["candidate"] = values
         key = plane["name"]
         samples.update(
-            {key + "_ct": plane["ct"], key + "_candidate": values, key + "_candidate_valid": np.isfinite(values)}
+            {
+                key + "_ct": plane["ct"],
+                key + "_candidate": values,
+                key + "_candidate_valid": np.isfinite(values),
+            }
         )
         if "reference" in plane:
             samples[key + "_reference"] = plane["reference"]
@@ -316,11 +349,20 @@ def render(visual, field, meta, support, output):
     synthetic = source.get("synthetic", False)
     ct_pitch = np.asarray(source["spacing_xyz"]) * source["voxel_um"]
     sampling = " × ".join(f"{v:g}" for v in ct_pitch)
-    columns = [(None, f"{'Synthetic CT-like data' if synthetic else 'Original CT'} — XYZ sampling {sampling} µm")]
+    columns = [
+        (
+            None,
+            f"{'Synthetic CT-like data' if synthetic else 'Original CT'} — XYZ sampling {sampling} µm",
+        )
+    ]
     if visual["reference_key"] is not None:
         columns.append(("reference", visual["reference_label"]))
     spacing = np.asarray(meta["spacing_xyz"]) * source["voxel_um"]
-    resolution = f"{spacing[0]:g}" if (spacing == spacing[0]).all() else " × ".join(f"{v:g}" for v in spacing)
+    resolution = (
+        f"{spacing[0]:g}"
+        if (spacing == spacing[0]).all()
+        else " × ".join(f"{v:g}" for v in spacing)
+    )
     columns.append(("candidate", f"Candidate — {resolution} µm field"))
     figures = draw_figures(
         visual["planes"],
@@ -365,21 +407,31 @@ def render(visual, field, meta, support, output):
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     for name in ("case", "field", "metadata", "output"):
-        parser.add_argument("--" + name, type=Path, required=name not in ('case','metadata'))
+        parser.add_argument("--" + name, type=Path, required=name not in ("case", "metadata"))
     parser.add_argument("--support", type=Path)
     parser.add_argument("--support-sha256")
-    parser.add_argument("--config", type=Path, help="explicit geometry for a historical case lacking voxel_um")
+    parser.add_argument(
+        "--config", type=Path, help="explicit geometry for a historical case lacking voxel_um"
+    )
     parser.add_argument("--check-only", action="store_true")
-    from .tool_settings import metadata_arguments,metadata_request,case_arguments,case_request,materialize_metadata,check_sources
+    from .tool_settings import (
+        metadata_arguments,
+        metadata_request,
+        case_arguments,
+        case_request,
+        materialize_metadata,
+        check_sources,
+    )
     from .cli_settings import parse_options
-    metadata_arguments(parser,ownership=False)
+
+    metadata_arguments(parser, ownership=False)
     case_arguments(parser)
-    args = parse_options(parser,argv)
+    args = parse_options(parser, argv)
     try:
-        meta=metadata_request(args,require_pin=True)
-        case=case_request(args,meta)
-    except (ValueError,OSError,KeyError,TypeError) as error:
-        print(f"ERROR: {type(error).__name__}: {error}",file=sys.stderr)
+        meta = metadata_request(args, require_pin=True)
+        case = case_request(args, meta)
+    except (ValueError, OSError, KeyError, TypeError) as error:
+        print(f"ERROR: {type(error).__name__}: {error}", file=sys.stderr)
         return 2
     try:
         args.output.mkdir(exist_ok=False)
@@ -387,12 +439,14 @@ def main(argv=None):
         print(f"New output directory required: {error}", file=sys.stderr)
         return 2
     try:
-        materialize_metadata(args,args.output,meta)
+        materialize_metadata(args, args.output, meta)
         if args._inline_case:
-            args.case=args.output/'case-request.json';atomic_json(args.case,case)
+            args.case = args.output / "case-request.json"
+            atomic_json(args.case, case)
         inputs = {
-            "dataset_config" if name == "config" else name:
-                dict(path=str(path.resolve()), sha256=file_sha(path), bytes=path.stat().st_size)
+            "dataset_config" if name == "config" else name: dict(
+                path=str(path.resolve()), sha256=file_sha(path), bytes=path.stat().st_size
+            )
             for name in ("case", "field", "metadata", "support", "config")
             if (path := getattr(args, name)) is not None
         }
@@ -400,16 +454,29 @@ def main(argv=None):
         meta = json.loads(args.metadata.read_text())
         validate_frame(case.get("frame"))
         configured = None if args.config is None else load_dataset(args.config)
-        if hasattr(args,'dataset_frame') or hasattr(args,'dataset_voxel_um'):
-            configured={**(configured or {}),**{name:vars(args)['dataset_'+name] for name in ('frame','voxel_um')
-                if 'dataset_'+name in vars(args)}}
+        if hasattr(args, "dataset_frame") or hasattr(args, "dataset_voxel_um"):
+            configured = {
+                **(configured or {}),
+                **{
+                    name: vars(args)["dataset_" + name]
+                    for name in ("frame", "voxel_um")
+                    if "dataset_" + name in vars(args)
+                },
+            }
         step = positive(case["step"], "case step")
-        unit = positive(case.get("voxel_um", configured["voxel_um"] if configured else None), "case voxel_um")
-        if configured is not None and (configured["frame"] != case["frame"] or configured["voxel_um"] != unit):
+        unit = positive(
+            case.get("voxel_um", configured["voxel_um"] if configured else None), "case voxel_um"
+        )
+        if configured is not None and (
+            configured["frame"] != case["frame"] or configured["voxel_um"] != unit
+        ):
             raise ValueError("case/config coordinate frame or units differ")
-        if (meta["field_sha256"] != inputs["field"]["sha256"] or meta["frame"] != case["frame"]
-                or not np.isclose(meta["step"], step, rtol=1e-12, atol=0)
-                or not np.isclose(meta.get("voxel_um", unit), unit, rtol=1e-12, atol=0)):
+        if (
+            meta["field_sha256"] != inputs["field"]["sha256"]
+            or meta["frame"] != case["frame"]
+            or not np.isclose(meta["step"], step, rtol=1e-12, atol=0)
+            or not np.isclose(meta.get("voxel_um", unit), unit, rtol=1e-12, atol=0)
+        ):
             raise ValueError("candidate hash, frame, scale or units differ from case")
         if "solver" in meta and meta["solver"].get("converged") is not True:
             raise ValueError("candidate declares a nonconverged solver")
@@ -418,33 +485,64 @@ def main(argv=None):
         physical_xyz(meta["origin_xyz"], "field origin")
         physical_xyz(meta["spacing_xyz"], "field spacing", positive=True)
         field = np.load(args.field, mmap_mode="r", allow_pickle=False)
-        if (field.ndim != 3 or min(field.shape) < 2 or field.dtype.kind not in "fiu"
-                or list(field.shape) != meta["shape_zyx"]):
+        if (
+            field.ndim != 3
+            or min(field.shape) < 2
+            or field.dtype.kind not in "fiu"
+            or list(field.shape) != meta["shape_zyx"]
+        ):
             raise ValueError("invalid candidate XYZ/ZYX grid")
-        declared = any(meta.get(key) is not None for key in ("support", "support_sha256", "support_array_sha256"))
-        if (case.get("requires_support") or declared or args.support_sha256) and args.support is None:
+        declared = any(
+            meta.get(key) is not None
+            for key in ("support", "support_sha256", "support_array_sha256")
+        )
+        if (
+            case.get("requires_support") or declared or args.support_sha256
+        ) and args.support is None:
             raise ValueError("candidate requires an explicit support mask")
-        support = None if args.support is None else np.load(args.support, mmap_mode="r", allow_pickle=False)
+        support = (
+            None
+            if args.support is None
+            else np.load(args.support, mmap_mode="r", allow_pickle=False)
+        )
         if support is not None:
             if support.shape != field.shape or support.dtype.kind != "b":
                 raise ValueError("support must be a matching boolean array")
-            expected = [v for v in (args.support_sha256, meta.get("support_sha256")) if v is not None]
+            expected = [
+                v for v in (args.support_sha256, meta.get("support_sha256")) if v is not None
+            ]
             array_hash = meta.get("support_array_sha256")
             if not expected and array_hash is None:
                 raise ValueError("support needs a declared hash")
             if any(value != inputs["support"]["sha256"] for value in expected):
                 raise ValueError("support file hash mismatch")
-            if array_hash is not None and hashlib.sha256(np.ascontiguousarray(support).tobytes()).hexdigest() != array_hash:
+            if (
+                array_hash is not None
+                and hashlib.sha256(np.ascontiguousarray(support).tobytes()).hexdigest()
+                != array_hash
+            ):
                 raise ValueError("support array hash mismatch")
         if (~np.isfinite(field) if support is None else ~np.isfinite(field) & support).any():
             raise ValueError("nonfinite field values in declared support")
-        visual = prepare(case["visualization"], args.case.parent, case["frame"], step, voxel_um=unit)
+        visual = prepare(
+            case["visualization"], args.case.parent, case["frame"], step, voxel_um=unit
+        )
         inputs.update(visual["inputs"])
-        receipt = dict(status="PASS_PREFLIGHT", inputs=inputs,request_sources=getattr(args,'_request_sources',{}),
-                       source_sha256={str(path): file_sha(path) for path in (
-                           Path(__file__), Path(point_stencils.__code__.co_filename),
-                           Path(positive.__code__.co_filename), Path(file_sha.__code__.co_filename))},
-                        environment=dict(numpy=np.__version__, matplotlib=visual["matplotlib_version"]))
+        receipt = dict(
+            status="PASS_PREFLIGHT",
+            inputs=inputs,
+            request_sources=getattr(args, "_request_sources", {}),
+            source_sha256={
+                str(path): file_sha(path)
+                for path in (
+                    Path(__file__),
+                    Path(point_stencils.__code__.co_filename),
+                    Path(positive.__code__.co_filename),
+                    Path(file_sha.__code__.co_filename),
+                )
+            },
+            environment=dict(numpy=np.__version__, matplotlib=visual["matplotlib_version"]),
+        )
         atomic_json(args.output / "PREFLIGHT.json", receipt)
         result = None if args.check_only else render(visual, field, meta, support, args.output)
         for entry in inputs.values():
@@ -452,14 +550,27 @@ def main(argv=None):
                 raise ValueError("input changed during visualization: " + entry["path"])
         check_sources(args)
         if result is not None:
-            atomic_json(args.output / "SUMMARY.json", dict(status="PASS_VISUALIZED", visualization=result,
-                        preflight_sha256=file_sha(args.output / "PREFLIGHT.json")))
-        atomic_json(args.output / "MANIFEST.json", {
-            p.name: file_sha(p) for p in sorted(args.output.iterdir()) if p.is_file()})
-        print("PASS_PREFLIGHT" if args.check_only else "PASS_VISUALIZED", str(args.output), flush=True)
+            atomic_json(
+                args.output / "SUMMARY.json",
+                dict(
+                    status="PASS_VISUALIZED",
+                    visualization=result,
+                    preflight_sha256=file_sha(args.output / "PREFLIGHT.json"),
+                ),
+            )
+        atomic_json(
+            args.output / "MANIFEST.json",
+            {p.name: file_sha(p) for p in sorted(args.output.iterdir()) if p.is_file()},
+        )
+        print(
+            "PASS_PREFLIGHT" if args.check_only else "PASS_VISUALIZED", str(args.output), flush=True
+        )
         return 0
     except Exception as error:
-        atomic_json(args.output / "ERROR.json", dict(status="ERROR", type=type(error).__name__, message=str(error)))
+        atomic_json(
+            args.output / "ERROR.json",
+            dict(status="ERROR", type=type(error).__name__, message=str(error)),
+        )
         print(f"ERROR: {type(error).__name__}: {error}", file=sys.stderr)
         return 2
 

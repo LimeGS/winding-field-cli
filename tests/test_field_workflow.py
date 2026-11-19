@@ -14,7 +14,9 @@ from field_store import BlockStore
 
 
 def workflow():
-    assert importlib.util.find_spec("winding_field.field_workflow"), "principal construction/resume workflow missing"
+    assert importlib.util.find_spec("winding_field.field_workflow"), (
+        "principal construction/resume workflow missing"
+    )
     from winding_field import field_workflow
 
     return field_workflow
@@ -26,13 +28,13 @@ def sha(path):
 
 def test_prepared_cache_budget_reaches_engine(tmp_path):
     path, config = prepared(tmp_path, constraints=True)
-    config['execution']['prepared_cache_bytes'] = 1 << 20
-    config['execution']['sweeps'] = 2
+    config["execution"]["prepared_cache_bytes"] = 1 << 20
+    config["execution"]["sweeps"] = 2
     path.write_text(json.dumps(config))
-    result = workflow().run_field(path, tmp_path/'run', prefetch=True)
-    assert result['prepared_cache_stats']['hits'] > 0
-    assert result['prepared_cache_stats']['peak_bytes'] <= 1 << 20
-    assert result['prefetched_blocks'] > 0 and result['prefetch_parity']
+    result = workflow().run_field(path, tmp_path / "run", prefetch=True)
+    assert result["prepared_cache_stats"]["hits"] > 0
+    assert result["prepared_cache_stats"]["peak_bytes"] <= 1 << 20
+    assert result["prefetched_blocks"] > 0 and result["prefetch_parity"]
 
 
 def prepared(tmp_path, *, fixed=False, constraints=False):
@@ -51,7 +53,9 @@ def prepared(tmp_path, *, fixed=False, constraints=False):
         voxel_um=8.64,
         sheet_step=1.0,
         calibration="analytic phi = .125 * world X offset",
-        grid=dict(origin_xyz=[11.0, -4.0, 19.0], spacing_xyz=[2.0, 3.0, 5.0], shape_zyx=list(shape)),
+        grid=dict(
+            origin_xyz=[11.0, -4.0, 19.0], spacing_xyz=[2.0, 3.0, 5.0], shape_zyx=list(shape)
+        ),
         observations={
             k: dict(path="inputs/" + k + ".npy", sha256=sha(inputs / (k + ".npy")))
             for k in ("target", "weights", "observed")
@@ -75,7 +79,9 @@ def prepared(tmp_path, *, fixed=False, constraints=False):
             targets=-1.125,
         )
         rows.save(inputs / "constraints.npz")
-        config["constraints"] = dict(path="inputs/constraints.npz", sha256=sha(inputs / "constraints.npz"))
+        config["constraints"] = dict(
+            path="inputs/constraints.npz", sha256=sha(inputs / "constraints.npz")
+        )
     path = tmp_path / "run.json"
     path.write_text(json.dumps(config))
     return path, config
@@ -93,31 +99,44 @@ def test_real_prepared_run_uses_core_and_exact_physical_geometry(tmp_path):
     cp, field, observed = stored(tmp_path / "field")
     np.testing.assert_allclose(field, np.broadcast_to(np.arange(6) * 0.25, field.shape), atol=2e-7)
     assert observed.all() and result["status"] == "SWEEP_BUDGET_REACHED"
-    assert result["global_converged"] is False and cp["identity"]["source_identity"]["frame"] == config["frame"]
+    assert (
+        result["global_converged"] is False
+        and cp["identity"]["source_identity"]["frame"] == config["frame"]
+    )
     metadata = json.loads((tmp_path / "field/RUN.json").read_text())
     assert metadata["frame"] == config["frame"] and metadata["sheet_step"] == 1.0
     assert metadata["grid"] == config["grid"]
 
 
 def test_public_prepared_verify_reads_stored_global_field_and_rejects_changed_inputs(tmp_path):
-    path,config=prepared(tmp_path,constraints=True)
-    root=tmp_path/'field'
-    workflow().run_field(path,root)
-    before=(root/'CHECKPOINT.json').read_bytes()
-    command=[sys.executable,'-m','winding_field','prepared','verify','--config',str(path),'--output',str(root)]
-    result=subprocess.run(command,capture_output=True,text=True)
-    assert result.returncode==0,result.stderr
-    receipt=json.loads(result.stdout)
-    assert receipt['status']=='VERIFIED' and receipt['global_converged'] is True
-    assert receipt['fixed_storage_max_error']==0
-    assert receipt['relative_residual']<config['solver']['rtol']
-    assert receipt['fixed_max_error']>0
-    assert receipt['physical_acceptance'] is False
-    assert receipt['checkpoint_sha256']==sha(root/'CHECKPOINT.json')
-    assert (root/'CHECKPOINT.json').read_bytes()==before
-    np.save(tmp_path/'inputs/weights.npy',np.full((3,4,6),2.,'f4'))
-    result=subprocess.run(command,capture_output=True,text=True)
-    assert result.returncode!=0
+    path, config = prepared(tmp_path, constraints=True)
+    root = tmp_path / "field"
+    workflow().run_field(path, root)
+    before = (root / "CHECKPOINT.json").read_bytes()
+    command = [
+        sys.executable,
+        "-m",
+        "winding_field",
+        "prepared",
+        "verify",
+        "--config",
+        str(path),
+        "--output",
+        str(root),
+    ]
+    result = subprocess.run(command, capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+    receipt = json.loads(result.stdout)
+    assert receipt["status"] == "VERIFIED" and receipt["global_converged"] is True
+    assert receipt["fixed_storage_max_error"] == 0
+    assert receipt["relative_residual"] < config["solver"]["rtol"]
+    assert receipt["fixed_max_error"] > 0
+    assert receipt["physical_acceptance"] is False
+    assert receipt["checkpoint_sha256"] == sha(root / "CHECKPOINT.json")
+    assert (root / "CHECKPOINT.json").read_bytes() == before
+    np.save(tmp_path / "inputs/weights.npy", np.full((3, 4, 6), 2.0, "f4"))
+    result = subprocess.run(command, capture_output=True, text=True)
+    assert result.returncode != 0
 
 
 def test_exact_resume_matches_uninterrupted_and_allows_reader_budget_changes(tmp_path):
@@ -130,8 +149,12 @@ def test_exact_resume_matches_uninterrupted_and_allows_reader_budget_changes(tmp
         return cp.exists() and json.loads(cp.read_text())["progress"].get("next_block") == 1
 
     assert workflow().run_field(path, root, stop=stop)["status"] == "CHECKPOINTED_STOP"
-    config["execution"].update(cache_bytes=1024**2, read_workers=2,
-                               prepared_cache_bytes=1024**2,constraint_cache_bytes=1024**2)
+    config["execution"].update(
+        cache_bytes=1024**2,
+        read_workers=2,
+        prepared_cache_bytes=1024**2,
+        constraint_cache_bytes=1024**2,
+    )
     path.write_text(json.dumps(config))
     result = workflow().run_field(path, root, resume=True, prefetch=True)
     full, expected, support = stored(tmp_path / "full")
@@ -146,10 +169,14 @@ def test_fixed_values_keep_double_precision_and_zero_gauge_is_not_substituted(tm
     path, _ = prepared(tmp_path, fixed=True)
     workflow().run_field(path, tmp_path / "field")
     _, field, _ = stored(tmp_path / "field")
-    np.testing.assert_allclose(field, 1.234567890123 + np.broadcast_to(np.arange(6) * 0.25, field.shape), atol=2e-7)
+    np.testing.assert_allclose(
+        field, 1.234567890123 + np.broadcast_to(np.arange(6) * 0.25, field.shape), atol=2e-7
+    )
 
 
-@pytest.mark.parametrize("change", ["observations", "fixed", "constraints", "frame", "spacing", "solver"])
+@pytest.mark.parametrize(
+    "change", ["observations", "fixed", "constraints", "frame", "spacing", "solver"]
+)
 def test_changed_problem_cannot_overwrite_resumable_checkpoint(tmp_path, change):
     path, config = prepared(tmp_path, fixed=True, constraints=True)
     root = tmp_path / "field"
@@ -298,7 +325,9 @@ def test_cli_has_distinct_success_numerical_and_resource_exit_statuses(tmp_path,
 
     monkeypatch.setattr(field_runtime.subprocess, "check_output", missing)
     assert api.main(["build", "--config", str(path), "--output", str(tmp_path / "busy")]) == 75
-    assert json.loads((tmp_path / "busy/STATUS.json").read_text())["status"] == "RESOURCE_UNAVAILABLE"
+    assert (
+        json.loads((tmp_path / "busy/STATUS.json").read_text())["status"] == "RESOURCE_UNAVAILABLE"
+    )
     assert stored(tmp_path / "busy")[0]["progress"]["next_block"] == 0
 
 
@@ -326,7 +355,10 @@ def test_invalid_order_source_does_not_create_output(tmp_path, kind):
         order = tmp_path / "inputs/order.npy"
         np.save(
             order,
-            np.array([[0, 0, 0], [0, 0, 0 if kind == "duplicate" else 1]], dtype=float if kind == "float" else int),
+            np.array(
+                [[0, 0, 0], [0, 0, 0 if kind == "duplicate" else 1]],
+                dtype=float if kind == "float" else int,
+            ),
         )
     config["order"] = dict(path=str(order), sha256=sha(order))
     path.write_text(json.dumps(config))
@@ -397,12 +429,19 @@ def test_supervised_preflight_rejects_bad_inputs_without_creating_output(tmp_pat
         np.save(order, [[0, 0, 0], [0, 0, 0]])
         config["order"] = dict(path=str(order), sha256=sha(order))
     path.write_text(json.dumps(config))
-    assert workflow().main(["build", "--config", str(path), "--output", str(tmp_path / "field"), "--supervised"]) == 2
+    assert (
+        workflow().main(
+            ["build", "--config", str(path), "--output", str(tmp_path / "field"), "--supervised"]
+        )
+        == 2
+    )
     assert not (tmp_path / "field").exists() and not (tmp_path / "field.service").exists()
 
 
 @pytest.mark.parametrize("name", ["constraints", "order"])
-def test_atomic_replacement_between_hash_and_load_cannot_change_the_pinned_problem(tmp_path, monkeypatch, name):
+def test_atomic_replacement_between_hash_and_load_cannot_change_the_pinned_problem(
+    tmp_path, monkeypatch, name
+):
     path, config = prepared(tmp_path, constraints=True)
     source = tmp_path / ("inputs/constraints.npz" if name == "constraints" else "inputs/order.npy")
     replacement = tmp_path / ("replacement.npz" if name == "constraints" else "replacement.npy")
@@ -445,15 +484,17 @@ def test_malformed_prepared_artifacts_are_input_errors_without_output(tmp_path, 
     source.write_bytes(raw)
     config[name] = dict(path=str(source), sha256=sha(source))
     path.write_text(json.dumps(config))
-    assert workflow().main(["build", "--config", str(path), "--output", str(tmp_path / "field")]) == 2
+    assert (
+        workflow().main(["build", "--config", str(path), "--output", str(tmp_path / "field")]) == 2
+    )
     assert not (tmp_path / "field").exists()
 
 
 def test_prepared_continue_policy_runs_full_budget(tmp_path):
-    path,config=prepared(tmp_path)
-    config['solver'].update(maxiter=1,nonconvergence_policy='continue')
+    path, config = prepared(tmp_path)
+    config["solver"].update(maxiter=1, nonconvergence_policy="continue")
     path.write_text(json.dumps(config))
-    result=workflow().run_field(path,tmp_path/'run')
-    assert result['status']=='SWEEP_BUDGET_REACHED'
-    assert result['nonconverged_solves']>0
-    assert result['local_solves_converged'] is False
+    result = workflow().run_field(path, tmp_path / "run")
+    assert result["status"] == "SWEEP_BUDGET_REACHED"
+    assert result["nonconverged_solves"] > 0
+    assert result["local_solves_converged"] is False

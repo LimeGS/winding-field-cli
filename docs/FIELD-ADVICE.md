@@ -120,7 +120,7 @@ time. All measured sweep intervals were complete, with no pause/restart.
 Environment: macOS arm64, Python 3.12.10, NumPy 2.4.6, PyTorch 2.6.0.
 Remeasured against the final review fixes; the earlier receipt is retained
 separately, not used to infer a performance improvement.
-Isolated development core `1.5.3.dev0`, core commit `44102c7`;
+Isolated development core `1.5.3.dev0`, core commit `e407183`;
 `block_solver.py` SHA256:
 `f1b0bbb9d1d509ca7967802b5ae2898b4abec086cf9a14803ad40fadec9dcbaf`.
 Local plan workspace retains `measure_overhead.py`, `overhead.json` and the

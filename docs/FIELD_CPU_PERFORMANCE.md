@@ -18,7 +18,7 @@ parent/worker RSS or GPU memory. Never size it from host RAM.
 ### Measured local stage-1 result
 
 Five paired repetitions, alternating baseline/candidate order, against main
-`4a53a59`; frozen synthetic64-curve,256-point,4-block field,4 sweeps, one numerical
+`0b0b3b9`; frozen synthetic64-curve,256-point,4-block field,4 sweeps, one numerical
 thread and published core1.5.2. The CLI field stage includes validation,
 initialization, solves and checkpoints; fixture creation and interpreter import
 are excluded. Raw records also retain full child-process wall time.

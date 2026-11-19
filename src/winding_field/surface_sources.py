@@ -50,7 +50,11 @@ def _number(value: Any) -> float:
 
 def _vector(value: Any, *, positive: bool = False) -> NDArray[np.float64]:
     raw = np.asarray(value)
-    if raw.shape != (3,) or raw.dtype.kind not in "iuf" or any(isinstance(v, (bool, np.bool_)) for v in value):
+    if (
+        raw.shape != (3,)
+        or raw.dtype.kind not in "iuf"
+        or any(isinstance(v, (bool, np.bool_)) for v in value)
+    ):
         raise ValueError("expected a finite numeric XYZ vector")
     result = np.array(raw, dtype=np.float64, copy=True)
     if not np.isfinite(result).all() or (positive and (result <= 0).any()):
@@ -114,7 +118,9 @@ class _Npy:
                 else:
                     raise ValueError("unsupported field NPY version")
                 self.offset = stream.tell()
-                if actual_shape != shape or (dtype != np.bool_ if mask else dtype.kind not in "iuf"):
+                if actual_shape != shape or (
+                    dtype != np.bool_ if mask else dtype.kind not in "iuf"
+                ):
                     raise ValueError("NPY shape or real/boolean dtype differs")
                 if self.offset + math.prod(shape) * dtype.itemsize != file.size:
                     raise ValueError("NPY header/data byte count differs")
@@ -123,7 +129,12 @@ class _Npy:
                 file.check()
                 # Map the hashed descriptor, never reopen its potentially replaced pathname.
                 self.array = np.memmap(
-                    stream, dtype=dtype, mode="r", offset=self.offset, shape=shape, order="F" if fortran else "C"
+                    stream,
+                    dtype=dtype,
+                    mode="r",
+                    offset=self.offset,
+                    shape=shape,
+                    order="F" if fortran else "C",
                 )
                 self.check()
         except BaseException:
@@ -134,7 +145,10 @@ class _Npy:
         self.file.check()
         fd = os.open(self.file.path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
         with os.fdopen(fd, "rb") as stream:
-            if _signature(os.fstat(stream.fileno())) != self.file.signature or stream.read(self.offset) != self.header:
+            if (
+                _signature(os.fstat(stream.fileno())) != self.file.signature
+                or stream.read(self.offset) != self.header
+            ):
                 raise ValueError("NPY source inode/header changed")
         self.file.check()
 
@@ -165,7 +179,9 @@ class FieldSource:
     Instances are serial readers, with no concurrent read/close guarantee.
     """
 
-    def __init__(self, field: dict[str, Any], geometry: dict[str, Any], *, cache_bytes: int = 0) -> None:
+    def __init__(
+        self, field: dict[str, Any], geometry: dict[str, Any], *, cache_bytes: int = 0
+    ) -> None:
         if not isinstance(field, dict) or not isinstance(geometry, dict):
             raise ValueError("field and geometry must be JSON objects")
         field = field_store._json_load(field_store._json_bytes(field))
@@ -176,7 +192,10 @@ class FieldSource:
         self.frame = geometry["frame"]
         if not isinstance(self.frame, str) or not self.frame.strip():
             raise ValueError("geometry frame must be a nonempty string")
-        self.voxel_um, self.sheet_step = _number(geometry["voxel_um"]), _number(geometry["sheet_step"])
+        self.voxel_um, self.sheet_step = (
+            _number(geometry["voxel_um"]),
+            _number(geometry["sheet_step"]),
+        )
         self.origin = _vector(geometry["origin_xyz"])
         self.spacing = _vector(geometry["spacing_xyz"], positive=True)
         self.shape = field_store._triple(geometry["shape_zyx"], 1)
@@ -192,8 +211,9 @@ class FieldSource:
         self._kind = field.get("kind")
         self._remote = None
         self._identity = dict(field=field, geometry=geometry)
-        if self._kind == 'zarr-v2':
+        if self._kind == "zarr-v2":
             from .remote_field import RemoteField
+
             self._remote = RemoteField(field, geometry, cache_bytes=cache_bytes)
             self._identity = self._remote.identity
             return
@@ -213,8 +233,13 @@ class FieldSource:
                 if field.keys() - {"kind", "path", "sha256", "support_policy"}:
                     raise ValueError("unknown chunk descriptor fields")
                 self._policy = field.get("support_policy")
-                if self._policy not in ("observed", "stored") or self._file.path.name != "CHECKPOINT.json":
-                    raise ValueError("chunks require CHECKPOINT.json and observed/stored support_policy")
+                if (
+                    self._policy not in ("observed", "stored")
+                    or self._file.path.name != "CHECKPOINT.json"
+                ):
+                    raise ValueError(
+                        "chunks require CHECKPOINT.json and observed/stored support_policy"
+                    )
                 self._root = self._file.path.parent
                 info = self._root.lstat()
                 if not stat.S_ISDIR(info.st_mode):
@@ -251,7 +276,9 @@ class FieldSource:
                 if name == "shape_zyx":
                     matches = field_store._triple(value, 1) == self.shape
                 elif name in ("origin_xyz", "spacing_xyz"):
-                    matches = np.array_equal(_vector(value, positive=name == "spacing_xyz"), expected)
+                    matches = np.array_equal(
+                        _vector(value, positive=name == "spacing_xyz"), expected
+                    )
                 elif name in ("voxel_um", "sheet_step"):
                     matches = _number(value) == expected
                 else:
@@ -279,7 +306,10 @@ class FieldSource:
         if not isinstance(manifest["chunks"], dict) or not isinstance(manifest["progress"], dict):
             raise ValueError("malformed checkpoint chunks/progress")
         for label, record in manifest["chunks"].items():
-            if re.fullmatch(r"(?:0|[1-9][0-9]*)-(?:0|[1-9][0-9]*)-(?:0|[1-9][0-9]*)", label) is None:
+            if (
+                re.fullmatch(r"(?:0|[1-9][0-9]*)-(?:0|[1-9][0-9]*)-(?:0|[1-9][0-9]*)", label)
+                is None
+            ):
                 raise ValueError("invalid checkpoint chunk key")
             key = field_store._triple(tuple(int(v) for v in label.split("-")))
             if any(k * self._chunk >= n for k, n in zip(key, self.shape)):
@@ -287,7 +317,10 @@ class FieldSource:
             if not isinstance(record, dict) or not {"path", "sha256", "bytes"} <= record.keys():
                 raise ValueError("malformed checkpoint payload record")
             name = record["path"]
-            if not isinstance(name, str) or re.fullmatch(re.escape(label) + r"\.g[0-9a-f]+\.npz", name) is None:
+            if (
+                not isinstance(name, str)
+                or re.fullmatch(re.escape(label) + r"\.g[0-9a-f]+\.npz", name) is None
+            ):
                 raise ValueError("invalid checkpoint generation path")
             size = field_store._integer(record["bytes"], 1)
             if size > math.prod(self._chunk_shape(key)) * 5 + 65536:
@@ -327,13 +360,17 @@ class FieldSource:
         if self._remote is not None:
             return self._remote.validate_region(field_store._triple(lo), field_store._triple(hi))
         self._validate(payloads=False)
-        low,high=field_store._triple(lo),field_store._triple(hi)
-        if any(b<=a or b>n for a,b,n in zip(low,high,self.shape)):raise ValueError('field read outside grid')
-        if self._kind!='npy':
-            keys=itertools.product(*(range(a//self._chunk,(b-1)//self._chunk+1) for a,b in zip(low,high)))
+        low, high = field_store._triple(lo), field_store._triple(hi)
+        if any(b <= a or b > n for a, b, n in zip(low, high, self.shape)):
+            raise ValueError("field read outside grid")
+        if self._kind != "npy":
+            keys = itertools.product(
+                *(range(a // self._chunk, (b - 1) // self._chunk + 1) for a, b in zip(low, high))
+            )
             for key in keys:
-                file=self._payloads.get('-'.join(map(str,key)))
-                if file is not None:file.check()
+                file = self._payloads.get("-".join(map(str, key)))
+                if file is not None:
+                    file.check()
         self._validate(payloads=False)
 
     @staticmethod
@@ -356,7 +393,9 @@ class FieldSource:
             self._cache_bytes += charge
         return value
 
-    def read(self, lo: Sequence[int], hi: Sequence[int]) -> tuple[NDArray[np.float64], NDArray[np.bool_]]:
+    def read(
+        self, lo: Sequence[int], hi: Sequence[int]
+    ) -> tuple[NDArray[np.float64], NDArray[np.bool_]]:
         """Copy a nonempty half-open integer ZYX crop and its admissible mask."""
         if self._remote is not None:
             return self._remote.read(field_store._triple(lo), field_store._triple(hi))
@@ -367,7 +406,9 @@ class FieldSource:
         region = tuple(slice(a, b) for a, b in zip(low, high))
         if self._kind == "npy":
             with np.errstate(over="ignore", invalid="ignore"):
-                values = np.array(self._arrays[0].array[region], dtype=np.float64, order="C", copy=True)
+                values = np.array(
+                    self._arrays[0].array[region], dtype=np.float64, order="C", copy=True
+                )
             valid = np.isfinite(values)
             if len(self._arrays) == 2:
                 valid &= self._arrays[1].array[region]
@@ -375,7 +416,9 @@ class FieldSource:
             return values, valid
         shape = tuple(b - a for a, b in zip(low, high))
         values, valid = np.zeros(shape, np.float64), np.zeros(shape, bool)
-        keys = itertools.product(*(range(a // self._chunk, (b - 1) // self._chunk + 1) for a, b in zip(low, high)))
+        keys = itertools.product(
+            *(range(a // self._chunk, (b - 1) // self._chunk + 1) for a, b in zip(low, high))
+        )
         for z, y, x in keys:
             key = (z, y, x)
             label = "-".join(map(str, key))

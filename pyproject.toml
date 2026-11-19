@@ -11,7 +11,7 @@ requires-python = ">=3.11,<3.13"
 license = "MIT"
 license-files = ["LICENSE", "licenses/*.txt"]
 dependencies = [
-  "winding-field @ https://github.com/LimeGS/winding-field/archive/c0649e338d046e3f422fdb41466faa48e72dc761.tar.gz",
+  "winding-field @ https://github.com/LimeGS/winding-field/archive/48eeb3473b4bc54944503b84997191e295b28245.tar.gz",
   "numpy>=1.26,<3",
   "scipy>=1.11",
   "torch>=2.6",
@@ -52,3 +52,11 @@ winding_field = ["native/predicates.h", "native/predicates.cpp", "native/predica
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
+
+[tool.ruff]
+line-length = 100
+extend-exclude = [
+  "src/winding_field/_vendor",
+  # Hash-pinned in provenance; must stay byte-identical.
+  "src/winding_field/surface_render.py",
+]

@@ -37,7 +37,11 @@ def export_tifxyz(grid_path, metadata, output):
     frame = validate_frame(metadata.get("frame"))
     unit = positive(metadata.get("voxel_um"), "voxel_um")
     with np.load(grid_path, allow_pickle=False) as grid:
-        points, valid, pitch_um = grid["points_xyz"], grid["valid"], np.asarray(grid["pitch_um"], float)
+        points, valid, pitch_um = (
+            grid["points_xyz"],
+            grid["valid"],
+            np.asarray(grid["pitch_um"], float),
+        )
     if (
         points.ndim != 3
         or points.shape[-1] != 3
@@ -105,12 +109,21 @@ def gate_outcome(surface):
 
 def main(argv=None):
     p = argparse.ArgumentParser(description=__doc__)
-    for name in ("grid", "source-receipt", "metadata", "registration-report", "tools", "origin-dir", "output"):
+    for name in (
+        "grid",
+        "source-receipt",
+        "metadata",
+        "registration-report",
+        "tools",
+        "origin-dir",
+        "output",
+    ):
         p.add_argument("--" + name, type=Path, required=True)
     p.add_argument("--gate-sha256", required=True)
     p.add_argument("--policy-sha256", required=True)
     from .cli_settings import parse_options
-    args = parse_options(p,argv)
+
+    args = parse_options(p, argv)
     args.output.mkdir(exist_ok=False)
     start = time.monotonic()
     result = dict(
@@ -144,7 +157,8 @@ def main(argv=None):
         if source["artifacts"][relative]["sha256"] != grid_sha:
             raise ValueError("pointmap hash does not match original atlas receipt")
         result["inputs"] = {
-            str(x): sha(x) for x in (args.grid, args.source_receipt, args.metadata, args.registration_report)
+            str(x): sha(x)
+            for x in (args.grid, args.source_receipt, args.metadata, args.registration_report)
         }
         metadata = json.loads(args.metadata.read_text())
         if (
@@ -158,7 +172,9 @@ def main(argv=None):
         if expected_metadata is not None and expected_metadata != sha(args.metadata):
             raise ValueError("registration metadata identity differs")
         result["physical_registration"] = {
-            k: registration[k] for k in ("human_seed", "seed", "seams", "validation") if k in registration
+            k: registration[k]
+            for k in ("human_seed", "seed", "seams", "validation")
+            if k in registration
         }
         gate_json = args.output / "gate.json"
         command = [
@@ -203,7 +219,11 @@ def main(argv=None):
             result["status"] = "UNMEASURED"
             result["error"] = f"gate process exit {run.returncode}"
     except subprocess.TimeoutExpired:
-        result.update(status="UNMEASURED", timed_out=True, error="existing gate exceeded 160-second inner deadline")
+        result.update(
+            status="UNMEASURED",
+            timed_out=True,
+            error="existing gate exceeded 160-second inner deadline",
+        )
     except Exception as error:
         result.update(status="UNMEASURED", error=f"{type(error).__name__}: {error}")
     result["seconds"] = time.monotonic() - start
@@ -213,7 +233,12 @@ def main(argv=None):
         if f.is_file()
     }
     save_json(args.output / "result.json", result)
-    print(json.dumps(dict(status=result["status"], seconds=result["seconds"], error=result.get("error"))), flush=True)
+    print(
+        json.dumps(
+            dict(status=result["status"], seconds=result["seconds"], error=result.get("error"))
+        ),
+        flush=True,
+    )
     return 0 if result["status"] == "PASS" else 2
 
 

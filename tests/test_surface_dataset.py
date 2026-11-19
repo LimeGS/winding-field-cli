@@ -15,14 +15,30 @@ from patch_check import sha256
 def configuration(frame):
     source = dict(frame=frame, origin_xyz=[10, -8, 4], spacing_xyz=[2, 2, 2])
     return dict(
-        schema="winding-dataset-v1", frame=frame, voxel_um=6,
+        schema="winding-dataset-v1",
+        frame=frame,
+        voxel_um=6,
         grid=dict(origin_xyz=[10, -8, 4], spacing_xyz=[2, 2, 2], shape_zyx=[5, 6, 7]),
-        sheet_step=1.5, calibration="synthetic analytic calibration",
-        afv=dict(path="fibres.afv", native_frame="test-scroll/native", native_voxel_um=[3, 6, 9],
-                 scale_xyz=[0.5, 1, 1.5], offset_xyz=[10, -8, 4]),
-        sources={name: dict(source, path=name + ".npy") for name in ("ct", "surface", "nx", "ny", "density")},
-        prediction=dict(normal_encoding="hemisphere_xy", density_scale=0.001, surface_threshold=128,
-                        material_weight=1, background_weight=0.1),
+        sheet_step=1.5,
+        calibration="synthetic analytic calibration",
+        afv=dict(
+            path="fibres.afv",
+            native_frame="test-scroll/native",
+            native_voxel_um=[3, 6, 9],
+            scale_xyz=[0.5, 1, 1.5],
+            offset_xyz=[10, -8, 4],
+        ),
+        sources={
+            name: dict(source, path=name + ".npy")
+            for name in ("ct", "surface", "nx", "ny", "density")
+        },
+        prediction=dict(
+            normal_encoding="hemisphere_xy",
+            density_scale=0.001,
+            surface_threshold=128,
+            material_weight=1,
+            background_weight=0.1,
+        ),
         orientation=dict(mode="radial", centerline=dict(path="axis.json", frame=frame)),
     )
 
@@ -63,7 +79,9 @@ def surface_case(tmp_path):
         field_sha256=sha256(tmp_path / "field.npy"),
     )
     (tmp_path / "field.npy.json").write_text(json.dumps(meta))
-    return dict(path=path, dataset=load_dataset(path), field=field, metadata=meta, ct=ct, root=tmp_path)
+    return dict(
+        path=path, dataset=load_dataset(path), field=field, metadata=meta, ct=ct, root=tmp_path
+    )
 
 
 def test_probe_preparation_preserves_ct_pixels_and_declared_grid(surface_case):
@@ -73,7 +91,9 @@ def test_probe_preparation_preserves_ct_pixels_and_declared_grid(surface_case):
     case = surface_case
     work = case["root"] / "inputs"
     work.mkdir()
-    selection, inputs = surface_probe.prepare_inputs(case["dataset"], case["field"], case["metadata"], work)
+    selection, inputs = surface_probe.prepare_inputs(
+        case["dataset"], case["field"], case["metadata"], work
+    )
     np.testing.assert_array_equal(np.load(inputs["ct"]), case["ct"])
     meta = json.loads(Path(inputs["ct_metadata"]).read_text())
     assert meta["frame"] == "another-scan/world" and meta["voxel_um"] == 12
@@ -83,7 +103,9 @@ def test_probe_preparation_preserves_ct_pixels_and_declared_grid(surface_case):
     for key in ("ct", "ct_metadata", "seed"):
         assert inputs[key + "_sha256"] == sha256(inputs[key])
     with pytest.raises(ValueError, match="frame"):
-        surface_probe.prepare_inputs(case["dataset"], case["field"], dict(case["metadata"], frame="wrong"), work)
+        surface_probe.prepare_inputs(
+            case["dataset"], case["field"], dict(case["metadata"], frame="wrong"), work
+        )
 
 
 def test_context_image_uses_ct_spacing_and_rejects_outside_seed(tmp_path):
@@ -91,7 +113,11 @@ def test_context_image_uses_ct_spacing_and_rejects_outside_seed(tmp_path):
 
     ct = np.zeros((7, 50, 60), np.uint16)
     meta = dict(
-        frame="scan/world", origin_xyz=[10, 20, 30], spacing_xyz=[2, 3, 4], voxel_um=12, display_window=[0, 1000]
+        frame="scan/world",
+        origin_xyz=[10, 20, 30],
+        spacing_xyz=[2, 3, 4],
+        voxel_um=12,
+        display_window=[0, 1000],
     )
     seed = dict(seed_xyz=[30, 50, 42], frame="scan/world")
     vertices = np.array([[90, 140, 42]], float)
@@ -172,7 +198,9 @@ def test_atlas_cli_reuses_prior_seed_and_configured_raster_without_human_labels(
     work = root / "inputs"
     work.mkdir()
     _, inputs = prepare_inputs(case["dataset"], case["field"], case["metadata"], work)
-    inputs.update(field_sha256=sha256(root / "field.npy"), metadata_sha256=sha256(root / "field.npy.json"))
+    inputs.update(
+        field_sha256=sha256(root / "field.npy"), metadata_sha256=sha256(root / "field.npy.json")
+    )
     path = work / "inputs.json"
     path.write_text(json.dumps(inputs))
     app = native_fixture(root)
@@ -228,7 +256,13 @@ def test_human_patch_conflicting_units_are_not_scored(tmp_path):
     from winding_field.surface_probe import evaluate_patch
 
     vertices, faces = human_patch(tmp_path / "patch", "scan/world", 24)
-    meta = dict(frame="scan/world", voxel_um=12, origin_xyz=[0, 0, 0], spacing_xyz=[1, 1, 1], shape_zyx=[64] * 3)
+    meta = dict(
+        frame="scan/world",
+        voxel_um=12,
+        origin_xyz=[0, 0, 0],
+        spacing_xyz=[1, 1, 1],
+        shape_zyx=[64] * 3,
+    )
     with pytest.raises(ValueError, match="units"):
         evaluate_patch(tmp_path / "patch", vertices, faces, meta, None)
 
@@ -237,7 +271,13 @@ def test_legacy_patch_needs_explicit_coordinate_context(tmp_path):
     from winding_field.surface_probe import evaluate_patch
 
     vertices, faces = human_patch(tmp_path / "patch")
-    meta = dict(frame="scan/world", voxel_um=12, origin_xyz=[0, 0, 0], spacing_xyz=[1, 1, 1], shape_zyx=[64] * 3)
+    meta = dict(
+        frame="scan/world",
+        voxel_um=12,
+        origin_xyz=[0, 0, 0],
+        spacing_xyz=[1, 1, 1],
+        shape_zyx=[64] * 3,
+    )
     before = (tmp_path / "patch/meta.json").read_bytes()
     with pytest.raises(ValueError, match="coordinate"):
         evaluate_patch(tmp_path / "patch", vertices, faces, meta, None)
@@ -257,7 +297,9 @@ def test_atlas_checks_human_patch_units_before_seed_selection(surface_case):
     work = root / "inputs"
     work.mkdir()
     _, inputs = prepare_inputs(case["dataset"], case["field"], case["metadata"], work)
-    inputs.update(field_sha256=sha256(root / "field.npy"), metadata_sha256=sha256(root / "field.npy.json"))
+    inputs.update(
+        field_sha256=sha256(root / "field.npy"), metadata_sha256=sha256(root / "field.npy.json")
+    )
     (work / "inputs.json").write_text(json.dumps(inputs))
     human_patch(root / "patch", case["metadata"]["frame"], 24)
     code = main(
