@@ -304,6 +304,28 @@ def test_bounded_surface_reader_never_stages_native_volume(tmp_path, monkeypatch
     assert not (tmp_path / "run/lasagna-source/input.zarr").exists()
 
 
+def test_bounded_local_surface_only_import_is_rejected(tmp_path):
+    """Streamed imports may omit fibres in bounded mode; local physical-frame imports may not."""
+    reader_type()
+    ct, root, config = fixture(tmp_path)
+    path = root / "input.lasagna.json"
+    manifest = json.loads(path.read_bytes())
+    manifest.update(
+        world_origin_xyz_um=[100.0, 200.0, 300.0], world_spacing_xyz_um=[5.0, 10.0, 20.0]
+    )
+    atomic_json(path, manifest)
+    from winding_field import bounded_pipeline
+    from winding_field.lasagna_input import streamed
+
+    assert not streamed(config)
+    with Volume(ct, cache=tmp_path / "ct-cache") as volume:
+        with pytest.raises(ValueError, match="bounded preparation"):
+            with bounded_pipeline.surface_maps(
+                volume, tmp_path / "run", config, np.zeros(3, dtype=int), np.array(volume.shape)
+            ):
+                pass
+
+
 @pytest.fixture
 def http_root(tmp_path):
     from functools import partial
