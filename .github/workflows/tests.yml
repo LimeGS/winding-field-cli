@@ -54,7 +54,7 @@ jobs:
       - name: Install original numerical library
         run: |
           CORE_REV=$(python -c "import json; print(json.load(open('provenance/core.json'))['revision'])")
-          python -m pip install "winding-field @ https://github.com/LimeGS/winding-field/archive/$CORE_REV.tar.gz"
+          python -m pip install "winding-field @ git+https://github.com/LimeGS/winding-field@$CORE_REV"
       - run: python -m build
       # main resolves the wheel exactly as users install it; PRs reuse a cached vc-reader build.
       - if: github.event_name != 'pull_request'
