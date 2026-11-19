@@ -185,15 +185,39 @@ def test_benchmark_separates_initialization_cold_and_warm_closures():
 
 
 def test_sdist_contains_the_benchmark_used_by_shipped_tests(tmp_path):
+    import shutil
+
     root = Path(__file__).resolve().parents[1]
+    # Build from a copy: the checkout may be read-only (container suite) and must stay clean.
+    project = tmp_path / "project"
+    project.mkdir()
+    for name in ("pyproject.toml", "MANIFEST.in", "README.md", "THIRD_PARTY.md", "uv.toml"):
+        shutil.copyfile(root / name, project / name)
+    for name in (
+        "src",
+        "tools",
+        "tests",
+        "benchmarks",
+        "provenance",
+        "licenses",
+        "docs",
+        "examples",
+        "docker",
+    ):
+        shutil.copytree(
+            root / name,
+            project / name,
+            ignore=shutil.ignore_patterns("__pycache__", "*.egg-info", ".pytest_cache"),
+        )
+    dist = tmp_path / "dist"
     result = subprocess.run(
-        [sys.executable, "-m", "build", "--sdist", "--no-isolation", "--outdir", str(tmp_path)],
-        cwd=root,
+        [sys.executable, "-m", "build", "--sdist", "--no-isolation", "--outdir", str(dist)],
+        cwd=project,
         text=True,
         capture_output=True,
     )
     assert result.returncode == 0, result.stdout + result.stderr
-    with tarfile.open(next(tmp_path.glob("*.tar.gz"))) as archive:
+    with tarfile.open(next(dist.glob("*.tar.gz"))) as archive:
         member = next(
             (name for name in archive.getnames() if name.endswith("/benchmarks/field_cpu.py")), None
         )

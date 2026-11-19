@@ -75,6 +75,10 @@ jobs:
             --mount "type=bind,src=$PWD/benchmarks,dst=/benchmarks,readonly" \
             --mount "type=bind,src=$PWD/pyproject.toml,dst=/pyproject.toml,readonly" \
             --mount "type=bind,src=$PWD/README.md,dst=/README.md,readonly" \
+            --mount "type=bind,src=$PWD/MANIFEST.in,dst=/MANIFEST.in,readonly" \
+            --mount "type=bind,src=$PWD/THIRD_PARTY.md,dst=/THIRD_PARTY.md,readonly" \
+            --mount "type=bind,src=$PWD/licenses,dst=/licenses,readonly" \
+            --mount "type=bind,src=$PWD/docs,dst=/docs,readonly" \
             --mount "type=bind,src=$PWD/uv.toml,dst=/uv.toml,readonly" \
             --mount "type=bind,src=$PWD/provenance,dst=/provenance,readonly" \
             --mount "type=bind,src=$PWD/docker,dst=/docker,readonly" \
