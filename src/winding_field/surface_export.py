@@ -427,43 +427,61 @@ def read_flatboi_uv(path, vertices_xyz, faces, *, vertex_atol=1e-6):
     return _bind_obj_uv(v, f, positions, textures, of, tf, missing, vertex_atol)
 
 
-_SIMPLE_FACE = None
-
-
 def _simple_obj(text):
-    """Vectorized parse of the plain OBJ Flatboi writes (v x y z / vt u v / f a/t b/t c/t).
+    """Vectorized parse of the plain OBJ Flatboi writes: a block of ``v x y z``, then
+    ``vt u v``, then ``f a/t b/t c/t`` lines, single-spaced.
 
-    Returns None for anything else (comments, other face syntax, 3-D vt, negative or zero
-    indices), which the general line parser then handles with its exact error messages.
+    Numbers are parsed straight from each block's text with string counts as the only
+    structure checks (no per-line or per-token Python objects), so memory stays near the
+    packed arrays. Anything else (comments, tabs, other face syntax, 3-D vt, interleaved
+    records) returns None and the general parser handles it. A misparsed position or face
+    would still fail the XYZ and oriented-topology checks that follow.
     """
-    import re
+    import warnings
 
-    global _SIMPLE_FACE
-    if _SIMPLE_FACE is None:
-        _SIMPLE_FACE = re.compile(r"[1-9]\d*/[1-9]\d* [1-9]\d*/[1-9]\d* [1-9]\d*/[1-9]\d*")
-    if "#" in text:
+    if not text.startswith("v ") or "#" in text or "\t" in text or "\r" in text:
         return None
-    records = dict(v=[], vt=[], f=[])
-    for line in text.splitlines():
-        kind, _, rest = line.strip().partition(" ")
-        if kind in records:
-            records[kind].append(rest.strip())
-        elif kind and kind[0] in "vf":
+    if "  " in text or "\n\n\n" in text:
+        return None
+    vt, f = text.find("\nvt "), text.find("\nf ")
+    if not 0 < vt < f:
+        return None
+    blocks = (
+        (0, vt + 1, "v ", 3, float),
+        (vt + 1, f + 1, "vt ", 2, float),
+        (f + 1, len(text), "f ", 6, np.int64),
+    )
+    arrays = []
+    for start, stop, prefix, columns, dtype in blocks:
+        lines = (
+            text.count("\n", start, stop)
+            - text.count("\n\n", start, stop)  # single blank lines are allowed
+            + (not text.endswith("\n") and stop == len(text))
+        )
+        rows = text.count("\n" + prefix, max(start - 1, 0), stop) + (start == 0)
+        spaces = 3 if prefix == "f " else columns
+        if rows != lines or text.count(" ", start, stop) != spaces * rows:
             return None
-    v, vt, f = records["v"], records["vt"], records["f"]
-    if not (v and vt and f) or not all(_SIMPLE_FACE.fullmatch(x) for x in f):
+        if prefix == "f " and text.count("/", start, stop) != 3 * rows:
+            return None
+        chunk = text[start:stop].replace(prefix, " ")
+        if prefix == "f ":
+            chunk = chunk.replace("/", " ")
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            try:
+                values = np.fromstring(chunk, dtype=dtype, sep=" ")
+            except (ValueError, DeprecationWarning):
+                return None
+        del chunk
+        if values.size != rows * columns:
+            return None
+        arrays.append(values.reshape(rows, columns))
+    positions, textures, faces = arrays
+    if faces.min() < 1:
         return None
-    try:
-        positions = np.array(" ".join(v).split(), float)
-        textures = np.array(" ".join(vt).split(), float)
-    except ValueError:
-        return None
-    if positions.size != 3 * len(v) or textures.size != 2 * len(vt):
-        return None
-    if any(len(x.split()) != 3 for x in v) or any(len(x.split()) != 2 for x in vt):
-        return None
-    corners = np.array(" ".join(f).replace("/", " ").split(), np.int64).reshape(-1, 3, 2) - 1
-    return positions.reshape(-1, 3), textures.reshape(-1, 2), corners[:, :, 0], corners[:, :, 1]
+    corners = faces.reshape(-1, 3, 2) - 1
+    return positions, textures, corners[:, :, 0], corners[:, :, 1]
 
 
 def _parse_obj(path, v, f, index):
