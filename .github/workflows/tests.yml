@@ -120,6 +120,27 @@ jobs:
       - run: python -m pytest -q --durations=30 -o pythonpath= -n auto --dist loadfile
         env:
           WINDING_REQUIRE_FLATBOI: ${{ runner.os == 'Linux' && '1' || '0' }}
+      # The base commit's verifier and REVIEW.md judge the change, so it cannot weaken its own checks.
+      - name: Verify against the base commit
+        if: runner.os == 'Linux'
+        env:
+          BASE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+          WINDING_REQUIRE_FLATBOI: '1'
+        run: |
+          git fetch --no-tags --depth=1 origin "$BASE_SHA"
+          if git cat-file -e "$BASE_SHA:tools/verify.py" 2>/dev/null; then
+            git show "$BASE_SHA:tools/verify.py" > "$RUNNER_TEMP/verify.py"
+          else
+            echo "::notice::base has no tools/verify.py yet; using this commit's copy"
+            cp tools/verify.py "$RUNNER_TEMP/verify.py"
+          fi
+          python "$RUNNER_TEMP/verify.py" --repo . --baseline "$BASE_SHA" --receipt "$RUNNER_TEMP/VERIFY.json"
+      - if: always() && runner.os == 'Linux'
+        uses: actions/upload-artifact@v4
+        with:
+          name: verify-receipt
+          path: ${{ runner.temp }}/VERIFY.json
+          if-no-files-found: ignore
       - name: Installed CLI outside checkout
         working-directory: ${{ runner.temp }}
         run: |

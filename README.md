@@ -537,6 +537,13 @@ uv pip install --constraint docker/cli.in '.[test,tifxyz]' pytest-cov
 python -m pytest -q --cov=winding_field --cov-report=term-missing
 ```
 
+End-to-end verification against the base branch (real CLI runs, flag and numerical
+diffs, cross-version resume; see [REVIEW.md](REVIEW.md)):
+
+```bash
+python tools/verify.py --baseline origin/main
+```
+
 </details>
 
 ## Credits
