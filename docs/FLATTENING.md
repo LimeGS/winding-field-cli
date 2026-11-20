@@ -1,6 +1,6 @@
 # Flatten fields or meshes and sample CT
 
-Start with [README section 5](../README.md). Choose the route before creating an
+Start with [README section 6](../README.md). Choose the route before creating an
 output directory:
 
 | Goal | Use |
