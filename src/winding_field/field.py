@@ -403,7 +403,7 @@ def solve(run, config, stop=None, *, sweep_target=None, convergence=None):
 
         if bounded:
             raise ValueError("field_prior supports ordinary (unbounded) preparation only")
-        prior = FieldPrior(config["field_prior"], geometry)
+        prior = FieldPrior(config["field_prior"], geometry, meta.get("source"))
         # The prior seeds and gauges the solve, so it is part of the numerical problem.
         identity["field_prior"] = prior.identity
         anchor_index, anchor_value = prior.anchor(

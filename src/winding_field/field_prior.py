@@ -15,8 +15,15 @@ import numpy as np
 from .util import file_sha
 
 
+_READER_KEYS = ("backend", "native_runtime")
+
+
+def _physical(source):
+    return {k: v for k, v in source.items() if k not in _READER_KEYS}
+
+
 class FieldPrior:
-    def __init__(self, path, geometry):
+    def __init__(self, path, geometry, source=None):
         from .field import open_field
 
         self.run = Path(path).expanduser().resolve()
@@ -25,10 +32,9 @@ class FieldPrior:
             raise ValueError(f"field prior has no FIELD.json: {self.run}")
         meta = json.loads(meta_path.read_bytes())
         prior = meta["geometry"]
+        frame_match = None
         if prior.get("frame") != geometry.get("frame"):
-            raise ValueError(
-                f"field prior frame {prior.get('frame')!r} differs from {geometry.get('frame')!r}"
-            )
+            frame_match = self._same_ct(source, geometry, prior)
         if float(prior.get("sheet_step", 1.0)) != float(geometry.get("sheet_step", 1.0)):
             raise ValueError("field prior sheet_step differs")
         self.geometry = prior
@@ -42,6 +48,27 @@ class FieldPrior:
             checkpoint_sha256=meta["checkpoint_sha256"],
             interpolation="trilinear-all-corners-supported",
         )
+        if frame_match:
+            self.identity["frame_match"] = frame_match
+
+    def _same_ct(self, source, geometry, prior):
+        """Accept a frame digest that differs only in CT reader metadata.
+
+        The frame digests the whole CT identity, including the reader backend and the
+        native reader binary, which runs from earlier releases did not record. Two runs
+        on the same CT source, level, metadata, shape, spacing and origin share their
+        physical coordinates whatever reader produced them.
+        """
+        prepared = self.run / "PREPARED.json"
+        theirs = json.loads(prepared.read_bytes()).get("source") if prepared.is_file() else None
+        message = f"field prior frame {prior.get('frame')!r} differs from {geometry.get('frame')!r}"
+        if not isinstance(source, dict) or not isinstance(theirs, dict):
+            raise ValueError(message + " and a CT source identity is unavailable to compare")
+        mine, theirs = _physical(source), _physical(theirs)
+        if mine != theirs:
+            keys = sorted(k for k in set(mine) | set(theirs) if mine.get(k) != theirs.get(k))
+            raise ValueError(message + "; CT identity differs in " + ", ".join(keys))
+        return dict(rule="ct-identity-without-reader-runtime", ignored=list(_READER_KEYS))
 
     def close(self):
         self.source.close()
