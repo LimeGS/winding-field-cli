@@ -90,11 +90,14 @@ wf demo --output /outputs/demo
 
 Open `outputs/demo/index.html`. Use a new output directory for each demo.
 
-### 1B. Custom host install
+<details>
+<summary><strong>1B. Custom host install</strong> (development, or no Docker)</summary>
 
-Installs the CLI directly on the host, without native Flatboi or prebuilt
-accelerators. Both variants use the same dependencies and automatic CPU/CUDA
-selection.
+Installs the CLI directly on the host. Both variants use the same dependencies
+and automatic CPU/CUDA selection. Prebuilt accelerators are not included, and on
+Linux x86_64 the pinned Flatboi (SLIM) runtime is downloaded and hash-verified on
+first use (`--offline` disables that download; see
+[SLIM runtime](docs/FLATTENING.md#slim-runtime-flatboi)).
 
 #### Quick install
 
@@ -148,8 +151,7 @@ model weights download on first use, not during installation.
 
 Docker (1A) uses this same recipe and Ubuntu package list, with explicit CPU/CUDA
 hash-locked dependency sets and exact Python versions. Host installation resolves
-from their shared dependency specifications with automatic backend selection and
-does **not** include native Flatboi or prebuilt accelerators; see
+from their shared dependency specifications with automatic backend selection; see
 [the installation differences](docs/DOCKER.md#shared-installation-recipe).
 
 **C. Check the installation** — no model downloads:
@@ -161,6 +163,8 @@ winding-field demo --output runs/demo
 
 The demo uses CUDA when available, otherwise CPU. Open `runs/demo/index.html`.
 Use a new output directory for each demo.
+</details>
+
 </details>
 
 <details>
@@ -355,13 +359,15 @@ preceding stages still needed and reuses completed work. Results are under the
 run's `surfaces/`: OBJ meshes in `level-*/meshes/` and CT images, overviews and
 masks in `level-*/component-*/`. The saved run configuration selects the branch.
 
-New native `run`/`plan` requests default to `--flattening-method slim`: existing
-projection/LSCM initialization followed by 10 libigl SLIM iterations per local
-chart, with the same geometry gates and seam assembly. Select
-`--flattening-method default` for the historical local mapping or `original`
-for global LSCM. Base installation includes `libigl==2.6.3` for SLIM; the
-`.[tifxyz]` extra adds TIFF export only. No Flatboi is needed. Explicit `slim` is native-only; atlas/direct-field TIFXYZ retain
-their previous defaults. See [native flattening](docs/FLATTENING.md#native-run-flattening).
+New native `run`/`plan` requests default to `--flattening-method slim` on Linux
+x86_64 (`default` elsewhere): each local chart keeps its projection/LSCM seed,
+then batches of charts are optimized by the pinned Flatboi SLIM, with the same
+geometry gates and seam assembly. Docker bundles Flatboi; host installs fetch and
+verify it on first use. Select `--flattening-method default` for the historical
+local mapping or `original` for global LSCM. Explicit `slim` is native-only;
+atlas/direct-field TIFXYZ retain their previous defaults. Add `--level-workers N`
+to compute N W levels in parallel processes (each needs its own memory; outputs
+equal a serial run). See [native flattening](docs/FLATTENING.md#native-run-flattening).
 
 ### Export a chosen W level as TIFXYZ
 
@@ -411,9 +417,9 @@ All four solver/scope combinations preserve source IDs and support resumable CT/
 export. SLIM needs pinned Flatboi; LSCM does not. Do not mix these flags with
 historical `--flattening-method` recipes. UVW outputs are diagnostic: inspect
 coverage and deformation before using side cuts through the stack.
-SLIM also requires a cgroup v2 memory/swap envelope; a regular unprivileged
-container without that host setup cannot run it. These requirements do not apply
-to the default native renderer.
+`export-sheets` SLIM also requires a cgroup v2 memory/swap envelope; a regular
+unprivileged container without that host setup cannot run it. The native run
+renderer uses Flatboi without that envelope.
 
 Inspect the result, not just the exit code. A completed workflow does not certify
 global convergence or physical sheet correctness. Native `PARTIAL` can mean that
@@ -535,11 +541,13 @@ inputs retain [calibrated interpolation](docs/LASAGNA-CALIBRATED.md).
 | `--stride` / `--field-spacing-um` | Observation sampling / independent solve-grid pitch; bounded preparation uses endpoint-aligned spacing |
 | `--lasagna-input FILE` / `--lasagna-geometry FILE` | Import local surface predictions / explicit base-grid calibration; combinable with `--bounded-preparation` when `--fibres` supplies the fibre set |
 | `--surface-output native\|atlas\|tifxyz` | Native default / legacy charts and gallery / experimental direct-field export |
-| `--flattening-method slim\|default` | Native local SLIM (new-run default) / historical local mapping |
+| `--flattening-method slim\|default` | Native local Flatboi SLIM (new-run default on Linux x86_64) / historical local mapping (default elsewhere) |
 | `--flattening-method original --flattening-config FILE` | Global LSCM with explicit output frame; independent of field resolution |
 | `--export-tifxyz` | Add mesh-derived XYZ TIFFs to native or original renders |
 | `--tifxyz-config FILE` | Separate request for the Linux-only experimental direct route |
 | `--coverage-target 1 --surface-time-limit 1800` | Native mapped mesh-area target / cumulative active seconds per W |
+| `--level-workers 1` | Native W levels computed in parallel processes; each needs its own memory; outputs equal a serial run |
+| `--import-workers 1` | Local import workers (`0` = resource-admitted automatic); results written in input order |
 | `--cache-gib 2 --reserve-gib 1` | CT payload cache cap / free disk reserve, not RAM |
 | `--threads 4` | PyTorch threads, not a global worker limit; idle threads sleep (`OMP_WAIT_POLICY=PASSIVE`) so concurrent runs share a host; set `OMP_WAIT_POLICY=ACTIVE` on a dedicated CPU host (~10% faster alone) |
 | `--device auto` | New-run default: usable CUDA → usable MPS → CPU; explicit PyTorch devices remain supported |

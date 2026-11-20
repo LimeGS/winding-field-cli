@@ -90,7 +90,8 @@ def test_readme_installs_with_docker_by_default_and_host_as_custom():
         .split("</details>", 1)[0]
     )
     docker = install.index("### 1A. Docker (default)")
-    host = install.index("### 1B. Custom host install")
+    host = install.index("<summary><strong>1B. Custom host install</strong>")
+    assert install[:host].rstrip().endswith("<details>"), "host install must be collapsible"
     assert (
         docker < host < install.index("#### Quick install") < install.index("#### Manual install")
     )
