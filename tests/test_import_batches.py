@@ -221,3 +221,41 @@ exports.export_afv({str(tmp_path / "run")!r})
     assert exports.export_afv(tmp_path / "run")
     with sqlite3.connect(tmp_path / "run/fibres/fibres.afv") as db:
         assert db.execute("SELECT count(*) FROM fibers").fetchone()[0] == 1002
+
+
+class _StaleLedger:
+    """A ledger connection whose first chunk lookup misses: another process inserts the
+    key between this process's SELECT and INSERT, as parallel level workers do."""
+
+    def __init__(self, connection):
+        self.connection, self.missed = connection, False
+
+    def execute(self, sql, *args):
+        if not self.missed and sql.startswith("SELECT sha FROM chunks"):
+            self.missed = True
+            return self.connection.execute("SELECT sha FROM chunks WHERE 0")
+        return self.connection.execute(sql, *args)
+
+    def __getattr__(self, name):
+        return getattr(self.connection, name)
+
+
+@pytest.mark.parametrize("changed", [False, True])
+def test_ledger_shared_by_processes_accepts_a_concurrent_identical_pin(tmp_path, changed):
+    source = write_ct(tmp_path / "ct", np.ones((4, 4, 4), np.uint8), chunk=4)
+    ledger = tmp_path / "source.sqlite"
+    with closing(Volume(source, cache=tmp_path / "a")) as first:
+        first.bind_ledger(ledger)
+        first.read([0] * 3, [4] * 3)
+    if changed:
+        (source / "0/0.0.0").write_bytes(bytes(64))
+    with closing(Volume(source, cache=tmp_path / "b")) as second:
+        second.bind_ledger(ledger)
+        second._ledger = _StaleLedger(second._ledger)
+        if changed:
+            with pytest.raises(ValueError, match="changed"):
+                second.read([0] * 3, [4] * 3)
+        else:
+            assert second.read([0] * 3, [4] * 3).shape == (4, 4, 4)
+        assert second._ledger.missed
+        assert second._ledger.execute("SELECT count(*) FROM chunks").fetchone()[0] == 1

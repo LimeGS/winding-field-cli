@@ -439,8 +439,20 @@ class Volume:
                         raise PinBudgetExceeded("worker source-pin budget exceeded")
                     budget["remaining"] -= charge
                     pins[key] = sha
-            if old is None:
-                self._ledger.execute("INSERT INTO chunks VALUES (?,?)", (key, sha))
+            if (
+                old is None
+                and not self._ledger.execute(
+                    "INSERT OR IGNORE INTO chunks VALUES (?,?)", (key, sha)
+                ).rowcount
+            ):
+                # Another process sharing this ledger (parallel level workers) recorded the
+                # key after our SELECT: accept it only if it pinned the same bytes.
+                (theirs,) = self._ledger.execute(
+                    "SELECT sha FROM chunks WHERE key=?", (key,)
+                ).fetchone()
+                if theirs != sha:
+                    raise ValueError("source chunk changed: " + key)
+            elif old is None:
                 if not self._pending_chunks:
                     self._batch_started = time.monotonic()
                 self._pending_chunks += 1
