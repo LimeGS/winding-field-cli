@@ -1,11 +1,11 @@
 {
   "origin": "https://github.com/LimeGS/winding-field",
   "distribution": "winding-field",
-  "version": "1.5.4",
-  "revision": "48eeb3473b4bc54944503b84997191e295b28245",
-  "install_url": "git+https://github.com/LimeGS/winding-field@48eeb3473b4bc54944503b84997191e295b28245",
+  "version": "1.6.0",
+  "revision": "a4e85bc8fe38e32fa4b56d7c19042cd9a1601532",
+  "install_url": "git+https://github.com/LimeGS/winding-field@a4e85bc8fe38e32fa4b56d7c19042cd9a1601532",
   "verification": "git commit object id plus source_sha256, checked after install by tools/install-runtime.sh",
-  "changes": "Immutable stable 1.5.4 source: opt-in block-solver nonconvergence policy (continue commits maxiter-exhausted local solves, counts them in checkpointed progress and reports local_solves_converged; breakdowns always fail); default fail unchanged; scientific operators unchanged; no numerical core bundled in the CLI",
+  "changes": "Stable 1.6.0 release: adds the core verification loop (tools/verify.py, REVIEW.md, CI) and documentation; numerical modules byte-identical to 1.5.4 (48eeb34), so source_sha256 is unchanged. Opt-in block-solver nonconvergence policy as in 1.5.4; default fail unchanged; no numerical core bundled in the CLI",
   "migrated_workflows": {
     "revision": "baf8052ed7115bddd8cbba08b3197ea31695ac4b",
     "changes": "moved to winding_field with tests, examples and wrappers; package imports, prepared command routing and module-based supervised launch",
