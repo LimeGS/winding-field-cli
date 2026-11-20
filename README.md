@@ -14,8 +14,7 @@ flattened with Flatboi SLIM. Saved stages let you stop and continue later.
 
 ## Quickstart
 
-Docker is the default runtime ([1A](#1a-docker-default)). After building the image
-and defining the `wf` wrapper from 1A step B:
+Install once with `wf docker-install` ([1A](#1a-install-with-wf-default)), then:
 
 ```bash
 wf demo --output /outputs/demo
@@ -41,58 +40,44 @@ to the detailed guides.
 <details>
 <summary><strong>1. Install</strong></summary>
 
-**Docker is the default installation.** The image contains the complete CLI, the
-isolated Lasagna environment, hash-locked dependencies, native Flatboi (SLIM) and
-prebuilt accelerators, with no host Python or system packages to manage. Install
-on the host (1B) only to develop the CLI or when Docker is not an option.
+Install once with `wf`, then use `wf` in place of `winding-field` in every command
+of this README. **Docker is the default**: the image contains the complete CLI,
+Lasagna, native Flatboi (SLIM) and prebuilt accelerators, with no host Python or
+system packages to manage.
 
-### 1A. Docker (default)
+### 1A. Install with `wf` (default)
 
-Requires **Linux x86-64** and Docker with Buildx. For NVIDIA GPUs, also install
-the NVIDIA Container Toolkit.
-
-**A. Build the image** from a checkout (`cpu`, or `cuda` for NVIDIA GPUs):
+**1. Get `wf`:**
 
 ```bash
 git clone https://github.com/LimeGS/winding-field-cli.git
-cd winding-field-cli
-docker buildx bake cpu --load
+echo "export PATH=\"$PWD/winding-field-cli/tools:\$PATH\"" >> ~/.bashrc && source ~/.bashrc
 ```
 
-**B. Run the CLI** with persistent host directories. This `wf` function replaces
-`winding-field` in every command of this README:
+**2. Install** with Docker (needs Linux x86-64 and Docker with Compose; for GPUs
+also the NVIDIA Container Toolkit):
 
 ```bash
-mkdir -p data outputs models cache scratch
-IMAGE=winding-field:cpu
-wf() {
-  docker run --rm --init --platform linux/amd64 \
-    --user "$(id -u):$(id -g)" --memory=21g --memory-swap=85g \
-    --mount "type=bind,src=$PWD/data,dst=/data,readonly" \
-    --mount "type=bind,src=$PWD/outputs,dst=/outputs" \
-    --mount "type=bind,src=$PWD/models,dst=/home/worker/.cache/winding-field/models" \
-    --mount "type=bind,src=$PWD/cache,dst=/cache" \
-    --mount "type=bind,src=$PWD/scratch,dst=/scratch" \
-    "$IMAGE" "$@"
-}
+wf docker-install
 ```
 
-Put inputs in `data/` (read-only as `/data`) and write runs under `/outputs`.
-For CUDA, use `IMAGE=winding-field:cuda` and add `--gpus all` to the function.
-Paths, memory limits, CUDA drivers and resuming with the same image are covered
-in [CPU and CUDA containers](docs/DOCKER.md).
+This builds the image (GPU or CPU, chosen automatically) and checks it. Without
+Docker, run `wf native-install` instead: it installs on the host (Ubuntu 24.04,
+uses `sudo` for system packages) and the same `wf` commands keep working.
 
-**C. Check the installation** — no model downloads:
+**3. Run the demo** from the folder where you want your work:
 
 ```bash
-wf doctor
 wf demo --output /outputs/demo
 ```
 
-Open `outputs/demo/index.html`. Use a new output directory for each demo.
+`wf` creates `data/` and `outputs/` in that folder. Put your inputs in `data/`,
+read them as `/data/...`, and find results in `outputs/` (`/outputs/...` in
+commands); open `outputs/demo/index.html`. Options and details:
+[CPU and CUDA containers](docs/DOCKER.md).
 
 <details>
-<summary><strong>1B. Custom host install</strong> (development, or no Docker)</summary>
+<summary><strong>1B. Manual host install</strong> (development)</summary>
 
 Installs the CLI directly on the host. Both variants use the same dependencies
 and automatic CPU/CUDA selection. Prebuilt accelerators are not included, and on
@@ -100,7 +85,8 @@ Linux x86_64 the pinned Flatboi (SLIM) runtime is downloaded and hash-verified o
 first use (`--offline` disables that download; see
 [SLIM runtime](docs/FLATTENING.md#slim-runtime-flatboi)).
 
-On a host install, run every command in this README with `winding-field` in
+`wf native-install` runs the quick install below for its checkout. If you
+install manually instead, run the commands in this README with `winding-field` in
 place of `wf`, and host paths in place of `/data/...` and `/outputs/...`.
 
 #### Quick install
@@ -198,8 +184,8 @@ wf run --source "$CT" --voxel-um 8.64 \
 - `--field-spacing-um 300` chooses an example coarse solve grid; it does not
   reduce observation preparation or tracing scratch. Check `plan` before running.
 - `--ct-mode stream` fetches CT chunks on demand; products still need disk/RAM.
-- `--device cuda:0` needs the CUDA image (`IMAGE=winding-field:cuda` and
-  `--gpus all` in `wf`, see 1A). Use `--device cpu` in both commands for CPU. `plan` does not create the run;
+- `--device cuda:0` needs the CUDA image, which `wf` selects automatically on an
+  NVIDIA host (or `WF_VARIANT=cuda`, see 1A). Use `--device cpu` in both commands for CPU. `plan` does not create the run;
   `run --output` must name a new directory.
 
 **Results:** `field/CHECKPOINT.json` and field blocks, root `FIELD.json` with

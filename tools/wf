@@ -1,0 +1,113 @@
+#!/usr/bin/env bash
+# winding-field launcher.
+#
+#   wf docker-install    build the container image (GPU or CPU, detected) and check it
+#   wf native-install    install on this host instead (Ubuntu; tools/install.sh)
+#   wf <arguments>       run `winding-field <arguments>` with the installed runtime
+#
+# Inputs live in $WF_HOME/data (read as /data/...), runs in $WF_HOME/outputs (/outputs/...);
+# WF_HOME defaults to the current directory. Native runs translate those two prefixes.
+# Docker options: WF_VARIANT=cpu|cuda, WF_BUILD=1 (rebuild), WF_MEMORY, WF_MEMORY_SWAP.
+set -euo pipefail
+
+checkout=$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)
+state="$checkout/.wf-runtime"
+
+die() {
+    echo "wf: $*" >&2
+    exit 2
+}
+
+detect_variant() {
+    local variant=${WF_VARIANT:-auto}
+    if [[ "$variant" == auto ]]; then
+        variant=cpu
+        if command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi -L >/dev/null 2>&1 &&
+            docker info --format '{{json .Runtimes}}' 2>/dev/null | grep -q nvidia; then
+            variant=cuda
+        fi
+    fi
+    [[ "$variant" == cpu || "$variant" == cuda ]] || die "WF_VARIANT must be auto, cpu or cuda"
+    echo "$variant"
+}
+
+workspace() {
+    local home=${WF_HOME:-$PWD}
+    mkdir -p "$home"/data "$home"/outputs "$home"/models "$home"/cache "$home"/scratch
+    WF_HOME=$(cd "$home" && pwd -P)
+    export WF_HOME
+}
+
+compose() {
+    docker compose --project-directory "$checkout" --file "$checkout/compose.yaml" "$@"
+}
+
+run_docker() {
+    local variant=$1
+    shift
+    workspace
+    WF_UID=$(id -u)
+    WF_GID=$(id -g)
+    export WF_UID WF_GID
+    local -a options=(--rm)
+    [[ "${WF_BUILD:-0}" == 1 ]] && options+=(--build)
+    [[ -t 0 && -t 1 ]] || options+=(-T) # no pseudo-TTY for pipes and scripts
+    exec docker compose --project-directory "$checkout" --file "$checkout/compose.yaml" \
+        run "${options[@]}" "$variant" "$@"
+}
+
+run_native() {
+    local cli="$checkout/.venv/bin/winding-field"
+    [[ -x "$cli" ]] || die "native install is incomplete; run: wf native-install"
+    workspace
+    local -a args=()
+    local arg prefix value
+    for arg in "$@"; do
+        prefix="" value=$arg
+        if [[ "$arg" == --*=* ]]; then
+            prefix="${arg%%=*}=" value="${arg#*=}"
+        fi
+        case "$value" in
+            /data | /data/* | /outputs | /outputs/*) value="$WF_HOME$value" ;;
+        esac
+        args+=("$prefix$value")
+    done
+    cd "$WF_HOME/outputs"
+    exec "$cli" "${args[@]}"
+}
+
+case "${1:-}" in
+    docker-install)
+        shift
+        command -v docker >/dev/null 2>&1 || die "Docker is not installed; see https://docs.docker.com/engine/install/"
+        docker compose version >/dev/null 2>&1 || die "Docker Compose is missing; install the docker-compose-plugin package"
+        variant=$(detect_variant)
+        echo "wf: building the $variant image (first time: several minutes)"
+        compose --profile "$variant" build "$variant"
+        echo "docker $variant" >"$state"
+        run_docker "$variant" doctor
+        ;;
+    native-install)
+        shift
+        [[ "$(basename "$checkout")" == winding-field-cli ]] ||
+            die "native install expects the checkout directory to be named winding-field-cli"
+        (cd "$(dirname "$checkout")" && bash "$checkout/tools/install.sh")
+        echo native >"$state"
+        echo "wf: installed natively; run commands with wf as usual"
+        ;;
+    "")
+        die "usage: wf docker-install | wf native-install | wf <winding-field arguments>"
+        ;;
+    *)
+        [[ -f "$state" ]] || die "nothing installed yet; run: wf docker-install (or wf native-install)"
+        read -r runtime variant <"$state"
+        case "$runtime" in
+            docker)
+                [[ -n "${WF_VARIANT:-}" ]] && variant=$(detect_variant)
+                run_docker "$variant" "$@"
+                ;;
+            native) run_native "$@" ;;
+            *) die "unknown runtime in $state; reinstall with wf docker-install or wf native-install" ;;
+        esac
+        ;;
+esac

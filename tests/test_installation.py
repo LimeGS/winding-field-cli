@@ -77,34 +77,33 @@ def test_readme_badges_credits_and_code_license_are_explicit():
     assert "repository-authored code" in license and "own licenses" in license
 
 
-def _wf_function(text):
-    start = text.index("wf() {")
-    return text[start : text.index("\n}", start) + 2]
-
-
-def test_readme_installs_with_docker_by_default_and_host_as_custom():
+def test_readme_installs_with_wf_docker_by_default_and_manual_host_as_custom():
     install = (
         (ROOT / "README.md")
         .read_text()
         .split("<summary><strong>1. Install</strong></summary>", 1)[1]
         .split("</details>", 1)[0]
     )
-    docker = install.index("### 1A. Docker (default)")
-    host = install.index("<summary><strong>1B. Custom host install</strong>")
-    assert install[:host].rstrip().endswith("<details>"), "host install must be collapsible"
+    default = install.index("### 1A. Install with `wf` (default)")
+    host = install.index("<summary><strong>1B. Manual host install</strong>")
+    assert install[:host].rstrip().endswith("<details>"), "manual host install must be collapsible"
     assert (
-        docker < host < install.index("#### Quick install") < install.index("#### Manual install")
+        default < host < install.index("#### Quick install") < install.index("#### Manual install")
     )
-    default = install[docker:host]
-    for command in ("docker buildx bake cpu --load", "wf doctor", "wf demo --output /outputs/demo"):
-        assert command in default
-    # The README's wrapper is the documented container invocation, not a variant of it.
-    assert _wf_function(default) == _wf_function((ROOT / "docs/DOCKER.md").read_text())
+    steps = install[default:host]
+    blocks = re.findall(r"```bash\n(.*?)```", steps, re.DOTALL)
+    # Get wf, install, run: installation and the demo are separate commands.
+    assert [block.strip().splitlines()[-1] for block in blocks[1:]] == [
+        "wf docker-install",
+        "wf demo --output /outputs/demo",
+    ]
+    assert 'echo "export PATH=\\"$PWD/winding-field-cli/tools:\\$PATH\\"" >> ~/.bashrc' in blocks[0]
+    assert "wf native-install" in steps and "wf() {" not in steps
 
 
 def test_readme_examples_use_the_docker_wrapper_outside_the_host_install():
     readme = (ROOT / "README.md").read_text()
-    host = readme.index("<summary><strong>1B. Custom host install</strong>")
+    host = readme.index("<summary><strong>1B. Manual host install</strong>")
     outside = readme[:host] + readme[readme.index("</details>", host) :]
     blocks = re.findall(r"```bash\n(.*?)```", outside, re.DOTALL)
     host_form = [
