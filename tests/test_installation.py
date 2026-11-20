@@ -1,6 +1,6 @@
-from pathlib import Path
+import re
 import tomllib
-
+from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -37,7 +37,7 @@ def test_readme_custom_options_are_collapsed_with_tables_and_help():
     assert "Options and results at a glance" in section
     assert "| Option | Meaning |" in section and "| Output | Where to look |" in section
     for command in ["run", "plan", "resume", "export-sheets", "tifxyz", "verify-tifxyz"]:
-        assert f"winding-field {command} --help" in section
+        assert f"wf {command} --help" in section
     assert "Native output does not create the atlas gallery." not in readme
 
 
@@ -100,3 +100,17 @@ def test_readme_installs_with_docker_by_default_and_host_as_custom():
         assert command in default
     # The README's wrapper is the documented container invocation, not a variant of it.
     assert _wf_function(default) == _wf_function((ROOT / "docs/DOCKER.md").read_text())
+
+
+def test_readme_examples_use_the_docker_wrapper_outside_the_host_install():
+    readme = (ROOT / "README.md").read_text()
+    host = readme.index("<summary><strong>1B. Custom host install</strong>")
+    outside = readme[:host] + readme[readme.index("</details>", host) :]
+    blocks = re.findall(r"```bash\n(.*?)```", outside, re.DOTALL)
+    host_form = [
+        line for block in blocks for line in block.splitlines() if line.startswith("winding-field ")
+    ]
+    assert host_form == [], (
+        "README examples use `wf` with /data and /outputs; host form lives in 1B"
+    )
+    assert "wf run --source" in outside and "--output /outputs/" in outside

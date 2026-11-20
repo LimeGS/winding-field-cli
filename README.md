@@ -9,31 +9,32 @@
 ![Illustrated workflow: original CT → Lasagna surfaces + Qual V2 fibres/splines → winding field → 3D meshes → flattened charts](docs/assets/workflow-banner.png)
 
 Build a winding field from scroll CT, then extract meshes and CT-textured surfaces.
-Defaults: Lasagna surface observations, Qual V2 fibres/splines, native surface
-output with SLIM-optimized local charts. Saved stages let you stop and continue later.
-New `run`/`plan` commands use `--device auto`: CUDA → MPS → CPU, admitting an
-accelerator only if the core's FP64 vector norm works. The concrete device is
-saved before execution; explicit devices and resumed runs are not reselected.
-MPS builds without FP64 support are skipped. There is no fallback after starting.
+Defaults: Lasagna surface observations, Qual V2 fibres/splines and native surfaces
+flattened with Flatboi SLIM. Saved stages let you stop and continue later.
 
-**Flags or config files:** all public commands accept `--cli-config FILE`
-in JSON or YAML (`.yaml`/`.yml`),
-using underscore option names. Explicit flags win over file values, then defaults.
-Native recipe options such as `--config` remain supported but are optional when
-their settings are supplied by flags. Scientific input arrays, hashes and frame
-declarations are still required; requests/checkpoints are generated automatically.
-See the [complete flag/config mappings](docs/CLI-FLAGS.md) and
-[flag-first Paris4 example](docs/PREPARED.md#flag-first-paris4-example).
+## Quickstart
 
-Lasagna output reduction defaults to **cos 2×, grad_mag/nx/ny 4× per axis**.
-Use `--lasagna-cos-downsample`, `--lasagna-grad-mag-downsample`,
-`--lasagna-nx-downsample`, `--lasagna-ny-downsample` with 1, 2, 4 or 8
-(`nx`/`ny` must match). Model input and CT texture stay unchanged; see
-[Lasagna grids and recovery](docs/LASAGNA.md#products-units-and-recovery).
+Docker is the default runtime ([1A](#1a-docker-default)). After building the image
+and defining the `wf` wrapper from 1A step B:
 
-Start with **1 → 3** for a small region (Docker by default: use `wf` in place of
-`winding-field`). Use **1–2** for a full scroll only when
-its plan fits your resources; **4** resumes work, **5** exports surfaces,
+```bash
+wf demo --output /outputs/demo
+CT='s3://vesuvius-challenge-open-data/PHerc0175A/volumes/20250521115057-8.640um-1.2m-116keV-masked.zarr'
+wf plan --source "$CT" --voxel-um 8.64 --roi 1488 1536 4032 4080 6048 6096 \
+  --field-spacing-um 17 --device cpu --ct-mode stream --until field --output /outputs/175a-roi
+wf run --source "$CT" --voxel-um 8.64 --roi 1488 1536 4032 4080 6048 6096 \
+  --field-spacing-um 17 --device cpu --ct-mode stream --until field --output /outputs/175a-roi
+wf render /outputs/175a-roi
+```
+
+1. `demo` checks the installation offline; open `outputs/demo/index.html`.
+2. `plan` estimates grids, disk and memory for a 48³ region without creating a run.
+3. `run` builds the field for that region and stops after the field stage.
+4. `render` continues the same run to meshes and CT-textured surfaces in
+   `outputs/175a-roi/surfaces/`.
+
+Sections: start with **1 → 3** for a small region. Use **1–2** for a full scroll
+only when its plan fits your resources; **4** resumes work, **5** exports surfaces,
 **6** reuses existing inputs, **7** summarizes options and results, and **8** links
 to the detailed guides.
 
@@ -98,6 +99,9 @@ and automatic CPU/CUDA selection. Prebuilt accelerators are not included, and on
 Linux x86_64 the pinned Flatboi (SLIM) runtime is downloaded and hash-verified on
 first use (`--offline` disables that download; see
 [SLIM runtime](docs/FLATTENING.md#slim-runtime-flatboi)).
+
+On a host install, run every command in this README with `winding-field` in
+place of `wf`, and host paths in place of `/data/...` and `/outputs/...`.
 
 #### Quick install
 
@@ -181,20 +185,21 @@ bypass the admission check.
 ```bash
 CT='s3://vesuvius-challenge-open-data/PHerc0175A/volumes/20250521115057-8.640um-1.2m-116keV-masked.zarr'
 
-winding-field plan --source "$CT" --voxel-um 8.64 \
+wf plan --source "$CT" --voxel-um 8.64 \
   --field-spacing-um 300 --device cuda:0 --ct-mode stream \
-  --until field --output runs/175a-full
+  --until field --output /outputs/175a-full
 
-winding-field run --source "$CT" --voxel-um 8.64 \
+wf run --source "$CT" --voxel-um 8.64 \
   --field-spacing-um 300 --device cuda:0 --ct-mode stream \
-  --until field --output runs/175a-full
+  --until field --output /outputs/175a-full
 ```
 
 - `--until field` runs Lasagna → Qual predictions/splines → field, then stops.
 - `--field-spacing-um 300` chooses an example coarse solve grid; it does not
   reduce observation preparation or tracing scratch. Check `plan` before running.
 - `--ct-mode stream` fetches CT chunks on demand; products still need disk/RAM.
-- Use `--device cpu` in both commands for CPU. `plan` does not create the run;
+- `--device cuda:0` needs the CUDA image (`IMAGE=winding-field:cuda` and
+  `--gpus all` in `wf`, see 1A). Use `--device cpu` in both commands for CPU. `plan` does not create the run;
   `run --output` must name a new directory.
 
 **Results:** `field/CHECKPOINT.json` and field blocks, root `FIELD.json` with
@@ -233,19 +238,19 @@ This example requests a 48³ region and a 17 µm field on CPU:
 
 ```bash
 CT='s3://vesuvius-challenge-open-data/PHerc0175A/volumes/20250521115057-8.640um-1.2m-116keV-masked.zarr'
-winding-field run --source "$CT" --voxel-um 8.64 \
+wf run --source "$CT" --voxel-um 8.64 \
   --roi 1488 1536 4032 4080 6048 6096 \
   --field-spacing-um 17 --device cpu --ct-mode stream \
-  --until field --output runs/175a-roi
+  --until field --output /outputs/175a-roi
 ```
 
 Replace the bounds for your region. Use `plan` instead of `run` to inspect grids
 first. Inference reads surrounding context; outputs remain inside the ROI.
 The field needs at least two nodes per axis.
 
-**Results:** `runs/175a-roi/field/`. To stop earlier, use `--until prepare` for
+**Results:** `outputs/175a-roi/field/`. To stop earlier, use `--until prepare` for
 predictions or `--until fibres` for traced/exported AFV. Continue with
-`winding-field field runs/175a-roi`.
+`wf field /outputs/175a-roi`.
 
 </details>
 
@@ -256,19 +261,19 @@ Point `RUN` at the complete run, not its `field/` subdirectory. Press Ctrl-C or
 create `STOP` from another terminal, then wait for the process to exit:
 
 ```bash
-RUN=runs/175a-roi
-winding-field status "$RUN"
-touch "$RUN/STOP"
+RUN=/outputs/175a-roi
+wf status "$RUN"
+touch outputs/175a-roi/STOP   # the same run, seen from the host
 ```
 
-Use `RUN=runs/175a-full` instead if you admitted and started the full-scroll run.
+Use `RUN=/outputs/175a-full` (and `outputs/175a-full/STOP`) instead if you admitted and started the full-scroll run.
 
 Continue through field construction or through the selected terminal stage:
 
 ```bash
-winding-field field "$RUN"
+wf field "$RUN"
 # Or:
-winding-field resume "$RUN"
+wf resume "$RUN"
 ```
 
 Both clear `STOP`, validate saved work and reuse completed stages. A run stopped
@@ -282,7 +287,7 @@ export for `--surface-output tifxyz`. It retains the saved flattening method;
 older runs without a method are not switched to SLIM. To extend an exhausted native time budget:
 
 ```bash
-winding-field resume "$RUN" --extra-surface-seconds 600
+wf resume "$RUN" --extra-surface-seconds 600
 ```
 
 Already published partial native levels are immutable; extra time does not remap
@@ -292,7 +297,7 @@ If a `--bounded-preparation` field exhausted its sweeps without passing global
 verification, increase its **absolute total** budget (for example, from 4 to 8):
 
 ```bash
-winding-field resume "$RUN" --field-sweeps 8
+wf resume "$RUN" --field-sweeps 8
 ```
 
 This extends the checkpoint budget without changing the original configuration
@@ -305,12 +310,12 @@ Legacy commands above keep their current operators and limits. For a **new**
 automatic field, stop the initial workflow at `--until fibres`, then:
 
 ```bash
-winding-field field-converge runs/prepared-inputs --output runs/field-auto \
+wf field-converge /outputs/prepared-inputs --output /outputs/field-auto \
   --max-sweeps 32 --global-rtol 1e-6
-# After interruption, remove runs/field-auto/STOP if present, then:
-winding-field field-converge runs/field-auto --resume
+# After interruption, remove outputs/field-auto/STOP if present, then:
+wf field-converge /outputs/field-auto --resume
 # Only if that automatic generation exhausted its budget:
-winding-field field-converge runs/field-auto --output runs/field-auto-next \
+wf field-converge /outputs/field-auto --output /outputs/field-auto-next \
   --max-sweeps 64
 ```
 
@@ -329,9 +334,9 @@ With an explicitly qualified **observer-capable development core**, add
 `--field-advice` to a new `run`/`field-converge`/`prepared build` request, then:
 
 ```bash
-winding-field field-advice runs/my-run
+wf field-advice /outputs/my-run
 # Prepared field roots are also accepted:
-winding-field field-advice runs/prepared-field
+wf field-advice /outputs/prepared-field
 ```
 
 The report never runs a solver or verification, stops work or adds sweeps.
@@ -351,10 +356,10 @@ See [scope, recovery and interpretation](docs/FIELD-ADVICE.md).
 For the default native run from section 2 or 3, continue through rendering:
 
 ```bash
-winding-field render runs/175a-roi
+wf render /outputs/175a-roi
 ```
 
-Use `runs/175a-full` for the full-scroll example. This automatically runs any
+Use `/outputs/175a-full` for the full-scroll example. This automatically runs any
 preceding stages still needed and reuses completed work. Results are under the
 run's `surfaces/`: OBJ meshes in `level-*/meshes/` and CT images, overviews and
 masks in `level-*/component-*/`. The saved run configuration selects the branch.
@@ -371,13 +376,13 @@ equal a serial run). See [native flattening](docs/FLATTENING.md#native-run-flatt
 
 ### Export a chosen W level as TIFXYZ
 
-Use the run created in section 3 (or `runs/175a-full` from section 2).
+Use the run created in section 3 (or `/outputs/175a-full` from section 2).
 The installer already includes the TIFXYZ dependencies. No configuration files
 or repeated CT path/scale are needed:
 
 ```bash
-winding-field export-sheets --run runs/175a-roi --levels -31 \
-  --export-tifxyz --output exports/W-31
+wf export-sheets --run /outputs/175a-roi --levels -31 \
+  --export-tifxyz --output /outputs/exports/W-31
 ```
 
 Choose more levels with `--levels -31 -30`; these are raw field isovalues, as
@@ -393,7 +398,7 @@ inconsistent saved metadata produces an error rather than guessed coordinates.
 Main outputs:
 
 ```text
-exports/W-31/original/level-0000/
+outputs/exports/W-31/original/level-0000/
 ├── image.png
 ├── mask.png
 └── tifxyz/{x,y,z}.tif
@@ -445,13 +450,13 @@ still supplies surfaces. Set the ROI to match your data:
 
 ```bash
 CT='s3://vesuvius-challenge-open-data/PHerc0175A/volumes/20250521115057-8.640um-1.2m-116keV-masked.zarr'
-winding-field run --source "$CT" --voxel-um 8.64 \
+wf run --source "$CT" --voxel-um 8.64 \
   --roi 1488 1536 4032 4080 6048 6096 --field-spacing-um 17 \
-  --fibres /path/fibres.afv --until field --output runs/from-fibres
+  --fibres /data/fibres.afv --until field --output /outputs/from-fibres
 ```
 
 CLI AFVs carry calibrated coordinates. Otherwise supply `--fibres-geometry
-geometry.json` with CT identity, XYZ origin and spacing:
+/data/geometry.json` with CT identity, XYZ origin and spacing:
 [descriptor](docs/LASAGNA.md#external-afv). V2 names the model; its AFV container
 uses schema v1.
 
@@ -460,12 +465,12 @@ uses schema v1.
 For geometry-only extraction, copy and edit the prepared template:
 
 ```bash
-cp examples/surface-run.example.json surface-run.json
+cp examples/surface-run.example.json data/surface-run.json
 # Replace paths, SHA-256 hashes, geometry, calibration and levels before running.
-winding-field prepared surfaces --config surface-run.json --output runs/external-surfaces
+wf prepared surfaces --config /data/surface-run.json --output /outputs/external-surfaces
 ```
 
-Paths resolve relative to the JSON. Remove `field.mask` if there is no support
+Paths resolve relative to the JSON (`/data` inside Docker). Remove `field.mask` if there is no support
 mask. The template's `voxel_um: 8` makes spacing 2 equal to 16 µm; use
 `voxel_um: 1` for micrometre origins/spacings. For chunk checkpoints and raw
 field-level calibration see [prepared inputs](docs/PREPARED.md#extract-or-import-surfaces-then-render).
@@ -489,18 +494,18 @@ the selected ROI:
 ```bash
 CT='s3://vesuvius-challenge-open-data/PHerc0175A/volumes/20250521115057-8.640um-1.2m-116keV-masked.zarr'
 
-winding-field run --source "$CT" --voxel-um 8.64 \
+wf run --source "$CT" --voxel-um 8.64 \
   --roi 1488 1536 4032 4080 6048 6096 --field-spacing-um 17 \
-  --lasagna-input /path/lasagna/surfaces.lasagna.json \
-  --until field --output runs/from-predictions
+  --lasagna-input /data/lasagna/surfaces.lasagna.json \
+  --until field --output /outputs/from-predictions
 ```
 
 The local Lasagna v2 manifest must reference scalar Zarr v2 `cos`, `grad_mag`,
 `nx` and `ny` channels. CLI exports include physical geometry; for uncalibrated
-predictions, add `--lasagna-geometry lasagna-geometry.json` describing the manifest's
+predictions, add `--lasagna-geometry /data/lasagna-geometry.json` describing the manifest's
 base grid. [Input format and geometry example](docs/LASAGNA.md#external-lasagna-predictions).
 
-Qual still supplies fibres by default. Add `--fibres /path/fibres.afv` (and its
+Qual still supplies fibres by default. Add `--fibres /data/fibres.afv` (and its
 geometry descriptor if needed) to import both inputs without running either
 model. Keep the original prediction files for hash-verified resume.
 
@@ -532,6 +537,28 @@ inputs retain [calibrated interpolation](docs/LASAGNA-CALIBRATED.md).
 
 <details>
 <summary><strong>7. Custom options</strong></summary>
+
+### Defaults and configuration
+
+New `run`/`plan` commands use `--device auto`: CUDA → MPS → CPU, admitting an
+accelerator only if the core's FP64 vector norm works. The concrete device is
+saved before execution; explicit devices and resumed runs are not reselected.
+MPS builds without FP64 support are skipped. There is no fallback after starting.
+
+**Flags or config files:** all public commands accept `--cli-config FILE`
+in JSON or YAML (`.yaml`/`.yml`),
+using underscore option names. Explicit flags win over file values, then defaults.
+Native recipe options such as `--config` remain supported but are optional when
+their settings are supplied by flags. Scientific input arrays, hashes and frame
+declarations are still required; requests/checkpoints are generated automatically.
+See the [complete flag/config mappings](docs/CLI-FLAGS.md) and
+[flag-first Paris4 example](docs/PREPARED.md#flag-first-paris4-example).
+
+Lasagna output reduction defaults to **cos 2×, grad_mag/nx/ny 4× per axis**.
+Use `--lasagna-cos-downsample`, `--lasagna-grad-mag-downsample`,
+`--lasagna-nx-downsample`, `--lasagna-ny-downsample` with 1, 2, 4 or 8
+(`nx`/`ny` must match). Model input and CT texture stay unchanged; see
+[Lasagna grids and recovery](docs/LASAGNA.md#products-units-and-recovery).
 
 ### Options and results at a glance
 
@@ -567,12 +594,12 @@ inputs retain [calibrated interpolation](docs/LASAGNA-CALIBRATED.md).
 For complete flags use command-specific help:
 
 ```bash
-winding-field run --help
-winding-field plan --help
-winding-field resume --help
-winding-field export-sheets --help
-winding-field tifxyz --help
-winding-field verify-tifxyz --help
+wf run --help
+wf plan --help
+wf resume --help
+wf export-sheets --help
+wf tifxyz --help
+wf verify-tifxyz --help
 ```
 
 </details>
