@@ -9,6 +9,19 @@ installed. Start with CPU for an offline smoke test; choose CUDA for NVIDIA mode
 inference. Build from the checkout, keep outputs outside the container, and start
 with a small ROI. ARM hosts are not qualified for these x86-64 images.
 
+## Quick use: `tools/wf`
+
+`tools/wf` runs the CLI through [`compose.yaml`](../compose.yaml): the first call
+builds the image from this checkout (CUDA when an NVIDIA GPU and runtime are
+available, otherwise CPU), creates `data/`, `outputs/`, `models/`, `cache/` and
+`scratch/` in the workspace (`WF_HOME`, default: the current directory) and runs as
+your UID/GID with the mounts and limits described below. `WF_VARIANT=cpu|cuda`
+forces an image and `WF_BUILD=1` rebuilds it after updating the checkout.
+`WF_MEMORY` / `WF_MEMORY_SWAP` set the container RAM / RAM+swap limits (default
+`21g` / `85g`). The
+`wf()` function in [Persistent paths](#persistent-paths-and-resource-limits) is the
+equivalent plain `docker run`, for hosts without Compose or for custom options.
+
 ## Shared installation recipe
 
 The README's manual install, Ubuntu quick installer and Docker build all use

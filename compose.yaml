@@ -1,0 +1,55 @@
+# The winding-field CLI as a Compose service. Use it through tools/wf:
+#
+#     tools/wf doctor
+#     tools/wf run --source ... --output /outputs/my-run
+#
+# wf picks the CUDA service when an NVIDIA GPU and runtime are available (else CPU),
+# runs as your UID/GID and binds data/, outputs/, models/, cache/ and scratch/ from
+# the workspace ($WF_HOME, default: the current directory). The first call builds the
+# image from this checkout; build arguments mirror docker-bake.hcl.
+
+name: winding-field
+
+x-cli: &cli
+  platform: linux/amd64
+  init: true
+  user: "${WF_UID:-10001}:${WF_GID:-10001}"
+  mem_limit: ${WF_MEMORY:-21g}
+  memswap_limit: ${WF_MEMORY_SWAP:-85g}
+  volumes:
+    - { type: bind, source: "${WF_HOME:-.}/data", target: /data, read_only: true }
+    - { type: bind, source: "${WF_HOME:-.}/outputs", target: /outputs }
+    - { type: bind, source: "${WF_HOME:-.}/models", target: /home/worker/.cache/winding-field/models }
+    - { type: bind, source: "${WF_HOME:-.}/cache", target: /cache }
+    - { type: bind, source: "${WF_HOME:-.}/scratch", target: /scratch }
+
+services:
+  cpu:
+    <<: *cli
+    profiles: [cpu]
+    image: winding-field:cpu
+    build:
+      context: .
+      dockerfile: Dockerfile
+
+  cuda:
+    <<: *cli
+    profiles: [cuda]
+    image: winding-field:cuda
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        BASE_IMAGE: "nvidia/cuda:12.8.1-devel-ubuntu24.04@sha256:520292dbb4f755fd360766059e62956e9379485d9e073bbd2f6e3c20c270ed66"
+        TORCH_VARIANT: "cu128"
+        NVIDIA_REQUIRE_CUDA: "cuda>=12.8"
+    environment:
+      # Older drivers: see docs/DOCKER.md (CUDA minor-version compatibility).
+      NVIDIA_REQUIRE_CUDA: ${WF_NVIDIA_REQUIRE_CUDA:-cuda>=12.8}
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]

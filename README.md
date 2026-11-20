@@ -14,8 +14,8 @@ flattened with Flatboi SLIM. Saved stages let you stop and continue later.
 
 ## Quickstart
 
-Docker is the default runtime ([1A](#1a-docker-default)). After building the image
-and defining the `wf` wrapper from 1A step B:
+Docker is the default runtime: put `tools/wf` on your `PATH` ([1A](#1a-docker-default));
+the first call builds the image automatically.
 
 ```bash
 wf demo --output /outputs/demo
@@ -48,48 +48,27 @@ on the host (1B) only to develop the CLI or when Docker is not an option.
 
 ### 1A. Docker (default)
 
-Requires **Linux x86-64** and Docker with Buildx. For NVIDIA GPUs, also install
-the NVIDIA Container Toolkit.
+Needs Linux x86-64 and Docker with Compose (plus the NVIDIA Container Toolkit
+for GPUs).
 
-**A. Build the image** from a checkout (`cpu`, or `cuda` for NVIDIA GPUs):
+**1. Install `wf`** (it replaces `winding-field` in every command of this README):
 
 ```bash
 git clone https://github.com/LimeGS/winding-field-cli.git
-cd winding-field-cli
-docker buildx bake cpu --load
+echo "export PATH=\"$PWD/winding-field-cli/tools:\$PATH\"" >> ~/.bashrc && source ~/.bashrc
 ```
 
-**B. Run the CLI** with persistent host directories. This `wf` function replaces
-`winding-field` in every command of this README:
+**2. Run it** from the folder where you want your work:
 
 ```bash
-mkdir -p data outputs models cache scratch
-IMAGE=winding-field:cpu
-wf() {
-  docker run --rm --init --platform linux/amd64 \
-    --user "$(id -u):$(id -g)" --memory=21g --memory-swap=85g \
-    --mount "type=bind,src=$PWD/data,dst=/data,readonly" \
-    --mount "type=bind,src=$PWD/outputs,dst=/outputs" \
-    --mount "type=bind,src=$PWD/models,dst=/home/worker/.cache/winding-field/models" \
-    --mount "type=bind,src=$PWD/cache,dst=/cache" \
-    --mount "type=bind,src=$PWD/scratch,dst=/scratch" \
-    "$IMAGE" "$@"
-}
-```
-
-Put inputs in `data/` (read-only as `/data`) and write runs under `/outputs`.
-For CUDA, use `IMAGE=winding-field:cuda` and add `--gpus all` to the function.
-Paths, memory limits, CUDA drivers and resuming with the same image are covered
-in [CPU and CUDA containers](docs/DOCKER.md).
-
-**C. Check the installation** — no model downloads:
-
-```bash
-wf doctor
 wf demo --output /outputs/demo
 ```
 
-Open `outputs/demo/index.html`. Use a new output directory for each demo.
+The first run builds the image (GPU or CPU, chosen automatically) and creates
+`data/` and `outputs/` in that folder. Put your inputs in `data/`, read them as
+`/data/...`, and find results in `outputs/` (`/outputs/...` in commands); open
+`outputs/demo/index.html`. Options and details:
+[CPU and CUDA containers](docs/DOCKER.md).
 
 <details>
 <summary><strong>1B. Custom host install</strong> (development, or no Docker)</summary>
@@ -198,8 +177,8 @@ wf run --source "$CT" --voxel-um 8.64 \
 - `--field-spacing-um 300` chooses an example coarse solve grid; it does not
   reduce observation preparation or tracing scratch. Check `plan` before running.
 - `--ct-mode stream` fetches CT chunks on demand; products still need disk/RAM.
-- `--device cuda:0` needs the CUDA image (`IMAGE=winding-field:cuda` and
-  `--gpus all` in `wf`, see 1A). Use `--device cpu` in both commands for CPU. `plan` does not create the run;
+- `--device cuda:0` needs the CUDA image, which `wf` selects automatically on an
+  NVIDIA host (or `WF_VARIANT=cuda`, see 1A). Use `--device cpu` in both commands for CPU. `plan` does not create the run;
   `run --output` must name a new directory.
 
 **Results:** `field/CHECKPOINT.json` and field blocks, root `FIELD.json` with

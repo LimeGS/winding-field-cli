@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+# Run the winding-field CLI in its container: `wf <winding-field arguments>`.
+#
+# WF_HOME     workspace holding data/ outputs/ models/ cache/ scratch/ (default: $PWD)
+# WF_VARIANT  auto (default: cuda when an NVIDIA GPU and runtime are present), cpu or cuda
+# WF_BUILD=1  rebuild the image from this checkout first (after updating it)
+# WF_MEMORY / WF_MEMORY_SWAP   container RAM / RAM+swap limits (default 21g / 85g)
+set -euo pipefail
+
+checkout=$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)
+variant=${WF_VARIANT:-auto}
+if [[ "$variant" == auto ]]; then
+    variant=cpu
+    if command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi -L >/dev/null 2>&1 &&
+        docker info --format '{{json .Runtimes}}' 2>/dev/null | grep -q nvidia; then
+        variant=cuda
+    fi
+fi
+case "$variant" in
+    cpu | cuda) ;;
+    *) echo "wf: WF_VARIANT must be auto, cpu or cuda" >&2; exit 2 ;;
+esac
+
+home=${WF_HOME:-$PWD}
+mkdir -p "$home"/data "$home"/outputs "$home"/models "$home"/cache "$home"/scratch
+WF_HOME=$(cd "$home" && pwd -P)
+WF_UID=$(id -u)
+WF_GID=$(id -g)
+export WF_HOME WF_UID WF_GID
+
+options=(--rm)
+[[ "${WF_BUILD:-0}" == 1 ]] && options+=(--build)
+[[ -t 0 && -t 1 ]] || options+=(-T) # no pseudo-TTY for pipes and scripts
+exec docker compose --project-directory "$checkout" --file "$checkout/compose.yaml" \
+    run "${options[@]}" "$variant" "$@"

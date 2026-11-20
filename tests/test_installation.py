@@ -77,11 +77,6 @@ def test_readme_badges_credits_and_code_license_are_explicit():
     assert "repository-authored code" in license and "own licenses" in license
 
 
-def _wf_function(text):
-    start = text.index("wf() {")
-    return text[start : text.index("\n}", start) + 2]
-
-
 def test_readme_installs_with_docker_by_default_and_host_as_custom():
     install = (
         (ROOT / "README.md")
@@ -96,10 +91,13 @@ def test_readme_installs_with_docker_by_default_and_host_as_custom():
         docker < host < install.index("#### Quick install") < install.index("#### Manual install")
     )
     default = install[docker:host]
-    for command in ("docker buildx bake cpu --load", "wf doctor", "wf demo --output /outputs/demo"):
+    for command in (
+        'echo "export PATH=\\"$PWD/winding-field-cli/tools:\\$PATH\\"" >> ~/.bashrc',
+        "wf demo --output /outputs/demo",
+    ):
         assert command in default
-    # The README's wrapper is the documented container invocation, not a variant of it.
-    assert _wf_function(default) == _wf_function((ROOT / "docs/DOCKER.md").read_text())
+    # Two commands: building, GPU selection and mounts are automatic (tools/wf).
+    assert len(re.findall(r"```bash\n", default)) == 2 and "wf() {" not in default
 
 
 def test_readme_examples_use_the_docker_wrapper_outside_the_host_install():
