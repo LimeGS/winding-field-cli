@@ -75,3 +75,27 @@ def test_readme_badges_credits_and_code_license_are_explicit():
     license = readme.split("## License", 1)[1]
     assert "[MIT](LICENSE)" in license
     assert "repository-authored code" in license and "own licenses" in license
+
+
+def _wf_function(text):
+    start = text.index("wf() {")
+    return text[start : text.index("\n}", start) + 2]
+
+
+def test_readme_installs_with_docker_by_default_and_host_as_custom():
+    install = (
+        (ROOT / "README.md")
+        .read_text()
+        .split("<summary><strong>1. Install</strong></summary>", 1)[1]
+        .split("</details>", 1)[0]
+    )
+    docker = install.index("### 1A. Docker (default)")
+    host = install.index("### 1B. Custom host install")
+    assert (
+        docker < host < install.index("#### Quick install") < install.index("#### Manual install")
+    )
+    default = install[docker:host]
+    for command in ("docker buildx bake cpu --load", "wf doctor", "wf demo --output /outputs/demo"):
+        assert command in default
+    # The README's wrapper is the documented container invocation, not a variant of it.
+    assert _wf_function(default) == _wf_function((ROOT / "docs/DOCKER.md").read_text())
