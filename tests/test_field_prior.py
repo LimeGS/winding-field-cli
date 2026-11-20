@@ -24,7 +24,8 @@ def _compare(fine, coarse):
     geometry = json.loads((fine / "FIELD.json").read_bytes())["geometry"]
     with field.open_field(fine) as source:
         values, valid = source.read([0, 0, 0], geometry["shape_zyx"])
-    prior = FieldPrior(coarse, geometry)
+    source = json.loads((fine / "PREPARED.json").read_bytes()).get("source")
+    prior = FieldPrior(coarse, geometry, source)
     try:
         expected, supported = prior.sample(
             field.coordinates([0, 0, 0], geometry["shape_zyx"], geometry)
@@ -80,3 +81,40 @@ def test_field_prior_must_name_a_run(value):
 
     with pytest.raises(ValueError, match="field_prior"):
         validate_config({"field_prior": value})
+
+
+def _with_source(run, frame, **changes):
+    meta = json.loads((run / "PREPARED.json").read_bytes())
+    meta["frame"] = frame
+    meta["source"] = dict(
+        source="/data/scroll.zarr",
+        level=0,
+        shape=[6, 6, 32],
+        spacing_xyz=[1.0, 1.0, 1.0],
+        origin_xyz=[0.0, 0.0, 0.0],
+        metadata_sha256="ab" * 32,
+    )
+    meta["source"].update(changes)
+    (run / "PREPARED.json").write_text(json.dumps(meta))
+    return run
+
+
+def test_prior_from_a_release_without_reader_metadata_is_the_same_frame(tmp_path):
+    """Earlier releases did not record the CT reader in the frame digest; the CT is the same."""
+    from winding_field import field
+
+    old = _with_source(_tile(tmp_path / "old", (6, 6, 32)), "old-reader")
+    assert field.solve(old, dict(sweeps=3, field_chunk=8))["status"] == "FIELD_READY"
+    reader = dict(backend="vc_reader-zarr-v2-checked-v1", native_runtime={"extension": "x"})
+    new = _with_source(_tile(tmp_path / "new", (6, 6, 16), shift_x=20.0), "new-reader", **reader)
+    config = dict(sweeps=3, field_chunk=8, field_spacing_um=1.0, field_prior=str(old))
+    assert field.solve(new, config)["status"] == "FIELD_READY"
+    assert _compare(new, old) < 1e-6
+    recorded = json.loads((new / "FIELD.json").read_bytes())["field_prior"]["frame_match"]
+    assert recorded["rule"] == "ct-identity-without-reader-runtime"
+
+    other = _with_source(
+        _tile(tmp_path / "other", (6, 6, 16)), "new-reader", **dict(reader, level=1)
+    )
+    with pytest.raises(ValueError, match="CT identity differs in level"):
+        field.solve(other, dict(config, field_prior=str(old)))
