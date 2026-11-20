@@ -1,3 +1,3 @@
 """Original CT to physically located winding-field products."""
 
-__version__ = "1.6.2"
+__version__ = "1.6.3"
