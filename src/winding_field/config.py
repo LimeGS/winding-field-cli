@@ -122,6 +122,9 @@ def validate_config(config):
         raise ValueError("field_advice must be boolean")
     if config.get("preconditioner", "jacobi") != "jacobi":
         raise ValueError("block workflows require preconditioner='jacobi'")
+    prior = config.get("field_prior")
+    if prior is not None and (not isinstance(prior, str) or not prior):
+        raise ValueError("field_prior must be a completed field run directory")
     if config.get("nonconvergence_policy", "fail") not in ("fail", "continue"):
         raise ValueError("invalid nonconvergence_policy")
     lasagna_downsamples(config)

@@ -397,6 +397,20 @@ def solve(run, config, stop=None, *, sweep_target=None, convergence=None):
     )
     if bounded:
         options["max_bytes"] = config.get("bounded_bytes", 12 << 30) // 8
+    prior = None
+    if config.get("field_prior"):
+        from .field_prior import FieldPrior, fixed_provider
+
+        if bounded:
+            raise ValueError("field_prior supports ordinary (unbounded) preparation only")
+        prior = FieldPrior(config["field_prior"], geometry)
+        # The prior seeds and gauges the solve, so it is part of the numerical problem.
+        identity["field_prior"] = prior.identity
+        anchor_index, anchor_value = prior.anchor(
+            options["order"], chunk, shape, lambda lo, hi: coordinates(lo, hi, geometry)
+        )
+        identity["field_prior"]["anchor"] = dict(index_zyx=list(anchor_index), value=anchor_value)
+        options["fixed"] = fixed_provider(anchor_index, anchor_value)
     db = sqlite3.connect((run / "fibres/fibres.sqlite").resolve().as_uri() + "?mode=ro", uri=True)
     row_count = 0
     static_rows = {}
@@ -562,12 +576,11 @@ def solve(run, config, stop=None, *, sweep_target=None, convergence=None):
                     lo = np.array(key) * chunk
                     hi = np.minimum(lo + chunk, shape)
                     _, _, valid, _ = compute_observations(lo, hi)
-                    store.commit(
-                        key,
-                        initial_field(coordinates(lo, hi, geometry), geometry, cal),
-                        progress,
-                        valid,
-                    )
+                    xyz = coordinates(lo, hi, geometry)
+                    start = initial_field(xyz, geometry, cal)
+                    if prior is not None:
+                        start = prior.initial(xyz, start)
+                    store.commit(key, start, progress, valid)
                 progress["initialization_done"] = True
                 store.save_progress(progress)
         if config.get("field_cpu_workers", 0):
@@ -763,6 +776,8 @@ def solve(run, config, stop=None, *, sweep_target=None, convergence=None):
                     else "stored global normal equations not converged"
                 ),
             )
+        if prior is not None:
+            receipt["field_prior"] = identity["field_prior"]
         atomic_json(run / "FIELD.json", receipt)
         return receipt
     except InterruptedError:
@@ -787,5 +802,7 @@ def solve(run, config, stop=None, *, sweep_target=None, convergence=None):
         release_observations()
         maps.close()
         db.close()
+        if prior is not None:
+            prior.close()
         if pair_provider is not None:
             pair_provider.__exit__()

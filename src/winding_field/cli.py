@@ -438,6 +438,12 @@ def main(argv=None):
             help="native/atlas local chart face budget (default: 1024); not original global flattening",
         )
         p.add_argument(
+            "--field-prior",
+            default=argparse.SUPPRESS,
+            help="completed field run whose W seeds and gauges this field (e.g. a coarse run "
+            "for a fine --roi tile); same frame required",
+        )
+        p.add_argument(
             "--level-workers",
             type=int,
             default=argparse.SUPPRESS,
