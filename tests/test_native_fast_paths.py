@@ -86,6 +86,36 @@ def test_vectorized_binding_rejects_uv_seams_and_counts_aliases(tmp_path):
         se.read_flatboi_uv(path, v, f, vertex_atol=0)
 
 
+def test_scratch_accounting_tolerates_a_sibling_journal_still_being_created(tmp_path):
+    """Parallel levels read each other's journals; a sibling may exist before its schema.
+
+    sqlite3.connect creates work.sqlite before Journal creates its tables, so a level that
+    checks its siblings at that moment must count the newcomer as zero scratch, not fail
+    with "no such table: state" (seen on macOS CI with spawned level workers).
+    """
+    import json
+    import sqlite3
+    from contextlib import closing
+
+    from winding_field.native_store import Journal
+
+    (tmp_path / "NATIVE.json").write_text("{}")
+    sibling = tmp_path / "level-0001"
+    sibling.mkdir()
+    (sibling / "IDENTITY.json").write_text(json.dumps({"level": 1}))  # Journal's order
+    sqlite3.connect(sibling / "work.sqlite").close()
+    with Journal(tmp_path / "level-0000", {"level": 0}) as store:
+        store.check()
+        assert store.other_scratch == 0
+    with Journal(sibling, {"level": 1}):  # once its tables exist, its scratch counts again
+        pass
+    with closing(sqlite3.connect(sibling / "work.sqlite")) as db, db:
+        db.execute("INSERT OR REPLACE INTO state VALUES ('scratch_bytes', '7')")
+    with Journal(tmp_path / "level-0000", {"level": 0}) as store:
+        store.check()
+        assert store.other_scratch == 7
+
+
 def test_parallel_levels_publish_the_serial_result(tmp_path):
     import hashlib
     import json

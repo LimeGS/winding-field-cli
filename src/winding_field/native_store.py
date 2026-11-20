@@ -155,10 +155,18 @@ class Journal:
                         with closing(
                             sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True)
                         ) as db:
-                            row = db.execute(
-                                "SELECT value FROM state WHERE name='scratch_bytes'"
+                            # A sibling level's journal exists before its tables (connect
+                            # creates the file); until then it has no scratch to count.
+                            ready = db.execute(
+                                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='state'"
                             ).fetchone()
-                            self.other_scratch += 0 if row is None else int(json.loads(row[0]))
+                            row = (
+                                ready
+                                and db.execute(
+                                    "SELECT value FROM state WHERE name='scratch_bytes'"
+                                ).fetchone()
+                            )
+                            self.other_scratch += 0 if not row else int(json.loads(row[0]))
         scratch = self.scratch_bytes()
         if scratch + self.other_scratch + pending_bytes > SCRATCH_LIMIT:
             raise Paused("SCRATCH_LIMIT")
