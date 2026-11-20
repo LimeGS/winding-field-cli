@@ -296,7 +296,7 @@ def test_readme_manual_install_runs_shared_runtime(installer):
     section = (
         (ROOT / "README.md")
         .read_text()
-        .split("### 1B. Manual install", 1)[1]
+        .split("#### Manual install", 1)[1]
         .split("</details>", 1)[0]
     )
     blocks = re.findall(r"```bash\n(.*?)```", section, re.S)

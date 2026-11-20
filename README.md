@@ -31,7 +31,8 @@ Use `--lasagna-cos-downsample`, `--lasagna-grad-mag-downsample`,
 (`nx`/`ny` must match). Model input and CT texture stay unchanged; see
 [Lasagna grids and recovery](docs/LASAGNA.md#products-units-and-recovery).
 
-Start with **1 → 3** for a small region. Use **1–2** for a full scroll only when
+Start with **1 → 3** for a small region (Docker by default: use `wf` in place of
+`winding-field`). Use **1–2** for a full scroll only when
 its plan fits your resources; **4** resumes work, **5** exports surfaces,
 **6** reuses existing inputs, **7** summarizes options and results, and **8** links
 to the detailed guides.
@@ -39,10 +40,63 @@ to the detailed guides.
 <details>
 <summary><strong>1. Install</strong></summary>
 
-Choose quick or manual installation. Both use the same dependencies and automatic
-CPU/CUDA selection. For a ready-to-build container, use [Docker](docs/DOCKER.md).
+**Docker is the default installation.** The image contains the complete CLI, the
+isolated Lasagna environment, hash-locked dependencies, native Flatboi (SLIM) and
+prebuilt accelerators, with no host Python or system packages to manage. Install
+on the host (1B) only to develop the CLI or when Docker is not an option.
 
-### 1A. Quick install
+### 1A. Docker (default)
+
+Requires **Linux x86-64** and Docker with Buildx. For NVIDIA GPUs, also install
+the NVIDIA Container Toolkit.
+
+**A. Build the image** from a checkout (`cpu`, or `cuda` for NVIDIA GPUs):
+
+```bash
+git clone https://github.com/LimeGS/winding-field-cli.git
+cd winding-field-cli
+docker buildx bake cpu --load
+```
+
+**B. Run the CLI** with persistent host directories. This `wf` function replaces
+`winding-field` in every command of this README:
+
+```bash
+mkdir -p data outputs models cache scratch
+IMAGE=winding-field:cpu
+wf() {
+  docker run --rm --init --platform linux/amd64 \
+    --user "$(id -u):$(id -g)" --memory=21g --memory-swap=85g \
+    --mount "type=bind,src=$PWD/data,dst=/data,readonly" \
+    --mount "type=bind,src=$PWD/outputs,dst=/outputs" \
+    --mount "type=bind,src=$PWD/models,dst=/home/worker/.cache/winding-field/models" \
+    --mount "type=bind,src=$PWD/cache,dst=/cache" \
+    --mount "type=bind,src=$PWD/scratch,dst=/scratch" \
+    "$IMAGE" "$@"
+}
+```
+
+Put inputs in `data/` (read-only as `/data`) and write runs under `/outputs`.
+For CUDA, use `IMAGE=winding-field:cuda` and add `--gpus all` to the function.
+Paths, memory limits, CUDA drivers and resuming with the same image are covered
+in [CPU and CUDA containers](docs/DOCKER.md).
+
+**C. Check the installation** — no model downloads:
+
+```bash
+wf doctor
+wf demo --output /outputs/demo
+```
+
+Open `outputs/demo/index.html`. Use a new output directory for each demo.
+
+### 1B. Custom host install
+
+Installs the CLI directly on the host, without native Flatboi or prebuilt
+accelerators. Both variants use the same dependencies and automatic CPU/CUDA
+selection.
+
+#### Quick install
 
 On **Ubuntu 24.04** with `curl` available, run this in **Bash** from the directory
 where you want the checkout:
@@ -59,7 +113,7 @@ models or create demo outputs; unrelated
 directories and incomplete environments are rejected rather than overwritten.
 Review the script before executing downloaded code, or use the manual steps below.
 
-### 1B. Manual install
+#### Manual install
 
 Run these steps in order.
 
@@ -92,10 +146,10 @@ Python extras, builds the CLI wheel and checks dependencies. The CLI remains in
 it automatically. Existing environments and additional user packages are retained;
 model weights download on first use, not during installation.
 
-Docker uses this same recipe and Ubuntu package list, with explicit CPU/CUDA
+Docker (1A) uses this same recipe and Ubuntu package list, with explicit CPU/CUDA
 hash-locked dependency sets and exact Python versions. Host installation resolves
-from their shared dependency specifications with automatic backend selection.
-Docker additionally bundles native Flatboi and prebuilt accelerators; see
+from their shared dependency specifications with automatic backend selection and
+does **not** include native Flatboi or prebuilt accelerators; see
 [the installation differences](docs/DOCKER.md#shared-installation-recipe).
 
 **C. Check the installation** — no model downloads:
@@ -107,7 +161,6 @@ winding-field demo --output runs/demo
 
 The demo uses CUDA when available, otherwise CPU. Open `runs/demo/index.html`.
 Use a new output directory for each demo.
-
 </details>
 
 <details>
