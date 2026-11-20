@@ -184,6 +184,7 @@ def validate_config(config):
         "seed_stride": (1, None),
         "mesh_tile": (1, 256),
         "chart_faces": (1, 8192),
+        "level_workers": (1, 64),
         "threads": (1, None),
         "cache_bytes": (0, None),
         "reserve_bytes": (0, None),

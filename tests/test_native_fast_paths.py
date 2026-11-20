@@ -84,3 +84,34 @@ def test_vectorized_binding_rejects_uv_seams_and_counts_aliases(tmp_path):
     path.write_text("\n".join(lines + faces) + "\n")
     with pytest.raises(ValueError, match="UV seam"):
         se.read_flatboi_uv(path, v, f, vertex_atol=0)
+
+
+def test_parallel_levels_publish_the_serial_result(tmp_path):
+    import hashlib
+    import json
+
+    from test_native_runtime import field_case
+    from winding_field.native_pipeline import work
+
+    results = {}
+    for workers in (1, 2):
+        (tmp_path / str(workers)).mkdir()
+        run, config = field_case(tmp_path / str(workers), levels=(0.5, 1.5, 2.5))
+        config.update(flattening_method="default", level_workers=workers)
+        assert work(run, config)["status"] == "COMPLETE"
+        root = run / "surfaces"
+        files = sorted(p for p in root.rglob("*") if p.suffix in (".npz", ".png"))
+        assert json.loads((run / "SURFACES.json").read_bytes())["status"] == "COMPLETE"
+        # Run-specific paths enter identities; the produced arrays and images must not differ.
+        results[workers] = {
+            str(p.relative_to(root)): hashlib.sha256(p.read_bytes()).hexdigest() for p in files
+        }
+    assert results[1] == results[2] and len(results[1]) > 3
+
+
+@pytest.mark.parametrize("value", [0, 65, 1.5, True])
+def test_level_workers_are_validated(value):
+    from winding_field.config import validate_config
+
+    with pytest.raises(ValueError, match="level_workers"):
+        validate_config({"level_workers": value})
