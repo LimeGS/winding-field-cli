@@ -29,7 +29,7 @@ def test_installation_does_not_require_build_or_backend_exports():
 
 def test_readme_custom_options_are_collapsed_with_tables_and_help():
     readme = (ROOT / "README.md").read_text()
-    heading = "<summary><strong>7. Custom options</strong></summary>"
+    heading = "<summary><strong>8. Custom options</strong></summary>"
     assert heading in readme
     before, section = readme.split(heading, 1)
     assert before.rstrip().endswith("<details>")
@@ -43,7 +43,7 @@ def test_readme_custom_options_are_collapsed_with_tables_and_help():
 
 def test_readme_extra_docs_are_collapsed_without_research_footer():
     readme = (ROOT / "README.md").read_text()
-    heading = "<summary><strong>8. Extra docs</strong></summary>"
+    heading = "<summary><strong>9. Extra docs</strong></summary>"
     assert heading in readme
     before, section = readme.split(heading, 1)
     assert before.rstrip().endswith("<details>")
@@ -92,11 +92,18 @@ def test_readme_installs_with_wf_docker_by_default_and_manual_host_as_custom():
     )
     steps = install[default:host]
     blocks = re.findall(r"```bash\n(.*?)```", steps, re.DOTALL)
-    # Get wf, install, run: installation and the demo are separate commands.
-    assert [block.strip().splitlines()[-1] for block in blocks[1:]] == [
-        "wf docker-install",
-        "wf demo --output /outputs/demo",
-    ]
+    # Get wf, then install; the demo is its own section right after Install.
+    assert [block.strip().splitlines()[-1] for block in blocks[1:]] == ["wf docker-install"]
+    readme = (ROOT / "README.md").read_text()
+    after_install = readme.split("<summary><strong>1. Install</strong></summary>", 1)[1]
+    first_section = re.search(
+        r"<summary><strong>(\d+)\. ([^<]+)</strong>", after_install.split("1B. Manual", 1)[1]
+    )
+    assert first_section.groups() == ("2", "Run a demo")
+    demo = after_install.split("<summary><strong>2. Run a demo</strong></summary>", 1)[1].split(
+        "</details>", 1
+    )[0]
+    assert "wf demo --output /outputs/demo" in demo
     assert 'echo "export PATH=\\"$PWD/winding-field-cli/tools:\\$PATH\\"" >> ~/.bashrc' in blocks[0]
     assert "wf native-install" in steps and "wf() {" not in steps
 

@@ -12,30 +12,10 @@ Build a winding field from scroll CT, then extract meshes and CT-textured surfac
 Defaults: Lasagna surface observations, Qual V2 fibres/splines and native surfaces
 flattened with Flatboi SLIM. Saved stages let you stop and continue later.
 
-## Quickstart
-
-Install once with `wf docker-install` ([1A](#1a-install-with-wf-default)), then:
-
-```bash
-wf demo --output /outputs/demo
-CT='s3://vesuvius-challenge-open-data/PHerc0175A/volumes/20250521115057-8.640um-1.2m-116keV-masked.zarr'
-wf plan --source "$CT" --voxel-um 8.64 --roi 1488 1536 4032 4080 6048 6096 \
-  --field-spacing-um 17 --device cpu --ct-mode stream --until field --output /outputs/175a-roi
-wf run --source "$CT" --voxel-um 8.64 --roi 1488 1536 4032 4080 6048 6096 \
-  --field-spacing-um 17 --device cpu --ct-mode stream --until field --output /outputs/175a-roi
-wf render /outputs/175a-roi
-```
-
-1. `demo` checks the installation offline; open `outputs/demo/index.html`.
-2. `plan` estimates grids, disk and memory for a 48³ region without creating a run.
-3. `run` builds the field for that region and stops after the field stage.
-4. `render` continues the same run to meshes and CT-textured surfaces in
-   `outputs/175a-roi/surfaces/`.
-
-Sections: start with **1 → 3** for a small region. Use **1–2** for a full scroll
-only when its plan fits your resources; **4** resumes work, **5** exports surfaces,
-**6** reuses existing inputs, **7** summarizes options and results, and **8** links
-to the detailed guides.
+Start with **1 → 2 → 4**: install, run the demo, then a small region. Use **3**
+for a full scroll only when its plan fits your resources; **5** resumes work,
+**6** exports surfaces, **7** reuses existing inputs, **8** summarizes options and
+results, and **9** links to the detailed guides.
 
 <details>
 <summary><strong>1. Install</strong></summary>
@@ -65,16 +45,7 @@ This builds the image (GPU or CPU, chosen automatically) and checks it. Without
 Docker, run `wf native-install` instead: it installs on the host (Ubuntu 24.04,
 uses `sudo` for system packages) and the same `wf` commands keep working.
 
-**3. Run the demo** from the folder where you want your work:
-
-```bash
-wf demo --output /outputs/demo
-```
-
-`wf` creates `data/` and `outputs/` in that folder. Put your inputs in `data/`,
-read them as `/data/...`, and find results in `outputs/` (`/outputs/...` in
-commands); open `outputs/demo/index.html`. Options and details:
-[CPU and CUDA containers](docs/DOCKER.md).
+Options and details: [CPU and CUDA containers](docs/DOCKER.md).
 
 <details>
 <summary><strong>1B. Manual host install</strong> (development)</summary>
@@ -158,14 +129,29 @@ Use a new output directory for each demo.
 </details>
 
 <details>
-<summary><strong>2. Run a winding field for a full scroll</strong></summary>
+<summary><strong>2. Run a demo</strong></summary>
+
+From the folder where you want your work (offline, synthetic data):
+
+```bash
+wf demo --output /outputs/demo
+```
+
+Open `outputs/demo/index.html`. `wf` creates `data/` and `outputs/` in that folder:
+put your inputs in `data/` and read them as `/data/...`; results appear in
+`outputs/` (`/outputs/...` in commands). Use a new output directory for each demo.
+
+</details>
+
+<details>
+<summary><strong>3. Run a winding field for a full scroll</strong></summary>
 
 Select the original CT, inspect storage/grid estimates, then run. Replace this
 public scan URL with your own URL or local 3D Zarr v2 path as needed.
 **No `--roi` means the entire selected CT level.**
 At native resolution, this scan's default preparation/product estimate is about
 **134 TB**, even with a coarse field. A typical GPU server cannot run this example
-unchanged. Use the ROI in section 3 when the plan exceeds available disk; do not
+unchanged. Use the ROI in section 4 when the plan exceeds available disk; do not
 bypass the admission check.
 
 ```bash
@@ -217,7 +203,7 @@ matching local chunk mirror to a remote source.
 </details>
 
 <details>
-<summary><strong>3. Run a field for a specific section of a scroll</strong></summary>
+<summary><strong>4. Run a field for a specific section of a scroll</strong></summary>
 
 ROI bounds are **selected CT-level voxels**, ZYX, with exclusive upper bounds.
 This example requests a 48³ region and a 17 µm field on CPU:
@@ -241,7 +227,7 @@ predictions or `--until fibres` for traced/exported AFV. Continue with
 </details>
 
 <details>
-<summary><strong>4. Stop, inspect and resume a run</strong></summary>
+<summary><strong>5. Stop, inspect and resume a run</strong></summary>
 
 Point `RUN` at the complete run, not its `field/` subdirectory. Press Ctrl-C or
 create `STOP` from another terminal, then wait for the process to exit:
@@ -335,11 +321,11 @@ See [scope, recovery and interpretation](docs/FIELD-ADVICE.md).
 </details>
 
 <details>
-<summary><strong>5. Extract meshes and flattened CT from an existing field</strong></summary>
+<summary><strong>6. Extract meshes and flattened CT from an existing field</strong></summary>
 
 ### Continue a CLI run
 
-For the default native run from section 2 or 3, continue through rendering:
+For the default native run from section 3 or 4, continue through rendering:
 
 ```bash
 wf render /outputs/175a-roi
@@ -362,7 +348,7 @@ equal a serial run). See [native flattening](docs/FLATTENING.md#native-run-flatt
 
 ### Export a chosen W level as TIFXYZ
 
-Use the run created in section 3 (or `/outputs/175a-full` from section 2).
+Use the run created in section 4 (or `/outputs/175a-full` from section 3).
 The installer already includes the TIFXYZ dependencies. No configuration files
 or repeated CT path/scale are needed:
 
@@ -427,7 +413,7 @@ Resume older reader-bound runs with their original v1.5.0 runtime. See
 </details>
 
 <details>
-<summary><strong>6. Custom input options</strong></summary>
+<summary><strong>7. Custom input options</strong></summary>
 
 ### Fibres / splines (`.afv`)
 
@@ -522,7 +508,7 @@ inputs retain [calibrated interpolation](docs/LASAGNA-CALIBRATED.md).
 </details>
 
 <details>
-<summary><strong>7. Custom options</strong></summary>
+<summary><strong>8. Custom options</strong></summary>
 
 ### Defaults and configuration
 
@@ -591,7 +577,7 @@ wf verify-tifxyz --help
 </details>
 
 <details>
-<summary><strong>8. Extra docs</strong></summary>
+<summary><strong>9. Extra docs</strong></summary>
 
 [Flattening](docs/FLATTENING.md) · [Constant-W visual atlas](docs/SHEET-ATLAS.md) · [Lasagna and AFV](docs/LASAGNA.md) ·
 [Streaming](docs/STREAMING.md) · [Prepared workflows](docs/PREPARED.md) ·
