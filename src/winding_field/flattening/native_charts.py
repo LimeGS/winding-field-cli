@@ -445,12 +445,72 @@ def weld(uv, faces, fixed, target, vertices):
     return result, _validate(vertices, faces, result)
 
 
+_SIMPLE_BOUNDARY_SEGMENTS = 2048
+
+
+def _simple_disk(uv, faces, signed):
+    """True when a positively oriented chart is provably free of UV overlaps.
+
+    A connected genus-0 chart with one boundary loop whose triangles all have positive
+    area is injective iff its boundary image is a simple closed curve (degree argument:
+    every interior point has winding number one). Anything not clearly in that case
+    (other topology, huge boundary, segments within a relative 1e-7 of touching, area
+    mismatch) returns False so the caller runs the exhaustive pairwise test.
+    """
+    from scipy.sparse import coo_matrix
+    from scipy.sparse.csgraph import connected_components
+
+    directed = np.concatenate([faces[:, [0, 1]], faces[:, [1, 2]], faces[:, [2, 0]]])
+    unique, inverse, counts = np.unique(
+        np.sort(directed, 1), axis=0, return_inverse=True, return_counts=True
+    )
+    used = np.unique(faces)
+    if (counts > 2).any() or len(used) - len(unique) + len(faces) != 1:
+        return False
+    boundary = directed[counts[inverse.ravel()] == 1]
+    if not 3 <= len(boundary) <= _SIMPLE_BOUNDARY_SEGMENTS:
+        return False
+    if (np.bincount(boundary.ravel(), minlength=len(uv))[np.unique(boundary)] != 2).any():
+        return False
+    graph = coo_matrix((np.ones(len(unique)), (unique[:, 0], unique[:, 1])), (len(uv),) * 2)
+    if len(np.unique(connected_components(graph, directed=False)[1][used])) != 1:
+        return False
+    a, b = uv[boundary[:, 0]], uv[boundary[:, 1]]
+    scale = float(np.ptp(uv, axis=0).max())
+    if not scale > 0:
+        return False
+    # Total positive area equals the area enclosed by the oriented boundary loop.
+    enclosed, total = 0.5 * float(cross2(a, b).sum()), 0.5 * float(signed.sum())
+    if not enclosed > 0 or abs(total - enclosed) > 1e-6 * total:
+        return False
+    i, j = np.triu_indices(len(boundary), 1)
+    shared = (boundary[i][:, :, None] == boundary[j][:, None, :]).any((1, 2))
+    i, j = i[~shared], j[~shared]
+    p, r, q, d = a[i], b[i] - a[i], a[j], b[j] - a[j]
+
+    def point_segment(x, start, direction):
+        t = np.einsum("ij,ij->i", x - start, direction) / np.einsum(
+            "ij,ij->i", direction, direction
+        )
+        return np.linalg.norm(x - (start + np.clip(t, 0, 1)[:, None] * direction), axis=1)
+
+    distance = np.minimum.reduce(
+        [point_segment(q, p, r), point_segment(q + d, p, r), point_segment(p, q, d),
+         point_segment(p + r, q, d)]
+    )  # fmt: skip
+    crossing = (np.sign(cross2(r, q - p)) != np.sign(cross2(r, q + d - p))) & (
+        np.sign(cross2(d, p - q)) != np.sign(cross2(d, p + r - q))
+    )
+    return not (crossing.any() or (distance <= 1e-7 * scale).any())
+
+
 def _validate(vertices, faces, uv):
     if not np.isfinite(uv).all():
         raise ValueError("nonfinite assembled UV")
     tri = uv[faces]
-    if np.any(cross2(tri[:, 1] - tri[:, 0], tri[:, 2] - tri[:, 0]) <= 1e-12) or overlap_pairs(
-        uv, faces
+    signed = cross2(tri[:, 1] - tri[:, 0], tri[:, 2] - tri[:, 0])
+    if np.any(signed <= 1e-12) or (
+        not _simple_disk(uv, faces, signed) and overlap_pairs(uv, faces)
     ):
         raise ValueError("inverted or overlapping assembled chart")
     edges = np.concatenate([faces[:, [0, 1]], faces[:, [1, 2]], faces[:, [2, 0]]])
