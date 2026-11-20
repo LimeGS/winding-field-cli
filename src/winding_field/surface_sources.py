@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import hashlib
 import itertools
+import io
 import math
 import os
 import re
@@ -46,6 +47,54 @@ def _number(value: Any) -> float:
     if not math.isfinite(number) or number <= 0:
         raise ValueError("expected a positive finite geometry number")
     return number
+
+
+def _decode_chunk(raw: bytes, shape: _Key) -> _Chunk:
+    """Current float32-delta chunks, or the float64-delta chunks earlier releases wrote.
+
+    Both layouts have the same three members; the legacy one is checked as strictly
+    (member sizes, finiteness, padding bits). Anything else keeps the current error.
+    """
+    try:
+        return field_store._decode(raw, shape)
+    except ValueError as error:
+        try:
+            return _decode_float64_chunk(raw, shape)
+        except ValueError:
+            raise error from None
+
+
+def _decode_float64_chunk(raw: bytes, shape: _Key) -> _Chunk:
+    import zipfile
+
+    count = math.prod(shape)
+    specifications = {
+        "delta.npy": ((shape,), np.float64, count * 8),
+        "offset.npy": (((),), np.float64, 8),
+        "observed.npy": (((0,), ((count + 7) // 8,)), np.uint8, (count + 7) // 8),
+    }
+    arrays = {}
+    try:
+        with zipfile.ZipFile(io.BytesIO(raw)) as archive:
+            members = archive.infolist()
+            if len(members) != 3 or {m.filename for m in members} != set(specifications):
+                raise ValueError("checkpoint NPZ members differ")
+            for member in members:
+                shapes, dtype, size = specifications[member.filename]
+                if member.file_size > size + 10016 or member.flag_bits & 1:
+                    raise ValueError("oversized or encrypted checkpoint member")
+                arrays[member.filename] = field_store._array(archive.read(member), shapes, dtype)
+    except (zipfile.BadZipFile, EOFError, OSError, RuntimeError) as error:
+        raise ValueError("invalid checkpoint NPZ") from error
+    delta, offset = arrays["delta.npy"], float(arrays["offset.npy"])
+    observed = arrays["observed.npy"]
+    with np.errstate(over="ignore", invalid="ignore"):
+        finite = np.isfinite(delta + offset).all()
+    if not finite or not math.isfinite(offset):
+        raise ValueError("nonfinite decoded checkpoint")
+    if observed.size and count % 8 and int(observed[-1]) & ((1 << (8 - count % 8)) - 1):
+        raise ValueError("nonzero observation padding bits")
+    return delta, offset, observed
 
 
 def _vector(value: Any, *, positive: bool = False) -> NDArray[np.float64]:
@@ -323,7 +372,8 @@ class FieldSource:
             ):
                 raise ValueError("invalid checkpoint generation path")
             size = field_store._integer(record["bytes"], 1)
-            if size > math.prod(self._chunk_shape(key)) * 5 + 65536:
+            # 8 bytes/node admits float64 deltas from earlier releases (current: float32).
+            if size > math.prod(self._chunk_shape(key)) * 9 + 65536:
                 raise ValueError("oversized checkpoint payload")
             if "quantization_max" in record:
                 error = record["quantization_max"]
@@ -383,7 +433,7 @@ class FieldSource:
         if label in self._cache:
             self._cache.move_to_end(label)
             return self._cache[label]
-        value = field_store._decode(file.read(), shape)
+        value = _decode_chunk(file.read(), shape)
         charge = self._charge(value)
         if charge <= self._budget:
             while self._cache_bytes + charge > self._budget:

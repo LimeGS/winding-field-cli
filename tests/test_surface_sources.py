@@ -418,7 +418,8 @@ def test_payload_hash_and_safe_decoder_are_enforced_on_read(tmp_path, change):
     else:
         stream = io.BytesIO()
         arrays = dict(
-            delta=np.zeros((2, 2, 2), np.float64 if change == "delta" else np.float32),
+            # float64 deltas are a supported legacy layout; an unknown dtype must still fail.
+            delta=np.zeros((2, 2, 2), np.float16 if change == "delta" else np.float32),
             offset=np.float64(4),
             observed=np.array([255], np.uint8),
         )
@@ -590,3 +591,66 @@ def test_read_only_sources_never_create_locks_publish_or_modify_any_bytes(tmp_pa
             source.read((0, 0, 0), (3, 3, 5))
             source.validate()
     assert {str(p): p.read_bytes() for p in tmp_path.rglob("*") if p.is_file()} == before
+
+
+def _legacy_checkpoint(tmp_path, dtype):
+    """A 32^3 one-chunk checkpoint whose deltas are stored as ``dtype`` (float64 = legacy)."""
+    root = tmp_path / f"legacy-{np.dtype(dtype).name}"
+    root.mkdir()
+    shape = (32, 32, 32)
+    meta = dict(geometry(shape), sheet_step=1.0)
+    rng = np.random.default_rng(0)
+    values = rng.normal(size=shape)  # incompressible: payload near 8 bytes/node
+    support = rng.random(shape) < 0.5
+    stream = io.BytesIO()
+    np.savez_compressed(
+        stream, delta=values.astype(dtype), offset=np.float64(-400.0), observed=np.packbits(support)
+    )
+    path = root / "0-0-0.g1792680000000000000.npz"
+    path.write_bytes(stream.getvalue())
+    chunk = dict(descriptor(path), bytes=path.stat().st_size, path=path.name)
+    manifest = dict(
+        identity=dict(meta, prepared_sha256="a" * 64),
+        shape=list(shape),
+        chunk=32,
+        chunks={"0-0-0": chunk},
+        progress={},
+    )
+    (root / "CHECKPOINT.json").write_text(json.dumps(manifest))
+    field = descriptor(root / "CHECKPOINT.json", kind="chunks", support_policy="observed")
+    return field, meta, values.astype(dtype).astype(np.float64) - 400.0, support
+
+
+def test_legacy_float64_checkpoints_are_read_exactly(tmp_path):
+    from pathlib import Path
+
+    field, meta, expected, support = _legacy_checkpoint(tmp_path, np.float64)
+    assert Path(field["path"]).parent.joinpath("0-0-0.g1792680000000000000.npz").stat().st_size > (
+        32**3 * 5 + 65536
+    )  # the former bound rejected it as "oversized checkpoint payload"
+    with api().FieldSource(field, meta) as source:
+        values, valid = source.read((0, 0, 0), (32, 32, 32))
+    np.testing.assert_array_equal(valid, support)
+    np.testing.assert_array_equal(values[valid], expected[valid])
+
+
+def test_current_float32_checkpoints_still_decode_with_the_core(tmp_path):
+    field, meta, expected, support = _legacy_checkpoint(tmp_path, np.float32)
+    with api().FieldSource(field, meta) as source:
+        values, valid = source.read((0, 0, 0), (32, 32, 32))
+    np.testing.assert_array_equal(values[valid], expected[valid])
+
+
+def test_legacy_decoder_keeps_the_strict_checks():
+    surface_sources = api()
+    stream = io.BytesIO()
+    np.savez(
+        stream,
+        delta=np.full((2, 2, 2), np.nan),
+        offset=np.float64(0),
+        observed=np.zeros(1, np.uint8),
+    )
+    with pytest.raises(ValueError):
+        surface_sources._decode_chunk(stream.getvalue(), (2, 2, 2))
+    with pytest.raises(ValueError):
+        surface_sources._decode_chunk(b"not a zip", (2, 2, 2))
