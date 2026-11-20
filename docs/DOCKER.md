@@ -11,16 +11,23 @@ with a small ROI. ARM hosts are not qualified for these x86-64 images.
 
 ## Quick use: `tools/wf`
 
-`tools/wf` runs the CLI through [`compose.yaml`](../compose.yaml): the first call
-builds the image from this checkout (CUDA when an NVIDIA GPU and runtime are
-available, otherwise CPU), creates `data/`, `outputs/`, `models/`, `cache/` and
-`scratch/` in the workspace (`WF_HOME`, default: the current directory) and runs as
-your UID/GID with the mounts and limits described below. `WF_VARIANT=cpu|cuda`
-forces an image and `WF_BUILD=1` rebuilds it after updating the checkout.
-`WF_MEMORY` / `WF_MEMORY_SWAP` set the container RAM / RAM+swap limits (default
-`21g` / `85g`). The
-`wf()` function in [Persistent paths](#persistent-paths-and-resource-limits) is the
-equivalent plain `docker run`, for hosts without Compose or for custom options.
+`wf docker-install` builds the image from this checkout through
+[`compose.yaml`](../compose.yaml) (CUDA when an NVIDIA GPU and the NVIDIA runtime are
+available, otherwise CPU), records it in `.wf-runtime` and runs `doctor`. Afterwards
+`wf <arguments>` runs `winding-field <arguments>` in that image: it creates `data/`,
+`outputs/`, `models/`, `cache/` and `scratch/` in the workspace (`WF_HOME`, default:
+the current directory) and runs as your UID/GID with the mounts and limits described
+below. `WF_VARIANT=cpu|cuda` forces an image and `WF_BUILD=1` rebuilds it after
+updating the checkout. `WF_MEMORY` / `WF_MEMORY_SWAP` set the container RAM /
+RAM+swap limits (default `21g` / `85g`).
+
+`wf native-install` instead runs the host installer (`tools/install.sh`) for this
+checkout. Native `wf` calls translate `/data/...` and `/outputs/...` arguments to the
+workspace folders, so the README commands are unchanged; paths inside JSON/YAML
+configuration files are not translated.
+
+The `wf()` function in [Persistent paths](#persistent-paths-and-resource-limits) is
+the equivalent plain `docker run`, for hosts without Compose or for custom options.
 
 ## Shared installation recipe
 
