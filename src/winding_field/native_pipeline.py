@@ -241,7 +241,7 @@ def render_mesh(reader, output, volume, config, stop=None):
             return dict(status="PAUSED", reason=str(error), elapsed_s=store.elapsed)
 
 
-def work(run, config, until="render", stop=None, token=None, started_epoch=None):
+def work(run, config, until="render", stop=None, token=None, started_epoch=None, only=None):
     from .surface_mesh import MeshReader
     from .native_mesh import extract_mesh
     from .field import open_field
@@ -293,11 +293,15 @@ def work(run, config, until="render", stop=None, token=None, started_epoch=None)
                 atomic_json(root / "LEVELS.json", levels)
                 identity = dict(identity, levels=levels)
                 atomic_json(root / "NATIVE.json", identity)
+            if only is None:
+                _parallel_levels(run, root, config, levels, until, token)
             for index, level in enumerate(levels):
                 path = root / f"level-{index:04d}"
                 binding = dict(
                     producer="native-mesh-v1", parent=digest(identity), level=float(level)
                 )
+                if only is not None and index not in only and not _committed_level(path):
+                    continue
                 if _committed_level(path):
                     records.append(verify_level(path, binding))
                     verify_ct_snapshot(path, volume)
@@ -379,6 +383,8 @@ def work(run, config, until="render", stop=None, token=None, started_epoch=None)
                     store.register("LEVEL.json")
                     records.append(result)
             source.validate()
+            if only is not None:  # a parallel level job; the caller publishes the aggregate
+                return dict(status="LEVEL_DONE", levels=records)
         if until != "render":
             return dict(status="PAUSED", reason="STAGE_LIMIT", until=until, levels=records)
         result = dict(
@@ -404,6 +410,37 @@ def work(run, config, until="render", stop=None, token=None, started_epoch=None)
             active_level=None if current is None else current.name,
             elapsed_s=0.0 if current is None else _elapsed(current),
         )
+
+
+def _level_job(run, config, until, index, token):
+    result = work(run, config, until, None, token, time.time(), only={index})
+    return index, result["status"], result.get("reason")
+
+
+def _parallel_levels(run, root, config, levels, until, token):
+    """Opt-in (level_workers > 1): compute pending levels in parallel worker processes.
+
+    Each worker runs this same pipeline for one level in its own journal; the caller's
+    serial pass then only verifies the committed levels and publishes the aggregate, so
+    outputs are those of a serial run. Workers share the process group, hence the
+    supervisor's RSS accounting, and stop on the same STOP files.
+    """
+    workers = int(config.get("level_workers", 1))
+    pending = [
+        index for index in range(len(levels)) if not _committed_level(root / f"level-{index:04d}")
+    ]
+    if workers <= 1 or len(pending) <= 1:
+        return
+    import multiprocessing
+    from concurrent.futures import ProcessPoolExecutor
+
+    single = dict(config, level_workers=1)
+    with ProcessPoolExecutor(
+        min(workers, len(pending)), mp_context=multiprocessing.get_context("spawn")
+    ) as pool:
+        jobs = [pool.submit(_level_job, run, single, until, i, token) for i in pending]
+        for job in jobs:
+            job.result()  # a failed level raises here; paused levels resume serially
 
 
 def _rss(process):

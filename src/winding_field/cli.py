@@ -438,6 +438,13 @@ def main(argv=None):
             help="native/atlas local chart face budget (default: 1024); not original global flattening",
         )
         p.add_argument(
+            "--level-workers",
+            type=int,
+            default=argparse.SUPPRESS,
+            help="native: compute this many W levels in parallel processes (default: 1); "
+            "each needs its own memory; outputs equal a serial run",
+        )
+        p.add_argument(
             "--threads",
             type=int,
             default=4,
