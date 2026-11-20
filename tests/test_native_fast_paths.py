@@ -98,7 +98,8 @@ def test_parallel_levels_publish_the_serial_result(tmp_path):
         (tmp_path / str(workers)).mkdir()
         run, config = field_case(tmp_path / str(workers), levels=(0.5, 1.5, 2.5))
         config.update(flattening_method="default", level_workers=workers)
-        assert work(run, config)["status"] == "COMPLETE"
+        result = work(run, config)
+        assert result["status"] == "COMPLETE", result  # reason/active level if it pauses
         root = run / "surfaces"
         files = sorted(p for p in root.rglob("*") if p.suffix in (".npz", ".png"))
         assert json.loads((run / "SURFACES.json").read_bytes())["status"] == "COMPLETE"
