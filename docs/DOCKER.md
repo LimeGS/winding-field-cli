@@ -71,9 +71,15 @@ docker buildx bake cpu --load       # winding-field:cpu
 docker buildx bake cuda --load      # winding-field:cuda, CUDA 12.8.1
 ```
 
+Release gate for fixable critical/high findings:
+
+```sh
+docker scout cves <image> --only-fixed --only-severity critical,high --exit-code
+```
+
 Builds download pinned source archives, hash-locked Python dependencies and the
 [official Villa AppImage](../provenance/flatboi.json). Base images and uv are
-digest-pinned; Ubuntu dependencies come from the 2026-11-01 snapshot. The full
+digest-pinned; Ubuntu dependencies come from the 2026-11-21 snapshot. The full
 AppImage runtime is extracted at `/opt/vc3d`; FUSE is unnecessary.
 
 The July Villa archive contains exactly the existing `historical` Flatboi binary.
