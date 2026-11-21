@@ -77,7 +77,9 @@ Completion authority remains the verified `FIBRES.json` receipt.
   Decoded source chunks, interpolation scratch, in-flight results and parent
   replay are charged, not just output tile size.
 - Parallel tile computation requires purely local CT and prediction channels.
-  Remote/mirror-backed sources retain serial surface reads. Direct
+  Remote/mirror-backed sources retain serial surface reads. External AFV clipping
+  reads only the run's local maps and the AFV, so it uses the admitted workers even
+  when the CT or predictions are remote. Direct
   `predict.prepare` callers without a bound CT ledger also stay serial.
   Without external `--fibres`, surface reads stay serial alongside parent fibre
   inference; its `--threads` setting is unchanged.

@@ -375,10 +375,12 @@ def import_fibres(run, config, stop=None, *, verified_source=None, maps=None):
         origin=meta["origin_xyz"],
         spacing=meta["spacing_xyz"],
     )
-    from .import_parallel import limits, local_inputs, ordered_map
+    from .import_parallel import limits, ordered_map
 
+    # Clip workers read only the run's local maps and the local AFV's block points, never
+    # CT or prediction sources, so a remote CT source does not force a serial import.
     execution = limits(
-        config.get("import_workers", 1) if (local_inputs(config) and not supplied) else 1,
+        config.get("import_workers", 1) if not supplied else 1,
         output=run,
         reserve_bytes=config.get("reserve_bytes", 0),
         worker_bytes=368 << 20,
