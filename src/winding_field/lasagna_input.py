@@ -15,6 +15,7 @@ from .artifacts import Tiles
 from .io import Volume, http_url, bounds
 from .lasagna import CHUNK, physical_observations
 from .lasagna_stream import LasagnaInput  # noqa: F401 - public re-export used by callers/tests
+from .lasagna_stream import missing_policy
 from .splines import bind
 from .util import atomic_json, file_sha
 
@@ -234,6 +235,7 @@ def _open_products(stack, identity, root, *, required, cache_bytes=256 << 20, le
                     cache=root / "reader-cache",
                     offline=True,
                     decoded_cache_bytes=cache_bytes // 6,
+                    missing_chunks=missing_policy(identity["input"]["manifest"]),
                 )
             )
         )

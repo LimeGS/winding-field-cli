@@ -172,6 +172,31 @@ def test_missing_local_prediction_chunk_fails_closed(tmp_path):
             reader.read(geometry(volume), [0, 0, 0], [4, 4, 4])
 
 
+def test_manifest_opt_in_reads_missing_local_prediction_chunk_as_fill(tmp_path):
+    cls = reader_type()
+    ct, root, config = fixture(tmp_path)
+    manifest = json.loads((root / "input.lasagna.json").read_text())
+    with Volume(ct, cache=tmp_path / "ct-cache") as volume:
+        with cls(volume, tmp_path / "full", config) as reader:
+            full = reader.read(geometry(volume), [0, 0, 0], [8, 8, 8])
+    (root / "nx.ome.zarr/2/0.0.0").unlink()
+    manifest["missing_chunks"] = "fill"
+    atomic_json(root / "input.lasagna.json", manifest)
+    with (
+        Volume(ct, cache=tmp_path / "ct-cache") as volume,
+        cls(volume, tmp_path / "run", config) as reader,
+    ):
+        data = reader.read(geometry(volume), [0, 0, 0], [8, 8, 8])
+        reader.validate_used()
+    # nx chunk 0.0.0 covers base voxels 0..15 on every axis: no observed direction there.
+    assert full["support"].all() and not data["support"].any()
+    manifest["missing_chunks"] = "maybe"
+    atomic_json(root / "input.lasagna.json", manifest)
+    with Volume(ct, cache=tmp_path / "ct-cache") as volume:
+        with pytest.raises(ValueError, match="missing_chunks"):
+            cls(volume, tmp_path / "bad", config)
+
+
 @pytest.mark.parametrize("changed", [False, True])
 def test_manifest_channel_metadata_pin_rejects_changed_metadata(tmp_path, changed):
     ct, root, config = fixture(tmp_path)
