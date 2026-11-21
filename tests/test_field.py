@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 
 
-def prepared_run(root, shape=(6, 6, 24), chunk=8, variable=False):
+def prepared_run(root, shape=(6, 6, 24), chunk=8, variable=False, support_x_below=None):
     from winding_field.artifacts import Tiles
     from winding_field.fibres import trace
     from winding_field.util import atomic_json
@@ -33,7 +33,11 @@ def prepared_run(root, shape=(6, 6, 24), chunk=8, variable=False):
                 density=density,
                 normals=normals,
                 tangents=tangent,
-                support=np.ones(local, bool),
+                support=(
+                    np.ones(local, bool)
+                    if support_x_below is None
+                    else np.broadcast_to(np.arange(lo[2], hi[2]) < support_x_below, local).copy()
+                ),
                 presence=np.ones(local, np.float32),
                 ct=np.full(local, 128, np.uint8),
             ),

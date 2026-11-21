@@ -444,6 +444,13 @@ def main(argv=None):
             "for a fine --roi tile); same frame required",
         )
         p.add_argument(
+            "--field-scope",
+            choices=["all", "supported"],
+            default=argparse.SUPPRESS,
+            help="field chunks to solve and store: all (default) or supported, which skips "
+            "chunks without observations and holds them at --field-prior",
+        )
+        p.add_argument(
             "--level-workers",
             type=int,
             default=argparse.SUPPRESS,

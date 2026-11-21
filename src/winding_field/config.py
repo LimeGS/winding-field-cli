@@ -125,6 +125,10 @@ def validate_config(config):
     prior = config.get("field_prior")
     if prior is not None and (not isinstance(prior, str) or not prior):
         raise ValueError("field_prior must be a completed field run directory")
+    if config.get("field_scope", "all") not in ("all", "supported"):
+        raise ValueError("field_scope must be all or supported")
+    if config.get("field_scope") == "supported" and not prior:
+        raise ValueError("field_scope supported requires field_prior")
     if config.get("nonconvergence_policy", "fail") not in ("fail", "continue"):
         raise ValueError("invalid nonconvergence_policy")
     lasagna_downsamples(config)

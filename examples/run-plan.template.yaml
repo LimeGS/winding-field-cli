@@ -117,6 +117,7 @@ mesh_tile: 64 # Opciones: entero 1..256, borde del tile en celdas del campo.
 chart_faces: 1024 # Opciones: entero 1..8192, caras por chart local native/atlas, no global original.
 level_workers: 1 # Opciones: entero 1..64, niveles W native calculados en paralelo (procesos); cada uno usa su propia memoria; mismo resultado que en serie.
 field_prior: null # Opciones: ruta a un run con field completo (p. ej. el grueso); su W siembra y fija el cero de este field (tiles finos con --roi); mismo frame.
+field_scope: all # Opciones: all | supported (requiere field_prior; resuelve y guarda solo los chunks con observaciones, el resto queda en el prior).
 previews: true # Opciones: true | false; previews de atlas legacy; false no elimina renders CT finales.
 surface_output: native # Opciones: native | atlas | tifxyz; tifxyz es directo del campo, no muestrea CT.
 flattening_method: slim # Opciones: slim | default | original; slim solo native; default conserva mapping legacy; original = global LSCM.
