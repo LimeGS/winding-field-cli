@@ -42,6 +42,7 @@ TOOLS = {
     "ct-visuals": ("ct_visuals", "render frozen CT planes and field contours"),
     "patch-visuals": ("patch_visuals", "evaluate and plot human-patch residuals"),
     "run-watch": ("run_watch", "supervise a job with timeout and storage limits"),
+    "scroll": ("scroll", "whole-scroll fields from overlapping tiles; full-resolution CT renders"),
 }
 
 
