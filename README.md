@@ -313,7 +313,7 @@ wf field-advice /outputs/prepared-field
 
 The report never runs a solver or verification, stops work or adds sweeps.
 Published core **1.5.2 does not support this opt-in**; new installations pin the
-stable core 1.6.0 from git at its exact commit, verified after install by commit
+stable core 1.7.0 from git at its exact commit, verified after install by commit
 id and source hashes (`tools/verify-core.py`) as recorded in
 `provenance/core.json`.
 See [scope, recovery and interpretation](docs/FIELD-ADVICE.md).
