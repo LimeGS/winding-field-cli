@@ -81,9 +81,10 @@ def test_test_image_build_uses_runner_dns_without_enabling_runtime_network():
     )
     assert "--network=none" in offline
     assert "APT::Update::Error-Mode=any" in (ROOT / "docker/testing.Dockerfile").read_text()
-    assert (
-        "https://snapshot.ubuntu.com/ubuntu/20261101T000000Z/" in (ROOT / "Dockerfile").read_text()
-    )
+    # Every apt source in the image uses the one dated snapshot of the security baseline.
+    dockerfile = (ROOT / "Dockerfile").read_text()
+    snapshots = set(re.findall(r"https://snapshot\.ubuntu\.com/ubuntu/(\d{8}T\d{6}Z)/", dockerfile))
+    assert snapshots == {"20261121T000000Z"}
 
 
 def test_full_suites_and_optional_gpu_checks_are_preserved_and_timed():
