@@ -2,10 +2,10 @@
   "origin": "https://github.com/LimeGS/winding-field",
   "distribution": "winding-field",
   "version": "1.6.0",
-  "revision": "3aa4cb6f1be8ead39b9db142e22a1e9c75f704ba",
-  "install_url": "git+https://github.com/LimeGS/winding-field@3aa4cb6f1be8ead39b9db142e22a1e9c75f704ba",
+  "revision": "e1663380b841729a712b568f7c697887e9af4c3d",
+  "install_url": "git+https://github.com/LimeGS/winding-field@e1663380b841729a712b568f7c697887e9af4c3d",
   "verification": "git commit object id plus source_sha256, checked after install by tools/install-runtime.sh",
-  "changes": "Core feat/partial-block-order (LimeGS/winding-field#18) on top of 1.6.0: adds opt-in solve_blocks(partial_order=True) used by run --field-scope supported; only block_solver.py changes; full-order identities and checkpoints unchanged. Repin to the merge commit once merged.",
+  "changes": "Core main after LimeGS/winding-field#18 (1.6.0 plus partial_order): adds opt-in solve_blocks(partial_order=True) used by run --field-scope supported; only block_solver.py changes; full-order identities and checkpoints unchanged.",
   "migrated_workflows": {
     "revision": "baf8052ed7115bddd8cbba08b3197ea31695ac4b",
     "changes": "moved to winding_field with tests, examples and wrappers; package imports, prepared command routing and module-based supervised launch",
