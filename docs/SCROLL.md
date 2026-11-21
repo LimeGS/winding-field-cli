@@ -88,9 +88,22 @@ Writes `merged/field/CHECKPOINT.json` in the ordinary chunk-checkpoint format
   (each node counted once, by the tile whose core owns it) and the resulting W levels.
 - `surface-run.json`: a ready `prepared mesh`/`surfaces` request for those levels.
 
+**Coarse-grid correction (default on).** A tile is gauged by a single prior node and
+relaxed for a few sweeps, so its low frequencies drift from the coarse field, differently
+in every tile. On the PHerc0175A pilot two neighbouring tiles disagreed in their overlap
+by a median 0.21 and a 95th percentile of 1.0 winding (21% of nodes by more than half a
+winding). Before blending, the merge subtracts from every tile a Gaussian low-pass of
+`(tile - coarse)` (`--coarse-sigma-mm`, default 0.5 mm, computed on a 4x reduced grid):
+detail below that scale comes from the tile, everything coarser from the one coarse
+solve that spans all tiles. On the pilot this gave a median 0.018 and a 95th percentile
+of 0.135 (0.26% of nodes over half a winding). Smaller sigma agrees better but keeps less
+fine detail (sigma 0.25 mm: 0.043; 1 mm: 0.31). The global winding structure therefore
+comes from the coarse field. `--coarse-sigma-mm 0` blends the raw tiles.
+
 Blending is a linear cross-fade over the whole overlap on interior tile faces. Nodes
 inside a solved chunk keep their value; observed support is the union of the tiles'
-observed support. Missing tiles are refused unless `--allow-missing`.
+observed support. Missing tiles are refused unless `--allow-missing`. The merge holds the
+checkpoint's `.writer.lock` exclusively while it writes, as the core writer does.
 
 ## 5. Meshes and full-resolution CT
 

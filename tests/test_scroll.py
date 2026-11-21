@@ -106,13 +106,85 @@ def plan_two_biased_tiles(tmp_path, bias=(0.0, 0.004, 0.0)):
         )
     root = tmp_path / "plan"
     root.mkdir()
+    coarse = write_coarse(tmp_path / "coarse")
     atomic_json(
         root / "TILES.json",
-        dict(schema=scroll.PLAN_SCHEMA, grid=GRID, overlap_nodes=64, tiles=tiles, run_args=[]),
+        dict(
+            schema=scroll.PLAN_SCHEMA,
+            grid=GRID,
+            overlap_nodes=64,
+            tiles=tiles,
+            run_args=[],
+            coarse=coarse,
+        ),
     )
     for tile, b in zip(tiles, bias):
         write_tile(root, tile, b)
     return root, tiles
+
+
+def write_coarse(run):
+    """The exact field on a 2x coarser grid, as a completed field run."""
+    from field_store import BlockStore
+    from winding_field.util import atomic_json, file_sha
+
+    shape = [2, 2, 161]
+    geometry = dict(
+        frame="test-frame",
+        voxel_um=1.0,
+        origin_xyz=[0.0, 0.0, 0.0],
+        spacing_xyz=[4.0, 4.0, 4.0],
+        shape_zyx=shape,
+        sheet_step=1.0,
+    )
+    run.mkdir()
+    with BlockStore(run / "field", shape, 64, dict(geometry=geometry)) as store:
+        for key in np.ndindex(*[(n - 1) // 64 + 1 for n in shape]):
+            first = np.asarray(key) * 64
+            last = np.minimum(first + 64, shape)
+            x_um = np.arange(first[2], last[2]) * 4.0
+            values = np.broadcast_to(truth(x_um / GRID["spacing_um"]), tuple(last - first))
+            store.commit(key, values.copy(), {}, observed=np.ones(tuple(last - first), bool))
+    sha = file_sha(run / "field/CHECKPOINT.json")
+    atomic_json(run / "FIELD.json", dict(geometry=geometry, checkpoint_sha256=sha))
+    return dict(path=str(run), checkpoint_sha256=sha)
+
+
+def test_coarse_correction_removes_each_tiles_own_drift(tmp_path):
+    from winding_field.field import open_field
+
+    # Each tile is offset from the truth by its own constant, as a weakly gauged tile is.
+    root, tiles = plan_two_biased_tiles(tmp_path, bias=(-0.2, 0.3, 0.1))
+    raw = scroll.merge(
+        Namespace(
+            plan=root,
+            output=tmp_path / "raw",
+            workers=1,
+            allow_missing=False,
+            coarse_sigma_mm=0,
+        )
+    )
+    assert raw["worst_seam_p95_abs_dW"] >= 0.5
+    result = scroll.merge(
+        Namespace(
+            plan=root,
+            output=tmp_path / "merged",
+            workers=1,
+            allow_missing=False,
+            coarse_sigma_mm=0.5,
+        )
+    )
+    with open_field(tmp_path / "merged") as source:
+        values, valid = source.read([0, 0, 0], GRID["shape_zyx"])
+    assert valid.all()
+    np.testing.assert_allclose(
+        values, np.broadcast_to(truth(np.arange(320)), values.shape), atol=1e-5
+    )
+    assert result["worst_seam_p95_abs_dW"] <= 0.002
+    meta = json.loads((tmp_path / "merged/FIELD.json").read_text())
+    assert meta["coarse_correction"]["p95_abs_correction"] == pytest.approx(
+        {"000-000-000": 0.2, "000-000-001": 0.3, "000-000-002": 0.1}, abs=1e-6
+    )
 
 
 def test_merge_blends_tiles_into_one_readable_field_and_reports_seams(tmp_path):
@@ -120,7 +192,9 @@ def test_merge_blends_tiles_into_one_readable_field_and_reports_seams(tmp_path):
 
     root, tiles = plan_two_biased_tiles(tmp_path)
     out = tmp_path / "merged"
-    result = scroll.merge(Namespace(plan=root, output=out, workers=1, allow_missing=False))
+    result = scroll.merge(
+        Namespace(plan=root, output=out, workers=1, allow_missing=False, coarse_sigma_mm=0)
+    )
     assert result["status"] == "MERGED" and result["tiles"] == 3
 
     with open_field(out) as source:
@@ -155,14 +229,26 @@ def test_merge_refuses_tiles_off_the_plan_grid(tmp_path):
     field.write_text(json.dumps(meta))
     with pytest.raises(ValueError, match="not on the plan grid"):
         scroll.merge(
-            Namespace(plan=root, output=tmp_path / "merged", workers=1, allow_missing=False)
+            Namespace(
+                plan=root,
+                output=tmp_path / "merged",
+                workers=1,
+                allow_missing=False,
+                coarse_sigma_mm=0,
+            )
         )
 
 
 def test_merge_requires_every_supported_tile_unless_allowed(tmp_path):
     root, tiles = plan_two_biased_tiles(tmp_path)
     (root / "tiles" / tiles[2]["id"] / "RUN.json").write_text("{}")
-    args = Namespace(plan=root, output=tmp_path / "merged", workers=1, allow_missing=False)
+    args = Namespace(
+        plan=root,
+        output=tmp_path / "merged",
+        workers=1,
+        allow_missing=False,
+        coarse_sigma_mm=0,
+    )
     with pytest.raises(ValueError, match="no completed field"):
         scroll.merge(args)
     args.allow_missing = True

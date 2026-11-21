@@ -537,12 +537,74 @@ class _Tile:
         self.maps.close()
 
 
+CORRECTION_STEP = 4
+
+
+def tile_correction(task):
+    """Low-pass of (tile - coarse) on a CORRECTION_STEP-reduced grid.
+
+    A tile is gauged by one prior node and relaxed for a few sweeps, so its low
+    frequencies drift from the coarse field differently in every tile; neighbours then
+    disagree by up to a winding in their overlap. Subtracting this smooth difference
+    keeps the tile's detail below ``sigma`` and takes everything coarser from the one
+    coarse solve that spans all tiles (a coarse-grid correction).
+    """
+    from scipy.ndimage import gaussian_filter
+
+    from .field_prior import FieldPrior
+
+    plan_root, tile_info, grid, coarse_dir, sigma_mm, out = task
+    tile = _Tile(plan_root, tile_info, grid)
+    step = CORRECTION_STEP
+    try:
+        prior = FieldPrior(coarse_dir, tile.geometry, tile.prepared.get("source"))
+        shape = np.asarray(tile.geometry["shape_zyx"])
+        reduced = (shape + step - 1) // step
+        sums = np.zeros(reduced)
+        counts = np.zeros(reduced)
+        spacing = np.asarray(tile.geometry["spacing_xyz"], float)
+        origin = np.asarray(tile.geometry["origin_xyz"], float)
+        for key in tile.chunks:
+            lo = np.asarray(key) * FIELD_CHUNK
+            hi = np.minimum(lo + FIELD_CHUNK, shape)
+            values, stored = tile.stored.read(lo.tolist(), hi.tolist())
+            if not stored.any():
+                continue
+            index = np.stack(
+                np.meshgrid(*[np.arange(a, b) for a, b in zip(lo, hi)], indexing="ij"), -1
+            )
+            xyz = index[..., ::-1].reshape(-1, 3) * spacing + origin
+            coarse, valid = prior.sample(xyz)
+            coarse = np.asarray(coarse, float).reshape(values.shape)
+            good = stored & np.asarray(valid, bool).reshape(values.shape) & np.isfinite(coarse)
+            cells = tuple((index[..., i] // step)[good] for i in range(3))
+            np.add.at(sums, cells, (values - coarse)[good])
+            np.add.at(counts, cells, 1.0)
+        prior.close()
+        sigma = sigma_mm * 1000.0 / float(grid["spacing_um"]) / step
+        weight = gaussian_filter(counts, sigma, mode="nearest")
+        low = gaussian_filter(sums, sigma, mode="nearest") / np.maximum(weight, 1e-12)
+        low[weight < 1e-9] = 0.0
+        path = Path(out) / f"{tile_info['id']}.npz"
+        np.savez(path, low=low, step=step)
+        used = counts > 0
+        return tile_info["id"], dict(
+            path=str(path),
+            sha256=file_sha(path),
+            p95_abs_correction=float(np.percentile(np.abs(low[used]), 95)) if used.any() else 0.0,
+        )
+    finally:
+        tile.close()
+
+
 _WORKER = {}
 
 
-def _worker_init(plan_root, tiles, grid, overlap, out):
+def _worker_init(plan_root, tiles, grid, overlap, out, corrections=None):
     _WORKER.update(plan_root=plan_root, grid=grid, overlap=overlap, out=Path(out), open={})
     _WORKER["tiles"] = {t["id"]: t for t in tiles}
+    _WORKER["corrections"] = corrections or {}
+    _WORKER["low"] = {}
 
 
 def _worker_tile(tile_id):
@@ -550,6 +612,24 @@ def _worker_tile(tile_id):
     if tile_id not in opened:
         opened[tile_id] = _Tile(_WORKER["plan_root"], _WORKER["tiles"][tile_id], _WORKER["grid"])
     return opened[tile_id]
+
+
+def _correction(tile_id, local_lo, local_hi):
+    """Trilinear value of a tile's reduced low-pass correction on local nodes."""
+    record = _WORKER["corrections"].get(tile_id)
+    if record is None:
+        return 0.0
+    if tile_id not in _WORKER["low"]:
+        if file_sha(record["path"]) != record["sha256"]:
+            raise ValueError("tile correction changed: " + tile_id)
+        with np.load(record["path"], allow_pickle=False) as data:
+            _WORKER["low"][tile_id] = (data["low"], int(data["step"]))
+    from scipy.ndimage import map_coordinates
+
+    low, step = _WORKER["low"][tile_id]
+    axes = [(np.arange(a, b) - (step - 1) / 2) / step for a, b in zip(local_lo, local_hi)]
+    coords = np.stack(np.meshgrid(*axes, indexing="ij"), 0)
+    return map_coordinates(low, coords, order=1, mode="nearest")
 
 
 def _merge_chunk(task):
@@ -578,6 +658,7 @@ def _merge_chunk(task):
         _, seen = tile.observed.read(local_lo.tolist(), local_hi.tolist())
         if not stored.any():
             continue
+        values = values - _correction(tile_id, local_lo, local_hi)
         axes = [np.arange(first[i], last[i]) for i in range(3)]
         w = (
             _ramp(axes[0], tile.lo[0], tile.hi[0], shape[0] - 1, width)[:, None, None]
@@ -695,15 +776,42 @@ def merge(args):
                 tasks[merged].add(tile["id"])
     field_dir = output / "field"
     field_dir.mkdir(parents=True)
+    # The same writer lease as the core BlockStore: readers (prepared mesh) take it shared.
+    import fcntl
+
+    lease = os.open(
+        field_dir / ".writer.lock", os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW | os.O_NONBLOCK, 0o600
+    )
+    fcntl.flock(lease, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    started = time.time()
+    corrections = {}
+    if args.coarse_sigma_mm > 0:
+        correction_dir = output / "corrections"
+        correction_dir.mkdir()
+        coarse = document["coarse"]
+        if file_sha(Path(coarse["path"]) / "field/CHECKPOINT.json") != coarse["checkpoint_sha256"]:
+            raise ValueError("coarse field changed since the plan")
+        jobs = [
+            (str(root), t, grid, coarse["path"], args.coarse_sigma_mm, str(correction_dir))
+            for t in tiles
+        ]
+        with ProcessPoolExecutor(max_workers=args.workers) as pool:
+            corrections = dict(pool.map(tile_correction, jobs))
     chunks = {}
     seams = {}
     phase, phase_weight, low, high = 0j, 0.0, math.inf, -math.inf
-    started = time.time()
     ordered = sorted(tasks.items())
     with ProcessPoolExecutor(
         max_workers=args.workers,
         initializer=_worker_init,
-        initargs=(str(root), tiles, grid, document["overlap_nodes"], str(field_dir)),
+        initargs=(
+            str(root),
+            tiles,
+            grid,
+            document["overlap_nodes"],
+            str(field_dir),
+            corrections,
+        ),
     ) as pool:
         for key, record, chunk_seams, stats in pool.map(
             _merge_chunk, [(k, sorted(v)) for k, v in ordered], chunksize=4
@@ -734,6 +842,14 @@ def merge(args):
             for tid in geometries
         },
         blend="linear cross-fade over 2*overlap+1 nodes on interior tile faces",
+        coarse_correction=dict(
+            sigma_mm=args.coarse_sigma_mm,
+            reduced_step=CORRECTION_STEP,
+            coarse_checkpoint_sha256=document["coarse"]["checkpoint_sha256"],
+            tiles={tid: c["sha256"] for tid, c in corrections.items()},
+        )
+        if corrections
+        else None,
     )
     manifest = dict(
         identity=identity,
@@ -744,6 +860,7 @@ def merge(args):
         initialization="weighted blend of field-prior tiles; not a global solve",
     )
     atomic_json(field_dir / "CHECKPOINT.json", manifest)
+    os.close(lease)
     seam_report = {}
     for pair, hist in sorted(seams.items()):
         total = int(hist.sum())
@@ -782,6 +899,12 @@ def merge(args):
         missing_tiles=missing,
         merged_chunks=len(chunks),
         worst_seam_p95_abs_dW=worst,
+        coarse_correction=dict(
+            sigma_mm=args.coarse_sigma_mm,
+            p95_abs_correction={tid: c["p95_abs_correction"] for tid, c in corrections.items()},
+        )
+        if corrections
+        else None,
         global_converged=False,
         physical_acceptance=False,
         numerical_status="blend of independently solved field-prior tiles; seams in SEAMS.json",
@@ -893,6 +1016,13 @@ def _parser():
     p.add_argument("--output", required=True)
     p.add_argument("--workers", type=int, default=max(1, (os.cpu_count() or 2) // 2))
     p.add_argument("--allow-missing", action="store_true")
+    p.add_argument(
+        "--coarse-sigma-mm",
+        type=float,
+        default=0.5,
+        help="replace each tile's (tile - coarse) content above this Gaussian scale by the "
+        "coarse field before blending (0 disables)",
+    )
 
     p = sub.add_parser("render-ct", help="flatten and render one mesh bundle against CT")
     p.add_argument("--mesh", required=True, help="single-level mesh bundle directory")
