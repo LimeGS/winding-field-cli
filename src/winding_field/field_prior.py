@@ -7,7 +7,9 @@ same sheet, and neighbouring tiles agree. The prior only seeds and gauges the so
 the observations and fibres still determine the result.
 """
 
+import itertools
 import json
+from collections import OrderedDict
 from pathlib import Path
 
 import numpy as np
@@ -131,6 +133,59 @@ def fixed_provider(anchor_index, anchor_value):
     def fixed(lo, hi):
         lo, hi = np.asarray(lo), np.asarray(hi)
         values = np.full(tuple(hi - lo), np.nan)
+        if np.all(anchor >= lo) and np.all(anchor < hi):
+            values[tuple(anchor - lo)] = anchor_value
+        return values
+
+    return fixed
+
+
+def owned_chunks(order, chunk, shape, supported):
+    """Chunks with at least one supported fine node, in solve order."""
+    owned = []
+    for key in order:
+        lo = np.array(key) * chunk
+        if supported(lo, np.minimum(lo + chunk, shape)):
+            owned.append(tuple(int(k) for k in key))
+    return owned
+
+
+def scoped_fixed(anchor_index, anchor_value, owned, chunk, shape, start, cache_chunks=64):
+    """Fixed values for a solve over ``owned`` chunks only (``partial_order``).
+
+    Every node of an unowned chunk is held at ``start(lo, hi)`` evaluated over that whole
+    chunk, the value initialization would have given it (the prior where it is supported),
+    so an owned block's halo sees the prior instead of the unstored chunk's zeros. The
+    gauge node is fixed as in ``fixed_provider``.
+    """
+    owned = set(owned)
+    anchor = np.asarray(anchor_index)
+    shape = np.asarray(shape)
+    cache = OrderedDict()
+
+    def chunk_values(key):
+        if key in cache:
+            cache.move_to_end(key)
+            return cache[key]
+        lo = np.asarray(key) * chunk
+        value = np.asarray(start(lo, np.minimum(lo + chunk, shape)), float)
+        cache[key] = value
+        if len(cache) > cache_chunks:
+            cache.popitem(last=False)
+        return value
+
+    def fixed(lo, hi):
+        lo, hi = np.asarray(lo), np.asarray(hi)
+        values = np.full(tuple(hi - lo), np.nan)
+        spans = (range(a // chunk, (b - 1) // chunk + 1) for a, b in zip(lo, hi))
+        for key in itertools.product(*spans):
+            if key in owned:
+                continue
+            origin = np.asarray(key) * chunk
+            a, b = np.maximum(lo, origin), np.minimum(hi, origin + chunk)
+            target = tuple(slice(x - low, y - low) for x, y, low in zip(a, b, lo))
+            source = tuple(slice(x - o, y - o) for x, y, o in zip(a, b, origin))
+            values[target] = chunk_values(key)[source]
         if np.all(anchor >= lo) and np.all(anchor < hi):
             values[tuple(anchor - lo)] = anchor_value
         return values

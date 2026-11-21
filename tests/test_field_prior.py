@@ -118,3 +118,49 @@ def test_prior_from_a_release_without_reader_metadata_is_the_same_frame(tmp_path
     )
     with pytest.raises(ValueError, match="CT identity differs in level"):
         field.solve(other, dict(config, field_prior=str(old)))
+
+
+def test_supported_scope_solves_and_stores_only_chunks_with_observations(tmp_path, coarse):
+    from test_field import prepared_run
+    from winding_field import field
+
+    def half(name):
+        run = prepared_run(tmp_path / name, shape=(6, 6, 32), support_x_below=16)
+        meta = json.loads((run / "PREPARED.json").read_bytes())
+        meta["frame"] = "test"
+        (run / "PREPARED.json").write_text(json.dumps(meta))
+        return run
+
+    config = dict(sweeps=3, field_chunk=8, field_prior=str(coarse))
+    full, scoped = half("full"), half("scoped")
+    assert field.solve(full, config)["status"] == "FIELD_READY"
+    receipt = field.solve(scoped, dict(config, field_scope="supported"))
+    assert receipt["status"] == "FIELD_READY"
+    assert receipt["field_scope"] == dict(
+        mode="supported-chunks-v1", owned_chunks=2, total_chunks=4
+    )
+    checkpoint = json.loads((scoped / "field/CHECKPOINT.json").read_bytes())
+    assert sorted(checkpoint["chunks"]) == ["0-0-0", "0-0-1"]
+    assert checkpoint["identity"]["order_scope"] == "partial"
+    shape = receipt["geometry"]["shape_zyx"]
+    with field.open_field(scoped) as source:
+        values, valid = source.read([0, 0, 0], shape)
+    assert not valid[..., 16:].any() and valid[..., :16].all()
+    # The skipped half is held at the prior and the solved half, with the same data as the
+    # prior, stays on it: only the empty-side edge terms pull the last owned nodes toward
+    # the held values (in scope "all" the empty half flattens instead).
+    assert _compare(scoped, coarse) < 0.05
+    assert _compare(full, coarse) < 0.05
+    # A resume reuses the cached chunk scope.
+    assert json.loads((scoped / "FIELD_SCOPE.json").read_bytes())["owned"] == [
+        [0, 0, 0],
+        [0, 0, 1],
+    ]
+
+
+@pytest.mark.parametrize("config", [{"field_scope": "some"}, {"field_scope": "supported"}])
+def test_field_scope_is_validated(config):
+    from winding_field.config import validate_config
+
+    with pytest.raises(ValueError, match="field_scope"):
+        validate_config(config)

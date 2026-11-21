@@ -2,10 +2,10 @@
   "origin": "https://github.com/LimeGS/winding-field",
   "distribution": "winding-field",
   "version": "1.6.0",
-  "revision": "a4e85bc8fe38e32fa4b56d7c19042cd9a1601532",
-  "install_url": "git+https://github.com/LimeGS/winding-field@a4e85bc8fe38e32fa4b56d7c19042cd9a1601532",
+  "revision": "e1663380b841729a712b568f7c697887e9af4c3d",
+  "install_url": "git+https://github.com/LimeGS/winding-field@e1663380b841729a712b568f7c697887e9af4c3d",
   "verification": "git commit object id plus source_sha256, checked after install by tools/install-runtime.sh",
-  "changes": "Stable 1.6.0 release: adds the core verification loop (tools/verify.py, REVIEW.md, CI) and documentation; numerical modules byte-identical to 1.5.4 (48eeb34), so source_sha256 is unchanged. Opt-in block-solver nonconvergence policy as in 1.5.4; default fail unchanged; no numerical core bundled in the CLI",
+  "changes": "Core main after LimeGS/winding-field#18 (1.6.0 plus partial_order): adds opt-in solve_blocks(partial_order=True) used by run --field-scope supported; only block_solver.py changes; full-order identities and checkpoints unchanged.",
   "migrated_workflows": {
     "revision": "baf8052ed7115bddd8cbba08b3197ea31695ac4b",
     "changes": "moved to winding_field with tests, examples and wrappers; package imports, prepared command routing and module-based supervised launch",
@@ -34,7 +34,7 @@
   "source_sha256": {
     "field_store.py": "af121e72de8c589b3f3462948b429e3647dc3681b67d60dcb87d5900e3e7deef",
     "field_runtime.py": "c46acd41337f580ba73b68ce12c35f6997e4221f4f132b13bda62f7d286ad029",
-    "block_solver.py": "d37d673f1f566f0e729b847639a725dd076c81410c31af72fff63ac70f644043",
+    "block_solver.py": "27da3ac408bc950e9ffedc589c907c8225351eed60b315470f8f95b992ebbabb",
     "field_solver.py": "6799619f5dd1b4a8d2853560892fa4df6f5191a135dd4e991ff7b855cc6f0a17",
     "field_prefetch.py": "3ac983503f5a41661302b0cdd2a0b8526e5a96e86c201e10a18081bd00cb84f8",
     "field_constraints.py": "71065fb4f0b5c03d689d2b5514c34a8551398dc5801e3def2d571152a162d84a",

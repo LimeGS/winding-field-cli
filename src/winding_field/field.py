@@ -105,6 +105,28 @@ def map_axes(meta, geometry, lo, hi):
     ]
 
 
+def _owned_chunks(run, order, chunk, shape, identity, maps, meta, cal):
+    """Chunks with supported observations, cached in the run for resumes."""
+    from .field_prior import owned_chunks
+
+    geometry = identity["geometry"]
+    key = dict(maps=identity["maps"], geometry=geometry, chunk=chunk)
+    path = run / "FIELD_SCOPE.json"
+    if path.exists():
+        saved = json.loads(path.read_bytes())
+        if saved["key"] == key:
+            return [tuple(k) for k in saved["owned"]]
+
+    def supported(lo, hi):
+        return bool(sample_prior(maps, meta, geometry, cal, lo, hi)[2].any())
+
+    owned = owned_chunks(order, chunk, shape, supported)
+    if not owned:
+        raise ValueError("no field chunk has supported observations")
+    atomic_json(path, dict(key=key, owned=[list(k) for k in owned]))
+    return owned
+
+
 def sample_prior(maps, meta, geometry, cal, lo, hi):
     names = ("normals", "density", "support")
     if all(geometry[k] == meta[k] for k in ("origin_xyz", "spacing_xyz", "shape_zyx")):
@@ -398,19 +420,41 @@ def solve(run, config, stop=None, *, sweep_target=None, convergence=None):
     if bounded:
         options["max_bytes"] = config.get("bounded_bytes", 12 << 30) // 8
     prior = None
+    scope = config.get("field_scope", "all")
+    if scope not in ("all", "supported"):
+        raise ValueError("field_scope must be all or supported")
+    if scope == "supported" and (not config.get("field_prior") or convergence is not None):
+        raise ValueError("field_scope supported requires field_prior and a fixed sweep budget")
     if config.get("field_prior"):
-        from .field_prior import FieldPrior, fixed_provider
+        from .field_prior import FieldPrior, fixed_provider, scoped_fixed
 
         if bounded:
             raise ValueError("field_prior supports ordinary (unbounded) preparation only")
         prior = FieldPrior(config["field_prior"], geometry, meta.get("source"))
         # The prior seeds and gauges the solve, so it is part of the numerical problem.
         identity["field_prior"] = prior.identity
+        if scope == "supported":
+            total = len(options["order"])
+            owned = _owned_chunks(run, options["order"], chunk, shape, identity, maps, meta, cal)
+            options.update(order=owned, partial_order=True)
+            identity["field_scope"] = dict(
+                mode="supported-chunks-v1", owned_chunks=len(owned), total_chunks=total
+            )
         anchor_index, anchor_value = prior.anchor(
             options["order"], chunk, shape, lambda lo, hi: coordinates(lo, hi, geometry)
         )
         identity["field_prior"]["anchor"] = dict(index_zyx=list(anchor_index), value=anchor_value)
-        options["fixed"] = fixed_provider(anchor_index, anchor_value)
+        if scope == "supported":
+
+            def start(lo, hi):
+                xyz = coordinates(lo, hi, geometry)
+                return prior.initial(xyz, initial_field(xyz, geometry, cal))
+
+            options["fixed"] = scoped_fixed(
+                anchor_index, anchor_value, options["order"], chunk, shape, start
+            )
+        else:
+            options["fixed"] = fixed_provider(anchor_index, anchor_value)
     db = sqlite3.connect((run / "fibres/fibres.sqlite").resolve().as_uri() + "?mode=ro", uri=True)
     row_count = 0
     static_rows = {}
@@ -778,6 +822,8 @@ def solve(run, config, stop=None, *, sweep_target=None, convergence=None):
             )
         if prior is not None:
             receipt["field_prior"] = identity["field_prior"]
+        if "field_scope" in identity:
+            receipt["field_scope"] = identity["field_scope"]
         atomic_json(run / "FIELD.json", receipt)
         return receipt
     except InterruptedError:
