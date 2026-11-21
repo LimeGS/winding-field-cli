@@ -1,4 +1,8 @@
-"""Purely local Lasagna tile workers with parent-owned source pins and publication."""
+"""Lasagna tile workers with parent-owned source pins and publication.
+
+Local inputs use private worker caches; remote CT/predictions (explicit --import-workers)
+share the parent's encoded-chunk cache.
+"""
 
 from contextlib import ExitStack, closing
 import math
@@ -23,7 +27,9 @@ def _initialize(config, work, geometry, physical, identity):
     global _READER, _VOLUME, _GEOMETRY
     root = Path(work) / str(os.getpid())
     root.mkdir()
-    config = dict(config, cache=str(root / "cache"), _import_worker=True)
+    config = dict(
+        config, cache=config.get("_shared_cache") or str(root / "cache"), _import_worker=True
+    )
     _VOLUME = open_volume(config)
     _VOLUME.bind_ledger(root / "source.sqlite")
     _READER = (
@@ -79,12 +85,12 @@ def observations(reader, volume, geometry, maps, config, stack, stop):
             reserve_bytes=config.get("reserve_bytes", 0),
             worker_bytes=(768 << 20) + 8 * largest + scratch + 2 * RESULT_BYTES,
         )
-        if local and config.get("fibres")
+        if config.get("fibres") and (local or requested != 1)
         else dict(
             workers=1,
             max_inflight=2,
             requested=requested,
-            limiting_resource="remote-input" if not local else "parent-inference",
+            limiting_resource="parent-inference" if local else "remote-input",
         )
     )
     execution.update(
@@ -112,6 +118,11 @@ def observations(reader, volume, geometry, maps, config, stack, stop):
         local=str(volume.local) if volume.local else None,
         _import_cache_bytes=budget,
     )
+    if not local:
+        # Remote sources: workers share the parent's encoded-chunk cache (multi-process
+        # safe) instead of private ones, so no chunk is downloaded once per worker. Pins
+        # still return to the parent, which re-verifies every consumed chunk.
+        worker_config["_shared_cache"] = str(config.get("cache") or volume.cache)
     work = stack.enter_context(TemporaryDirectory(prefix=".import-workers-", dir=maps.root.parent))
     jobs = ((key, *maps.box(key)) for key in maps.keys() if not maps.has(key))
     results = stack.enter_context(
