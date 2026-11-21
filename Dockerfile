@@ -19,7 +19,7 @@ COPY tools/ubuntu-packages.txt /opt/runtime-provenance/tools/ubuntu-packages.txt
 RUN mkdir -p /scratch && test "$TARGETARCH" = amd64 && \
     case "$TORCH_VARIANT" in cpu|cu128) ;; *) exit 1 ;; esac && \
     rm -f /etc/apt/sources.list.d/cuda*.list && \
-    sed -i -E 's|http://[^ ]+/ubuntu/?|https://snapshot.ubuntu.com/ubuntu/20261101T000000Z/|g' /etc/apt/sources.list.d/ubuntu.sources && \
+    sed -i -E 's|http://[^ ]+/ubuntu/?|https://snapshot.ubuntu.com/ubuntu/20261121T000000Z/|g' /etc/apt/sources.list.d/ubuntu.sources && \
     printf 'Acquire::Retries "5";\nAcquire::https::Pipeline-Depth "0";\n' > /etc/apt/apt.conf.d/80snapshot && \
     apt-get update -o APT::Update::Error-Mode=any && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
       ca-certificates $(cat /opt/runtime-provenance/tools/ubuntu-packages.txt) \
@@ -94,9 +94,10 @@ ARG NVIDIA_REQUIRE_CUDA=""
 LABEL org.opencontainers.image.source="https://github.com/LimeGS/winding-field-cli"
 COPY --from=certificates /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
 # G++ and Ninja are required by explicit accelerator builds and Lasagna JIT.
-RUN sed -i -E 's|http://[^ ]+/ubuntu/?|https://snapshot.ubuntu.com/ubuntu/20261101T000000Z/|g' /etc/apt/sources.list.d/ubuntu.sources && \
+RUN sed -i -E 's|http://[^ ]+/ubuntu/?|https://snapshot.ubuntu.com/ubuntu/20261121T000000Z/|g' /etc/apt/sources.list.d/ubuntu.sources && \
     printf 'Acquire::Retries "5";\nAcquire::https::Pipeline-Depth "0";\n' > /etc/apt/apt.conf.d/80snapshot && \
     apt-get update -o APT::Update::Error-Mode=any && \
+    DEBIAN_FRONTEND=noninteractive apt-get upgrade -y && \
     DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
       ca-certificates g++ ninja-build libcurl4t64 libsqlite3-0 libblosc1 libzstd1 \
       liblz4-1 zlib1g libtiff6 libpng16-16t64 libjpeg-turbo8 libgomp1 libnuma1 \

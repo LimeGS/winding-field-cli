@@ -1,3 +1,6 @@
 vesuvius-lasagna @ https://github.com/ScrollPrize/villa/archive/b29f310957c7b29e7d332f9876e0e487819cfaa3.tar.gz#subdirectory=lasagna
 torch==2.10.0
 torchvision==0.25.0
+pillow==13.0.0
+wandb==0.31.2
+cwevals==0.0.1b3
