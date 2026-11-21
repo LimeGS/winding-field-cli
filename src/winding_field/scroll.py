@@ -1079,7 +1079,17 @@ def render_ct(args):
     mesh = Path(args.mesh)
     receipts = {}
     started = time.time()
-    if args.decimate > 1:
+    source_levels = _json(mesh / "MESH.json")["levels"]
+    source_faces = sum(level["faces"] for level in source_levels)
+    if args.decimate > 1 and source_faces < args.decimate_min_faces:
+        # Small meshes are cheap to flatten as they are, and collapsing a few thousand
+        # faces to a few hundred left PHerc0175A edge levels with no mappable chart.
+        receipts["decimation"] = dict(
+            factor=1, requested_factor=args.decimate, source_faces=source_faces,
+            source_level=source_levels[0]["level"],
+            reason=f"fewer than {args.decimate_min_faces} faces",
+        )  # fmt: skip
+    elif args.decimate > 1:
         mesh, receipts["decimation"] = decimate_bundle(
             mesh, args.decimate, output.parent / (output.name + ".decimated")
         )
@@ -1114,6 +1124,131 @@ def render_ct(args):
         result["scroll_render"] = receipts
         atomic_json(output / "SCROLL-RENDER.json", receipts)
     return result
+
+
+# --- site -------------------------------------------------------------------------------
+
+
+def build_pyramid(component, output, name):
+    """Deep Zoom (DZI) pyramid from a tiled render component's per-tile PNGs."""
+    from PIL import Image
+
+    component, output = Path(component), Path(output)
+    grid = _json(component / "RENDER.json")["grid"]
+    height, width = grid["shape_yx"]
+    size = grid["tile_pixels"]
+    top = max(0, math.ceil(math.log2(max(width, height))))
+    files = output / f"{name}_files"
+    level = files / str(top)
+    level.mkdir(parents=True, exist_ok=True)
+    for png in (component / "png").glob("*.png"):
+        y, x = (int(v) for v in png.stem.split("-"))
+        target = level / f"{x // size}_{y // size}.png"
+        if not target.exists():
+            target.write_bytes(png.read_bytes())
+    w, h = width, height
+    for index in range(top - 1, -1, -1):
+        source, target_dir = files / str(index + 1), files / str(index)
+        target_dir.mkdir(exist_ok=True)
+        w, h = math.ceil(w / 2), math.ceil(h / 2)
+        for col in range(math.ceil(w / size)):
+            for row in range(math.ceil(h / size)):
+                target = target_dir / f"{col}_{row}.png"
+                if target.exists():
+                    continue
+                canvas = Image.new("LA", (2 * size, 2 * size))
+                found = False
+                for dc in (0, 1):
+                    for dr in (0, 1):
+                        child = source / f"{2 * col + dc}_{2 * row + dr}.png"
+                        if child.exists():
+                            with Image.open(child) as image:
+                                canvas.paste(image, (dc * size, dr * size))
+                            found = True
+                if found:
+                    tile = canvas.resize((size, size), Image.BOX).crop(
+                        (0, 0, min(size, w - col * size), min(size, h - row * size))
+                    )
+                    tile.save(target)
+    (output / f"{name}.dzi").write_text(
+        f'<?xml version="1.0" encoding="UTF-8"?>\n'
+        f'<Image xmlns="http://schemas.microsoft.com/deepzoom/2008" TileSize="{size}" '
+        f'Overlap="0" Format="png"><Size Width="{width}" Height="{height}"/></Image>\n'
+    )
+    return dict(dzi=f"{name}.dzi", width=width, height=height, tile=size)
+
+
+SITE_HTML = """<!doctype html><meta charset="utf-8"><title>{title}</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+body{{margin:0;font:14px system-ui,sans-serif;display:flex;height:100vh;background:#111;color:#ddd}}
+#list{{width:220px;overflow:auto;border-right:1px solid #333}}
+#list a{{display:block;padding:6px 10px;color:#ddd;text-decoration:none;font-variant-numeric:tabular-nums}}
+#list a.on{{background:#2a4a7a}} #list a small{{color:#999}} #view{{flex:1}}
+h1{{font-size:15px;margin:10px}}
+</style>
+<div id="list"><h1>{title}</h1></div><div id="view"></div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/openseadragon/4.1.0/openseadragon.min.js"></script>
+<script>
+const levels = {levels};
+const viewer = OpenSeadragon({{id:"view", prefixUrl:
+  "https://cdnjs.cloudflare.com/ajax/libs/openseadragon/4.1.0/images/", showNavigator:true,
+  maxZoomPixelRatio:4}});
+const list = document.getElementById("list");
+function show(i){{
+  document.querySelectorAll("#list a").forEach((a,j)=>a.classList.toggle("on",j===i));
+  const l = levels[i];
+  // Inline Deep Zoom description: no XHR for the .dzi (works from file:// too).
+  viewer.open({{Image:{{xmlns:"http://schemas.microsoft.com/deepzoom/2008",
+    Url:l.dzi.replace(/\\.dzi$/,"_files/"), Format:"png", Overlap:"0", TileSize:String(l.tile),
+    Size:{{Width:String(l.width), Height:String(l.height)}}}}}});
+  location.hash = i;
+}}
+levels.forEach((l,i)=>{{const a=document.createElement("a"); a.href="#"+i;
+  a.innerHTML="W "+l.w.toFixed(2)+" <small>"+l.status+" "+(100*l.coverage).toFixed(1)+"%</small>";
+  a.onclick=e=>{{e.preventDefault(); show(i);}}; list.appendChild(a);}});
+if (levels.length) show(Math.min(levels.length-1, parseInt(location.hash.slice(1))||0));
+</script>
+"""
+
+
+def site(args):
+    """Pyramids for every rendered level/component and one viewer page for the scroll."""
+    renders, output = Path(args.renders), Path(args.output)
+    output.mkdir(parents=True, exist_ok=True)
+    levels = []
+    for level_dir in sorted(p for p in renders.iterdir() if (p / "LEVEL.json").is_file()):
+        record = _json(level_dir / "LEVEL.json")
+        extra = level_dir / "SCROLL-RENDER.json"
+        w = (
+            _json(extra)["decimation"]["source_level"]
+            if extra.is_file() and "decimation" in _json(extra)
+            else record["components"][0]["grid"]["level"]
+        )
+        for component in record["components"]:
+            folder = level_dir / component["path"]
+            if not (folder / "png").is_dir():
+                continue
+            name = f"{level_dir.name}-{component['path']}"
+            pyramid = build_pyramid(folder, output / "dzi", name)
+            levels.append(
+                dict(
+                    w=float(w),
+                    status=record["status"],
+                    coverage=float(record.get("coverage_fraction", 0.0)),
+                    dzi="dzi/" + pyramid["dzi"],
+                    width=pyramid["width"],
+                    height=pyramid["height"],
+                    tile=pyramid["tile"],
+                    source=str(level_dir),
+                )
+            )
+    levels.sort(key=lambda item: item["w"])
+    atomic_json(output / "levels.json", levels)
+    (output / "index.html").write_text(
+        SITE_HTML.format(title=args.title, levels=json.dumps(levels, allow_nan=False))
+    )
+    return dict(status="SITE_READY", output=str(output), levels=len(levels))
 
 
 # --- CLI --------------------------------------------------------------------------------
@@ -1198,11 +1333,22 @@ def _parser():
         help="collapse the mesh to 1/N of its faces before flattening (9 is ~1 um on 175A)",
     )
     p.add_argument(
+        "--decimate-min-faces",
+        type=int,
+        default=50000,
+        help="render meshes with fewer faces without decimation",
+    )
+    p.add_argument(
         "--prefetch-workers",
         type=int,
         default=16,
         help="parallel CT downloads before an offline render (0: render online as before)",
     )
+    p.add_argument("--output", required=True)
+
+    p = sub.add_parser("site", help="Deep Zoom pyramids and one viewer page for a scroll")
+    p.add_argument("renders", help="directory of render-ct outputs (one per level)")
+    p.add_argument("--title", default="scroll")
     p.add_argument("--output", required=True)
     return parser
 
@@ -1216,6 +1362,8 @@ def main(argv=None):
             result = run_tiles(args)
         elif args.action == "merge":
             result = merge(args)
+        elif args.action == "site":
+            result = site(args)
         else:
             result = render_ct(args)
     except (ValueError, OSError) as error:

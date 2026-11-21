@@ -402,3 +402,38 @@ def test_mesh_ct_chunks_cover_every_sampled_voxel(tmp_path):
     # z 3..5, y 2..10, x 1..11 -> chunks z 0..1, y 0..2, x 0..2.
     expected = {(z, y, x) for z in range(2) for y in range(3) for x in range(3)}
     assert keys == expected
+
+
+def test_build_pyramid_keeps_full_resolution_tiles_and_halves_each_level(tmp_path):
+    from PIL import Image
+
+    component = tmp_path / "component"
+    (component / "png").mkdir(parents=True)
+    height, width = 300, 600
+    (component / "RENDER.json").write_text(
+        json.dumps(dict(grid=dict(shape_yx=[height, width], tile_pixels=256)))
+    )
+    rng = np.random.default_rng(1)
+    image = rng.integers(0, 255, (height, width, 2), dtype=np.uint8)
+    for y in range(0, height, 256):
+        for x in range(0, width, 256):
+            Image.fromarray(image[y : y + 256, x : x + 256], "LA").save(
+                component / "png" / f"{y:09d}-{x:09d}.png"
+            )
+    result = scroll.build_pyramid(component, tmp_path / "out", "w")
+    assert result == dict(dzi="w.dzi", width=width, height=height, tile=256)
+    files = tmp_path / "out" / "w_files"
+    top = 10  # ceil(log2(600))
+    assert sorted(int(p.name) for p in files.iterdir()) == list(range(top + 1))
+    for name in (files / str(top)).iterdir():
+        col, row = (int(v) for v in name.stem.split("_"))
+        np.testing.assert_array_equal(
+            np.asarray(Image.open(name)),
+            image[row * 256 : row * 256 + 256, col * 256 : col * 256 + 256],
+        )
+    w, h = width, height
+    for level in range(top - 1, -1, -1):
+        w, h = -(-w // 2), -(-h // 2)
+        with Image.open(files / str(level) / "0_0.png") as tile:
+            assert tile.size == (min(256, w), min(256, h))
+    assert 'Width="600" Height="300"' in (tmp_path / "out" / "w.dzi").read_text()
