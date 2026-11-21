@@ -4,3 +4,4 @@ torchvision==0.25.0
 pillow==13.0.0
 wandb==0.31.2
 cwevals==0.0.1b3
+# moviepy is omitted: it pins pillow<12 and is only used by WandB media logging.
