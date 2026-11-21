@@ -20,6 +20,8 @@ from .util import atomic_json, digest
 
 TILE = 256
 MAX_PIXELS = 100_000_000
+# Tiled output never holds a canvas row or image in memory; this only bounds runaway UVs.
+MAX_TILED_PIXELS = 50_000_000_000
 
 
 def _geometry_sha(store):
@@ -147,6 +149,50 @@ def _blocks(store, prefix, shape, window, quality=False):
                 block[:h, x : x + w, 0] = gray
                 block[:h, x : x + w, 1] = (mask == 2) * 255
         yield y, block
+
+
+def _tile_la(tile, window):
+    """The sheet.png gray + observed-alpha encoding for one stored tile."""
+    values = np.nan_to_num(tile["ct"], nan=window[0])
+    gray = np.rint(np.clip((values - window[0]) * 255 / (window[1] - window[0]), 0, 255))
+    return np.stack([gray.astype(np.uint8), ((tile["mask"] == 2) * 255).astype(np.uint8)], -1)
+
+
+def _publish_png_file(store, name, image, mode):
+    if store.db.execute("SELECT 1 FROM files WHERE name=?", (name,)).fetchone():
+        store.validate_file(name)
+        return
+    path = store.path(name)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    pending = path.with_name("." + path.name + ".pending")
+    with pending.open("wb") as stream:
+        Image.fromarray(image, mode=mode).save(stream, format="PNG")
+        stream.flush()
+        os.fsync(stream.fileno())
+    pending.replace(path)
+    store.register(name)
+
+
+def _publish_tiles(store, prefix, shape, window, overview_name):
+    """One LA PNG per stored tile (pixels as in sheet.png) and a tile-built overview."""
+    height, width = shape
+    stride = max(1, math.ceil(max(height, width) / 2048))
+    overview = np.zeros((math.ceil(height / stride), math.ceil(width / stride), 2), np.uint8)
+    for y in range(0, height, TILE):
+        for x in range(0, width, TILE):
+            store.check()
+            image = _tile_la(store.load_arrays(_tile_name(prefix, y, x)), window)
+            if image[..., 1].any():
+                _publish_png_file(store, f"{prefix}/png/{y:09d}-{x:09d}.png", image, "LA")
+            # Same samples as the whole-canvas overview: global rows/columns % stride == 0.
+            rows = np.flatnonzero((np.arange(y, y + image.shape[0])) % stride == 0)
+            cols = np.flatnonzero((np.arange(x, x + image.shape[1])) % stride == 0)
+            if len(rows) and len(cols):
+                overview[np.ix_((y + rows) // stride, (x + cols) // stride)] = image[
+                    np.ix_(rows, cols)
+                ]
+    if not store.db.execute("SELECT 1 FROM files WHERE name=?", (overview_name,)).fetchone():
+        _publish_png_file(store, overview_name, overview, "LA")
 
 
 def _write_png(store, name, shape, blocks, quality=False):
@@ -521,17 +567,28 @@ def _tifxyz(store, prefix, grid, volume, component=None):
     return dict(counts, status="WRITTEN", path=prefix + "/tifxyz", manifest=result)
 
 
-def render(store, volume, pitch_um, export_tifxyz=False):
+def render(store, volume, pitch_um, export_tifxyz=False, *, keep_xyz=True, tiled=False):
+    """Rasterize mapped charts and sample CT per TILE x TILE pixel tile.
+
+    Defaults keep the historical outputs. ``keep_xyz=False`` stores only CT and mask per
+    tile (XYZ/normal are recomputable from the retained charts and UVs; TIFXYZ needs
+    them). ``tiled=True`` writes one PNG per tile under ``<component>/png/`` instead of
+    whole-canvas sheet/mask PNGs, which lifts the 100M-pixel canvas bound.
+    """
     if type(pitch_um) not in (int, float) or not math.isfinite(pitch_um) or pitch_um <= 0:
         raise ValueError("positive physical render pitch required")
-    if export_tifxyz:
-        pass  # Preflight before any expensive work.
+    if export_tifxyz and not keep_xyz:
+        raise ValueError("TIFXYZ export needs per-pixel XYZ (keep_xyz)")
     identity = dict(
         volume=volume.identity,
         pitch_um=pitch_um,
         export_tifxyz=export_tifxyz,
         geometry_sha256=_geometry_sha(store),
     )
+    if not keep_xyz:
+        identity["keep_xyz"] = False
+    if tiled:
+        identity["tiled"] = True
     old = store.get("render_identity")
     if old is not None and old != identity:
         raise ValueError("render identity changed")
@@ -555,7 +612,10 @@ def render(store, volume, pitch_um, export_tifxyz=False):
         origin = np.floor(np.array([minx, miny]) / pitch_um) * pitch_um
         wh = (np.ceil((np.array([maxx, maxy]) - origin) / pitch_um) + 1).astype(np.int64)
         width, height = map(int, wh)
-        if min(width, height) <= 0 or max(width, height) > 100_000 or width * height > MAX_PIXELS:
+        if tiled:
+            if min(width, height) <= 0 or width * height > MAX_TILED_PIXELS:
+                raise ValueError("global raster exceeds the tiled-canvas bound")
+        elif min(width, height) <= 0 or max(width, height) > 100_000 or width * height > MAX_PIXELS:
             raise ValueError("global raster exceeds bounded100M-pixel canvas")
         prefix = f"component-{component:012d}"
         grid = dict(
@@ -595,6 +655,8 @@ def render(store, volume, pitch_um, export_tifxyz=False):
                         rows, cols = np.nonzero(valid)
                         mask[rows[observed], cols[observed]] = 2
                     tile = {"xyz_um": xyz, "normal": normal, "mask": mask, "ct": values}
+                    if not keep_xyz:
+                        tile = {"mask": mask, "ct": values}
                     store.phase = "save_tiles"
                     store.save_arrays(name, **tile)
                     with store.db:
@@ -615,20 +677,23 @@ def render(store, volume, pitch_um, export_tifxyz=False):
             if window[1] <= window[0]:
                 window[1] = window[0] + 1.0
         store.phase = "publish"
-        _write_png(
-            store,
-            prefix + "/sheet.png",
-            (height, width),
-            _blocks(store, prefix, (height, width), window),
-        )
-        _write_png(
-            store,
-            prefix + "/mask.png",
-            (height, width),
-            _blocks(store, prefix, (height, width), window, True),
-            True,
-        )
         overview_name = prefix + "/overview.png"
+        if tiled:
+            _publish_tiles(store, prefix, (height, width), window, overview_name)
+        else:
+            _write_png(
+                store,
+                prefix + "/sheet.png",
+                (height, width),
+                _blocks(store, prefix, (height, width), window),
+            )
+            _write_png(
+                store,
+                prefix + "/mask.png",
+                (height, width),
+                _blocks(store, prefix, (height, width), window, True),
+                True,
+            )
         if not store.db.execute("SELECT 1 FROM files WHERE name=?", (overview_name,)).fetchone():
             stride = max(1, math.ceil(max(height, width) / 2048))
             overview = np.zeros(

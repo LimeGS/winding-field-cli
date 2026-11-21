@@ -334,3 +334,71 @@ def test_split_afv_keeps_whole_fibres_touching_each_box_and_stays_importable(tmp
         assert split["tile"] == name
         identity = afv.source_identity(out[name]["path"], None, meta["source"])
         assert identity["input_count"] == len(ids)
+
+
+def test_tiled_render_writes_the_same_pixels_as_whole_png_and_drops_xyz(tmp_path):
+    from PIL import Image
+    from test_native_geometry import plane_bundle
+    from test_native_render import analytic_ct
+    from winding_field.native_pipeline import render_mesh
+    from winding_field.surface_mesh import MeshReader
+
+    bundle = plane_bundle(tmp_path, nx=40, ny=30)
+    config = {"chart_faces": 64, "render_pitch_um": 0.1}
+    with MeshReader(bundle) as reader, analytic_ct(tmp_path) as volume:
+        whole = render_mesh(reader, tmp_path / "whole", volume, config)
+        tiled = render_mesh(
+            reader,
+            tmp_path / "tiled",
+            volume,
+            dict(config, render_tiled=True, render_keep_xyz=False),
+        )
+    assert whole["status"] == tiled["status"] == "COMPLETE"
+    component = whole["components"][0]["path"]
+    sheet = np.asarray(Image.open(tmp_path / "whole" / component / "sheet.png"))
+    assert sheet.shape[0] > 256 and sheet.shape[1] > 256  # several tiles per axis
+    assert not (tmp_path / "tiled" / component / "sheet.png").exists()
+    rebuilt = np.zeros_like(sheet)
+    for png in (tmp_path / "tiled" / component / "png").iterdir():
+        y, x = (int(v) for v in png.stem.split("-"))
+        tile = np.asarray(Image.open(png))
+        rebuilt[y : y + tile.shape[0], x : x + tile.shape[1]] = tile
+    np.testing.assert_array_equal(rebuilt, sheet)
+    for name in ("overview.png",):
+        assert (tmp_path / "tiled" / component / name).read_bytes() == (
+            tmp_path / "whole" / component / name
+        ).read_bytes()
+    stored = next((tmp_path / "tiled" / component / "tiles").glob("*.npz"))
+    with np.load(stored) as data:
+        assert set(data.files) == {"mask", "ct"}
+
+
+def test_decimate_bundle_reports_deviation_and_keeps_a_plane_exact(tmp_path):
+    from test_native_geometry import plane_bundle
+
+    bundle = plane_bundle(tmp_path, nx=20, ny=20)
+    mesh, receipt = scroll.decimate_bundle(bundle, 4, tmp_path / "decimated")
+    assert receipt["faces"] <= receipt["source_faces"] // 4 + 2
+    assert receipt["deviation_um"]["max"] < 1e-9
+    assert (mesh / "MESH.json").is_file()
+
+
+def test_mesh_ct_chunks_cover_every_sampled_voxel(tmp_path):
+    from types import SimpleNamespace
+
+    from test_native_geometry import plane_bundle
+    from winding_field.surface_mesh import MeshReader
+
+    bundle = plane_bundle(tmp_path, nx=9, ny=7)
+    volume = SimpleNamespace(
+        origin_xyz=[0.0, 0.0, 0.0],
+        spacing_xyz=[1.0, 1.0, 1.0],
+        chunks=(4, 4, 4),
+        shape=(12, 12, 16),
+    )
+    with MeshReader(bundle) as reader:
+        keys = set(scroll.mesh_ct_chunks(reader, volume))
+    # The plane spans x 2..10, y 3..9 at z = 4; with one voxel of margin that is
+    # z 3..5, y 2..10, x 1..11 -> chunks z 0..1, y 0..2, x 0..2.
+    expected = {(z, y, x) for z in range(2) for y in range(3) for x in range(3)}
+    assert keys == expected

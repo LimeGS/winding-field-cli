@@ -600,6 +600,13 @@ def tile_correction(task):
 _WORKER = {}
 
 
+def _spawn():
+    # Fresh interpreters: forking a parent that already holds threads/SQLite can deadlock.
+    import multiprocessing
+
+    return multiprocessing.get_context("spawn")
+
+
 def _worker_init(plan_root, tiles, grid, overlap, out, corrections=None):
     _WORKER.update(plan_root=plan_root, grid=grid, overlap=overlap, out=Path(out), open={})
     _WORKER["tiles"] = {t["id"]: t for t in tiles}
@@ -795,7 +802,7 @@ def merge(args):
             (str(root), t, grid, coarse["path"], args.coarse_sigma_mm, str(correction_dir))
             for t in tiles
         ]
-        with ProcessPoolExecutor(max_workers=args.workers) as pool:
+        with ProcessPoolExecutor(max_workers=args.workers, mp_context=_spawn()) as pool:
             corrections = dict(pool.map(tile_correction, jobs))
     chunks = {}
     seams = {}
@@ -803,6 +810,7 @@ def merge(args):
     ordered = sorted(tasks.items())
     with ProcessPoolExecutor(
         max_workers=args.workers,
+        mp_context=_spawn(),
         initializer=_worker_init,
         initargs=(
             str(root),
@@ -941,7 +949,110 @@ def merge(args):
 # --- render-ct --------------------------------------------------------------------------
 
 
+def _indexed_mesh(reader):
+    """(vertices_xyz, faces) of a single-level bundle, faces as 0-based vertex rows."""
+    reader.validate()
+    ids, vertices = [], []
+    for row in reader.db.execute("SELECT id,x,y,z FROM vertices ORDER BY id"):
+        ids.append(row[0])
+        vertices.append(row[1:])
+    ids = np.asarray(ids, np.int64)
+    faces = np.asarray(
+        reader.db.execute("SELECT a,b,c FROM faces ORDER BY id").fetchall(), np.int64
+    )
+    reader.validate()
+    return np.asarray(vertices, np.float64), np.searchsorted(ids, faces)
+
+
+def decimate_bundle(mesh, factor, output, *, sample=200_000, seed=0):
+    """Edge-collapse (libigl qslim) a single-level bundle to 1/factor of its faces.
+
+    Rendering samples CT at every pixel of the flattened surface, so triangles only need
+    to follow the surface, not the field grid: on PHerc0175A 1/9 (95 um edges) moved the
+    surface by at most 1.05 um while cutting flatten+assemble ~10x. The receipt reports
+    the measured deviation of a sample of original vertices from the new surface.
+    """
+    import igl
+
+    from .surface_mesh import MeshReader, import_mesh
+
+    with MeshReader(mesh) as reader:
+        meta = reader.manifest["metadata"]
+        levels = reader.manifest["levels"]
+        vertices, faces = _indexed_mesh(reader)
+    if len(levels) != 1:
+        raise ValueError("decimation needs a single-level bundle")
+    target = max(1, len(faces) // factor)
+    out_v, out_f, _, _ = igl.qslim(
+        np.asfortranarray(vertices), np.asfortranarray(faces.astype(np.int32)), target
+    )
+    rng = np.random.default_rng(seed)
+    probe = vertices[rng.choice(len(vertices), min(sample, len(vertices)), replace=False)]
+    distance = np.sqrt(
+        igl.point_mesh_squared_distance(probe, out_v, np.asarray(out_f, np.int32))[0]
+    )
+    output = Path(output)
+    output.mkdir(parents=True, exist_ok=True)
+    source = output / "decimated.npz"
+    np.savez(source, vertices_xyz=out_v, faces=np.asarray(out_f, np.int64))
+    geometry = {
+        k: meta[k]
+        for k in ("frame", "voxel_um", "origin_xyz", "spacing_xyz", "shape_zyx", "sheet_step")
+    }
+    import_mesh({"path": str(source), "sha256": file_sha(source)}, output / "mesh", geometry)
+    receipt = dict(
+        factor=factor,
+        source_level=levels[0]["level"],
+        source_faces=len(faces),
+        faces=int(len(out_f)),
+        sampled_vertices=len(probe),
+        deviation_um=dict(
+            p50=float(np.median(distance)),
+            p99=float(np.percentile(distance, 99)),
+            max=float(distance.max()),
+        ),
+    )
+    atomic_json(output / "DECIMATION.json", receipt)
+    return output / "mesh", receipt
+
+
+def mesh_ct_chunks(reader, volume, margin=1):
+    """CT chunk indices (ZYX) that rasterizing and trilinear sampling the mesh can touch."""
+    origin = np.asarray(volume.origin_xyz, float)
+    spacing = np.asarray(volume.spacing_xyz, float)
+    chunks = np.asarray(volume.chunks, np.int64)
+    last = np.asarray(volume.shape, np.int64) - 1
+    keys = set()
+    for triangles, _ in reader.triangles(batch_size=65536):
+        grid = (triangles - origin) / spacing
+        lo = np.clip(np.floor(grid.min(1)).astype(np.int64)[:, ::-1] - margin, 0, last)
+        hi = np.clip(np.ceil(grid.max(1)).astype(np.int64)[:, ::-1] + margin, 0, last)
+        klo, khi = lo // chunks, hi // chunks
+        single = (klo == khi).all(1)
+        keys.update(map(tuple, np.unique(klo[single], axis=0).tolist()))
+        for a, b in zip(klo[~single].tolist(), khi[~single].tolist()):
+            keys.update(itertools.product(*(range(x, y + 1) for x, y in zip(a, b))))
+    return sorted(keys)
+
+
+def prefetch_ct(volume, keys, workers):
+    """Fill the CT cache with ``keys`` using parallel connections; returns bytes fetched."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    separator = volume.metadata.get("dimension_separator", ".")
+    prefix = volume.array_path + "/" if volume.array_path else ""
+
+    def fetch(key):
+        raw = volume._native_bytes(prefix + separator.join(map(str, key)))
+        return 0 if raw is None else len(raw)
+
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        return sum(pool.map(fetch, keys))
+
+
 def render_ct(args):
+    import shutil
+
     from .native_pipeline import render_mesh
     from .surface_mesh import MeshReader
     from .workflow import open_volume
@@ -959,17 +1070,49 @@ def render_ct(args):
         surface_time_limit_s=args.surface_time_limit,
         coverage_target=args.coverage_target,
         export_tifxyz=args.export_tifxyz,
+        render_keep_xyz=args.export_tifxyz,
+        render_tiled=not args.whole_png,
     )
     if args.cache_gib is not None:
         config["cache_bytes"] = int(args.cache_gib * (1 << 30))
-    with MeshReader(Path(args.mesh)) as reader:
+    output = Path(args.output)
+    mesh = Path(args.mesh)
+    receipts = {}
+    started = time.time()
+    if args.decimate > 1:
+        mesh, receipts["decimation"] = decimate_bundle(
+            mesh, args.decimate, output.parent / (output.name + ".decimated")
+        )
+        receipts["decimation"]["seconds"] = time.time() - started
+    with MeshReader(mesh) as reader:
         volume = open_volume({k: v for k, v in config.items() if v is not None})
+        if volume.remote and not args.offline and args.prefetch_workers > 0:
+            # Prefetch every touched chunk over parallel connections, then render offline:
+            # an online render re-verifies each chunk against the source per epoch, one
+            # HTTPS connection at a time (53 of 77 s on a PHerc0175A winding).
+            t = time.time()
+            keys = mesh_ct_chunks(reader, volume)
+            need = len(keys) * math.prod(volume.chunks) * volume.dtype.itemsize
+            config["cache_bytes"] = max(config.get("cache_bytes", 2 << 30), int(need * 1.25))
+            volume.close()
+            volume = open_volume({k: v for k, v in config.items() if v is not None})
+            free = shutil.disk_usage(volume.cache).free
+            if need > free:
+                raise ValueError(f"CT prefetch needs {need >> 30} GiB, {free >> 30} GiB free")
+            fetched = prefetch_ct(volume, keys, args.prefetch_workers)
+            volume.close()
+            config["offline"] = True
+            volume = open_volume({k: v for k, v in config.items() if v is not None})
+            receipts["prefetch"] = dict(
+                chunks=len(keys), fetched_bytes=fetched, seconds=time.time() - t
+            )
         try:
-            result = render_mesh(reader, Path(args.output), volume, config)
+            result = render_mesh(reader, output, volume, config)
         finally:
-            close = getattr(volume, "close", None)
-            if close:
-                close()
+            volume.close()
+    if receipts:
+        result["scroll_render"] = receipts
+        atomic_json(output / "SCROLL-RENDER.json", receipts)
     return result
 
 
@@ -1038,7 +1181,28 @@ def _parser():
     p.add_argument("--flattening-method", default="slim", choices=("slim", "default"))
     p.add_argument("--surface-time-limit", type=float, default=1800.0)
     p.add_argument("--coverage-target", type=float, default=1.0)
-    p.add_argument("--export-tifxyz", action="store_true")
+    p.add_argument(
+        "--export-tifxyz",
+        action="store_true",
+        help="also write TIFXYZ; keeps per-pixel XYZ, otherwise only CT and mask are stored",
+    )
+    p.add_argument(
+        "--whole-png",
+        action="store_true",
+        help="write whole-canvas sheet/mask PNGs (100M-pixel bound) instead of per-tile PNGs",
+    )
+    p.add_argument(
+        "--decimate",
+        type=int,
+        default=1,
+        help="collapse the mesh to 1/N of its faces before flattening (9 is ~1 um on 175A)",
+    )
+    p.add_argument(
+        "--prefetch-workers",
+        type=int,
+        default=16,
+        help="parallel CT downloads before an offline render (0: render online as before)",
+    )
     p.add_argument("--output", required=True)
     return parser
 

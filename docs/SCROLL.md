@@ -116,6 +116,33 @@ wf scroll render-ct --mesh /outputs/meshes/level-0000 --source "$CT" --voxel-um 
   --level 0 --render-pitch-um 8.64 --output /outputs/render/level-0000
 ```
 
-`render-ct` uses the same native flatten/render path as `run`, with two differences: the
-pixel pitch is `--render-pitch-um` (a `run` renders at the field spacing, 34.56 µm here)
-and the CT level is chosen independently of the level the field was built from.
+`render-ct` uses the same native flatten/render path as `run`, with these differences:
+
+- **Pitch and level.** Pixels are `--render-pitch-um` (a `run` renders at the field
+  spacing, 34.56 µm here) and the CT level is chosen independently of the level the
+  field was built from.
+- **CT prefetch, then offline.** An online render re-verifies every CT chunk against the
+  source at the start and end of the render, one HTTPS connection per chunk. On a
+  PHerc0175A winding that was 53 of 77 s with every chunk already cached. `render-ct`
+  lists the chunks the mesh can touch (triangle bounds plus one voxel for trilinear
+  sampling), downloads them into `--cache` over `--prefetch-workers` (default 16)
+  parallel connections, sizes the cache so nothing is evicted, and renders `--offline`
+  from the ledger-pinned cache. `--prefetch-workers 0` restores the online render.
+- **`--decimate N`** collapses the mesh to 1/N of its faces (libigl qslim) before
+  flattening; `DECIMATION.json` records the deviation of a vertex sample from the new
+  surface. Triangles only need to follow the surface: CT is still sampled at every
+  pixel. On PHerc0175A, 1/9 (95 µm edges) moved the surface by at most 1.05-1.35 µm (p99
+  0.5 µm; one CT voxel is 8.64 µm) and cut flatten+assemble from 17.6 to 1.7 s; 1/16
+  started to raise flattening stretch.
+- **Per-tile PNGs.** Each 256-pixel tile is written as `component-*/png/Y-X.png` (the
+  same gray + observed-alpha pixels as `sheet.png`) with the usual `overview.png`; there
+  is no whole-canvas PNG and no 100M-pixel canvas bound (an outer winding at 8.64 µm is
+  about 290M pixels). `--whole-png` restores `sheet.png`/`mask.png`. `sheet-atlas` reads
+  `sheet.png` and needs `--whole-png`.
+- **No per-pixel XYZ.** Only CT and mask are stored per tile. XYZ and normals are
+  recomputable from the retained charts and UVs; `--export-tifxyz` keeps them and writes
+  TIFXYZ.
+
+Measured on a merged two-tile winding (98,656 faces, empty cache): 187 s online and
+98.98% mapped before; 39 s with prefetch, `--decimate 9` and tiles (5 s decimation, 9 s
+for 70 CT chunks, ~13 s flatten and render), 100% mapped, 3.4 MB instead of 21 MB.
