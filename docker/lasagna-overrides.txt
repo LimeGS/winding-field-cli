@@ -1,0 +1,4 @@
+# moviepy 2.2.1 (the latest release) requires pillow<12, which would undo the Pillow 13
+# security fix. It only comes in through wandb's optional "media" extra (video logging),
+# which the Lasagna inference runtime never uses, so it is excluded from the lock.
+moviepy ; python_version < "0"

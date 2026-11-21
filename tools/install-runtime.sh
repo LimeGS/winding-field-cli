@@ -58,7 +58,8 @@ if [[ "$phase" != application ]]; then
         "$uv" pip install --python "$cli/bin/python" "${options[@]}" \
             --constraint "$root/docker/cli.in" --requirements "$PWD/pyproject.toml" --extra plot --extra tifxyz
         "$uv" pip install --python "$lasagna/bin/python" "${options[@]}" \
-            --constraint "$root/docker/cli.in" --requirements "$root/docker/lasagna.in"
+            --constraint "$root/docker/cli.in" --override "$root/docker/lasagna-overrides.txt" \
+            --requirements "$root/docker/lasagna.in"
     else
         "$uv" pip sync --python "$cli/bin/python" --require-hashes "${options[@]}" "$root/docker/cli-$backend.txt"
         "$uv" pip sync --python "$lasagna/bin/python" --require-hashes "${options[@]}" "$root/docker/lasagna-$backend.txt"

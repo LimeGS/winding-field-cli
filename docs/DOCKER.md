@@ -309,7 +309,9 @@ a fresh container CI run.
 ## Updating locks
 
 Use uv **0.9.17**. Update source pins deliberately, then regenerate and verify
-both variants rather than editing generated hashes:
+both variants rather than editing generated hashes. `docker/lasagna-overrides.txt`
+excludes `moviepy` (wandb's unused `media` extra), whose `pillow<12` cap would undo
+the Pillow 13 security fix:
 
 ```sh
 for backend in cpu cu128; do
@@ -320,6 +322,6 @@ for backend in cpu cu128; do
   uv pip compile docker/lasagna.in --python-version 3.14.0 \
     --python-platform x86_64-manylinux_2_39 --torch-backend "$backend" \
     --generate-hashes --build-constraints docker/build-constraints.txt \
-    -o "docker/lasagna-$backend.txt"
+    --override docker/lasagna-overrides.txt -o "docker/lasagna-$backend.txt"
 done
 ```
