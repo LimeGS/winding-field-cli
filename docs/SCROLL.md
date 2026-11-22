@@ -20,8 +20,29 @@ level-2 tiles). A 138.24 µm coarse field at level 2 is stride 4:
 ```sh
 wf run --source "$CT" --voxel-um 8.64 --level 2 --stride 4 --field-spacing-um 138.24 \
   --fibres /data/scroll.afv --lasagna-input /data/lasagna/input.lasagna.json \
-  --sweeps 32 --until field --output /outputs/coarse
+  --field-chunk 640 --sweeps 1 --rtol 1e-7 --maxiter 50000 --until field \
+  --output /outputs/coarse
 ```
+
+**Solve the coarse as one block** (`--field-chunk` at least the largest grid dimension,
+one sweep): the merge takes every scale above `--coarse-sigma-mm` from it, so an
+unconverged coarse puts the wrong winding count into the whole scroll. Blocks exchange
+information only through their overlap, and with the default 2-node halo a whole-scroll
+coarse does not converge. Measured on PHerc0175A (625 × 404 × 482 nodes) against the
+one-block solution, after removing the constant offset:
+
+| Coarse | Median \|dW\| | p99 | Nodes over half a winding |
+|---|---|---|---|
+| 12 blocks of 256, halo 2, 8 sweeps | 10.98 | 65.9 | 97 % |
+| halo 32 (`--field-halo 32`), 8 sweeps | 1.57 | 3.04 | 86 % |
+| halo 32, 16 sweeps | 0.38 | 0.62 | 16 % |
+| one block | 0 (reference) | | |
+
+The per-sweep change does not show this (halo 32, sweep 16: 0.148). One block needs GPU
+memory for the whole system in float64, about 121 bytes per node plus about 419 bytes per
+fibre constraint row (~50 GB here; 19 min on a 96 GB GPU). Operational scripts and the
+other measured pitfalls of a whole-scroll run are in
+[tools/scroll](../tools/scroll/README.md).
 
 ## 2. Plan
 
