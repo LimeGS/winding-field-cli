@@ -51,6 +51,21 @@ def _settings(config):
         or type(result["export_tifxyz"]) is not bool
     ):
         raise ValueError("invalid native coverage/time/export settings")
+    scope = config.get("flattening_scope") or "charts"
+    if scope not in ("charts", "sheet"):
+        raise ValueError("flattening_scope must be charts or sheet")
+    if scope == "sheet":
+        # Opt-in: recorded only when enabled, so chart-scope identities are unchanged.
+        if result["parameterizer"]["solver"] != "flatboi-slim":
+            raise ValueError("flattening_scope sheet requires flattening_method slim")
+        result["flattening_scope"] = "sheet"
+        result["parameterizer"] = dict(
+            result["parameterizer"],
+            scope="sheet",
+            initialization="global-lscm-or-mean-value",
+            cut="igl-cut-to-disk",
+            layout="v-follows-world-z",
+        )
     # Opt-in render storage/output modes; absent keys keep existing identities unchanged.
     for key in ("render_keep_xyz", "render_tiled"):
         if key in config:
@@ -137,7 +152,18 @@ def _geometry_and_render(reader, store, volume, settings, pitch, until, *, offli
     target = settings["coverage_target"]
     method = "slim" if settings["parameterizer"]["solver"] == "flatboi-slim" else "default"
     available = target
-    if until in ("flatten", "assemble"):
+    sheet = settings.get("flattening_scope") == "sheet"
+    if sheet and store.get("render_identity") is None:
+        from .flattening.native_global import flatten_sheet
+
+        # One global map per connected piece; charts are stored already assembled.
+        flatten_sheet(reader, store, settings["chart_faces"], offline=offline)
+        if until == "flatten":
+            return None
+        mapped = assemble(store, target)
+        if until == "assemble":
+            return None
+    elif until in ("flatten", "assemble"):
         if store.get("render_identity") is not None:
             return None
         flatten_mesh(
@@ -148,6 +174,8 @@ def _geometry_and_render(reader, store, volume, settings, pitch, until, *, offli
         return None
     if store.get("render_identity") is not None:
         mapped = summary(store)
+    elif sheet:
+        pass
     else:
         uv_deadline = store.elapsed + max(0.0, store.seconds - store.elapsed) * 0.6
         while True:
@@ -196,6 +224,8 @@ def _geometry_and_render(reader, store, volume, settings, pitch, until, *, offli
         for c in rendered["components"]
     )
     complete = mapped["coverage_fraction"] >= 1.0 - 1e-12 and usable and all_tiff
+    if sheet:
+        rendered = dict(rendered, sheet_flatten=store.get("sheet_flatten"))
     return dict(
         mapped,
         **rendered,
