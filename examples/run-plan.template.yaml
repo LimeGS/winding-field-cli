@@ -98,7 +98,8 @@ afv_clip_backend: auto # Opciones: auto | native | numpy | reference; recorte AF
 # lasagna_embedded_spacing_xyz_um: [9.6, 9.6, 9.6] # Opciones: 3 números finitos >0 [X,Y,Z] en µm; exige embedded_origin y ct_source.
 
 # ── Solver de campo ──────────────────────────────────────────────────────────
-field_chunk: 64 # Opciones: entero 4..256, borde de bloque en muestras de campo.
+field_chunk: 64 # Opciones: entero >= 4, borde de bloque en muestras de campo; >= la mayor dimensión del grid resuelve el campo como un solo bloque global.
+# field_halo: 2 # Opciones: entero >= 1, nodos de campo que cada bloque comparte con sus vecinos | null/omitir para 2; más solape converge en menos barridos.
 sweeps: 4 # Opciones: entero >=1; presupuesto de barridos, NO garantía de convergencia.
 # field_advice: true # Opciones: true|false; diagnóstico consultivo opt-in; requiere core de desarrollo con observer; no cambia barridos, parada ni verificaciones.
 prepared_cache_bytes: 0 # Opciones: entero >=0 en bytes de workspaces retenidos; 0 desactiva; no es tope de memoria pico.

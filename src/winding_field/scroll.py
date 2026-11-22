@@ -1363,7 +1363,24 @@ def _parser():
 
 
 def main(argv=None):
-    args = _parser().parse_args(argv)
+    from .cli_settings import parse_options
+
+    args = parse_options(
+        _parser(),
+        argv,
+        paths=(
+            "source",
+            "coarse",
+            "fibres",
+            "lasagna_input",
+            "output",
+            "plan",
+            "mesh",
+            "local",
+            "cache",
+            "renders",
+        ),
+    )
     try:
         if args.action == "plan":
             result = plan(args)
