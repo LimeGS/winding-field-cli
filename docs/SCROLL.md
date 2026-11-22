@@ -135,8 +135,8 @@ wf scroll render-ct --mesh /outputs/meshes/level-0000 --source "$CT" --voxel-um 
   (a closed winding is opened along one seam), seeded with a global LSCM and optimized
   by one Flatboi SLIM solve, then stored as raster charts that already agree on every
   shared vertex. There is nothing to weld; the only seams are the disk cuts, and +v
-  follows world +Z on every level. A piece that cannot be flattened whole (non-manifold
-  input, a failed solve) uses the chart route under its own component and is listed in
+  follows world +Z on every level. A piece that cannot be flattened whole (a failed
+  or folded solve) uses the chart route under its own component and is listed in
   `LEVEL.json` → `sheet_flatten.fallback`; per-piece iterations and edge-stretch/area
   percentiles are in `sheet_flatten.pieces`. It needs `--flattening-method slim` and,
   for multi-million-face meshes, a larger `--surface-time-limit`.
@@ -152,6 +152,15 @@ wf scroll render-ct --mesh /outputs/meshes/level-0000 --source "$CT" --voxel-um 
   The same SLIM solve on 466,216 faces took 90 s (25 steps). These are synthetic
   single runs, not a 175A measurement: check `ambiguous_xyz` in each `RENDER.json` and
   the `sheet_flatten` receipt on real levels before a sweep.
+
+  Real meshes are not clean, so two things happen before the solve and are counted in
+  the receipt. `repair`: faces stay joined only across edges with exactly two faces of
+  opposite direction, and a vertex is copied once per fan of such faces; a pinched
+  vertex, a third face on an edge, a flipped or a duplicated face come apart instead of
+  sending the whole sheet to the chart route. `holes` (per piece): a hole whose rim
+  turns by about -2 pi is left as a hole; only closed wraps and handles are cut. On a
+  synthetic 73,527-face sheet with 12 holes, cutting every hole to the boundary cost
+  642 seam vertices and 0.88% ambiguous + 0.90% missing pixels; keeping them costs none.
 - **`--decimate N`** collapses the mesh to 1/N of its faces (libigl qslim) before
   flattening; `DECIMATION.json` records the deviation of a vertex sample from the new
   surface. Triangles only need to follow the surface: CT is still sampled at every
