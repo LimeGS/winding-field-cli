@@ -93,6 +93,7 @@ def _logical(root):
 def _worker(config, output, workers, profiled, resume_case=False):
     from winding_field import (
         afv,
+        afv_support,
         artifacts,
         exports,
         io,
@@ -145,6 +146,12 @@ def _worker(config, output, workers, profiled, resume_case=False):
         metrics["support_loads"] += int(names == ("support",))
         return load(self, key, names)
 
+    read_support = afv_support._read_tile
+
+    def snapshot_read(maps, key):
+        metrics["support_loads"] += 1
+        return read_support(maps, key)
+
     def hashed(path):
         result = sha(path)
         metrics["hashed_bytes"] += Path(path).stat().st_size
@@ -189,6 +196,8 @@ def _worker(config, output, workers, profiled, resume_case=False):
             stack.enter_context(patch.object(io.Volume, "_decode_chunk", decoded))
             stack.enter_context(patch.object(io.Volume, "_record", recorded))
             stack.enter_context(patch.object(artifacts.Tiles, "load", loaded))
+            # The AFV support snapshot reads each tile once, outside Tiles.load.
+            stack.enter_context(patch.object(afv_support, "_read_tile", snapshot_read))
             stack.enter_context(
                 patch.object(
                     io.Volume, "validate_used", timed(io.Volume.validate_used, "validation")

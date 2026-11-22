@@ -129,6 +129,8 @@ def validate_config(config):
         raise ValueError("field_scope must be all or supported")
     if config.get("field_scope") == "supported" and not prior:
         raise ValueError("field_scope supported requires field_prior")
+    if config.get("afv_clip_backend", "auto") not in ("auto", "native", "numpy", "reference"):
+        raise ValueError("afv_clip_backend must be auto, native, numpy or reference")
     if config.get("nonconvergence_policy", "fail") not in ("fail", "continue"):
         raise ValueError("invalid nonconvergence_policy")
     lasagna_downsamples(config)
@@ -200,6 +202,7 @@ def validate_config(config):
         "constraint_cache_bytes": (0, None),
         "observation_cache_bytes": (0, None),
         "field_cache_bytes": (0, None),
+        "afv_support_snapshot_bytes": (0, None),
     }
     for name, (low, high) in integers.items():
         if name in config:

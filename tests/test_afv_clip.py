@@ -42,8 +42,9 @@ def test_support_cache_eviction_and_ownership(tmp_path):
         assert tiny.bytes == 0
 
 
-def test_cached_support_cannot_hide_mid_import_map_mutation(tmp_path, monkeypatch):
-    config = tool().generated_input(tmp_path / "run", 4, 1)
+@pytest.mark.parametrize("backend", ["reference", "numpy"])
+def test_cached_support_cannot_hide_mid_import_map_mutation(tmp_path, monkeypatch, backend):
+    config = dict(tool().generated_input(tmp_path / "run", 4, 1), afv_clip_backend=backend)
     original = afv._pieces
     changed = False
 

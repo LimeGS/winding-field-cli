@@ -162,6 +162,19 @@ def source_identity(path, geometry_path, source):
 
 
 def _pieces(points, maps, stop=None):
+    """Fragments of one block: native when the support carries the kernel, else NumPy."""
+    native = getattr(maps, "native", None)
+    if native is not None:
+        from .afv_clip import MAX_INTERVALS
+        from .afv_native import clip_blocks
+
+        fragments = clip_blocks(native, [points], maps.dense, MAX_INTERVALS)[0]
+        counts = maps.native_counts
+        if fragments is not None:
+            counts["native_blocks"] += 1
+            yield from fragments
+            return
+        counts["reference_blocks"] += 1
     from .afv_clip import pieces
 
     yield from pieces(points, maps, stop)
@@ -334,31 +347,155 @@ def _source_blocks(src, source, meta, stop):
         raise ValueError("AFV block inventory changed")
 
 
+# Work units: consecutive source blocks, bounded by count, points and annotation bytes.
+_JOB_BLOCKS = 512
+_JOB_POINTS = 1 << 18
+_JOB_ANNOTATION_BYTES = 4 << 20
+# Native calls per worker step, so STOP is observed between bounded slices.
+_NATIVE_SLICE_BLOCKS = 64
+_SNAPSHOT_BYTES = 4 << 30
+_RESUME = dict(
+    schema="afv-import-resume-v2",
+    clip="afv-clip-pieces-v1",
+    serializer="npy-v1-float64-xyz",
+    checksum="sha256(digest([family,annotation])) chained with sha256(blob) in curve order",
+)
+_HEADERS = {}
+
 _WORKER_SUPPORT = None
+_WORKER_LIBRARY = None
 
 
-def _clip_initialize(path, cache_bytes):
+def _clip_initialize(path, cache_bytes, library=None, snapshot=None):
+    """Worker state: the shared dense snapshot when given, else a bounded tile cache."""
     from .afv_clip import SupportTiles
+    from .afv_support import DenseSupport
 
-    global _WORKER_SUPPORT
-    _WORKER_SUPPORT = SupportTiles(Tiles(path, readonly=True), cache_bytes=cache_bytes)
+    global _WORKER_SUPPORT, _WORKER_LIBRARY
+    if snapshot is not None:
+        _WORKER_SUPPORT = DenseSupport(*snapshot)
+    else:
+        _WORKER_SUPPORT = SupportTiles(Tiles(path, readonly=True), cache_bytes=cache_bytes)
+    _WORKER_LIBRARY = None
+    if library is not None:
+        from .afv_native import load
+
+        _WORKER_LIBRARY = load(library)
 
 
-def _clip_worker(job):
+def _clip(blocks, support, library, stop, counters):
+    """Fragments for each block (None entries are skipped: retained blocks)."""
+    from .afv_clip import MAX_INTERVALS
+
+    results = [None] * len(blocks)
+    pending = [i for i, points in enumerate(blocks) if points is not None]
+    if library is not None and getattr(support, "dense", None) is not None:
+        from .afv_native import clip_blocks
+
+        for start in range(0, len(pending), _NATIVE_SLICE_BLOCKS):
+            if stop and stop():
+                raise InterruptedError("AFV import paused")
+            chosen = pending[start : start + _NATIVE_SLICE_BLOCKS]
+            native = clip_blocks(library, [blocks[i] for i in chosen], support.dense, MAX_INTERVALS)
+            for index, fragments in zip(chosen, native):
+                if fragments is not None:
+                    results[index] = fragments
+                    counters["native_blocks"] += 1
+        pending = [i for i in pending if results[i] is None]
+        counters["reference_blocks"] += len(pending)
+    for index in pending:
+        if stop and stop():
+            raise InterruptedError("AFV import paused")
+        results[index] = list(_pieces(blocks[index], support, stop))
+    return results
+
+
+def _clip_worker(blocks):
+    """Clip one work unit; return results only, never echo the input back."""
     from .import_parallel import RESULT_BYTES, worker_stopped
 
+    counters = dict(native_blocks=0, reference_blocks=0)
     before = _WORKER_SUPPORT.loads
-    fragments = []
-    charge = len(job[3].encode()) + job[-1].nbytes + 4096
-    if charge > RESULT_BYTES:
-        return job, None, dict(pid=os.getpid(), support_loads=0)
-    for piece in _pieces(job[-1], _WORKER_SUPPORT, worker_stopped):
-        charge += piece.nbytes + 256
+    results = _clip(blocks, _WORKER_SUPPORT, _WORKER_LIBRARY, worker_stopped, counters)
+    charge = 4096
+    for index, fragments in enumerate(results):
+        if fragments is None:
+            continue
+        charge += 256 + sum(piece.nbytes + 256 for piece in fragments)
         if charge > RESULT_BYTES:
-            fragments = None
+            # The parent recomputes the rest; results are never truncated.
+            for later in range(index, len(results)):
+                results[later] = None
             break
-        fragments.append(piece)
-    return job, fragments, dict(pid=os.getpid(), support_loads=_WORKER_SUPPORT.loads - before)
+    stats = dict(pid=os.getpid(), support_loads=_WORKER_SUPPORT.loads - before, **counters)
+    return results, stats
+
+
+def _blob(world):
+    """Exactly ``np.save(world)`` for a native float64 (n, 3) array, header cached."""
+    if world.dtype != np.float64 or world.ndim != 2 or not world.flags.c_contiguous:
+        buffer = io.BytesIO()
+        np.save(buffer, world, allow_pickle=False)
+        return buffer.getvalue()
+    n = world.shape[0]
+    header = _HEADERS.get((n, world.shape[1]))
+    if header is None:
+        buffer = io.BytesIO()
+        np.save(buffer, np.zeros(world.shape, np.float64), allow_pickle=False)
+        raw = buffer.getvalue()
+        header = raw[: len(raw) - world.nbytes]
+        if len(_HEADERS) >= 4096:
+            _HEADERS.clear()
+        _HEADERS[(n, world.shape[1])] = header
+    return header + world.tobytes()
+
+
+def _batches(jobs, retained):
+    """Bounded consecutive work units; retained blocks carry no clipping work."""
+    batch, points, notes = [], 0, 0
+    for job in jobs:
+        fid, family, first, annotation, local = job
+        old = retained(fid, first)
+        batch.append((job, old))
+        points += 0 if old else len(local)
+        notes += len(annotation)
+        if len(batch) >= _JOB_BLOCKS or points >= _JOB_POINTS or notes >= _JOB_ANNOTATION_BYTES:
+            yield batch
+            batch, points, notes = [], 0, 0
+    if batch:
+        yield batch
+
+
+def _resume_mode(db):
+    """``fast`` for runs that recorded the v2 resume contract, ``legacy`` otherwise.
+
+    The contract row is written in the transaction of the first committed block.
+    Earlier partial runs have committed blocks and no contract: they keep the
+    re-clipping verification and their database is not altered to claim otherwise.
+    """
+    known = db.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='import_meta'"
+    ).fetchone()
+    row = (
+        db.execute("SELECT value FROM import_meta WHERE key='resume'").fetchone() if known else None
+    )
+    if row is not None:
+        if json.loads(row[0]) != _RESUME:
+            raise ValueError("AFV import resume contract differs; use a new output")
+        return "fast"
+    if (
+        db.execute("SELECT 1 FROM done LIMIT 1").fetchone()
+        or db.execute("SELECT 1 FROM curves LIMIT 1").fetchone()
+    ):
+        return "legacy"
+    return "new"  # the contract is written with the first committed block
+
+
+def _record_contract(db):
+    db.execute("CREATE TABLE IF NOT EXISTS import_meta(key TEXT PRIMARY KEY,value TEXT)")
+    db.execute(
+        "INSERT INTO import_meta VALUES ('resume',?)", (json.dumps(_RESUME, sort_keys=True),)
+    )
 
 
 def import_fibres(run, config, stop=None, *, verified_source=None, maps=None):
@@ -375,15 +512,40 @@ def import_fibres(run, config, stop=None, *, verified_source=None, maps=None):
         origin=meta["origin_xyz"],
         spacing=meta["spacing_xyz"],
     )
+    from .afv_native import NativeUnavailable, backend as clip_backend
     from .import_parallel import limits, local_inputs, ordered_map
 
+    chosen = clip_backend(config)
+    snapshot_limit = config.get("afv_support_snapshot_bytes", _SNAPSHOT_BYTES)
+    if type(snapshot_limit) is not int or snapshot_limit < 0:
+        raise ValueError("afv_support_snapshot_bytes must be a nonnegative integer")
+    if supplied:
+        shape = tuple(maps.shape)
+    else:
+        tiles = run / "maps/TILES.json"
+        shape = tuple(json.loads(tiles.read_bytes())["shape"]) if tiles.is_file() else ()
+    snapshot_bytes = (
+        math.prod(shape)
+        if shape and not supplied and chosen != "reference" and math.prod(shape) <= snapshot_limit
+        else 0
+    )
     execution = limits(
         config.get("import_workers", 1) if (local_inputs(config) and not supplied) else 1,
         output=run,
-        reserve_bytes=config.get("reserve_bytes", 0),
+        reserve_bytes=config.get("reserve_bytes", 0) + snapshot_bytes,
         worker_bytes=368 << 20,
+        shared_bytes=snapshot_bytes,
     )
-    execution.update(worker_pids=[], worker_support_loads=0, streaming_replays=0)
+    execution.update(
+        worker_pids=[],
+        worker_support_loads=0,
+        streaming_replays=0,
+        backend=chosen,
+        native_blocks=0,
+        reference_blocks=0,
+        retained_verified=0,
+        retained_reclipped=0,
+    )
     root = run / "fibres"
     root.mkdir(exist_ok=True)
     bind(root / "IMPORT.json", identity)
@@ -398,9 +560,12 @@ def import_fibres(run, config, stop=None, *, verified_source=None, maps=None):
     from .afv_clip import SupportTiles
 
     support = SupportTiles(maps, cache_bytes=64 << 20)
+    dense = None
+    library = None
     pending = processed = commits = 0
     committed = None
     batch_started = last_commit_utc = last_update = None
+    counters = dict(native_blocks=0, reference_blocks=0)
 
     def progress(status, force=False):
         nonlocal last_update
@@ -410,6 +575,9 @@ def import_fibres(run, config, stop=None, *, verified_source=None, maps=None):
         if not force and last_update is not None and now - last_update < _PROGRESS_SECONDS:
             return
         elapsed = max(0.0, now - started)
+        execution.update(
+            native_blocks=counters["native_blocks"], reference_blocks=counters["reference_blocks"]
+        )
         atomic_json(
             root / "STATUS.json",
             dict(
@@ -463,7 +631,10 @@ def import_fibres(run, config, stop=None, *, verified_source=None, maps=None):
             ).fetchone()
         ):
             raise ValueError("imported AFV inventory changed")
+        resume = _resume_mode(db)
+        execution["resume"] = resume
         committed = db.execute("SELECT count(*) FROM done").fetchone()[0]
+        next_id = db.execute("SELECT coalesce(max(id),0)+1 FROM curves").fetchone()[0]
         status_path = root / "STATUS.json"
         if status_path.is_file() and status_path.stat().st_size <= 65536:
             with suppress(OSError, ValueError, TypeError, AttributeError):
@@ -476,105 +647,175 @@ def import_fibres(run, config, stop=None, *, verified_source=None, maps=None):
                     and math.isfinite(stamp)
                 ):
                     last_commit_utc = stamp
+        if snapshot_bytes:
+            from .afv_support import open_or_build
+
+            dense, execution["support"] = open_or_build(
+                maps,
+                root,
+                meta["tiles_sha256"],
+                limit_bytes=snapshot_limit,
+                reserve_bytes=config.get("reserve_bytes", 0),
+            )
+        else:
+            execution["support"] = dict(snapshot="bounded-tiles")
+        if chosen == "native" and dense is None:
+            raise NativeUnavailable("native AFV clipping needs the dense support snapshot")
+        if chosen in ("auto", "native") and dense is not None:
+            from .afv_native import build, load
+
+            try:
+                library = build()
+            except NativeUnavailable:
+                if chosen == "native":
+                    raise
+                library = None
+            execution["clipper"] = "native" if library is not None else "numpy"
+        else:
+            execution["clipper"] = "numpy"
+        clip_support = dense if dense is not None else support
         progress("IMPORTING", force=True)
-        jobs = _source_blocks(src, source, meta, stop)
-        computed = (
-            ordered_map(
+
+        def retained(fid, block):
+            return db.execute(
+                "SELECT sha FROM done WHERE fid=? AND block=?", (fid, block)
+            ).fetchone()
+
+        units = _batches(_source_blocks(src, source, meta, stop), retained)
+        fast = resume == "fast"
+        contract_pending = resume == "new"
+        workers = execution["workers"]
+        if workers > 1:
+            from collections import deque
+
+            submitted = deque()
+
+            def submissions():
+                for unit in units:
+                    submitted.append(unit)
+                    # Retained blocks of a fast resume need no clipping.
+                    yield [None if (old and fast) else job[4] for job, old in unit]
+
+            computed = ordered_map(
                 _clip_worker,
-                jobs,
-                workers=execution["workers"],
+                submissions(),
+                workers=workers,
                 max_inflight=execution["max_inflight"],
                 initializer=_clip_initialize,
-                initargs=(str(run / "maps"), (64 << 20) // execution["workers"]),
+                initargs=(
+                    str(run / "maps"),
+                    64 << 20,
+                    None if library is None else str(library),
+                    None if dense is None else (str(dense.path), dense.meta),
+                ),
                 stop=stop,
             )
-            if execution["workers"] > 1
-            else ((job, None, None) for job in jobs)
-        )
-        with closing(computed):
-            for job, fragments, stats in computed:
-                fid, family, first, annotation, local = job
+
+            def paired():
+                # Closing this stream must reap the owned workers (ordered_map's finally).
+                with closing(computed):
+                    for results, stats in computed:
+                        yield submitted.popleft(), results, stats
+
+            stream = paired()
+        else:
+            if library is not None:
+                dense.native = load(library)
+                dense.native_counts = counters
+
+            def serial():
+                # One block at a time: clip, then publish, as the reference importer.
+                for unit in units:
+                    for job, old in unit:
+                        if old and fast:
+                            yield [(job, old)], [None], None
+                        else:
+                            yield [(job, old)], [list(_pieces(job[4], clip_support, stop))], None
+
+            stream = serial()
+        with closing(stream):
+            for unit, results, stats in stream:
                 if stats:
                     if stats["pid"] not in execution["worker_pids"]:
                         execution["worker_pids"].append(stats["pid"])
                     execution["worker_support_loads"] += stats["support_loads"]
-                    execution["streaming_replays"] += int(fragments is None)
-                old = db.execute(
-                    "SELECT sha FROM done WHERE fid=? AND block=?", (fid, first)
-                ).fetchone()
-                rows = (
-                    db.execute(
-                        "SELECT id,points,family,annotation FROM curves WHERE source_id=? AND source_block=? ORDER BY id",
-                        (fid, first),
-                    )
-                    if old
-                    else None
-                )
-                checksum = hashlib.sha256(digest([family, annotation]).encode())
-                if not old and not db.in_transaction:
-                    db.execute("BEGIN")
-                    batch_started = time.monotonic()
-                for piece in _pieces(local, support, stop) if fragments is None else fragments:
+                    counters["native_blocks"] += stats["native_blocks"]
+                    counters["reference_blocks"] += stats["reference_blocks"]
+                for (job, old), fragments in zip(unit, results):
+                    fid, family, first, annotation, local = job
                     if stop and stop():
                         raise InterruptedError("AFV import paused")
-                    world = piece * meta["spacing_xyz"] + meta["origin_xyz"]
-                    buffer = io.BytesIO()
-                    np.save(buffer, world, allow_pickle=False)
-                    box = tuple(float(v) for pair in zip(world.min(0), world.max(0)) for v in pair)
-                    blob = buffer.getvalue()
-                    checksum.update(hashlib.sha256(blob).digest())
+                    if old and fast:
+                        _verify_retained(db, fid, first, family, annotation, old[0])
+                        execution["retained_verified"] += 1
+                        processed += 1
+                        progress("IMPORTING")
+                        continue
+                    if fragments is None:
+                        execution["streaming_replays"] += int(stats is not None)
+                        fragments = _clip([local], clip_support, None, stop, counters)[0]
+                    checksum = hashlib.sha256(digest([family, annotation]).encode())
+                    rows, boxes, total = [], [], 0
+                    for piece in fragments:
+                        world = piece * meta["spacing_xyz"] + meta["origin_xyz"]
+                        blob = _blob(world)
+                        box = tuple(
+                            float(v) for pair in zip(world.min(0), world.max(0)) for v in pair
+                        )
+                        checksum.update(hashlib.sha256(blob).digest())
+                        rows.append(blob)
+                        boxes.append(box)
+                        total += len(blob)
                     if old:
-                        row = rows.fetchone()
-                        if row is None:
+                        _compare_retained(db, fid, first, family, annotation, rows, boxes)
+                        if old != (checksum.hexdigest(),):
                             raise ValueError("imported AFV inventory changed")
-                        cid, saved, label, note = row
-                        bound = db.execute(
-                            "SELECT min_x,max_x,min_y,max_y,min_z,max_z FROM curve_bounds WHERE id=?",
-                            (cid,),
-                        ).fetchone()
-                        if (
-                            blob != saved
-                            or label != family
-                            or note != annotation
-                            or bound is None
-                            or not np.allclose(bound, box, rtol=2e-7, atol=1e-6)
-                        ):
-                            raise ValueError("imported AFV payload changed")
-                    else:
-                        if config.get("bounded_preparation"):
-                            size = (
-                                db.execute("PRAGMA page_count").fetchone()[0]
-                                * db.execute("PRAGMA page_size").fetchone()[0]
-                            )
-                            if (
-                                2 * (size + len(blob) + 65536)
-                                > config.get("bounded_bytes", 12 << 30) // 4
-                            ):
-                                raise OSError("bounded AFV quota exhausted; block not committed")
-                        if (
-                            shutil.disk_usage(root).free
-                            < len(blob) + config.get("reserve_bytes", 0) + 65536
-                        ):
-                            raise OSError("insufficient space for AFV import and reserve")
-                        cid = db.execute(
-                            "INSERT INTO curves(tile,points,family,source_id,source_block,annotation) VALUES (?,?,?,?,?,?)",
-                            ("imported", blob, family, fid, first, annotation),
-                        ).lastrowid
-                        db.execute("INSERT INTO curve_bounds VALUES (?,?,?,?,?,?,?)", (cid, *box))
-                if old:
-                    if old != (checksum.hexdigest(),) or rows.fetchone() is not None:
-                        raise ValueError("imported AFV inventory changed")
-                else:
+                        execution["retained_reclipped"] += 1
+                        processed += 1
+                        progress("IMPORTING")
+                        continue
+                    if not db.in_transaction:
+                        db.execute("BEGIN")
+                        batch_started = time.monotonic()
+                    if config.get("bounded_preparation") and rows:
+                        size = (
+                            db.execute("PRAGMA page_count").fetchone()[0]
+                            * db.execute("PRAGMA page_size").fetchone()[0]
+                        )
+                        if 2 * (size + total + 65536) > config.get("bounded_bytes", 12 << 30) // 4:
+                            raise OSError("bounded AFV quota exhausted; block not committed")
+                    if rows and (
+                        shutil.disk_usage(root).free
+                        < total + config.get("reserve_bytes", 0) + 65536
+                    ):
+                        raise OSError("insufficient space for AFV import and reserve")
+                    ids = range(next_id, next_id + len(rows))
+                    db.executemany(
+                        "INSERT INTO curves(id,tile,points,family,source_id,source_block,annotation) VALUES (?,?,?,?,?,?,?)",
+                        [
+                            (cid, "imported", blob, family, fid, first, annotation)
+                            for cid, blob in zip(ids, rows)
+                        ],
+                    )
+                    db.executemany(
+                        "INSERT INTO curve_bounds VALUES (?,?,?,?,?,?,?)",
+                        [(cid, *box) for cid, box in zip(ids, boxes)],
+                    )
+                    next_id += len(rows)
+                    if contract_pending:
+                        _record_contract(db)
+                        contract_pending = False
                     db.execute(
                         "INSERT INTO done VALUES (?,?,?)", (fid, first, checksum.hexdigest())
                     )
                     pending += 1
-                processed += 1
-                if pending and (
-                    pending >= _BATCH_BLOCKS or time.monotonic() - batch_started >= _BATCH_SECONDS
-                ):
-                    commit_batch()
-                progress("IMPORTING")
+                    processed += 1
+                    if pending and (
+                        pending >= _BATCH_BLOCKS
+                        or time.monotonic() - batch_started >= _BATCH_SECONDS
+                    ):
+                        commit_batch()
+                    progress("IMPORTING")
         if (
             processed != source["block_count"]
             or db.execute("SELECT count(*) FROM done").fetchone()[0] != processed
@@ -588,6 +829,8 @@ def import_fibres(run, config, stop=None, *, verified_source=None, maps=None):
             raise ValueError("external AFV source changed during import")
         if not supplied and maps.identity() != meta["tiles_sha256"]:
             raise ValueError("AFV import maps changed during import")
+        if dense is not None:
+            dense.verify()
         count = db.execute("SELECT count(*) FROM curves").fetchone()[0]
         kept = db.execute("SELECT count(DISTINCT source_id) FROM curves").fetchone()[0]
     except InterruptedError:
@@ -603,6 +846,8 @@ def import_fibres(run, config, stop=None, *, verified_source=None, maps=None):
         raise
     finally:
         support.close()
+        if dense is not None:
+            dense.close()
         if not supplied:
             maps.close()
         src.close()
@@ -622,5 +867,63 @@ def import_fibres(run, config, stop=None, *, verified_source=None, maps=None):
         physical_accuracy="UNVALIDATED",
     )
     atomic_json(run / "FIBRES.json", result)
+    from .afv_support import remove
+
+    remove(root)  # the snapshot is a resume aid, not an output
     progress("FIBRES_READY", force=True)
     return result
+
+
+def _compare_retained(db, fid, first, family, annotation, blobs, boxes):
+    """Legacy resume: committed rows must equal the freshly clipped block."""
+    rows = db.execute(
+        "SELECT id,points,family,annotation FROM curves WHERE source_id=? AND source_block=? ORDER BY id",
+        (fid, first),
+    ).fetchall()
+    if len(rows) != len(blobs):
+        raise ValueError("imported AFV inventory changed")
+    for (cid, saved, label, note), blob, box in zip(rows, blobs, boxes):
+        bound = db.execute(
+            "SELECT min_x,max_x,min_y,max_y,min_z,max_z FROM curve_bounds WHERE id=?", (cid,)
+        ).fetchone()
+        if (
+            blob != saved
+            or label != family
+            or note != annotation
+            or bound is None
+            or not np.allclose(bound, box, rtol=2e-7, atol=1e-6)
+        ):
+            raise ValueError("imported AFV payload changed")
+
+
+def _verify_retained(db, fid, first, family, annotation, expected):
+    """Fast resume: committed rows must reproduce the digest recorded with them.
+
+    The ``done`` digest was written in the same transaction as the rows; the rows'
+    own payloads, labels, annotations and R-tree bounds are re-checked against it
+    and against the source metadata, without re-clipping. Corruption or a missing,
+    extra or reordered row fails, as on the legacy path.
+    """
+    checksum = hashlib.sha256(digest([family, annotation]).encode())
+    rows = db.execute(
+        "SELECT id,points,family,annotation FROM curves WHERE source_id=? AND source_block=? ORDER BY id",
+        (fid, first),
+    ).fetchall()
+    for cid, saved, label, note in rows:
+        if label != family or note != annotation or not isinstance(saved, bytes):
+            raise ValueError("imported AFV payload changed")
+        try:
+            world = np.load(io.BytesIO(saved), allow_pickle=False)
+        except ValueError as error:
+            raise ValueError("imported AFV payload changed") from error
+        if world.dtype != np.float64 or world.ndim != 2 or world.shape[1] != 3 or len(world) < 2:
+            raise ValueError("imported AFV payload changed")
+        box = tuple(float(v) for pair in zip(world.min(0), world.max(0)) for v in pair)
+        bound = db.execute(
+            "SELECT min_x,max_x,min_y,max_y,min_z,max_z FROM curve_bounds WHERE id=?", (cid,)
+        ).fetchone()
+        if bound is None or not np.allclose(bound, box, rtol=2e-7, atol=1e-6):
+            raise ValueError("imported AFV payload changed")
+        checksum.update(hashlib.sha256(saved).digest())
+    if checksum.hexdigest() != expected:
+        raise ValueError("imported AFV inventory changed")

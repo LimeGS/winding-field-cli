@@ -57,6 +57,7 @@ threads: 4 # Opciones: entero >= 1; threads CPU PyTorch, no un límite global de
 # fibres_origin_xyz_um: [0.0, 0.0, 0.0] # Opciones: 3 números finitos [X,Y,Z], origen físico AFV en µm; no inferir del ejemplo.
 # fibres_spacing_xyz_um: [9.6, 9.6, 9.6] # Opciones: 3 números finitos > 0 [X,Y,Z], espaciado físico AFV en µm.
 import_workers: 1 # Opciones: entero >= 0; 1 serial, 0 auto admitido, >1 importación local paralela; publica el padre.
+afv_clip_backend: auto # Opciones: auto | native | numpy | reference; recorte AFV exacto (native se compila con el C++ del host; reference = caché por tile, sin snapshot).
 
 # ── Generación oficial Lasagna (omitir al importar lasagna_input) ──────────────
 # lasagna_python: "/opt/lasagna-venv/bin/python" # Opciones: ruta al Python 3.14 aislado oficial | null/omitir para descubrimiento; conservar symlink del venv.

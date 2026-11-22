@@ -27,7 +27,9 @@ def local_inputs(config):
     )
 
 
-def limits(requested, *, output, reserve_bytes, worker_bytes):
+def limits(requested, *, output, reserve_bytes, worker_bytes, shared_bytes=0):
+    """``shared_bytes``: resident pages every worker maps (e.g. a support snapshot),
+    charged once against memory headroom, never per worker and never as free."""
     if (
         type(requested) is not int
         or requested < 0
@@ -35,6 +37,8 @@ def limits(requested, *, output, reserve_bytes, worker_bytes):
         or worker_bytes <= 0
         or type(reserve_bytes) is not int
         or reserve_bytes < 0
+        or type(shared_bytes) is not int
+        or shared_bytes < 0
     ):
         raise ValueError("invalid import worker admission")
     cpus = max(1, cpu_limit())
@@ -47,9 +51,12 @@ def limits(requested, *, output, reserve_bytes, worker_bytes):
     else:
         # Available headroom already excludes live parent RSS; charge all new
         # worker scratch, caches and parent-side in-flight results in worker_bytes.
-        head = min(
-            memory["host_available_bytes"] - (2 << 30),
-            memory["effective_headroom_bytes"] - (128 << 20),
+        head = (
+            min(
+                memory["host_available_bytes"] - (2 << 30),
+                memory["effective_headroom_bytes"] - (128 << 20),
+            )
+            - shared_bytes
         )
         memory_slots = max(0, head // worker_bytes)
         if memory_slots < slots:
