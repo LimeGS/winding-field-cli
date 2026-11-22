@@ -345,6 +345,15 @@ def solve(run, config, stop=None, *, sweep_target=None, convergence=None):
     ):
         raise ValueError("prepared maps or fibres changed")
     cal = meta["calibration"] if bounded else calibration(maps, meta)
+    inherited = None
+    if config.get("field_prior_calibration") == "inherit":
+        # A tile's own ROI centroid is not the scroll centre: radial orientation from it
+        # flips normals across the tile and against the coarse. Use the prior's calibration.
+        source = Path(config["field_prior"]).expanduser() / "CALIBRATION.json"
+        if not source.is_file():
+            raise ValueError("field prior has no CALIBRATION.json to inherit")
+        cal = json.loads(source.read_bytes())
+        inherited = file_sha(source)
     atomic_json(run / "CALIBRATION.json", cal)
     geometry = field_geometry(meta, None if bounded else config.get("field_spacing_um"))
     geometry.update(voxel_um=1.0, sheet_step=1.0)
@@ -360,6 +369,8 @@ def solve(run, config, stop=None, *, sweep_target=None, convergence=None):
         fibre_weight=config.get("fibre_weight", 1.0),
         algorithm="physical-trilinear-prior-v2",
     )
+    if inherited is not None:
+        identity["calibration_source"] = dict(kind="field_prior", sha256=inherited)
     pair_provider = None
     if bounded or convergence is not None:
         from .bounded_constraints import build, PairCatalog

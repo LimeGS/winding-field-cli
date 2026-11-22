@@ -164,3 +164,28 @@ def test_field_scope_is_validated(config):
 
     with pytest.raises(ValueError, match="field_scope"):
         validate_config(config)
+
+
+def test_inherited_calibration_uses_the_priors_centre_and_is_recorded(tmp_path, coarse):
+    from winding_field import field
+    from winding_field.config import validate_config
+
+    with pytest.raises(ValueError, match="requires field_prior"):
+        validate_config({"field_prior_calibration": "inherit"})
+    with pytest.raises(ValueError, match="own or inherit"):
+        validate_config({"field_prior": str(coarse), "field_prior_calibration": "global"})
+    config = dict(sweeps=3, field_chunk=8, field_spacing_um=1.0, field_prior=str(coarse))
+    own = _tile(tmp_path / "own", (6, 6, 16), shift_x=20.0)
+    field.solve(own, config)
+    tile = _tile(tmp_path / "inherit", (6, 6, 16), shift_x=20.0)
+    receipt = field.solve(tile, dict(config, field_prior_calibration="inherit"))
+    assert receipt["status"] == "FIELD_READY"
+    prior_cal = json.loads((coarse / "CALIBRATION.json").read_bytes())
+    # A shifted tile's own centroid differs from the prior's; inheriting keeps the prior's.
+    own_cal = json.loads((own / "CALIBRATION.json").read_bytes())
+    assert own_cal["centre_xyz"] != prior_cal["centre_xyz"]
+    assert json.loads((tile / "CALIBRATION.json").read_bytes()) == prior_cal
+    identity = json.loads((tile / "field/CHECKPOINT.json").read_bytes())["identity"]
+    assert identity["source_identity"]["calibration_source"]["kind"] == "field_prior"
+    own_identity = json.loads((own / "field/CHECKPOINT.json").read_bytes())["identity"]
+    assert "calibration_source" not in own_identity["source_identity"]

@@ -333,6 +333,8 @@ def plan(args):
         "--lasagna-input", str(Path(args.lasagna_input).resolve()),
         "--field-prior", str(coarse_dir),
         "--field-scope", "supported",
+        # Tiles orient sheets from the scroll centre and use the coarse's spacing.
+        "--field-prior-calibration", "inherit",
         "--sweeps", str(args.sweeps),
         "--device", args.device,
         "--threads", str(args.threads),

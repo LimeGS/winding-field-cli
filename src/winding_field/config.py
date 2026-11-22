@@ -125,6 +125,10 @@ def validate_config(config):
     prior = config.get("field_prior")
     if prior is not None and (not isinstance(prior, str) or not prior):
         raise ValueError("field_prior must be a completed field run directory")
+    if config.get("field_prior_calibration", "own") not in ("own", "inherit"):
+        raise ValueError("field_prior_calibration must be own or inherit")
+    if config.get("field_prior_calibration") == "inherit" and not prior:
+        raise ValueError("field_prior_calibration inherit requires field_prior")
     if config.get("field_scope", "all") not in ("all", "supported"):
         raise ValueError("field_scope must be all or supported")
     if config.get("field_scope") == "supported" and not prior:

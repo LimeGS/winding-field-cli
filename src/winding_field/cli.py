@@ -460,6 +460,14 @@ def main(argv=None):
             "a wider overlap reaches the global solution in fewer sweeps",
         )
         p.add_argument(
+            "--field-prior-calibration",
+            choices=["own", "inherit"],
+            default=argparse.SUPPRESS,
+            help="sheet orientation and spacing calibration with --field-prior: own (default) "
+            "estimates it from this run's ROI; inherit uses the prior's, so a tile orients "
+            "normals from the scroll centre like its coarse",
+        )
+        p.add_argument(
             "--field-scope",
             choices=["all", "supported"],
             default=argparse.SUPPRESS,
