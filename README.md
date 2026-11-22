@@ -250,8 +250,12 @@ wf resume "$RUN"
 
 Both clear `STOP`, validate saved work and reuse completed stages. A run stopped
 at `--until field` reports `PAUSED`; inspect `FIELD.json` for the field result.
-Keep the original inputs, runtime, settings and run location. Changed inputs or
-implementation require a new output directory.
+Keep the original inputs, runtime, settings and run location. Changed inputs require
+a new output directory. A newer CLI continues a run when every stage still to compute
+has the same compatibility epoch (`winding_field/compat.py`) and the numerical core the
+same major version; completed stages are verified by their output hashes. A change of
+epoch is released as a new major version. Runs created before these records, and a
+half-finished native-surfaces or Qual stage, still need the original package.
 
 `resume` finishes native surfaces by default, original mapping for
 `--flattening-method original`, atlas for `--surface-output atlas`, or direct

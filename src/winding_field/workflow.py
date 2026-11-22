@@ -706,8 +706,31 @@ def run(
             if config.get("reuse_from") and not state.get("reuse"):
                 raise ValueError("reuse admission incomplete; use a new output")
             if state.get("implementation_sha256") != implementation_sha():
-                raise ValueError(
-                    "implementation changed; resume with the original package (v1.5.0 for pre-cutover runs) or use a new output"
+                if "compat" not in state:
+                    raise ValueError(
+                        "implementation changed; resume with the original package (v1.5.0 for pre-cutover runs) or use a new output"
+                    )
+                # Newer code continues the stages it computes identically (compat.py);
+                # completed stages are verified by their output hashes below.
+                from . import compat
+
+                pending = [name for name, _ in path if name not in state["stages"]]
+                if field_sweeps is not None and "field" not in pending:
+                    pending.append("field")
+                problems = compat.incompatibilities(state["compat"], pending)
+                if problems:
+                    raise ValueError(
+                        "this version cannot continue the run ("
+                        + "; ".join(problems)
+                        + "); resume with the original package or use a new output"
+                    )
+                state.setdefault("continued_with", []).append(
+                    dict(
+                        version=__version__,
+                        implementation_sha256=implementation_sha(),
+                        stages=pending,
+                        at=time.time(),
+                    )
                 )
             from .ct_reader import runtime_identity
 
@@ -788,7 +811,10 @@ def run(
         fibres_input = None
         try:
             if not resume:
+                from . import compat
+
                 state["implementation_sha256"] = implementation_sha()
+                state["compat"] = compat.record()
             import torch
             from .predict import prepare
             from .fibres import trace
