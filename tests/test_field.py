@@ -675,3 +675,46 @@ def test_continue_publishes_complete_approximate_field(tmp_path):
     with open_field(run) as source:
         values, present = source.read([0] * 3, [6, 6, 32])
     assert present.all() and np.isfinite(values).all()
+
+
+def test_one_block_covering_the_grid_is_a_global_solve_read_with_one_decode(tmp_path, monkeypatch):
+    from winding_field import surface_sources
+    from winding_field.config import validate_config
+    from winding_field.field import open_field, solve
+
+    validate_config(dict(field_chunk=640))
+    run = prepared_run(tmp_path / "run")  # 6 x 6 x 24 nodes
+    assert solve(run, {"sweeps": 1, "field_chunk": 640})["status"] == "FIELD_READY"
+    assert json.loads((run / "field/CHECKPOINT.json").read_bytes())["chunk"] == 640
+    decoded = []
+    real = surface_sources._decode_chunk
+    monkeypatch.setattr(surface_sources, "_decode_chunk", lambda *a: decoded.append(1) or real(*a))
+    with open_field(run) as source:
+        for _ in range(3):
+            field, _ = source.read([0, 0, 0], [6, 6, 24])
+    assert len(decoded) == 1
+    np.testing.assert_allclose(field[3, 3] - field[3, 3, 0], np.arange(24) / 8, atol=2e-4)
+
+
+def test_field_halo_is_part_of_the_problem_and_wider_overlap_converges_faster(tmp_path):
+    from winding_field.config import validate_config
+    from winding_field.field import open_field, solve
+
+    with pytest.raises(ValueError):
+        validate_config(dict(field_halo=0))
+
+    def field_after(name, **config):
+        run = prepared_run(tmp_path / name, shape=(6, 6, 32), chunk=8, variable=True)
+        solve(run, dict(config, rtol=1e-10, maxiter=10000))
+        halo = json.loads((run / "field/CHECKPOINT.json").read_bytes())["identity"]["halo"]
+        with open_field(run) as source:
+            values, _ = source.read([0, 0, 0], [6, 6, 32])
+        return run, halo, values - values.mean()
+
+    _, _, exact = field_after("global", sweeps=1, field_chunk=64)
+    narrow_run, narrow_halo, narrow = field_after("narrow", sweeps=2, field_chunk=8)
+    _, wide_halo, wide = field_after("wide", sweeps=2, field_chunk=8, field_halo=8)
+    assert (narrow_halo, wide_halo) == (2, 8)
+    assert np.abs(wide - exact).max() < np.abs(narrow - exact).max()
+    with pytest.raises(ValueError, match="identity|differ"):
+        solve(narrow_run, dict(sweeps=2, field_chunk=8, field_halo=8, rtol=1e-10, maxiter=10000))

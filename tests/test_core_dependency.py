@@ -30,6 +30,12 @@ def test_changed_external_solver_rejects_resume_without_rewriting_products(tmp_p
         reserve_bytes=0,
     )
     state = workflow.run(config, until="prepare")
+    # A run from before stage compatibility records (compat.py) keeps the exact-implementation
+    # rule; runs with a record refuse a changed core by its major version (test_run_compat.py).
+    from winding_field.util import atomic_json
+
+    del state["compat"]
+    atomic_json(output / "RUN.json", state)
     before = {name: (output / name).read_bytes() for name in ("RUN.json", "PREPARED.json")}
     original = workflow.file_sha
     solver = Path(field_solver.__file__).resolve()

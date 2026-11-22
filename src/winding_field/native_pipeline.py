@@ -51,6 +51,13 @@ def _settings(config):
         or type(result["export_tifxyz"]) is not bool
     ):
         raise ValueError("invalid native coverage/time/export settings")
+    # Opt-in render storage/output modes; absent keys keep existing identities unchanged.
+    for key in ("render_keep_xyz", "render_tiled"):
+        if key in config:
+            if type(config[key]) is not bool:
+                raise ValueError(f"{key} must be a boolean")
+            if config[key] != (key == "render_keep_xyz"):
+                result[key] = config[key]
     if result["export_tifxyz"]:
         try:
             import tifffile
@@ -168,7 +175,14 @@ def _geometry_and_render(reader, store, volume, settings, pitch, until, *, offli
                 if available >= 1.0:
                     break
                 available = min(1.0, available + 0.1)
-    rendered = render(store, volume, pitch, settings["export_tifxyz"])
+    rendered = render(
+        store,
+        volume,
+        pitch,
+        settings["export_tifxyz"],
+        keep_xyz=settings.get("render_keep_xyz", True),
+        tiled=settings.get("render_tiled", False),
+    )
     reader.validate()
     # observed_ct counts in-bounds samples, including fill; image contrast is not physical acceptance.
     usable = any(

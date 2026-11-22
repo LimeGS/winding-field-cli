@@ -224,6 +224,8 @@ def test_legacy_saved_config_is_not_backfilled_and_code_identity_stays_strict(tm
     assert state["config"] == config
     assert run(config, resume=True, until="prepare")["config"] == config
     state["implementation_sha256"] = "b" * 64
+    # A run from before stage compatibility records (compat.py) keeps the strict rule.
+    del state["compat"]
     atomic_json(root / "RUN.json", state)
     before = (root / "RUN.json").read_bytes()
     with pytest.raises(ValueError, match="implementation changed"):

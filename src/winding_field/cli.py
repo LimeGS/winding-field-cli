@@ -42,6 +42,7 @@ TOOLS = {
     "ct-visuals": ("ct_visuals", "render frozen CT planes and field contours"),
     "patch-visuals": ("patch_visuals", "evaluate and plot human-patch residuals"),
     "run-watch": ("run_watch", "supervise a job with timeout and storage limits"),
+    "scroll": ("scroll", "whole-scroll fields from overlapping tiles; full-resolution CT renders"),
 }
 
 
@@ -340,7 +341,8 @@ def main(argv=None):
             "--field-chunk",
             type=int,
             default=64,
-            help="field solver block edge in field-grid samples (default: 64)",
+            help="field solver block edge in field-grid samples (default: 64); at least the "
+            "largest grid dimension solves the whole field as one block",
         )
         p.add_argument(
             "--sweeps",
@@ -449,6 +451,13 @@ def main(argv=None):
             default=argparse.SUPPRESS,
             help="completed field run whose W seeds and gauges this field (e.g. a coarse run "
             "for a fine --roi tile); same frame required",
+        )
+        p.add_argument(
+            "--field-halo",
+            type=int,
+            default=argparse.SUPPRESS,
+            help="field nodes each solver block shares with its neighbours (default: 2); "
+            "a wider overlap reaches the global solution in fewer sweeps",
         )
         p.add_argument(
             "--field-scope",
@@ -568,7 +577,7 @@ def main(argv=None):
             p.add_argument(
                 "--field-sweeps",
                 type=int,
-                help="absolute total sweep budget for an unpublished bounded field; retries do not add sweeps",
+                help="absolute total sweep budget: continue a field (also a finished ordinary one) from its checkpoint; retries do not add sweeps",
             )
             p.add_argument(
                 "--extra-surface-seconds",
