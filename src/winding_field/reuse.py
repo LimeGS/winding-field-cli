@@ -36,6 +36,7 @@ VARIABLE = {
     "reuse_from_sha256",
     "field_chunk",
     "field_halo",
+    "field_prior_calibration",
     "sweeps",
     "maxiter",
     "rtol",
