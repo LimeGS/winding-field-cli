@@ -304,7 +304,7 @@ def plan(config, volume=None, stages=()):
                 bounded_preparation=True,
                 solver_device=config.get("device", "cpu"),
                 field_chunk=config.get("field_chunk", 64),
-                field_halo=2,
+                field_halo=config.get("field_halo", 2),
                 solver_dtype="float64",
                 canonical_windows=dict(qual=128, qual_core=48, lasagna=64, lasagna_core=32),
                 output_budget_is_cap=True,
@@ -656,12 +656,9 @@ def run(
     if type(offline) is not bool or offline and not resume:
         raise ValueError("offline transport override requires a resumed run")
     if field_sweeps is not None and (
-        type(field_sweeps) is not int
-        or field_sweeps < 1
-        or not resume
-        or not config.get("bounded_preparation")
+        type(field_sweeps) is not int or field_sweeps < 1 or not resume
     ):
-        raise ValueError("field sweep target requires a bounded resume and positive integer")
+        raise ValueError("field sweep target requires a resume and a positive integer")
     if config.get("flattening_method") == "original":
         from .flattening.original_pipeline import settings
 
@@ -709,8 +706,31 @@ def run(
             if config.get("reuse_from") and not state.get("reuse"):
                 raise ValueError("reuse admission incomplete; use a new output")
             if state.get("implementation_sha256") != implementation_sha():
-                raise ValueError(
-                    "implementation changed; resume with the original package (v1.5.0 for pre-cutover runs) or use a new output"
+                if "compat" not in state:
+                    raise ValueError(
+                        "implementation changed; resume with the original package (v1.5.0 for pre-cutover runs) or use a new output"
+                    )
+                # Newer code continues the stages it computes identically (compat.py);
+                # completed stages are verified by their output hashes below.
+                from . import compat
+
+                pending = [name for name, _ in path if name not in state["stages"]]
+                if field_sweeps is not None and "field" not in pending:
+                    pending.append("field")
+                problems = compat.incompatibilities(state["compat"], pending)
+                if problems:
+                    raise ValueError(
+                        "this version cannot continue the run ("
+                        + "; ".join(problems)
+                        + "); resume with the original package or use a new output"
+                    )
+                state.setdefault("continued_with", []).append(
+                    dict(
+                        version=__version__,
+                        implementation_sha256=implementation_sha(),
+                        stages=pending,
+                        at=time.time(),
+                    )
                 )
             from .ct_reader import runtime_identity
 
@@ -719,12 +739,33 @@ def run(
             if field_sweeps is not None:
                 from .field_budget import effective_budget
 
-                if "field" in state["stages"] or (root / "FIELD.json").exists():
-                    raise ValueError("cannot extend a published field")
                 if not (root / "field/CHECKPOINT.json").is_file():
                     raise ValueError("field sweep extension requires an existing checkpoint")
-                if field_sweeps < effective_budget(root / "field", config.get("sweeps", 4)):
+                budget = effective_budget(root / "field", config.get("sweeps", 4))
+                if field_sweeps < budget:
                     raise ValueError("field sweep target cannot decrease")
+                published = "field" in state["stages"] or (root / "FIELD.json").exists()
+                if published and config.get("bounded_preparation"):
+                    # Bounded publication is gated on global verification.
+                    raise ValueError("cannot extend a published bounded field")
+                if published and field_sweeps > budget:
+                    stages = [name for name, _ in path]
+                    later = [
+                        name
+                        for name in stages[stages.index("field") + 1 :]
+                        if name in state["stages"]
+                    ]
+                    if later:
+                        raise ValueError(
+                            "field has later stages (" + ", ".join(later) + "); use a new output"
+                        )
+                    # Reopen the ordinary field stage; field.solve archives the published
+                    # FIELD.json and continues the checkpoint from its last sweep.
+                    state["stages"].pop("field", None)
+                    state.setdefault("field_extensions", []).append(
+                        dict(from_sweeps=budget, to_sweeps=field_sweeps, at=time.time())
+                    )
+                    atomic_json(root / "RUN.json", state)
             (root / "STOP").unlink(missing_ok=True)
         else:
             state = dict(
@@ -770,7 +811,10 @@ def run(
         fibres_input = None
         try:
             if not resume:
+                from . import compat
+
                 state["implementation_sha256"] = implementation_sha()
+                state["compat"] = compat.record()
             import torch
             from .predict import prepare
             from .fibres import trace

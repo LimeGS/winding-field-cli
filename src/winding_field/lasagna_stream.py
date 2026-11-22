@@ -35,6 +35,14 @@ def retained_import(run):
     return True
 
 
+def missing_policy(manifest):
+    """Manifest opt-in: absent local Lasagna chunks are Zarr fill instead of an error."""
+    policy = manifest.get("missing_chunks", "error")
+    if policy not in ("error", "fill"):
+        raise ValueError("Lasagna missing_chunks must be 'error' or 'fill'")
+    return policy
+
+
 def location(value, base=None):
     value = http_url(value)
     if value.startswith(("http://", "https://")):
@@ -193,6 +201,9 @@ class LasagnaInput:
                     reserve_bytes=config.get("reserve_bytes", volume.reserve),
                     stream_policy=self.stream_policy,
                     metadata_pins=self.metadata_pins,
+                    # Fail closed on an absent local chunk unless the manifest declares that
+                    # its producer omits all-zero chunks ("missing_chunks": "fill").
+                    missing_chunks=missing_policy(manifest),
                     decoded_cache_bytes=(
                         config.get("_import_cache_bytes", 256 << 20) // 6
                         if not volume.remote and not source.startswith(("http://", "https://"))

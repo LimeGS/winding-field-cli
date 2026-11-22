@@ -9,6 +9,7 @@ import pytest
 from test_lasagna_input import source_case
 from test_splines import upstream_curves
 from winding_field.util import file_sha
+from test_lasagna_stream import http_root  # noqa: F401 - pytest fixture
 
 
 def benchmark():
@@ -297,3 +298,47 @@ def test_stop_while_tile_jobs_are_pending_is_paused_not_failed(tmp_path, monkeyp
     assert not (root / "PREPARED.json").exists()
     (root / "STOP").unlink()
     assert "prepare" in workflow.run(config, resume=True, until="prepare")["stages"]
+
+
+def test_parallel_import_with_remote_ct_matches_serial_and_shares_cache(
+    tmp_path,
+    monkeypatch,
+    http_root,  # noqa: F811 - fixture imported above
+):
+    from contextlib import closing
+    from pathlib import Path
+    from test_import_parallel import resources
+    from test_afv_batching import inventory
+    from winding_field import workflow
+    from winding_field.artifacts import Tiles
+
+    path = local_case(tmp_path / "input", physical=False, count=12)
+    config = json.loads(path.read_bytes())
+    url = http_root + "/" + Path(config["source"]).relative_to(tmp_path).as_posix()
+    config["source"] = url
+    geometry = json.loads((tmp_path / "input/geometry.json").read_text())
+    (tmp_path / "input/geometry.json").write_text(json.dumps(dict(geometry, source=url)))
+    resources(monkeypatch)
+    for name, workers in (("serial", 1), ("parallel", 2)):
+        workflow.run(
+            dict(
+                config,
+                output=str(tmp_path / name),
+                cache=str(tmp_path / f"cache-{name}"),
+                import_workers=workers,
+            ),
+            until="fibres",
+        )
+    assert inventory(tmp_path / "serial") == inventory(tmp_path / "parallel")
+    with (
+        closing(Tiles(tmp_path / "serial/maps")) as a,
+        closing(Tiles(tmp_path / "parallel/maps")) as b,
+    ):
+        for key in a.keys():
+            left, right = a.load(key), b.load(key)
+            for name in left:
+                np.testing.assert_array_equal(left[name], right[name])
+    stats = json.loads((tmp_path / "parallel/lasagna-import/PERFORMANCE.json").read_bytes())
+    assert stats["workers"] == 2 and stats["worker_pids"]
+    # Workers used the shared cache: no private per-worker caches were left behind.
+    assert not list((tmp_path / "parallel").glob(".import-workers-*"))

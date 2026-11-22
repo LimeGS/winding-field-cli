@@ -135,7 +135,7 @@ against the journal and finishes the summary without another solve.
 | `--resume` | Resume SOURCE with its frozen settings/limits |
 | `--max-sweeps` | Required positive integer for new generations; **absolute total**, including inherited sweeps |
 | `--global-rtol` | Separate positive finite global tolerance; new default 1e-6 |
-| `--field-chunk` | Block edge, 4..256 nodes; inherited, otherwise 64 |
+| `--field-chunk` | Block edge, at least 4 nodes; inherited, otherwise 64 |
 | `--field-spacing-um` | Positive field pitch in µm for ordinary inputs; bounded inputs retain their prepared grid |
 | `--rtol` | Positive local tolerance, not global; inherited, otherwise 1e-6 |
 | `--maxiter` | Positive local iteration limit; inherited, otherwise 2000 |

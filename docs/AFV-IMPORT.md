@@ -114,8 +114,13 @@ Completion authority remains the verified `FIBRES.json` receipt.
   headroom and the configured disk reserve. Unknown memory selects serial mode.
   Decoded source chunks, interpolation scratch, in-flight results and parent
   replay are charged, not just output tile size.
-- Parallel tile computation requires purely local CT and prediction channels.
-  Remote/mirror-backed sources retain serial surface reads. Direct
+- Parallel tile computation with purely local CT and prediction channels uses private
+  worker caches. With a remote CT or remote predictions it runs only when
+  `--import-workers` is set explicitly; workers then share the run's encoded-chunk cache
+  so no chunk is downloaded once per worker, and the parent still records and
+  re-verifies every consumed chunk. External AFV clipping
+  reads only the run's local maps and the AFV, so it uses the admitted workers even
+  when the CT or predictions are remote. Direct
   `predict.prepare` callers without a bound CT ledger also stay serial.
   Without external `--fibres`, surface reads stay serial alongside parent fibre
   inference; its `--threads` setting is unchanged.

@@ -158,7 +158,16 @@ class Volume:
         decoded_cache_bytes=0,
         stream_policy=False,
         metadata_pins=None,
+        missing_chunks="error",
     ):
+        if missing_chunks not in ("error", "fill"):
+            raise ValueError("missing_chunks must be 'error' or 'fill'")
+        # "fill": an absent chunk file in a local (non-remote) array is Zarr fill, exactly
+        # like a remote 404, and is pinned in the ledger as authoritative fill. Only for
+        # arrays whose producer omits all-fill chunks (Lasagna products); CT keeps
+        # refusing unexplained local holes. Reads that succeeded before are unchanged,
+        # so the identity is too and earlier runs still resume.
+        self.missing_chunks = missing_chunks
         self.stream_policy = stream_policy
         self.metadata_pins = metadata_pins or {}
         try:
@@ -609,6 +618,8 @@ class Volume:
             self._stats["local_hits"] += 1
             return self._record(key, raw)
         if not self.remote:
+            if self.missing_chunks == "fill":
+                return self._record(key, None)
             raise FileNotFoundError(f"missing local CT chunk (not known air): {key}")
         return self._record(key, self._native_bytes(key))
 

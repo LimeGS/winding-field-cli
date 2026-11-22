@@ -148,15 +148,20 @@ def sample_prior(maps, meta, geometry, cal, lo, hi):
 def open_field(run):
     run = Path(run)
     meta = json.loads((run / "FIELD.json").read_bytes())
+    checkpoint = run / "field/CHECKPOINT.json"
+    # Retain at least one decoded chunk (float64 values and mask) so a field stored as
+    # a few large blocks is not decoded again for every read; affects memory only.
+    chunk = json.loads(checkpoint.read_bytes())["chunk"]
+    one_chunk = math.prod(min(chunk, n) for n in meta["geometry"]["shape_zyx"]) * 9 + 4096
     return FieldSource(
         dict(
             kind="chunks",
-            path=str((run / "field/CHECKPOINT.json").resolve()),
+            path=str(checkpoint.resolve()),
             sha256=meta["checkpoint_sha256"],
             support_policy="observed",
         ),
         meta["geometry"],
-        cache_bytes=64 << 20,
+        cache_bytes=max(64 << 20, one_chunk),
     )
 
 
@@ -345,8 +350,8 @@ def solve(run, config, stop=None, *, sweep_target=None, convergence=None):
     geometry.update(voxel_um=1.0, sheet_step=1.0)
     shape = tuple(geometry["shape_zyx"])
     chunk = config.get("field_chunk", 64)
-    if type(chunk) is not int or not 4 <= chunk <= 256:
-        raise ValueError("field chunk must be 4..256")
+    if type(chunk) is not int or chunk < 4:
+        raise ValueError("field chunk must be at least 4")
     identity = dict(
         maps=meta["tiles_sha256"],
         fibres=fibres["sha256"],
@@ -393,20 +398,17 @@ def solve(run, config, stop=None, *, sweep_target=None, convergence=None):
 
     from .field_budget import effective_budget, extend
 
-    sweeps = (
-        effective_budget(root, config.get("sweeps", 4))
-        if bounded or convergence is not None
-        else config.get("sweeps", 4)
-    )
-    if sweep_target is not None and (
-        not bounded or type(sweep_target) is not int or sweep_target < sweeps
-    ):
-        raise ValueError("invalid bounded field sweep target")
+    # The audited budget equals the configured one until a field is extended
+    # (field_budget.extend), for ordinary and bounded fields alike.
+    sweeps = effective_budget(root, config.get("sweeps", 4))
+    if sweep_target is not None and (type(sweep_target) is not int or sweep_target < sweeps):
+        raise ValueError("invalid field sweep target")
     options = dict(
         origin_xyz=geometry["origin_xyz"],
         spacing_xyz=geometry["spacing_xyz"],
         order=list(itertools.product(*(range((n - 1) // chunk + 1) for n in shape))),
-        halo=2,
+        # The core records the overlap in the checkpoint's problem identity.
+        halo=config.get("field_halo", 2),
         sweeps=sweeps,
         rtol=config.get("rtol", 1e-6),
         maxiter=config.get("maxiter", 2000),
@@ -690,6 +692,14 @@ def solve(run, config, stop=None, *, sweep_target=None, convergence=None):
             and sweep_target is not None
             and sweep_target > sweeps
         ):
+            published = root.parent / "FIELD.json"
+            if published.exists() and not bounded:
+                # Reopen a finished ordinary field: keep its receipt next to the run;
+                # extend() still refuses when meshes or surfaces were built from it.
+                archive = root.parent / f"FIELD.sweeps-{sweeps}.json"
+                if archive.exists():
+                    archive = root.parent / f"FIELD.sweeps-{sweeps}.{time.time_ns()}.json"
+                published.replace(archive)
             options["sweeps"] = extend(
                 root,
                 sweep_target,
