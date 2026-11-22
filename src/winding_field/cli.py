@@ -562,7 +562,7 @@ def main(argv=None):
             p.add_argument(
                 "--field-sweeps",
                 type=int,
-                help="absolute total sweep budget for an unpublished bounded field; retries do not add sweeps",
+                help="absolute total sweep budget: continue a field (also a finished ordinary one) from its checkpoint; retries do not add sweeps",
             )
             p.add_argument(
                 "--extra-surface-seconds",

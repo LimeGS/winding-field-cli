@@ -437,3 +437,48 @@ def test_build_pyramid_keeps_full_resolution_tiles_and_halves_each_level(tmp_pat
         with Image.open(files / str(level) / "0_0.png") as tile:
             assert tile.size == (min(256, w), min(256, h))
     assert 'Width="600" Height="300"' in (tmp_path / "out" / "w.dzi").read_text()
+
+
+def test_tiles_use_a_shared_cache_when_given(tmp_path):
+    import sys
+
+    from winding_field.util import atomic_json
+
+    root = tmp_path / "plan"
+    root.mkdir()
+    tiles = [
+        dict(id=f"000-000-00{k}", supported=True, roi=[0, 2, 0, 2, k, k + 2]) for k in range(2)
+    ]
+    atomic_json(
+        root / "TILES.json",
+        dict(schema=scroll.PLAN_SCHEMA, tiles=tiles, run_args=["--fibres", "full.afv"]),
+    )
+    fake = tmp_path / "fake.py"
+    fake.write_text(
+        "import json, sys, pathlib\n"
+        "out = pathlib.Path(sys.argv[sys.argv.index('--output') + 1])\n"
+        "out.mkdir(parents=True)\n"
+        "(out / 'ARGS.json').write_text(json.dumps(sys.argv[1:]))\n"
+        "(out / 'RUN.json').write_text(json.dumps({'stages': {'field': {}}}))\n"
+        "(out / 'FIELD.json').write_text('{}')\n"
+    )
+    shared = tmp_path / "shared-cache"
+    result = scroll.run_tiles(
+        scroll._parser().parse_args(
+            [
+                "tiles",
+                str(root),
+                "--jobs",
+                "2",
+                "--cache",
+                str(shared),
+                "--executable",
+                sys.executable,
+                str(fake),
+            ]
+        )  # fmt: skip
+    )
+    assert result["status"] == "TILES_DONE" and result["DONE"] == 2
+    for tile in tiles:
+        args = json.loads((root / "tiles" / tile["id"] / "ARGS.json").read_text())
+        assert args[args.index("--cache") + 1] == str(shared.resolve())

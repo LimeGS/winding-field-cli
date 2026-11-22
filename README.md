@@ -265,16 +265,20 @@ wf resume "$RUN" --extra-surface-seconds 600
 Already published partial native levels are immutable; extra time does not remap
 them. Inspect status and coverage rather than treating a pause as completion.
 
-If a `--bounded-preparation` field exhausted its sweeps without passing global
-verification, increase its **absolute total** budget (for example, from 4 to 8):
+To continue any field with more sweeps, give its **absolute total** budget (for
+example, from 4 to 8):
 
 ```bash
 wf resume "$RUN" --field-sweeps 8
 ```
 
-This extends the checkpoint budget without changing the original configuration
-or discarding progress. Repeating the target adds nothing; lower targets and
-changes to published fields are rejected. Verification still gates publication.
+This continues the checkpoint from its last completed sweep, without changing the
+original configuration or recomputing earlier sweeps: the result is byte-identical to
+solving 8 sweeps directly. The extension is audited in the checkpoint and `RUN.json`.
+A finished ordinary field is reopened (its receipt is kept as `FIELD.sweeps-4.json`);
+a field that meshes or surfaces were built from is not, use a new output. Repeating
+the target adds nothing and lower targets are rejected. For `--bounded-preparation`,
+only an unpublished field can be extended and verification still gates publication.
 
 ### Opt-in automatic field convergence
 

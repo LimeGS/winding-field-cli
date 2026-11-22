@@ -433,7 +433,11 @@ def run_tiles(args):
                         "--roi",
                         *roi,
                         "--cache",
-                        str(root / "cache" / tile["id"]),
+                        str(
+                            Path(args.cache).resolve()
+                            if args.cache
+                            else root / "cache" / tile["id"]
+                        ),
                         "--output",
                         str(run),
                     ]
@@ -1288,6 +1292,11 @@ def _parser():
     p.add_argument("--jobs", type=int, default=1)
     p.add_argument("--ids", nargs="*")
     p.add_argument("--executable", nargs="+", help="command prefix (default: this Python)")
+    p.add_argument(
+        "--cache",
+        help="one CT cache shared by every tile (e.g. a prefetched level, with --run-arg "
+        "--offline at plan time); default: a private cache per tile",
+    )
 
     p = sub.add_parser("merge", help="blend completed tiles into one field checkpoint")
     p.add_argument("plan")

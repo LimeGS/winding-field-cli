@@ -656,12 +656,9 @@ def run(
     if type(offline) is not bool or offline and not resume:
         raise ValueError("offline transport override requires a resumed run")
     if field_sweeps is not None and (
-        type(field_sweeps) is not int
-        or field_sweeps < 1
-        or not resume
-        or not config.get("bounded_preparation")
+        type(field_sweeps) is not int or field_sweeps < 1 or not resume
     ):
-        raise ValueError("field sweep target requires a bounded resume and positive integer")
+        raise ValueError("field sweep target requires a resume and a positive integer")
     if config.get("flattening_method") == "original":
         from .flattening.original_pipeline import settings
 
@@ -719,12 +716,33 @@ def run(
             if field_sweeps is not None:
                 from .field_budget import effective_budget
 
-                if "field" in state["stages"] or (root / "FIELD.json").exists():
-                    raise ValueError("cannot extend a published field")
                 if not (root / "field/CHECKPOINT.json").is_file():
                     raise ValueError("field sweep extension requires an existing checkpoint")
-                if field_sweeps < effective_budget(root / "field", config.get("sweeps", 4)):
+                budget = effective_budget(root / "field", config.get("sweeps", 4))
+                if field_sweeps < budget:
                     raise ValueError("field sweep target cannot decrease")
+                published = "field" in state["stages"] or (root / "FIELD.json").exists()
+                if published and config.get("bounded_preparation"):
+                    # Bounded publication is gated on global verification.
+                    raise ValueError("cannot extend a published bounded field")
+                if published and field_sweeps > budget:
+                    stages = [name for name, _ in path]
+                    later = [
+                        name
+                        for name in stages[stages.index("field") + 1 :]
+                        if name in state["stages"]
+                    ]
+                    if later:
+                        raise ValueError(
+                            "field has later stages (" + ", ".join(later) + "); use a new output"
+                        )
+                    # Reopen the ordinary field stage; field.solve archives the published
+                    # FIELD.json and continues the checkpoint from its last sweep.
+                    state["stages"].pop("field", None)
+                    state.setdefault("field_extensions", []).append(
+                        dict(from_sweeps=budget, to_sweeps=field_sweeps, at=time.time())
+                    )
+                    atomic_json(root / "RUN.json", state)
             (root / "STOP").unlink(missing_ok=True)
         else:
             state = dict(

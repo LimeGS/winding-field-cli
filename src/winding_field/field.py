@@ -393,15 +393,11 @@ def solve(run, config, stop=None, *, sweep_target=None, convergence=None):
 
     from .field_budget import effective_budget, extend
 
-    sweeps = (
-        effective_budget(root, config.get("sweeps", 4))
-        if bounded or convergence is not None
-        else config.get("sweeps", 4)
-    )
-    if sweep_target is not None and (
-        not bounded or type(sweep_target) is not int or sweep_target < sweeps
-    ):
-        raise ValueError("invalid bounded field sweep target")
+    # The audited budget equals the configured one until a field is extended
+    # (field_budget.extend), for ordinary and bounded fields alike.
+    sweeps = effective_budget(root, config.get("sweeps", 4))
+    if sweep_target is not None and (type(sweep_target) is not int or sweep_target < sweeps):
+        raise ValueError("invalid field sweep target")
     options = dict(
         origin_xyz=geometry["origin_xyz"],
         spacing_xyz=geometry["spacing_xyz"],
@@ -690,6 +686,14 @@ def solve(run, config, stop=None, *, sweep_target=None, convergence=None):
             and sweep_target is not None
             and sweep_target > sweeps
         ):
+            published = root.parent / "FIELD.json"
+            if published.exists() and not bounded:
+                # Reopen a finished ordinary field: keep its receipt next to the run;
+                # extend() still refuses when meshes or surfaces were built from it.
+                archive = root.parent / f"FIELD.sweeps-{sweeps}.json"
+                if archive.exists():
+                    archive = root.parent / f"FIELD.sweeps-{sweeps}.{time.time_ns()}.json"
+                published.replace(archive)
             options["sweeps"] = extend(
                 root,
                 sweep_target,
