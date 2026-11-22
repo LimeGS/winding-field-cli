@@ -196,9 +196,10 @@ def test_large_worker_result_requests_streaming_replay_instead_of_truncation(tmp
     afv._clip_initialize(str(tmp_path / "run/maps"), 1 << 20)
     try:
         monkeypatch.setattr(import_parallel, "RESULT_BYTES", 1)
-        job = (1, "H", 0, "{}", np.array([[1.0, 2.0, 3.0], [20.0, 2.0, 3.0]]))
-        returned, fragments, stats = afv._clip_worker(job)
-        assert returned is job and fragments is None
+        points = np.array([[1.0, 2.0, 3.0], [20.0, 2.0, 3.0]])
+        results, stats = afv._clip_worker([points, None])
+        # Over-budget results are replayed by the parent, never truncated or echoed.
+        assert results == [None, None] and stats["pid"]
     finally:
         afv._WORKER_SUPPORT.close()
         afv._WORKER_SUPPORT.maps.close()
