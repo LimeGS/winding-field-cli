@@ -58,6 +58,9 @@ from scipy.sparse.csgraph import connected_components
 from scipy.spatial import cKDTree
 from skimage.measure import marching_cubes
 
+from .flattening.obj import write_obj
+from .flattening.topology import duplicate_faces, edge_groups
+
 MAX_FIELD_VOXELS = 64_000_000
 MAX_PIXELS = 4_000_000
 MAX_STACK_SAMPLES = 64_000_000
@@ -102,6 +105,10 @@ def _support(array, meta, require_finite):
 
 def mesh_geometry(vertices_xyz, faces, bounds_xyz=None):
     """Basic mesh checks only: boundary edges are valid, intersections unmeasured."""
+    return _geometry_and_edges(vertices_xyz, faces, bounds_xyz)[0]
+
+
+def _geometry_and_edges(vertices_xyz, faces, bounds_xyz=None):
     v, f = np.asarray(vertices_xyz), np.asarray(faces)
     r = dict(status="UNMEASURED", basic_status="FAIL", self_intersection="UNMEASURED")
     if (
@@ -116,20 +123,15 @@ def mesh_geometry(vertices_xyz, faces, bounds_xyz=None):
         or f.min() < 0
         or f.max() >= len(v)
     ):
-        return {**r, "status": "FAIL", "reason": "invalid vertices or face indices"}
+        return {**r, "status": "FAIL", "reason": "invalid vertices or face indices"}, None
     degenerate = 0
     for first in range(0, len(f), 8192):
         tri = v[f[first : first + 8192]]
         area2 = np.linalg.norm(np.cross(tri[:, 1] - tri[:, 0], tri[:, 2] - tri[:, 0]), axis=1)
         degenerate += int((area2 <= 1e-12).sum())
-    duplicate = len(f) - len(np.unique(np.sort(f, axis=1), axis=0))
-    edges = np.concatenate([f[:, [0, 1]], f[:, [1, 2]], f[:, [2, 0]]])
-    _, inverse, counts = np.unique(
-        np.sort(edges, axis=1), axis=0, return_inverse=True, return_counts=True
-    )
-    direction = np.bincount(inverse, weights=np.where(edges[:, 0] < edges[:, 1], 1, -1))
+    duplicate = duplicate_faces(f)
+    edges, counts, inconsistent, _ = edge_groups(f)
     nonmanifold = int((counts > 2).sum())
-    inconsistent = int(((counts == 2) & (direction != 0)).sum())
     outside = False
     if bounds_xyz is not None:
         lo, hi = np.asarray(bounds_xyz, float)
@@ -148,7 +150,7 @@ def mesh_geometry(vertices_xyz, faces, bounds_xyz=None):
         outside_bounds=outside,
         bounds_xyz=[v.min(0).tolist(), v.max(0).tolist()],
     )
-    return r
+    return r, edges
 
 
 def _seed_distances(seed, triangles):
@@ -565,7 +567,7 @@ def _bind_obj_uv(v, f, positions, textures, of, tf, missing, vertex_atol):
         )
         return rotations[np.lexsort((rotations[:, 2], rotations[:, 1], rotations[:, 0]))]
 
-    if not np.array_equal(topology(of), topology(f)):
+    if not np.array_equal(of, f) and not np.array_equal(topology(of), topology(f)):
         raise ValueError("OBJ oriented topology differs from original mesh")
     if (
         textures.ndim != 2
@@ -584,16 +586,27 @@ def _bind_obj_uv(v, f, positions, textures, of, tf, missing, vertex_atol):
             raise ValueError("mixed indexed/unindexed UVs are unsupported")
         if tf.min() < 0 or tf.max() >= len(textures):
             raise ValueError("OBJ texture index out of bounds")
-        # Corner order per vertex, as the former per-corner loop visited them.
-        vi, ti = of.ravel(), tf.ravel()
-        order = np.argsort(vi, kind="stable")
-        vi, ti = vi[order], ti[order]
-        change = (vi[1:] == vi[:-1]) & (ti[1:] != ti[:-1])
-        if not np.array_equal(textures[ti[1:][change]], textures[ti[:-1][change]]):
-            raise ValueError("unsupported UV seam: one XYZ vertex uses different per-corner UVs")
-        exact_aliases = int(change.sum())
         bindings = np.full(len(v), -1, dtype=np.int64)
-        bindings[vi] = ti  # the last corner wins, as before
+        vi, ti = of.reshape(-1), tf.reshape(-1)
+        seam = "unsupported UV seam: one XYZ vertex uses different per-corner UVs"
+        if len(textures) >= ti.size and (ti[1:] > ti[:-1]).all():
+            # Native per-corner vt IDs increase in visit order: max is the last corner.
+            np.maximum.at(bindings, vi, ti)
+            exact_aliases = ti.size - len(v)
+            for first in range(0, ti.size, 32768):
+                block = slice(first, first + 32768)
+                if not np.array_equal(textures[ti[block]], textures[bindings[vi[block]]]):
+                    raise ValueError(seam)
+        else:
+            bindings[of] = tf
+            if not np.array_equal(bindings[of], tf):
+                order = np.argsort(vi, kind="stable")
+                vi, ti = vi[order], ti[order]
+                change = (vi[1:] == vi[:-1]) & (ti[1:] != ti[:-1])
+                if not np.array_equal(textures[ti[1:][change]], textures[ti[:-1][change]]):
+                    raise ValueError(seam)
+                exact_aliases = int(change.sum())
+                bindings[vi] = ti
         if (bindings < 0).any():
             raise ValueError("unreferenced original vertices have no UV binding")
         uv, mode = textures[bindings], "indexed_v_vt"
@@ -611,15 +624,9 @@ def _bind_obj_uv(v, f, positions, textures, of, tf, missing, vertex_atol):
 def scale_uv_to_world(vertices_xyz, faces, uv):
     """One global scale from unique edge lengths; no per-axis/nonlinear fitting."""
     v, f, uv = np.asarray(vertices_xyz, float), np.asarray(faces), np.asarray(uv, float)
-    if (
-        mesh_geometry(v, f)["basic_status"] != "PASS"
-        or uv.shape != (len(v), 2)
-        or not np.isfinite(uv).all()
-    ):
+    geometry, edges = _geometry_and_edges(v, f)
+    if geometry["basic_status"] != "PASS" or uv.shape != (len(v), 2) or not np.isfinite(uv).all():
         raise ValueError("invalid mesh or UVs for global scaling")
-    edges = np.unique(
-        np.sort(np.concatenate([f[:, [0, 1]], f[:, [1, 2]], f[:, [2, 0]]]), axis=1), axis=0
-    )
     xyz_lengths = np.linalg.norm(v[edges[:, 1]] - v[edges[:, 0]], axis=1)
     uv_lengths = np.linalg.norm(uv[edges[:, 1]] - uv[edges[:, 0]], axis=1)
     if (uv_lengths <= 0).any() or not np.isfinite(uv_lengths).all():
@@ -697,8 +704,7 @@ def flatten_native(
             and _sha(binary) == "2f89bfc96512bebf7ef44b25de01c5afd01c7af058e452515b03bc52cf6afd6a"
         )
         with mesh.open("x") as stream:
-            np.savetxt(stream, vertices_xyz, fmt="v %.17g %.17g %.17g")
-            np.savetxt(stream, np.asarray(faces) + 1, fmt="f %d %d %d")
+            write_obj(stream, vertices_xyz, faces)
         receipt["input_mesh_sha256"] = _sha(mesh)
         with (
             (output_dir / "stdout.log").open("xb") as stdout,
@@ -1084,6 +1090,10 @@ def main(argv=None):
         status="FAILED",
         argv=list(sys.argv[1:] if argv is None else argv),
         source_sha256=_sha(__file__),
+        geometry_helpers_sha256={
+            name: _sha(Path(__file__).parent / "flattening" / name)
+            for name in ("obj.py", "topology.py")
+        },
         self_intersection="UNMEASURED",
         sheet_identity="UNMEASURED",
         writing_face="UNMEASURED",
@@ -1114,8 +1124,7 @@ def main(argv=None):
         np.savez(args.output / "surface.npz", vertices_xyz=vertices, faces=faces)
         with (args.output / "surface.obj").open("x") as f:
             f.write(f"# XYZ world frame {meta['frame']}; {meta['voxel_um']} um/world-unit\n")
-            np.savetxt(f, vertices, fmt="v %.17g %.17g %.17g")
-            np.savetxt(f, faces + 1, fmt="f %d %d %d")
+            write_obj(f, vertices, faces)
         if args.app_run:
             uv, projection = flatten_native(
                 vertices,

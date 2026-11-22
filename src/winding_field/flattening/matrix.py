@@ -10,6 +10,7 @@ from . import patches as p
 from .legacy_charts import cross2
 from ..overlap_audit import audit_uv
 from .native_sheet import cut_component, mean_value_map
+from .flatboi import _write_obj
 from .original import face_quality, scale_uv_to_world
 from .sheet_atlas import _arrays, _json, _verified
 from ..surface_atlas import face_components, local_chart, split_faces
@@ -124,10 +125,7 @@ def solve(cut, output, cfg, guard):
         seed = _lscm_seed if cfg["flattening_solver"] == "lscm-slim" else mean_value_map
         uv, initialization = seed(cut, guard, diagnostics=output / "initialization")
         np.savez_compressed(initial, world=v, faces=f, uv=uv)
-        with obj.open("w") as stream:
-            np.savetxt(stream, v, fmt="v %.17g %.17g %.17g")
-            np.savetxt(stream, uv, fmt="vt %.17g %.17g")
-            np.savetxt(stream, np.repeat(f + 1, 2, axis=1), fmt="f %d/%d %d/%d %d/%d")
+        _write_obj(obj, v, uv, f)
         atomic_json(
             prepared,
             dict(

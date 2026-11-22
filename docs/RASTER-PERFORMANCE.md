@@ -10,6 +10,48 @@ gain; size decoded RAM caches separately from disk caches; compare identical
 values, masks and source IDs before trusting a speedup. Cold/warm application
 caches are not the same as cold/warm operating-system or network caches.
 
+### Exact CPU raster and TIFXYZ, 2026-11-22
+
+Compared to `eea0cbb`, multi-tile exports build a conservative two-level UV
+bounding-box index in original face order and compute eligible domain boundaries
+once. Large faces do not produce an entry per overlapping tile. Each face/edge
+index uses at most 8 MiB for its leaf boxes (plus block summaries). The pixel
+kernel evaluates small batches with the same predicates, interpolation precision,
+ownership, ambiguity and sampling order. Native `run` has a separate renderer:
+it now computes normals once per hit face and reuses decoded CT for the overview.
+
+Mac M2 Pro, Python 3.12, NumPy 2.4.6, single raster worker, same pitch/geometry
+and fresh output per repetition. Wall times below include the tiled renderer,
+PNG/NPZ/TIFF output, hashes and receipts. Medians of three runs:
+
+| Real saved geometry | CT source | Before | After |
+|---|---|---:|---:|
+| 175A, 1,007 faces, 139×124, 6 tiles | Four locally staged, SHA-verified original chunks, native interpolation | 715 ms | 205 ms |
+| Paris4 strip, 794 faces, 861×210, 14 tiles | Deterministic samples (geometry/publication control) | 445 ms | 205 ms |
+
+These interleaved runs shared the host with other work. Face owners were resolved
+to original per-level row offsets from the ordered mesh face IDs. The complete
+render records, including every file hash, matched across versions.
+The 175A record also matched at 1, 2 and 4 workers; it contained 140 distinct
+grayscale values. An emulated Linux x86_64 run of the Paris4 strip independently
+matched its own Linux baseline.
+
+On a larger Paris4 W−60 map (602,776 faces), three 260×260 windows sampled the
+empty exterior, dense interior and an overlap. With deterministic CT and TIFXYZ,
+one paired run took 3.72 s before and 0.29 s after **including** 0.15 s of
+one-time index/edge setup. XYZ, owners, masks, image bytes and emitted TIFXYZ
+files matched for each window, including all 7,006 ambiguous pixels in the third.
+These are not full-scroll times or measurements of remote CT throughput.
+
+Reproduce a bounded full-map comparison with the same environment and input:
+
+```sh
+PYTHONPATH=/path/to/baseline/src python tools/bench_exact_render.py map.npz --voxel-um 9.6 --tile-size 128 --tifxyz
+PYTHONPATH=src python tools/bench_exact_render.py map.npz --voxel-um 9.6 --tile-size 128 --tifxyz
+```
+
+That harness uses deterministic samples; compare `record_sha256` before interpreting time.
+
 ## Verified float64 native sampler
 
 All CLI CT samplers use native float64 interpolation and return float32 samples, retaining

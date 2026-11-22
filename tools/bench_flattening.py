@@ -698,6 +698,8 @@ def tool_identity():
         "io",
         "ct_reader",
         "surface_export",
+        "flattening.obj",
+        "flattening.topology",
         "surface_atlas",
         "patch_pipeline",
         "patch_mapping",

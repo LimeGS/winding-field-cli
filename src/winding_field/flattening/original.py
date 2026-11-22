@@ -4,11 +4,13 @@ Port of the project's frozen 2026-10-24 recipe (see provenance/original-recipe.j
 Coordinates, UV pitch and XYZ tolerance use the caller's declared world unit.
 """
 
-import gc
 import math
-from itertools import product
+from itertools import islice, product
+
 import numpy as np
+
 from .lscm import lscm
+from .topology import duplicate_faces, edge_groups
 
 
 def sample_points(xyz, shape, chunks, chunk, *, prefetch=None):
@@ -117,30 +119,37 @@ def face_quality(vertices, faces, uv):
 
 
 def scale_uv_to_world(v, f, uv):
+    return _scale_uv_to_world(v, f, uv, degenerate=None)
+
+
+def _scale_uv_to_world(v, f, uv, degenerate):
     if uv.shape != (len(v), 2) or not np.isfinite(uv).all():
         raise ValueError("invalid mesh or UVs for global scaling")
-    t = v[f]
-    area2 = np.linalg.norm(np.cross(t[:, 1] - t[:, 0], t[:, 2] - t[:, 0]), axis=1)
-    oriented = np.concatenate([f[:, [0, 1]], f[:, [1, 2]], f[:, [2, 0]]])
-    _, inverse, counts = np.unique(
-        np.sort(oriented, axis=1), axis=0, return_inverse=True, return_counts=True
-    )
-    direction = np.bincount(inverse, weights=np.where(oriented[:, 0] < oriented[:, 1], 1, -1))
-    if (
-        (area2 <= 1e-12).any()
-        or len(np.unique(np.sort(f, axis=1), axis=0)) != len(f)
-        or (counts > 2).any()
-        or ((counts == 2) & (direction != 0)).any()
-    ):
+    if degenerate is None:
+        t = v[f]
+        area2 = np.linalg.norm(np.cross(t[:, 1] - t[:, 0], t[:, 2] - t[:, 0]), axis=1)
+        degenerate = (area2 <= 1e-12).any()
+        del t, area2
+    if type(f) in (np.ndarray, np.memmap) and f.ndim == 2 and f.shape[1] == 3 and len(f):
+        edges, counts, inconsistent, _ = edge_groups(f)
+        invalid_faces = degenerate or duplicate_faces(f)
+    else:
+        # Preserve legacy handling of empty/nontriangle rows, including NumPy errors.
+        oriented = np.concatenate([f[:, [0, 1]], f[:, [1, 2]], f[:, [2, 0]]])
+        edges, inverse, counts = np.unique(
+            np.sort(oriented, axis=1), axis=0, return_inverse=True, return_counts=True
+        )
+        signs = np.bincount(inverse, weights=np.where(oriented[:, 0] < oriented[:, 1], 1, -1))
+        inconsistent = ((counts == 2) & (signs != 0)).any()
+        invalid_faces = degenerate or len(np.unique(np.sort(f, axis=1), axis=0)) != len(f)
+    if invalid_faces or (counts > 2).any() or inconsistent:
         raise ValueError("invalid mesh or UVs for global scaling")
-    edges = np.unique(
-        np.sort(np.concatenate([f[:, [0, 1]], f[:, [1, 2]], f[:, [2, 0]]]), axis=1), axis=0
-    )
     xyz_lengths = np.linalg.norm(v[edges[:, 1]] - v[edges[:, 0]], axis=1)
     uv_lengths = np.linalg.norm(uv[edges[:, 1]] - uv[edges[:, 0]], axis=1)
     if (uv_lengths <= 0).any() or not np.isfinite(uv_lengths).all():
         raise ValueError("zero/nonfinite UV edge prevents global scaling")
-    scale = float(xyz_lengths.sum() / uv_lengths.sum())
+    xyz_sum, uv_sum = xyz_lengths.sum(), uv_lengths.sum()
+    scale = float(xyz_sum / uv_sum)
     if not np.isfinite(scale) or scale <= 0:
         raise ValueError("invalid global UV scale")
     shift = uv.min(0)
@@ -152,8 +161,8 @@ def scale_uv_to_world(v, f, uv):
         uv_origin_removed=shift.tolist(),
         definition="sum_unique_xyz_edge_lengths / sum_unique_uv_edge_lengths",
         unique_edges=len(edges),
-        xyz_edge_length_sum=float(xyz_lengths.sum()),
-        uv_edge_length_sum=float(uv_lengths.sum()),
+        xyz_edge_length_sum=float(xyz_sum),
+        uv_edge_length_sum=float(uv_sum),
         anisotropic_or_nonlinear_fit=False,
     )
 
@@ -175,7 +184,9 @@ def make_map(vertices, faces):
     ):
         raise ValueError("finite indexed triangles required")
     f = f.astype(np.int64)
-    area = np.linalg.norm(np.cross(v[f[:, 1]] - v[f[:, 0]], v[f[:, 2]] - v[f[:, 0]]), axis=1) / 2
+    area = np.linalg.norm(np.cross(v[f[:, 1]] - v[f[:, 0]], v[f[:, 2]] - v[f[:, 0]]), axis=1)
+    degenerate = area <= 1e-12
+    area /= 2
     curvature = igl.gaussian_curvature(v, f)
     selected = None
     for threshold in [0.1, 0.05, 0.02]:
@@ -225,7 +236,8 @@ def make_map(vertices, faces):
     second = int(boundary[np.argmax(np.linalg.norm(centered[boundary] - centered[first], axis=1))])
     length = float(np.linalg.norm(centered[first] - centered[second]))
     uv, _, _ = lscm(centered, tri, first, second, length=length)
-    uv, calibration = scale_uv_to_world(world, tri, uv)
+    # Source XYZ and every chosen face were checked above; their area predicate is identical.
+    uv, calibration = _scale_uv_to_world(world, tri, uv, degenerate[chosen].any())
     t = uv[tri]
     a, b = t[:, 1] - t[:, 0], t[:, 2] - t[:, 0]
     signed = a[:, 0] * b[:, 1] - a[:, 1] * b[:, 0]
@@ -330,23 +342,6 @@ def _points(vertices, faces, uv, indices, query, tolerance):
         return np.concatenate([a, b]), np.r_[ok_a, ok_b]
 
 
-def _merge(xyz, bounds, owner, mask, rows, cols, points, chart_id, tolerance):
-    key = rows, cols
-    old = owner[key]
-    fresh = old == -1
-    low = np.where(fresh[:, None], points, np.minimum(bounds[rows, cols, 0], points))
-    high = np.where(fresh[:, None], points, np.maximum(bounds[rows, cols, 1], points))
-    conflict = (mask[key] == 3) | (np.linalg.norm(high - low, axis=1) > tolerance)
-    replace = (fresh | (chart_id < old)) & ~conflict
-    xyz[rows[replace], cols[replace]] = points[replace]
-    owner[rows[replace], cols[replace]] = chart_id
-    bounds[rows, cols, 0], bounds[rows, cols, 1] = low, high
-    mask[rows[~conflict], cols[~conflict]] = 1
-    mask[rows[conflict], cols[conflict]] = 3
-    owner[rows[conflict], cols[conflict]] = -2
-    xyz[rows[conflict], cols[conflict]] = np.nan
-
-
 def raster_candidates(faces, uv, canvas, guard=lambda: None):
     """Conservative pixel bounds in bounded batches; keep original IDs and order."""
     pitch = canvas["pitch"]
@@ -385,8 +380,14 @@ def raster_sheet(
     guard=lambda: None,
     capture=None,
     xyz_tolerance=0.005,
+    candidate_ids=None,
 ):
-    v, f, uv = np.asarray(vertices, float), np.asarray(faces, np.int64), np.asarray(uv, float)
+    """Rasterize an ordered stream of original face IDs, or scan candidates for this tile."""
+
+    v, f, uv = np.asarray(vertices, float), np.asarray(faces), np.asarray(uv, float)
+    # Published sheet maps commonly have int32 connectivity; indexing needs no tile-local copy.
+    if f.dtype not in (np.int32, np.int64):
+        f = f.astype(np.int64)
     width, height = int(canvas["width"]), int(canvas["height"])
     pitch = float(canvas["pitch"])
     u0, top = float(canvas["u0"]), float(canvas["v_top"])
@@ -404,66 +405,131 @@ def raster_sheet(
         raise ValueError("bounded finite sheet canvas/window required")
     guard()
     xyz = np.full((height, width, 3), np.nan)
-    bounds = np.full((height, width, 2, 3), np.nan)
+    # A pixel's first XYZ is already its min and max. Touch the bounds buffer
+    # only on a second known hit; ambiguous pixels never become eligible again.
+    bounds = np.empty((height * width, 2, 3))
+    multiple = np.zeros(height * width, bool)
     owner = np.full((height, width), -1, np.int32)
     mask = np.zeros((height, width), np.uint8)
-    for index in raster_candidates(f, uv, canvas, guard):
-        if index % 2048 == 0:
-            guard()
-        t = uv[f[index]]
-        if not np.isfinite(t).all():
-            continue
-        a, b = t[1] - t[0], t[2] - t[0]
-        signed = a[0] * b[1] - a[1] * b[0]
-        if signed == 0:
-            continue
-        blocked = not eligible[index] or signed < 0
-        if signed < 0:
-            t = t[[0, 2, 1]]
-        pixel = np.column_stack(
-            [
-                (t[:, 0] - global_u0) / pitch - column_offset,
-                (global_top - t[:, 1]) / pitch - row_offset,
-            ]
+    coords, owners, states = xyz.reshape(-1, 3), owner.ravel(), mask.ravel()
+    display = np.asarray(eligible, bool)
+    if display.ndim > 1:
+        display = display.reshape(len(display))
+    candidates = raster_candidates(f, uv, canvas, guard) if candidate_ids is None else candidate_ids
+
+    def checked_ids():
+        for i in candidates:
+            if i % 2048 == 0:
+                guard()
+            yield i
+
+    def merge_hits(pixel, indices, blocked, points, known):
+        # A pixel may be visited many times. Replay its visits in face order,
+        # vectorizing only independent pixels so an unknown retains its prior XYZ.
+        order = np.argsort(pixel, kind="stable")
+        cuts = np.r_[0, np.flatnonzero(np.diff(pixel[order])) + 1, len(pixel)]
+        pos, end = cuts[:-1], cuts[1:]
+        while len(pos):
+            hit = order[pos]
+            ok = known[hit]
+            if not ok.all():
+                bad = hit[~ok]
+                states[pixel[bad]], owners[pixel[bad]] = 3, -2
+                coords[pixel[bad[blocked[bad]]]] = np.nan
+                hit = hit[ok]
+            key = pixel[hit]
+            old = owners[key]
+            fresh = old == -1
+            if fresh.all():
+                coords[key], owners[key], states[key] = points[hit], indices[hit], 1
+            else:
+                new, k = hit[fresh], key[fresh]
+                coords[k], owners[k], states[k] = points[new], indices[new], 1
+                coords[key[old == -2]] = np.nan
+                overlap = old >= 0
+                k, h = key[overlap], hit[overlap]
+                low = coords[k]
+                high = low.copy()
+                seen = multiple[k]
+                low[seen], high[seen] = bounds[k[seen], 0], bounds[k[seen], 1]
+                p = points[h]
+                low, high = np.minimum(low, p), np.maximum(high, p)
+                bounds[k, 0], bounds[k, 1], multiple[k] = low, high, True
+                conflict = np.linalg.norm(high - low, axis=1) > xyz_tolerance
+                replace = (indices[h] < old[overlap]) & ~conflict
+                coords[k[replace]], owners[k[replace]] = p[replace], indices[h[replace]]
+                k = k[conflict]
+                states[k], owners[k], coords[k] = 3, -2, np.nan
+            more = pos + 1 < end
+            pos, end = pos[more] + 1, end[more]
+
+    stream = checked_ids()
+    while len(ids := np.fromiter(islice(stream, 2048), np.int64)):
+        tri = f[ids]
+        t = uv[tri]
+        finite = np.isfinite(t).all((1, 2))
+        if not finite.all():
+            ids, tri, t = ids[finite], tri[finite], t[finite]
+        pixel = np.stack(
+            (
+                (t[:, :, 0] - global_u0) / pitch - column_offset,
+                (global_top - t[:, :, 1]) / pitch - row_offset,
+            ),
+            axis=-1,
         )
-        lower = np.maximum(0, np.ceil(pixel.min(0) - 1e-10).astype(int))
-        upper = np.minimum([width - 1, height - 1], np.floor(pixel.max(0) + 1e-10).astype(int))
-        for row in range(int(lower[1]), int(upper[1]) + 1, 128):
-            for col in range(int(lower[0]), int(upper[0]) + 1, 128):
-                rr, cc = np.meshgrid(
-                    np.arange(row, min(row + 128, int(upper[1]) + 1)),
-                    np.arange(col, min(col + 128, int(upper[0]) + 1)),
-                    indexing="ij",
-                )
-                rr, cc = rr.ravel(), cc.ravel()
-                query = np.column_stack(
-                    [
-                        global_u0 + (cc + column_offset) * pitch,
-                        global_top - (rr + row_offset) * pitch,
-                    ]
-                )
-                indices = np.full(len(rr), index, np.int64)
-                inside = (
-                    inside_triangles(np.array([[0, 1, 2]]), t, np.zeros(len(rr), np.int64), query)
-                    if blocked
-                    else inside_triangles(f, uv, indices, query)
-                )
-                rr, cc, query, indices = rr[inside], cc[inside], query[inside], indices[inside]
-                if not len(rr):
-                    continue
-                if blocked:
-                    mask[rr, cc] = 3
-                    owner[rr, cc] = -2
-                    xyz[rr, cc] = np.nan
-                    bounds[rr, cc] = np.nan
-                    continue
-                points, known = _points(v, f, uv, indices, query, xyz_tolerance)
-                mask[rr[~known], cc[~known]] = 3
-                owner[rr[~known], cc[~known]] = -2
-                bounds[rr[~known], cc[~known]] = np.nan
-                rr, cc, points = rr[known], cc[known], points[known]
-                if len(rr):
-                    _merge(xyz, bounds, owner, mask, rr, cc, points, int(index), xyz_tolerance)
+        lower, upper = np.ceil(pixel.min(1) - 1e-10), np.floor(pixel.max(1) + 1e-10)
+        if candidate_ids is not None:
+            near = (np.maximum(0, lower) <= np.minimum([width - 1, height - 1], upper)).all(1)
+            if not near.all():
+                ids, tri, t, lower, upper = ids[near], tri[near], t[near], lower[near], upper[near]
+        a, b = t[:, 1] - t[:, 0], t[:, 2] - t[:, 0]
+        signed = a[:, 0] * b[:, 1] - a[:, 1] * b[:, 0]
+        degenerate = signed == 0
+        lower[degenerate], upper[degenerate] = 0, -1
+        lower = np.maximum(0, lower.astype(int))
+        upper = np.minimum([width - 1, height - 1], upper.astype(int))
+        use = (lower <= upper).all(1)
+        if not use.all():
+            ids, tri, signed, lower, upper = ids[use], tri[use], signed[use], lower[use], upper[use]
+        if not len(ids):
+            continue
+        reverse = signed < 0
+        tri[reverse] = tri[reverse][:, [0, 2, 1]]
+        blocked = ~display[ids] | reverse
+        nx, ny = (upper - lower + 1).T
+        ends = np.cumsum(nx * ny)
+        starts = ends - nx * ny
+        # Prefix sums index the concatenated bounding boxes without expanding a
+        # large triangle (or a stack of overlapping triangles) beyond 128² pixels.
+        for start in range(0, int(ends[-1]), 128**2):
+            if start and start % (16 * 128**2) == 0:
+                guard()
+            offset = np.arange(start, min(start + 128**2, ends[-1]))
+            first, last = np.searchsorted(ends, (offset[0], offset[-1]), side="right")
+            active = slice(first, last + 1)
+            counts = np.minimum(ends[active], offset[-1] + 1) - np.maximum(starts[active], start)
+            local = np.repeat(np.arange(first, last + 1), counts)
+            offset -= starts[local]
+            cc = lower[local, 0] + offset % nx[local]
+            rr = lower[local, 1] + offset // nx[local]
+            query = np.column_stack(
+                (global_u0 + (cc + column_offset) * pitch, global_top - (rr + row_offset) * pitch)
+            )
+            inside = inside_triangles(tri, uv, local, query)
+            if not inside.any():
+                continue
+            local = local[inside]
+            indices, bad = ids[local], blocked[local]
+            known = ~bad
+            if known.all():
+                points, known = _points(v, f, uv, indices, query[inside], xyz_tolerance)
+            else:
+                points = np.empty((len(local), 3))
+                if known.any():
+                    points[known], known[known] = _points(
+                        v, f, uv, indices[known], query[inside][known], xyz_tolerance
+                    )
+            merge_hits(rr[inside] * width + cc[inside], indices, bad, points, known)
     image = np.zeros((height, width), np.uint8)
     for start in range(0, height, max(1, 100000 // width)):
         guard()
@@ -491,6 +557,4 @@ def raster_sheet(
     )
     if capture is not None:
         capture(xyz, mask, owner)
-    del xyz, bounds, owner
-    gc.collect()
     return image, mask, report
