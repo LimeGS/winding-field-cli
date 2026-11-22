@@ -113,8 +113,10 @@ def test_native_defers_ambiguous_and_streaming_blocks_to_the_reference(tmp_path,
         signed = np.array([[-0.0, 2.0, 3.0], [-0.0, 2.0, 9.0]])
         long = np.array([[0.0, 2.0, 3.0], [23.0, 2.0, 3.0]])
         result = afv_native.clip_blocks(library, [signed, long, long], dense.dense, 4)
-        # -0.0 clip inputs and over-budget intervals are the reference's to decide.
-        assert result[0] is None and result[1] is None and result[2] is None
+        # -0.0 + 0.0 is +0.0, so this signed-zero input is exact natively.
+        assert _bits(result[0]) == _bits(list(afv_clip_frozen.pieces(signed, maps)))
+        # Over-budget intervals are the reference's streaming path to decide.
+        assert result[1] is None and result[2] is None
         ok = afv_native.clip_blocks(library, [long], dense.dense, afv_clip.MAX_INTERVALS)
         assert _bits(ok[0]) == _bits(list(afv_clip_frozen.pieces(long, maps)))
         # Bounded output: a tiny first capacity grows instead of truncating.

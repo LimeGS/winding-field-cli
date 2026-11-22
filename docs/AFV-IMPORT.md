@@ -37,8 +37,8 @@ logical rows in `tests/test_afv_native.py`.
 - **Work units.** Workers receive up to 512 consecutive blocks, 262,144 points or
   4 MiB of annotations per unit and return only fragments. Results above the
   16 MiB envelope are recomputed by the parent, never truncated. Publication
-  keeps strict source order; inserts are bulk per block with the same ids SQLite
-  would assign.
+  keeps strict source order; R-tree bounds are inserted in bulk per block. The
+  serial route still clips one block at a time inside its transaction.
 
 ## Transactions and recovery
 

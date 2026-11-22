@@ -634,7 +634,6 @@ def import_fibres(run, config, stop=None, *, verified_source=None, maps=None):
         resume = _resume_mode(db)
         execution["resume"] = resume
         committed = db.execute("SELECT count(*) FROM done").fetchone()[0]
-        next_id = db.execute("SELECT coalesce(max(id),0)+1 FROM curves").fetchone()[0]
         status_path = root / "STATUS.json"
         if status_path.is_file() and status_path.stat().st_size <= 65536:
             with suppress(OSError, ValueError, TypeError, AttributeError):
@@ -730,7 +729,8 @@ def import_fibres(run, config, stop=None, *, verified_source=None, maps=None):
                         if old and fast:
                             yield [(job, old)], [None], None
                         else:
-                            yield [(job, old)], [list(_pieces(job[4], clip_support, stop))], None
+                            # Lazy: the batch clock starts before the block is clipped.
+                            yield [(job, old)], [_pieces(job[4], clip_support, stop)], None
 
             stream = serial()
         with closing(stream):
@@ -754,6 +754,9 @@ def import_fibres(run, config, stop=None, *, verified_source=None, maps=None):
                     if fragments is None:
                         execution["streaming_replays"] += int(stats is not None)
                         fragments = _clip([local], clip_support, None, stop, counters)[0]
+                    if not old and not db.in_transaction:
+                        db.execute("BEGIN")
+                        batch_started = time.monotonic()
                     checksum = hashlib.sha256(digest([family, annotation]).encode())
                     rows, boxes, total = [], [], 0
                     for piece in fragments:
@@ -774,9 +777,6 @@ def import_fibres(run, config, stop=None, *, verified_source=None, maps=None):
                         processed += 1
                         progress("IMPORTING")
                         continue
-                    if not db.in_transaction:
-                        db.execute("BEGIN")
-                        batch_started = time.monotonic()
                     if config.get("bounded_preparation") and rows:
                         size = (
                             db.execute("PRAGMA page_count").fetchone()[0]
@@ -789,19 +789,17 @@ def import_fibres(run, config, stop=None, *, verified_source=None, maps=None):
                         < total + config.get("reserve_bytes", 0) + 65536
                     ):
                         raise OSError("insufficient space for AFV import and reserve")
-                    ids = range(next_id, next_id + len(rows))
-                    db.executemany(
-                        "INSERT INTO curves(id,tile,points,family,source_id,source_block,annotation) VALUES (?,?,?,?,?,?,?)",
-                        [
-                            (cid, "imported", blob, family, fid, first, annotation)
-                            for cid, blob in zip(ids, rows)
-                        ],
-                    )
+                    ids = [
+                        db.execute(
+                            "INSERT INTO curves(tile,points,family,source_id,source_block,annotation) VALUES (?,?,?,?,?,?)",
+                            ("imported", blob, family, fid, first, annotation),
+                        ).lastrowid
+                        for blob in rows
+                    ]
                     db.executemany(
                         "INSERT INTO curve_bounds VALUES (?,?,?,?,?,?,?)",
                         [(cid, *box) for cid, box in zip(ids, boxes)],
                     )
-                    next_id += len(rows)
                     if contract_pending:
                         _record_contract(db)
                         contract_pending = False
