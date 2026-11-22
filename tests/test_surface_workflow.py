@@ -439,3 +439,33 @@ def test_prepared_resume_rejects_invalid_binding_without_overwriting(tmp_path, b
         assert target.exists() == (binding == "symlink")
         if target.exists():
             assert target.read_bytes() == original
+
+
+def test_one_chunk_field_is_decoded_once_per_reader_not_once_per_mesh_tile(tmp_path, monkeypatch):
+    from field_store import BlockStore
+
+    from winding_field import surface_sources
+
+    path, config = prepared(tmp_path)
+    root = tmp_path / "chunks"
+    shape = (5, 6, 7)
+    values = np.broadcast_to(np.arange(7.0) + 1.0, shape).copy()
+    identity = dict(frame=config["geometry"]["frame"], spacing_xyz=[2.0, 3.0, 5.0])
+    with BlockStore(root, shape, 8, identity) as store:  # one stored chunk, as a global solve
+        store.commit((0, 0, 0), values, dict(sweep=1, next_tile=1), np.ones(shape, bool))
+    cp = root / "CHECKPOINT.json"
+    config["field"] = dict(
+        kind="chunks",
+        path="chunks/CHECKPOINT.json",
+        sha256=hashlib.sha256(cp.read_bytes()).hexdigest(),
+        support_policy="observed",
+    )
+    config["levels"] = [2.5]
+    assert config["execution"]["tile"] == 2  # 3 x 3 x 4 mesh tiles read the same chunk
+    path.write_text(json.dumps(config))
+    decoded = []
+    real = surface_sources._decode_chunk
+    monkeypatch.setattr(surface_sources, "_decode_chunk", lambda *a: decoded.append(1) or real(*a))
+    result = api().run_surfaces(path, tmp_path / "output")
+    assert result["mesh"]["levels"][0]["faces"] == 40
+    assert len(decoded) <= 4  # a handful of readers, not one decode per tile

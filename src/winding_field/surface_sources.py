@@ -12,6 +12,7 @@ from __future__ import annotations
 import hashlib
 import itertools
 import io
+import json
 import math
 import os
 import re
@@ -204,6 +205,22 @@ class _Npy:
     def close(self) -> None:
         if hasattr(self, "array"):
             self.array._mmap.close()  # type: ignore[attr-defined]
+
+
+def chunk_cache_floor(field, geometry):
+    """Bytes that retain one decoded chunk of a chunked field (float64 values and mask).
+
+    A field stored as a few large blocks (a one-block coarse is a single chunk) is decoded
+    again for every read unless the reader may keep one chunk: meshing one level of a
+    625x404x482 one-block field took 42 min with no cache and 77 s with it.
+    """
+    if not isinstance(field, dict) or field.get("kind") != "chunks":
+        return 0
+    try:
+        chunk = int(json.loads(Path(field["path"]).read_bytes())["chunk"])
+        return math.prod(min(chunk, int(n)) for n in geometry["shape_zyx"]) * 9 + 4096
+    except (OSError, KeyError, TypeError, ValueError):
+        return 0  # the reader reports malformed inputs itself
 
 
 class FieldSource:

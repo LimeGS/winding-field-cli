@@ -15,7 +15,7 @@ import torch
 from block_solver import solve_blocks
 from field_constraints import pair_constraints
 from field_store import BlockStore
-from .surface_sources import FieldSource
+from .surface_sources import FieldSource, chunk_cache_floor
 from .artifacts import Tiles
 from .config import field_geometry, validate_field_cpu
 from .util import atomic_json, file_sha
@@ -148,21 +148,16 @@ def sample_prior(maps, meta, geometry, cal, lo, hi):
 def open_field(run):
     run = Path(run)
     meta = json.loads((run / "FIELD.json").read_bytes())
-    checkpoint = run / "field/CHECKPOINT.json"
-    # Retain at least one decoded chunk (float64 values and mask) so a field stored as
-    # a few large blocks is not decoded again for every read; affects memory only.
-    chunk = json.loads(checkpoint.read_bytes())["chunk"]
-    one_chunk = math.prod(min(chunk, n) for n in meta["geometry"]["shape_zyx"]) * 9 + 4096
-    return FieldSource(
-        dict(
-            kind="chunks",
-            path=str(checkpoint.resolve()),
-            sha256=meta["checkpoint_sha256"],
-            support_policy="observed",
-        ),
-        meta["geometry"],
-        cache_bytes=max(64 << 20, one_chunk),
+    descriptor = dict(
+        kind="chunks",
+        path=str((run / "field/CHECKPOINT.json").resolve()),
+        sha256=meta["checkpoint_sha256"],
+        support_policy="observed",
     )
+    # Retain at least one decoded chunk so a field stored as a few large blocks is not
+    # decoded again for every read; affects memory only.
+    floor = chunk_cache_floor(descriptor, meta["geometry"])
+    return FieldSource(descriptor, meta["geometry"], cache_bytes=max(64 << 20, floor))
 
 
 def spline_samples(points, low, high, step):
