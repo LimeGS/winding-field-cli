@@ -1071,6 +1071,7 @@ def render_ct(args):
         render_pitch_um=args.render_pitch_um,
         chart_faces=args.chart_faces,
         flattening_method=args.flattening_method,
+        flattening_scope=args.flattening_scope if args.flattening_scope != "charts" else None,
         surface_time_limit_s=args.surface_time_limit,
         coverage_target=args.coverage_target,
         export_tifxyz=args.export_tifxyz,
@@ -1323,6 +1324,14 @@ def _parser():
     p.add_argument("--render-pitch-um", type=float, required=True)
     p.add_argument("--chart-faces", type=int, default=1024)
     p.add_argument("--flattening-method", default="slim", choices=("slim", "default"))
+    p.add_argument(
+        "--flattening-scope",
+        default="charts",
+        choices=("charts", "sheet"),
+        help="charts: weld ~1,000-face charts (default); sheet: one global LSCM+SLIM map per "
+        "connected piece, no welded seams (needs --flattening-method slim; raise "
+        "--surface-time-limit for multi-million-face meshes)",
+    )
     p.add_argument("--surface-time-limit", type=float, default=1800.0)
     p.add_argument("--coverage-target", type=float, default=1.0)
     p.add_argument(

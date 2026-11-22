@@ -128,6 +128,30 @@ wf scroll render-ct --mesh /outputs/meshes/level-0000 --source "$CT" --voxel-um 
   sampling), downloads them into `--cache` over `--prefetch-workers` (default 16)
   parallel connections, sizes the cache so nothing is evicted, and renders `--offline`
   from the ledger-pinned cache. `--prefetch-workers 0` restores the online render.
+- **`--flattening-scope sheet` (opt-in).** The default (`charts`) flattens ~1,000-face
+  charts and welds each to one parent; every other seam is a cut, and drift between
+  charts opens those cuts into gaps or overlapping (blanked, `ambiguous_xyz`) pixels.
+  `sheet` flattens each edge-connected piece as **one map**: it is cut to a disk
+  (a closed winding is opened along one seam), seeded with a global LSCM and optimized
+  by one Flatboi SLIM solve, then stored as raster charts that already agree on every
+  shared vertex. There is nothing to weld; the only seams are the disk cuts, and +v
+  follows world +Z on every level. A piece that cannot be flattened whole (non-manifold
+  input, a failed solve) uses the chart route under its own component and is listed in
+  `LEVEL.json` → `sheet_flatten.fallback`; per-piece iterations and edge-stretch/area
+  percentiles are in `sheet_flatten.pieces`. It needs `--flattening-method slim` and,
+  for multi-million-face meshes, a larger `--surface-time-limit`.
+
+  On a synthetic 20 × 14 mm curved, non-developable sheet (radius 8 mm, 80 µm bumps),
+  decimated 1/9 to 51,800 faces and rasterized at 8.64 µm:
+
+  | Scope | Cut seams (gap median / max) | Ambiguous + missing pixels | Long-range distance error (p95) | Flatten |
+  |---|---|---|---|---|
+  | `charts` | 1,222 edges (90 µm / 1.26 mm) | 5.7% + 5.1% | 8.8% | 7 s |
+  | `sheet` | 0 | 0% + 0.001% | 0.41% | 22 s |
+
+  The same SLIM solve on 466,216 faces took 90 s (25 steps). These are synthetic
+  single runs, not a 175A measurement: check `ambiguous_xyz` in each `RENDER.json` and
+  the `sheet_flatten` receipt on real levels before a sweep.
 - **`--decimate N`** collapses the mesh to 1/N of its faces (libigl qslim) before
   flattening; `DECIMATION.json` records the deviation of a vertex sample from the new
   surface. Triangles only need to follow the surface: CT is still sampled at every
