@@ -497,3 +497,59 @@ def test_seam_percentile_in_the_open_last_bin_is_finite_json():
     assert p95 == 4.0
     json.dumps({"p95_abs_dW": p95}, allow_nan=False)
     assert scroll._percentile(hist, 0.05) == float(scroll.SEAM_BINS[1])
+
+
+def _npz_bundle(tmp_path, vertices, faces):
+    from winding_field.surface_mesh import import_mesh
+    from winding_field.util import file_sha
+
+    path = tmp_path / "source.npz"
+    np.savez(path, vertices_xyz=np.asarray(vertices, float), faces=np.asarray(faces))
+    meta = dict(frame="test", origin_xyz=[0.0, 0.0, 0.0], spacing_xyz=[1.0, 1.0, 1.0],
+                shape_zyx=[40, 40, 40], voxel_um=1.0, sheet_step=1.0)  # fmt: skip
+    import_mesh({"path": str(path), "sha256": file_sha(path)}, tmp_path / "mesh", meta)
+    return tmp_path / "mesh"
+
+
+def _grid(n, origin, first=0):
+    x, y = np.meshgrid(np.arange(float(n)), np.arange(float(n)))
+    vertices = np.column_stack([x.ravel(), y.ravel(), np.zeros(x.size)]) + origin
+    faces = []
+    for row in range(n - 1):
+        for col in range(n - 1):
+            a = first + row * n + col
+            faces.extend([(a, a + 1, a + n), (a + 1, a + n + 1, a + n)])
+    return vertices, np.array(faces)
+
+
+def test_decimation_splits_a_vertex_shared_by_two_sheets_and_reuses_its_output(tmp_path):
+    import igl
+
+    n = 12
+    va, fa = _grid(n, [2.0, 2.0, 5.0])
+    vb, fb = _grid(n, [2.0 + n - 1, 2.0 + n - 1, 5.0], first=n * n)
+    # The two sheets touch at one corner: make them share that vertex (a bow-tie).
+    fb = np.where(fb == n * n, n * n - 1, fb)
+    vertices, faces = np.concatenate([va, vb]), np.concatenate([fa, fb])
+    refused = igl.qslim(np.asfortranarray(vertices), np.asfortranarray(faces.astype(np.int32)), 60)
+    assert len(refused[1]) == 0  # libigl refuses the raw mesh
+    bundle = _npz_bundle(tmp_path, vertices, faces)
+    mesh, receipt = scroll.decimate_bundle(bundle, 4, tmp_path / "decimated")
+    assert 0 < receipt["faces"] <= len(faces) // 4 + 2
+    assert receipt["split_vertex_fans"] == 1 and receipt["dropped_degenerate_faces"] == 0
+    assert receipt["deviation_um"]["max"] < 1e-9
+    again = scroll.decimate_bundle(bundle, 4, tmp_path / "decimated")
+    assert again == (mesh, receipt)
+    (tmp_path / "decimated/DECIMATION.json").unlink()  # an interrupted attempt is redone
+    assert scroll.decimate_bundle(bundle, 4, tmp_path / "decimated")[1]["faces"] == receipt["faces"]
+
+
+def test_decimation_refuses_a_mesh_with_a_non_manifold_edge(tmp_path):
+    vertices, faces = _grid(8, [2.0, 2.0, 5.0])
+    fin = len(vertices)
+    vertices = np.concatenate([vertices, [[2.5, 2.5, 9.0]]])
+    faces = np.concatenate([faces, [[0, 1, fin]]])  # a third face on the edge 0-1
+    bundle = _npz_bundle(tmp_path, vertices, faces)
+    with pytest.raises(scroll.DecimationRefused):
+        scroll.decimate_bundle(bundle, 4, tmp_path / "decimated")
+    assert not (tmp_path / "decimated").exists()

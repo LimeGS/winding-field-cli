@@ -974,6 +974,57 @@ def _indexed_mesh(reader):
     return np.asarray(vertices, np.float64), np.searchsorted(ids, faces)
 
 
+class DecimationRefused(ValueError):
+    """The edge collapse returned no mesh (e.g. non-manifold edges); render the source mesh."""
+
+
+def _collapsible(vertices, faces):
+    """Drop degenerate faces and give every fan of a vertex its own copy of that vertex.
+
+    libigl's edge collapse closes the boundary with a vertex at infinity and refuses a mesh
+    that is then not edge-manifold. One vertex where two sheets or two boundary loops touch
+    is enough, and whole-scroll isosurfaces have a few (68 of 821,728 on a PHerc0175A
+    level): the collapse then returns an empty mesh. Geometry is unchanged: copies share the
+    position, and only faces of (near-)zero area are dropped.
+    """
+    from scipy.sparse import coo_matrix
+    from scipy.sparse.csgraph import connected_components
+
+    first, second = (
+        vertices[faces[:, 1]] - vertices[faces[:, 0]],
+        vertices[faces[:, 2]] - vertices[faces[:, 0]],
+    )
+    area = 0.5 * np.linalg.norm(np.cross(first, second), axis=1)
+    keep = area > 1e-6 * np.median(area) if len(area) else np.zeros(0, bool)
+    faces = faces[keep]
+    count = len(faces)
+    # Corners (face, slot) of faces that share an edge belong to one fan at both endpoints.
+    corner = np.arange(3 * count, dtype=np.int64).reshape(count, 3)
+    a, b = faces.ravel(), faces[:, [1, 2, 0]].ravel()
+    corner_a, corner_b = corner.ravel(), corner[:, [1, 2, 0]].ravel()
+    low = np.where(a < b, corner_a, corner_b)
+    high = np.where(a < b, corner_b, corner_a)
+    key = np.minimum(a, b) * np.int64(len(vertices)) + np.maximum(a, b)
+    order = np.argsort(key, kind="stable")
+    same = key[order][1:] == key[order][:-1]
+    i, j = order[:-1][same], order[1:][same]
+    # libigl does not return on an edge with three or more faces, and needs one orientation.
+    if (len(same) > 1 and (same[1:] & same[:-1]).any()) or ((a[i] < b[i]) == (a[j] < b[j])).any():
+        raise DecimationRefused("mesh has non-manifold or inconsistently oriented edges")
+    rows, cols = np.concatenate([low[i], high[i]]), np.concatenate([low[j], high[j]])
+    fans, label = connected_components(
+        coo_matrix((np.ones(len(rows), np.int8), (rows, cols)), shape=(3 * count, 3 * count)),
+        directed=False,
+    )
+    pair, inverse = np.unique(faces.ravel() * np.int64(max(fans, 1)) + label, return_inverse=True)
+    owner = pair // max(fans, 1)
+    extra = np.flatnonzero(np.r_[False, owner[1:] == owner[:-1]])
+    identifier = owner.copy()
+    identifier[extra] = len(vertices) + np.arange(len(extra))
+    vertices = np.concatenate([vertices, vertices[owner[extra]]])
+    return vertices, identifier[inverse].reshape(-1, 3), int((~keep).sum()), len(extra)
+
+
 def decimate_bundle(mesh, factor, output, *, sample=200_000, seed=0):
     """Edge-collapse (libigl qslim) a single-level bundle to 1/factor of its faces.
 
@@ -981,7 +1032,13 @@ def decimate_bundle(mesh, factor, output, *, sample=200_000, seed=0):
     to follow the surface, not the field grid: on PHerc0175A 1/9 (95 um edges) moved the
     surface by at most 1.05 um while cutting flatten+assemble ~10x. The receipt reports
     the measured deviation of a sample of original vertices from the new surface.
+
+    Raises DecimationRefused for a mesh the collapse cannot take (an edge with three or
+    more faces, mixed orientation, or an empty result); an interrupted earlier attempt in
+    ``output`` is replaced, a completed one for the same request is reused.
     """
+    import shutil
+
     import igl
 
     from .surface_mesh import MeshReader, import_mesh
@@ -992,16 +1049,26 @@ def decimate_bundle(mesh, factor, output, *, sample=200_000, seed=0):
         vertices, faces = _indexed_mesh(reader)
     if len(levels) != 1:
         raise ValueError("decimation needs a single-level bundle")
+    output = Path(output)
+    if output.exists():
+        done = output / "DECIMATION.json"
+        if done.is_file() and (output / "mesh/MESH.json").is_file():
+            receipt = _json(done)
+            if (receipt.get("factor"), receipt.get("source_faces")) == (factor, len(faces)):
+                return output / "mesh", receipt
+        shutil.rmtree(output)
     target = max(1, len(faces) // factor)
+    clean_v, clean_f, degenerate, copies = _collapsible(vertices, faces)
     out_v, out_f, _, _ = igl.qslim(
-        np.asfortranarray(vertices), np.asfortranarray(faces.astype(np.int32)), target
+        np.asfortranarray(clean_v), np.asfortranarray(clean_f.astype(np.int32)), target
     )
+    if not len(out_f):
+        raise DecimationRefused("edge collapse returned no faces; the mesh is not collapsible")
     rng = np.random.default_rng(seed)
     probe = vertices[rng.choice(len(vertices), min(sample, len(vertices)), replace=False)]
     distance = np.sqrt(
         igl.point_mesh_squared_distance(probe, out_v, np.asarray(out_f, np.int32))[0]
     )
-    output = Path(output)
     output.mkdir(parents=True, exist_ok=True)
     source = output / "decimated.npz"
     np.savez(source, vertices_xyz=out_v, faces=np.asarray(out_f, np.int64))
@@ -1015,6 +1082,8 @@ def decimate_bundle(mesh, factor, output, *, sample=200_000, seed=0):
         source_level=levels[0]["level"],
         source_faces=len(faces),
         faces=int(len(out_f)),
+        dropped_degenerate_faces=degenerate,
+        split_vertex_fans=copies,
         sampled_vertices=len(probe),
         deviation_um=dict(
             p50=float(np.median(distance)),
@@ -1104,9 +1173,16 @@ def render_ct(args):
             reason=f"fewer than {args.decimate_min_faces} faces",
         )  # fmt: skip
     elif args.decimate > 1:
-        mesh, receipts["decimation"] = decimate_bundle(
-            mesh, args.decimate, output.parent / (output.name + ".decimated")
-        )
+        try:
+            mesh, receipts["decimation"] = decimate_bundle(
+                mesh, args.decimate, output.parent / (output.name + ".decimated")
+            )
+        except DecimationRefused as error:
+            # Render the level from its full mesh rather than lose it.
+            receipts["decimation"] = dict(
+                factor=1, requested_factor=args.decimate, source_faces=source_faces,
+                source_level=source_levels[0]["level"], reason=str(error),
+            )  # fmt: skip
         receipts["decimation"]["seconds"] = time.time() - started
     with MeshReader(mesh) as reader:
         volume = open_volume({k: v for k, v in config.items() if v is not None})
