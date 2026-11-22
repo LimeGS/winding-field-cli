@@ -334,7 +334,8 @@ def main(argv=None):
             "--field-chunk",
             type=int,
             default=64,
-            help="field solver block edge in field-grid samples (default: 64)",
+            help="field solver block edge in field-grid samples (default: 64); at least the "
+            "largest grid dimension solves the whole field as one block",
         )
         p.add_argument(
             "--sweeps",
@@ -443,6 +444,13 @@ def main(argv=None):
             default=argparse.SUPPRESS,
             help="completed field run whose W seeds and gauges this field (e.g. a coarse run "
             "for a fine --roi tile); same frame required",
+        )
+        p.add_argument(
+            "--field-halo",
+            type=int,
+            default=argparse.SUPPRESS,
+            help="field nodes each solver block shares with its neighbours (default: 2); "
+            "a wider overlap reaches the global solution in fewer sweeps",
         )
         p.add_argument(
             "--field-scope",

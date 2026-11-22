@@ -304,7 +304,7 @@ def plan(config, volume=None, stages=()):
                 bounded_preparation=True,
                 solver_device=config.get("device", "cpu"),
                 field_chunk=config.get("field_chunk", 64),
-                field_halo=2,
+                field_halo=config.get("field_halo", 2),
                 solver_dtype="float64",
                 canonical_windows=dict(qual=128, qual_core=48, lasagna=64, lasagna_core=32),
                 output_budget_is_cap=True,

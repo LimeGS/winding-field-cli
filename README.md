@@ -269,6 +269,13 @@ wf resume "$RUN" --extra-surface-seconds 600
 Already published partial native levels are immutable; extra time does not remap
 them. Inspect status and coverage rather than treating a pause as completion.
 
+Blocks exchange information only through their overlap, `--field-halo` nodes wide
+(default 2). Many blocks with a narrow overlap need many sweeps to carry large-scale
+structure across the grid; a wider overlap (for example 16 or 32) needs far fewer, at
+the cost of larger block solves. A `--field-chunk` at least the largest grid dimension
+solves the field as one block, exactly, with one sweep; check its GPU memory first
+(about 120 bytes per node plus about 420 bytes per fibre constraint row, in float64).
+
 To continue any field with more sweeps, give its **absolute total** budget (for
 example, from 4 to 8):
 

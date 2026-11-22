@@ -148,15 +148,20 @@ def sample_prior(maps, meta, geometry, cal, lo, hi):
 def open_field(run):
     run = Path(run)
     meta = json.loads((run / "FIELD.json").read_bytes())
+    checkpoint = run / "field/CHECKPOINT.json"
+    # Retain at least one decoded chunk (float64 values and mask) so a field stored as
+    # a few large blocks is not decoded again for every read; affects memory only.
+    chunk = json.loads(checkpoint.read_bytes())["chunk"]
+    one_chunk = math.prod(min(chunk, n) for n in meta["geometry"]["shape_zyx"]) * 9 + 4096
     return FieldSource(
         dict(
             kind="chunks",
-            path=str((run / "field/CHECKPOINT.json").resolve()),
+            path=str(checkpoint.resolve()),
             sha256=meta["checkpoint_sha256"],
             support_policy="observed",
         ),
         meta["geometry"],
-        cache_bytes=64 << 20,
+        cache_bytes=max(64 << 20, one_chunk),
     )
 
 
@@ -345,8 +350,8 @@ def solve(run, config, stop=None, *, sweep_target=None, convergence=None):
     geometry.update(voxel_um=1.0, sheet_step=1.0)
     shape = tuple(geometry["shape_zyx"])
     chunk = config.get("field_chunk", 64)
-    if type(chunk) is not int or not 4 <= chunk <= 256:
-        raise ValueError("field chunk must be 4..256")
+    if type(chunk) is not int or chunk < 4:
+        raise ValueError("field chunk must be at least 4")
     identity = dict(
         maps=meta["tiles_sha256"],
         fibres=fibres["sha256"],
@@ -402,7 +407,8 @@ def solve(run, config, stop=None, *, sweep_target=None, convergence=None):
         origin_xyz=geometry["origin_xyz"],
         spacing_xyz=geometry["spacing_xyz"],
         order=list(itertools.product(*(range((n - 1) // chunk + 1) for n in shape))),
-        halo=2,
+        # The core records the overlap in the checkpoint's problem identity.
+        halo=config.get("field_halo", 2),
         sweeps=sweeps,
         rtol=config.get("rtol", 1e-6),
         maxiter=config.get("maxiter", 2000),

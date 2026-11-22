@@ -184,7 +184,10 @@ def validate_config(config):
     integers = {
         "import_workers": (0, None),
         "chunk": (4, 128),
-        "field_chunk": (4, 256),
+        # A block edge at least the largest grid dimension solves the whole field as one
+        # block (a global solve); its memory, not this check, bounds the size.
+        "field_chunk": (4, None),
+        "field_halo": (1, None),
         "level": (0, None),
         "sweeps": (1, None),
         "maxiter": (1, None),
