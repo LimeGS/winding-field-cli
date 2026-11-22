@@ -297,6 +297,13 @@ def main(argv=None):
             default=1,
             help="local AFV/Lasagna compute workers: 1 serial (default), 0 resource-admitted auto; parent writes in order",
         )
+        p.add_argument(
+            "--afv-clip-backend",
+            choices=["auto", "native", "numpy", "reference"],
+            default=argparse.SUPPRESS,
+            help="AFV support clipping: auto (native when buildable, default), native (required), "
+            "numpy, or reference (per-tile cache, no snapshot); all keep exact fragments",
+        )
         p.add_argument("--lasagna-python", help="isolated official Python 3.14 runtime")
         p.add_argument("--lasagna-model-path", help="local pinned Lasagna surface checkpoint")
         from .config import LASAGNA_DOWNSAMPLE

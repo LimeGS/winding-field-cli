@@ -51,6 +51,7 @@ def _supported(points, maps, stop):
     low = np.floor(q).astype(np.int64)
     fraction = q - low
     valid = np.ones(len(q), bool)
+    dense = getattr(maps, "dense", None)
     for corner in itertools.product((0, 1), repeat=3):
         if stop and stop():
             raise InterruptedError("AFV import paused")
@@ -60,6 +61,10 @@ def _supported(points, maps, stop):
         if not len(active):
             continue
         ij = np.minimum(low[active] + corner, np.asarray(maps.shape) - 1)
+        if dense is not None:
+            # Shared snapshot: the same contributing-corner lookup without tiles.
+            valid[active] &= dense[tuple(ij.T)]
+            continue
         keys, inverse = np.unique(ij // maps.chunk, axis=0, return_inverse=True)
         for index, key in enumerate(keys):
             if stop and stop():
@@ -123,20 +128,33 @@ def pieces(points, maps, stop=None):
             yield from _scalar_pieces(points, maps, stop)
             return
         batches.append((start, delta, times))
-    piece = []
+    # One support query for the whole block: the per-segment arithmetic is the
+    # same element-wise IEEE operations as per edge, only batched.
+    segments = []
     for batch in batches:
-        if stop and stop():
-            raise InterruptedError("AFV import paused")
         if batch is None:
-            if len(piece) > 1:
-                yield np.asarray(piece)
-            piece = []
+            segments.append(None)
             continue
         start, delta, times = batch
         previous = np.r_[0.0, times[:-1]]
         left = np.clip(start + previous[:, None] * delta, 0, high)
         right = np.clip(start + times[:, None] * delta, 0, high)
-        supported = _supported((left + right) / 2, maps, stop)
+        segments.append((left, right))
+    midpoints = [(left + right) / 2 for left, right in filter(None, segments)]
+    flags = _supported(np.concatenate(midpoints), maps, stop) if midpoints else None
+    offset = 0
+    piece = []
+    for segment in segments:
+        if stop and stop():
+            raise InterruptedError("AFV import paused")
+        if segment is None:
+            if len(piece) > 1:
+                yield np.asarray(piece)
+            piece = []
+            continue
+        left, right = segment
+        supported = flags[offset : offset + len(left)]
+        offset += len(left)
         boundaries = np.diff(np.r_[False, supported, False].astype(np.int8))
         for first, last in zip(np.flatnonzero(boundaries == 1), np.flatnonzero(boundaries == -1)):
             if piece and (first > 0 or not np.allclose(piece[-1], left[first], rtol=0, atol=1e-9)):

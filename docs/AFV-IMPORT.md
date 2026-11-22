@@ -6,6 +6,40 @@ The serial route streams one source block at a time; optional local workers use
 bounded in-flight blocks and one ordered parent writer. No scientific parameter or SQLite
 durability setting is changed.
 
+## Clipping backends and the shared support snapshot
+
+Fragments are exact: the same float64 vertices (signed zero included), bend
+vertices, fragment order, source ids, metadata, serialized payloads and R-tree
+bounds as the frozen v1.6.5 importer (`tests/afv_frozen.py`), compared by
+logical rows in `tests/test_afv_native.py`.
+
+- **Support snapshot.** Unless `--afv-clip-backend reference`, the maps' Boolean
+  support is published once as `fibres/support-*.npy`, a read-only ZYX memory map
+  shared by all workers (counted once in admission). Each tile is hashed and
+  decoded from the same bytes; the file is fsynced and renamed before
+  `SUPPORT.json` names its digest. A mismatching or partial snapshot is rebuilt.
+  The digest and the maps identity are re-checked before `FIBRES.json`, and the
+  snapshot is deleted on completion. Above `afv_support_snapshot_bytes`
+  (default 4 GiB) or without disk headroom, clipping keeps the bounded tile
+  cache.
+- **Native kernel.** `native/afv_clip.cpp` repeats the NumPy clipping operation by
+  operation (no fast-math, no FMA contraction, no `-march`). It is compiled on
+  first use with the host C++ compiler into `~/.cache/winding-field/native`
+  (`WINDING_FIELD_NATIVE_CACHE` overrides), keyed by source, compiler, flags and
+  platform. Blocks whose exact result depends on a NumPy implementation choice
+  (a `-0.0` clip input), that exceed the interval budget, or that need the
+  streaming path are returned to the NumPy reference; output capacity grows
+  instead of truncating.
+- **Backends** (`--afv-clip-backend` / `afv_clip_backend`, or
+  `WINDING_AFV_CLIP_BACKEND`): `auto` (default: native when it builds, else
+  NumPy), `native` (fails if it cannot build), `numpy` (batched NumPy over the
+  snapshot), `reference` (NumPy with the bounded per-tile cache, no snapshot).
+- **Work units.** Workers receive up to 512 consecutive blocks, 262,144 points or
+  4 MiB of annotations per unit and return only fragments. Results above the
+  16 MiB envelope are recomputed by the parent, never truncated. Publication
+  keeps strict source order; R-tree bounds are inserted in bulk per block. The
+  serial route still clips one block at a time inside its transaction.
+
 ## Transactions and recovery
 
 - New blocks share a transaction until **1,000 blocks or 2 seconds** at a
@@ -16,10 +50,14 @@ durability setting is changed.
 - Normal completion commits the final partial batch. Stop or exception rolls
   back **the entire unconfirmed batch**, preserving previous committed batches.
   Hard process death relies on SQLite's unchanged durable journal recovery.
-- Resume uses the database, not telemetry. It revalidates already committed
-  blocks with the original clipping/checksum/inventory checks, without inserting
-  them again; only uncommitted writes must be imported again. This validation
-  still costs time and is deliberately not skipped for speed.
+- Resume uses the database, not telemetry. Runs started by this version record
+  their resume contract (`import_meta`) before the first block; on resume each
+  committed block's rows are re-read and must reproduce the `done` digest written
+  in the same transaction, with matching labels, annotations, decodable payloads
+  and R-tree bounds. They are not re-clipped. Partial runs from earlier
+  versions have no contract and keep the original re-clipping verification;
+  their database is not altered to claim otherwise. Either way, only
+  uncommitted writes are imported again.
 - `FIBRES.json`, its field meanings and final database hash retain their existing
   contract. Different commit boundaries can change SQLite bytes; logical curves,
   annotations, clipping, spatial indexes and inventories must match instead.
