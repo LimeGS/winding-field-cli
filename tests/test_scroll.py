@@ -482,3 +482,18 @@ def test_tiles_use_a_shared_cache_when_given(tmp_path):
     for tile in tiles:
         args = json.loads((root / "tiles" / tile["id"] / "ARGS.json").read_text())
         assert args[args.index("--cache") + 1] == str(shared.resolve())
+
+
+def test_seam_percentile_in_the_open_last_bin_is_finite_json():
+    import json
+
+    import numpy as np
+
+    from winding_field import scroll
+
+    hist = np.zeros(len(scroll.SEAM_BINS) - 1, np.int64)
+    hist[0], hist[-1] = 10, 90  # most seam nodes differ by more than 4 windings
+    p95 = scroll._percentile(hist, 0.95)
+    assert p95 == 4.0
+    json.dumps({"p95_abs_dW": p95}, allow_nan=False)
+    assert scroll._percentile(hist, 0.05) == float(scroll.SEAM_BINS[1])

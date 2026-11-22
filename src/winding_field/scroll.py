@@ -736,7 +736,10 @@ def _percentile(hist, q):
     if not total:
         return None
     index = int(np.searchsorted(np.cumsum(hist), q * total))
-    return float(SEAM_BINS[min(index + 1, len(SEAM_BINS) - 1)])
+    edge = SEAM_BINS[min(index + 1, len(SEAM_BINS) - 1)]
+    # The last bin is open-ended (>= 4 windings): report its finite lower edge, so receipts
+    # stay valid JSON; over_four_windings counts those nodes.
+    return float(edge if np.isfinite(edge) else SEAM_BINS[-2])
 
 
 def merge(args):
@@ -881,6 +884,7 @@ def merge(args):
             median_abs_dW=_percentile(hist, 0.5),
             p95_abs_dW=_percentile(hist, 0.95),
             over_half_winding=int(hist[SEAM_BINS[1:] > 0.5].sum()),
+            over_four_windings=int(hist[-1]),
         )
     worst = max((v["p95_abs_dW"] or 0.0 for v in seam_report.values()), default=0.0)
     atomic_json(output / "SEAMS.json", dict(pairs=seam_report, worst_p95_abs_dW=worst))
