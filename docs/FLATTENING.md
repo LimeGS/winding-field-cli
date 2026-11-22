@@ -145,6 +145,18 @@ and batch size. Implementation/runtime changes require the original package or a
 output. Completed charts are verified/reused; interruption within a SLIM group restarts
 only that uncommitted group on continuation.
 
+**Host-side exact acceleration (comparison to `eea0cbb`).** Seed OBJ formatting,
+verified UV readback and integer mesh-topology checks use bounded batches or
+reuse sorted edges. The numerical solver, seed selection, threads and checkpoint
+batches retain their existing settings. On a 130,050-triangle grid on macOS arm64,
+four interleaved runs per version gave median seed writes of 273→96 ms, indexed
+seed readback 471→166 ms, and component cutting/topology 849→285 ms. Run
+`PYTHONPATH=src python benchmarks/flatboi_prep.py` in a clone containing the
+baseline to compare stage times and exact products. On a separate real 1,007-face
+175A chart, Linux x86_64 Flatboi (pinned historical binary, one numerical thread)
+converged in four steps with identical UV bytes and final energy `8.0004073106`
+before and after; the small solve itself took about 3.9 s on both under emulation.
+
 ## Explicit solver × scope matrix
 
 `export-sheets` selects `--flattening-solver lscm-slim|lscm|slim` and

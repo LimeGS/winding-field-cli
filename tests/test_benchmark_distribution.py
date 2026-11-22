@@ -18,7 +18,17 @@ def test_sdist_contains_flattening_tools_with_their_tests(tmp_path):
     project.mkdir()
     for name in ("pyproject.toml", "MANIFEST.in", "README.md", "THIRD_PARTY.md", "uv.toml"):
         shutil.copyfile(root / name, project / name)
-    for name in ("src", "tools", "tests", "provenance", "licenses", "docs", "examples", "docker"):
+    for name in (
+        "src",
+        "tools",
+        "tests",
+        "provenance",
+        "licenses",
+        "docs",
+        "examples",
+        "docker",
+        "benchmarks",
+    ):
         shutil.copytree(
             root / name,
             project / name,
@@ -50,6 +60,7 @@ def test_sdist_contains_flattening_tools_with_their_tests(tmp_path):
         "flattening_review",
         "bench_local_imports",
         "bench_afv_import",
+        "bench_exact_render",
     ):
         assert f"tools/{tool}.py" in names
     for test in ("benchmark", "ct", "metrics", "review"):
@@ -57,6 +68,7 @@ def test_sdist_contains_flattening_tools_with_their_tests(tmp_path):
     for module in ("cli_settings", "export_settings", "input_settings", "tool_settings"):
         assert f"src/winding_field/{module}.py" in names
     for name in (
+        "benchmarks/flatboi_prep.py",
         "docs/CLI-FLAGS.md",
         "examples/paris4-cli.json",
         "examples/run-plan.template.yaml",

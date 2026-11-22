@@ -421,7 +421,13 @@ def main(argv=None):
         human_seed=args.patch is not None,
         source_sha256=_sha(__file__),
         source_hashes={
-            n: _sha(Path(__file__).with_name(n)) for n in ("surface_export.py", "surface_probe.py")
+            n: _sha(Path(__file__).parent / n)
+            for n in (
+                "surface_export.py",
+                "surface_probe.py",
+                "flattening/obj.py",
+                "flattening/topology.py",
+            )
         },
         request_sources=getattr(args, "_request_sources", {}),
     )

@@ -64,27 +64,29 @@ def rasterize(charts, origin, pitch, shape):
             ids = selected[first : first + count]
             first += count
             sizes = counts[ids]
-            which = np.repeat(ids, sizes)
+            which = np.repeat(np.arange(len(ids)), sizes)
             offset = np.arange(int(sizes.sum())) - np.repeat(np.r_[0, np.cumsum(sizes[:-1])], sizes)
-            cols = starts[which, 0] + offset % dims[which, 0]
-            rows = starts[which, 1] + offset // dims[which, 0]
-            t = tri[which]
+            widths = dims[ids, 0][which]
+            cols = starts[ids, 0][which] + offset % widths
+            rows = starts[ids, 1][which] + offset // widths
+            t = tri[ids]
             a, b = t[:, 1] - t[:, 0], t[:, 2] - t[:, 0]
-            relative = np.column_stack([cols, rows]) - t[:, 0]
+            relative = np.column_stack([cols, rows]) - t[which, 0]
             den = cross2(a, b)
             if np.any(den <= 0):
                 raise ValueError("inverted raster triangles")
-            w1 = cross2(relative, b) / den
-            w2 = cross2(a, relative) / den
+            den = den[which]
+            w1 = cross2(relative, b[which]) / den
+            w2 = cross2(a[which], relative) / den
             inside = (w1 >= -1e-9) & (w2 >= -1e-9) & (w1 + w2 <= 1 + 1e-9)
             which, rows, cols, w1, w2 = (v[inside] for v in (which, rows, cols, w1, w2))
-            source = vertices[faces[which]]
-            points = (
-                source[:, 0]
-                + w1[:, None] * (source[:, 1] - source[:, 0])
-                + w2[:, None] * (source[:, 2] - source[:, 0])
-            )
-            normal = np.cross(source[:, 1] - source[:, 0], source[:, 2] - source[:, 0])
+            # Candidate faces without a hit never participate in XYZ degeneracy checks.
+            hit = np.bincount(which, minlength=len(ids)) != 0
+            source = vertices[faces[ids[hit]]]
+            which = (np.cumsum(hit) - 1)[which]
+            e1, e2 = source[:, 1] - source[:, 0], source[:, 2] - source[:, 0]
+            points = source[which, 0] + w1[:, None] * e1[which] + w2[:, None] * e2[which]
+            normal = np.cross(e1, e2)
             length = np.linalg.norm(normal, axis=1)
             if np.any(length <= 0):
                 raise ValueError("degenerate raster geometry")
@@ -93,7 +95,7 @@ def rasterize(charts, origin, pitch, shape):
             unique, pick = np.unique(key, return_index=True)
             fresh = mask[unique] == 0
             xyz[unique[fresh]] = points[pick[fresh]]
-            normals[unique[fresh]] = normal[pick[fresh]]
+            normals[unique[fresh]] = normal[which[pick[fresh]]]
             mask[unique[fresh]] = 1
             np.minimum.at(low, key, points)
             np.maximum.at(high, key, points)
@@ -128,31 +130,53 @@ def _cell_mask_name(prefix, y, x):
     return f"{prefix}/tiles/tifxyz-mask-{y:09d}-{x:09d}.npz"
 
 
-def _blocks(store, prefix, shape, window, quality=False):
+def _tile_members(store, name, *members):
+    # Verification covers the entire archive, including members this pass doesn't inflate.
+    with np.load(store.validate_file(name), allow_pickle=False) as archive:
+        return {k: archive[k] for k in members}
+
+
+def _blocks(store, prefix, shape, window, quality=False, stride=1):
+    """Yield scanline bands backed by one buffer, consumed before advancing."""
     height, width = shape
+    members = ("mask",) if quality else ("mask", "ct")
     for y in range(0, height, TILE):
         store.check()
-        block = np.zeros((min(TILE, height - y), width, 1 if quality else 2), np.uint8)
+        if y == 0:
+            buffer = np.empty(
+                (
+                    math.ceil(min(TILE, height) / stride),
+                    math.ceil(width / stride),
+                    1 if quality else 2,
+                ),
+                np.uint8,
+            )
+        first = y + (-y) % stride
+        block = buffer[: len(range(first, min(y + TILE, height), stride))]
+        block.fill(0)
         for x in range(0, width, TILE):
-            tile = store.load_arrays(_tile_name(prefix, y, x))
-            mask = tile["mask"]
+            tile = _tile_members(store, _tile_name(prefix, y, x), *members)
+            dx = (-x) % stride
+            select = np.s_[first - y :: stride, dx::stride]
+            mask = tile["mask"][select]
             h, w = mask.shape
+            col = (x + dx) // stride
             if quality:
-                block[:h, x : x + w, 0] = mask
+                block[:h, col : col + w, 0] = mask
             else:
-                values = np.nan_to_num(tile["ct"], nan=window[0])
+                values = np.nan_to_num(tile["ct"][select], nan=window[0])
                 gray = np.rint(
                     np.clip((values - window[0]) * 255 / (window[1] - window[0]), 0, 255)
                 ).astype(np.uint8)
-                block[:h, x : x + w, 0] = gray
-                block[:h, x : x + w, 1] = (mask == 2) * 255
-        yield y, block
+                block[:h, col : col + w, 0] = gray
+                block[:h, col : col + w, 1] = (mask == 2) * 255
+        yield first // stride, block
 
 
 def _write_png(store, name, shape, blocks, quality=False):
     if store.db.execute("SELECT 1 FROM files WHERE name=?", (name,)).fetchone():
         store.validate_file(name)
-        return
+        return False
     path = store.path(name)
     path.parent.mkdir(parents=True, exist_ok=True)
     pending = store.path(str(path.relative_to(store.root).with_name("." + path.name + ".pending")))
@@ -182,6 +206,50 @@ def _write_png(store, name, shape, blocks, quality=False):
         os.fsync(stream.fileno())
     pending.replace(path)
     store.register(name)
+    return True
+
+
+def _publish_images(store, prefix, shape, window):
+    overview_name = prefix + "/overview.png"
+    overview = None
+    stride = max(1, math.ceil(max(shape) / 2048))
+    if not store.db.execute("SELECT 1 FROM files WHERE name=?", (overview_name,)).fetchone():
+        overview = np.zeros(
+            (math.ceil(shape[0] / stride), math.ceil(shape[1] / stride), 2), np.uint8
+        )
+
+    def sheet_blocks():
+        for y, block in _blocks(store, prefix, shape, window):
+            if overview is not None:
+                first = (-y) % stride
+                part = block[first::stride, ::stride]
+                row = (y + first) // stride
+                overview[row : row + len(part)] = part
+            yield y, block
+
+    wrote_sheet = _write_png(store, prefix + "/sheet.png", shape, sheet_blocks())
+    _write_png(
+        store, prefix + "/mask.png", shape, _blocks(store, prefix, shape, window, True), True
+    )
+    if overview is None:
+        return
+    if wrote_sheet:
+        # Same commit order and verification boundary even when reusing the sampled pixels.
+        for y in range(0, shape[0], TILE):
+            store.check()
+            for x in range(0, shape[1], TILE):
+                store.validate_file(_tile_name(prefix, y, x))
+    else:
+        for row, block in _blocks(store, prefix, shape, window, stride=stride):
+            overview[row : row + len(block)] = block
+    path = store.path(overview_name)
+    pending = path.with_name(".overview.pending")
+    with pending.open("wb") as stream:
+        Image.fromarray(overview, mode="LA").save(stream, format="PNG")
+        stream.flush()
+        os.fsync(stream.fileno())
+    pending.replace(path)
+    store.register(overview_name)
 
 
 def _publish_record(store, name, record):
@@ -258,7 +326,7 @@ class _TiffTiles:
         mask = np.zeros(xyz.shape[:2], bool)
         for y in range(lo[0] // TILE * TILE, hi[0], TILE):
             for x in range(lo[1] // TILE * TILE, hi[1], TILE):
-                tile = self.store.load_arrays(_tile_name(self.prefix, y, x))
+                tile = _tile_members(self.store, _tile_name(self.prefix, y, x), "mask", "xyz_um")
                 lower = np.maximum(lo, [y, x])
                 upper = np.minimum(hi, np.array([y, x]) + tile["mask"].shape)
                 src = tuple(slice(int(a - b), int(c - b)) for a, b, c in zip(lower, [y, x], upper))
@@ -577,6 +645,7 @@ def render(store, volume, pitch_um, export_tifxyz=False):
                     "SELECT 1 FROM rendered WHERE component=? AND y=? AND x=?", (component, y, x)
                 ).fetchone()
                 if committed:
+                    # Reopen every historical member once before reusing this checkpoint.
                     tile = store.load_arrays(name)
                 else:
                     shape = (min(TILE, height - y), min(TILE, width - x))
@@ -615,37 +684,7 @@ def render(store, volume, pitch_um, export_tifxyz=False):
             if window[1] <= window[0]:
                 window[1] = window[0] + 1.0
         store.phase = "publish"
-        _write_png(
-            store,
-            prefix + "/sheet.png",
-            (height, width),
-            _blocks(store, prefix, (height, width), window),
-        )
-        _write_png(
-            store,
-            prefix + "/mask.png",
-            (height, width),
-            _blocks(store, prefix, (height, width), window, True),
-            True,
-        )
-        overview_name = prefix + "/overview.png"
-        if not store.db.execute("SELECT 1 FROM files WHERE name=?", (overview_name,)).fetchone():
-            stride = max(1, math.ceil(max(height, width) / 2048))
-            overview = np.zeros(
-                (math.ceil(height / stride), math.ceil(width / stride), 2), np.uint8
-            )
-            for y, block in _blocks(store, prefix, (height, width), window):
-                rows = np.arange(y, y + len(block))
-                keep = rows % stride == 0
-                overview[rows[keep] // stride] = block[keep, ::stride]
-            path = store.path(overview_name)
-            pending = path.with_name(".overview.pending")
-            with pending.open("wb") as stream:
-                Image.fromarray(overview, mode="LA").save(stream, format="PNG")
-                stream.flush()
-                os.fsync(stream.fileno())
-            pending.replace(path)
-            store.register(overview_name)
+        _publish_images(store, prefix, (height, width), window)
         record = dict(
             path=prefix,
             grid=grid,

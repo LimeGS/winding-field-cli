@@ -9,6 +9,7 @@ prune docs/superpowers
 prune docs/verification
 recursive-include tests *.py
 include benchmarks/field_cpu.py
+include benchmarks/flatboi_prep.py
 include tools/vendor.py
 include examples/*.py
 include examples/*.json
@@ -17,6 +18,7 @@ include tools/run_field.py
 include tools/run_surfaces.py
 include tools/benchmark_blocks.py
 include tools/bench_solver.py
+include tools/bench_exact_render.py
 include tools/bench_flattening.py tools/flattening_ct.py tools/flattening_metrics.py tools/flattening_review.py
 include tools/install.sh
 include tools/install-runtime.sh tools/verify-core.py tools/ubuntu-packages.txt

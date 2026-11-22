@@ -123,10 +123,10 @@ def provision(url=APPIMAGE_URL, sha256=APPIMAGE_SHA256):
 
 
 def _write_obj(path, vertices, uv, faces):
+    from .obj import write_obj
+
     with open(path, "w") as stream:
-        np.savetxt(stream, vertices, fmt="v %.17g %.17g %.17g")
-        np.savetxt(stream, uv, fmt="vt %.17g %.17g")
-        np.savetxt(stream, np.repeat(faces + 1, 2, axis=1), fmt="f %d/%d %d/%d %d/%d")
+        write_obj(stream, vertices, faces, uv)
 
 
 def solve_batch(

@@ -768,6 +768,82 @@ def build_map(
     )
 
 
+class PixelBounds:
+    """Two-level pixel boxes in source order; wide faces never duplicate index entries."""
+
+    def __init__(self, faces, uv, left, top, pitch, wh, guard, *, budget=8 << 20):
+        self.count = len(faces)
+        dtype = np.uint16 if max(wh) <= 65536 else np.uint32
+        # Coarsen leaves for large meshes rather than growing with faces × tiles.
+        self.group = max(1, math.ceil(len(faces) * 4 * np.dtype(dtype).itemsize / budget))
+        leaves = (len(faces) + self.group - 1) // self.group
+        self.boxes = boxes = np.empty((leaves, 4), dtype)
+        step = self.group * max(1, 8192 // self.group)
+        maximum = np.tile(np.subtract(wh, 1), 2)
+        for start in range(0, len(faces), step):
+            guard()
+            stop = min(len(faces), start + step)
+            t = uv[faces[start:stop]]
+            lo, hi = np.minimum(t[:, 0], t[:, 1]), np.maximum(t[:, 0], t[:, 1])
+            if t.shape[1] == 3:
+                np.minimum(lo, t[:, 2], out=lo)
+                np.maximum(hi, t[:, 2], out=hi)
+            # Round outward: the exact lattice predicate and epsilon belong to the kernel.
+            coords = np.column_stack(
+                (
+                    np.floor((lo[:, 0] - left) / pitch),
+                    np.floor((top - hi[:, 1]) / pitch),
+                    np.ceil((hi[:, 0] - left) / pitch),
+                    np.ceil((top - lo[:, 1]) / pitch),
+                )
+            )
+            if self.group > 1:
+                starts = np.arange(0, len(coords), self.group)
+                coords = np.column_stack(
+                    (
+                        np.minimum.reduceat(coords[:, :2], starts, axis=0),
+                        np.maximum.reduceat(coords[:, 2:], starts, axis=0),
+                    )
+                )
+            first = start // self.group
+            boxes[first : first + len(coords)] = np.clip(coords, 0, maximum)
+        starts = np.arange(0, leaves, 256)
+        self.blocks = np.column_stack(
+            (
+                np.minimum.reduceat(boxes[:, :2], starts, axis=0),
+                np.maximum.reduceat(boxes[:, 2:], starts, axis=0),
+            )
+        )
+
+    def batches(self, canvas, guard):
+        x, y = canvas["column_offset"], canvas["row_offset"]
+        xmax, ymax = x + canvas["width"] - 1, y + canvas["height"] - 1
+
+        def hits(boxes):
+            return np.flatnonzero(
+                (boxes[:, 0] <= xmax)
+                & (boxes[:, 1] <= ymax)
+                & (boxes[:, 2] >= x)
+                & (boxes[:, 3] >= y)
+            )
+
+        for block in hits(self.blocks):
+            guard()
+            start = int(block) * 256
+            leaves = hits(self.boxes[start : start + 256]) + start
+            if not len(leaves):
+                continue
+            if self.group == 1:
+                yield leaves
+            else:
+                ids = (leaves[:, None] * self.group + np.arange(self.group)).ravel()
+                yield ids[ids < self.count]
+
+    def candidates(self, canvas, guard):
+        for batch in self.batches(canvas, guard):
+            yield from batch
+
+
 def render_map(
     mapped,
     output,
@@ -782,7 +858,7 @@ def render_map(
     raster_workers=1,
     reuse=None,
 ):
-    from .original_tifxyz import export_xyz
+    from .original_tifxyz import domain_edges, export_xyz
     from PIL import Image
 
     if type(raster_workers) is not int or not 1 <= raster_workers <= 4:
@@ -818,6 +894,16 @@ def render_map(
         if stopped.is_set():
             raise InterruptedError("raster cancelled")
         guard()
+
+    face_index = edge_index = edges = None
+    tile_count = math.prod((int(n) + tile_size - 2) // (tile_size - 1) for n in wh)
+    reused_count = len(reuse.receipts) if reuse else 0
+    if tile_count - reused_count > 1 and uv.dtype == np.float64:
+        args = (uv, low[0], high[1], pitch, wh, check)
+        face_index = PixelBounds(faces, *args)
+        if export_tifxyz:
+            edges = domain_edges(faces, uv, mapped["display"], check)
+            edge_index = PixelBounds(edges, *args)
 
     def render_tile(position):
         row, col = position
@@ -885,6 +971,9 @@ def render_map(
                             check,
                             binding=binding,
                             publish=(crop, canvas),
+                            boundary_batches=None
+                            if edge_index is None
+                            else (edges[ids] for ids in edge_index.batches(expanded, check)),
                         )
                     )
                 except ValueError as error:
@@ -903,6 +992,7 @@ def render_map(
             guard=check,
             capture=capture,
             xyz_tolerance=0.048 / frame["voxel_um"],
+            candidate_ids=None if face_index is None else face_index.candidates(expanded, check),
         )
         image, mask = image[crop], mask[crop]
         report["canvas"] = canvas
@@ -1122,6 +1212,8 @@ def export_mesh(mesh_path, out, volume, request, *, export_tifxyz=False, stop=la
                 "native_patches",
                 "patch_mapping",
                 "surface_export",
+                "flattening.obj",
+                "flattening.topology",
                 "surface_atlas",
                 "original_recipe",
                 "original_pipeline",

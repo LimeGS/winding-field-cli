@@ -4,9 +4,11 @@ import hashlib
 from pathlib import Path
 
 import numpy as np
-from scipy.sparse import coo_matrix, diags
+from scipy.sparse import coo_matrix, diags, triu
+from scipy.sparse.csgraph import connected_components
 
 from .legacy_charts import cross2, iter_overlap_pairs
+from .topology import duplicate_faces, edge_groups
 from ..native_mesh import _topology
 from ..tifxyz_guide import _cut_flags, _sphere_seam, validate_map
 from ..util import atomic_json
@@ -73,12 +75,22 @@ def _topology_report(v, f, areas, check):
         vertices=len(v),
     )
     admit_memory(sum(arrays.values()), phase="mesh topology")
-    _, (edges, _, counts, signs), groups = _topology(np.arange(len(f)), f, areas)
-    if (counts > 2).any() or ((counts == 2) & (signs != 0)).any():
+    if np.shape(areas) != (len(f),):
+        raise ValueError("expected one area per source face")
+    edges, counts, inconsistent, order = edge_groups(f)
+    if (counts > 2).any() or inconsistent:
         raise ValueError("nonmanifold or inconsistent edges")
-    if len(np.unique(np.sort(f, axis=1), axis=0)) != len(f):
+    if duplicate_faces(f):
         raise ValueError("duplicate source faces")
-    if len(groups[0]) != 1 or len(np.unique(f)) != len(v):
+    # With at most two faces per edge, each shared edge contributes one face adjacency.
+    second = counts.cumsum()[counts == 2] - 1
+    graph = coo_matrix(
+        (np.ones(len(second), np.uint8), (order[second - 1] % len(f), order[second] % len(f))),
+        shape=(len(f), len(f)),
+    )
+    used = np.zeros(len(v), bool)
+    used[f] = True
+    if connected_components(graph, directed=False, return_labels=False) != 1 or not used.all():
         raise ValueError("one edge component without unused vertices required")
     _check(check)
     if not igl.is_vertex_manifold(f).all():
@@ -406,6 +418,13 @@ def _save_initialization(directory, cut, scale):
     )
 
 
+def _scaling_edges(adjacency):
+    # CSR row/column order matches the former lexicographic unique-edge reduction.
+    upper = triu(adjacency, k=1, format="csr")
+    upper.sort_indices()
+    return upper.nonzero()
+
+
 def mean_value_map(cut, check=None, *, diagnostics=None):
     v, f, b = _disk(cut, check)
     import igl
@@ -421,17 +440,15 @@ def mean_value_map(cut, check=None, *, diagnostics=None):
         check,
         diagnostics=None if diagnostics is None else Path(diagnostics) / "uniform",
     )
+    first, second = _scaling_edges(adjacency)
     del adjacency
     t = uv[f]
     signed = cross2(t[:, 1] - t[:, 0], t[:, 2] - t[:, 0])
     # Robust sign: a rounding-level minority must not hide a globally flipped chart.
     if int((signed < 0).sum()) > int((signed > 0).sum()):
         uv[:, 0] *= -1
-    edges = np.unique(
-        np.sort(np.concatenate([f[:, [0, 1]], f[:, [1, 2]], f[:, [2, 0]]]), axis=1), axis=0
-    )
-    native = np.linalg.norm(v[edges[:, 1]] - v[edges[:, 0]], axis=1)
-    mapped = np.linalg.norm(uv[edges[:, 1]] - uv[edges[:, 0]], axis=1)
+    native = np.linalg.norm(v[second] - v[first], axis=1)
+    mapped = np.linalg.norm(uv[second] - uv[first], axis=1)
     if not np.isfinite(mapped).all() or (mapped <= 0).any():
         raise ValueError("collapsed uniform initialization")
     scale = float(native.sum() / mapped.sum())
