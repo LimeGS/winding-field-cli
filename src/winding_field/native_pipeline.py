@@ -63,7 +63,8 @@ def _settings(config):
             result["parameterizer"],
             scope="sheet",
             initialization="global-lscm-or-mean-value",
-            cut="igl-cut-to-disk",
+            repair="split-irregular-edges",
+            cut="holes-kept-igl-cut-to-disk",
             layout="v-follows-world-z",
         )
     # Opt-in render storage/output modes; absent keys keep existing identities unchanged.

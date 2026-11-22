@@ -154,21 +154,134 @@ def test_closed_winding_is_cut_once_and_unrolled_as_a_strip(tmp_path, flatboi_ap
     assert counts[1] * 0.25 == pytest.approx(circumference * 28.5, rel=0.03)
 
 
-def test_pieces_that_cannot_be_flattened_whole_use_the_chart_route(tmp_path, flatboi_app):  # noqa: F811
+def punch(vertices, faces, centres, radius):
+    """Remove the faces around some points and the vertices nothing uses any more."""
+    middle = vertices[faces].mean(1)
+    keep = np.ones(len(faces), bool)
+    for centre in centres:
+        keep &= np.linalg.norm(middle - vertices[centre], axis=1) > radius
+    used, local = np.unique(faces[keep], return_inverse=True)
+    return vertices[used], local.reshape(-1, 3)
+
+
+def test_holes_are_kept_instead_of_cut_to_the_boundary(tmp_path, flatboi_app):  # noqa: F811
+    vertices, faces = curved_sheet()
+    vertices, faces = punch(vertices, faces, [12 * 60 + 15, 25 * 60 + 40, 20 * 60 + 28], 3.5)
+    receipt, _, summary, charts, _, cuts, _ = flatten(tmp_path, bundle(tmp_path, vertices, faces))
+    piece = receipt["pieces"][0]
+    assert receipt["fallback"] == [] and len(receipt["pieces"]) == 1
+    assert piece["euler_characteristic"] == -2 and piece["holes"] == 3
+    assert piece["seam_vertex_copies"] == 0  # no cut joins a hole to the boundary
+    assert 0.97 < piece["edge_stretch"]["p01"] and piece["edge_stretch"]["p99"] < 1.03
+    assert summary["coverage_fraction"] == pytest.approx(1.0) and cuts == 0
+    assert raster_counts(charts)[3] == 0
+
+
+def test_a_distorted_holed_map_is_redone_as_a_disk(tmp_path, monkeypatch, flatboi_app):  # noqa: F811
+    from winding_field.flattening import native_global
+
+    vertices, faces = curved_sheet()
+    vertices, faces = punch(vertices, faces, [20 * 60 + 28], 3.5)
+    stats, calls = native_global._stats, []
+
+    def first_is_distorted(*args):
+        result = stats(*args)
+        calls.append(1)
+        if len(calls) == 1:
+            result["edge_stretch"]["p99"] = 2.5
+        return result
+
+    monkeypatch.setattr(native_global, "_stats", first_is_distorted)
+    receipt, _, summary, charts, _, _, _ = flatten(tmp_path, bundle(tmp_path, vertices, faces))
+    piece = receipt["pieces"][0]
+    assert receipt["fallback"] == [] and len(calls) == 2
+    assert piece["holes"] == 0 and piece["seam_vertex_copies"] > 0  # cut to a disk this time
+    assert summary["coverage_fraction"] == pytest.approx(1.0)
+
+
+def test_closed_winding_with_a_hole_is_cut_once_and_keeps_the_hole(tmp_path, flatboi_app):  # noqa: F811
+    vertices, faces = cylinder()
+    vertices, faces = punch(vertices, faces, [10 * 48 + 7], 3.0)
+    receipt, _, summary, charts, _, _, _ = flatten(tmp_path, bundle(tmp_path, vertices, faces))
+    piece = receipt["pieces"][0]
+    assert receipt["fallback"] == [] and piece["euler_characteristic"] == -1
+    assert piece["holes"] == 1 and piece["seam_vertex_copies"] > 0  # only the wrap is cut
+    assert 0.97 < piece["edge_stretch"]["p01"] and piece["edge_stretch"]["p99"] < 1.03
+    assert summary["coverage_fraction"] == pytest.approx(1.0)
+    assert raster_counts(charts)[3] == 0
+
+
+def test_irregular_contacts_are_split_and_the_sheet_stays_whole(tmp_path, flatboi_app):  # noqa: F811
+    nu = 60
+    vertices, faces = curved_sheet(nu=nu, nv=40)
+    # A fin: a third face on an interior edge.
+    a, b = 13 * nu + 30, 13 * nu + 31
+    fin = (vertices[a] + vertices[b]) / 2 + [0.0, 0.0, 0.3]
+    fin[:2] += 0.02 * (fin[:2] - 60)
+    vertices = np.vstack([vertices, fin])
+    extra = [[a, b, len(vertices) - 1], faces[700]]  # and a duplicated face
+    faces = np.vstack([faces, extra])
+    faces[1500] = faces[1500][::-1]  # a flipped face
+    # A pinched vertex: two fans that touch only there.
+    pinch = 20 * nu + 20
+    fan = np.flatnonzero((faces == pinch).any(1))
+    middle = vertices[faces[fan]].mean(1) - vertices[pinch]
+    fan = fan[np.argsort(np.arctan2(middle[:, 2], middle[:, 0] * -0.6 + middle[:, 1] * 0.8))]
+    faces = np.delete(faces, [fan[0], fan[3]], axis=0)
+    receipt, _, summary, charts, _, cuts, _ = flatten(tmp_path, bundle(tmp_path, vertices, faces))
+    assert receipt["fallback"] == []
+    assert receipt["repair"]["vertex_copies"] > 0 and receipt["repair"]["irregular_edges"] == 7
+    pieces = sorted(receipt["pieces"], key=lambda piece: -piece["faces"])
+    # The sheet is one map; only the fin, the flipped face and both duplicates left it.
+    assert [piece["faces"] for piece in pieces] == [len(faces) - 4, 1, 1, 1, 1]
+    assert pieces[0]["seam_vertex_copies"] == 0
+    assert 0.97 < pieces[0]["edge_stretch"]["p01"] and pieces[0]["edge_stretch"]["p99"] < 1.03
+    assert summary["coverage_fraction"] == pytest.approx(1.0) and cuts == 0
+    assert summary["mapped_faces"] == len(faces)
+
+
+def test_a_clean_mesh_is_not_changed_by_the_repair():
+    from winding_field.flattening.native_global import _manifold_pieces
+
+    _, faces = curved_sheet(nu=12, nv=9)
+    faces = np.vstack([faces, faces[:4] + 500])  # a second, separate piece
+    split, parent, groups, repair = _manifold_pieces(faces)
+    used = np.unique(faces)
+    np.testing.assert_array_equal(parent, used)
+    np.testing.assert_array_equal(parent[split], faces)
+    assert repair == {"vertex_copies": 0, "irregular_edges": 0}
+    assert [len(group) for group in groups] == [len(faces) - 4, 4]
+
+
+def test_pieces_that_cannot_be_flattened_whole_use_the_chart_route(
+    tmp_path,
+    monkeypatch,
+    flatboi_app,  # noqa: F811
+):
+    from winding_field.flattening import native_sheet
+
     vertices, faces = curved_sheet(nu=20, nv=12)
-    # A second piece with a non-manifold edge (three triangles on one edge).
-    fan = np.array(
-        [[150.0, 150, 50], [151, 150, 50], [150, 151, 50], [150, 149, 50], [150.5, 150, 51]]
-    )
-    bad = np.array([[0, 1, 2], [1, 0, 3], [0, 1, 4]]) + len(vertices)
+    island = np.array([[150.0, 150, 50], [151, 150, 50], [150, 151, 50], [151, 151, 50.2]])
+    faces = np.vstack([faces, np.array([[0, 1, 2], [1, 3, 2]]) + len(vertices)])
+    cut_component = native_sheet.cut_component
+
+    def refuse_small(v, f, check=None):
+        if len(f) == 2:
+            raise ValueError("refused for the test")
+        return cut_component(v, f, check)
+
+    monkeypatch.setattr(native_sheet, "cut_component", refuse_small)
     receipt, _, summary, charts, _, _, _ = flatten(
-        tmp_path, bundle(tmp_path, np.vstack([vertices, fan]), np.vstack([faces, bad]))
+        tmp_path, bundle(tmp_path, np.vstack([vertices, island]), faces)
     )
     assert len(receipt["pieces"]) == 1 and len(receipt["fallback"]) == 1
-    assert "nonmanifold" in receipt["fallback"][0]["reason"]
-    assert receipt["fallback"][0]["faces"] == 3
-    # The good sheet is still mapped whole; the bad piece is reported, never dropped silently.
-    assert summary["mapped_faces"] >= len(faces)
+    assert receipt["fallback"][0] == {
+        "component": receipt["fallback"][0]["component"],
+        "faces": 2,
+        "reason": "refused for the test",
+    }
+    # The good sheet is still mapped whole; the other piece is reported, never dropped.
+    assert summary["mapped_faces"] >= len(faces) - 2
 
 
 def test_sheet_scope_is_opt_in_and_needs_slim():
@@ -191,6 +304,8 @@ def test_sheet_settings_record_the_global_recipe(flatboi_app):  # noqa: F811
     assert settings["flattening_scope"] == "sheet"
     assert settings["parameterizer"]["scope"] == "sheet"
     assert settings["parameterizer"]["solver"] == "flatboi-slim"
+    assert settings["parameterizer"]["repair"] == "split-irregular-edges"
+    assert settings["parameterizer"]["cut"] == "holes-kept-igl-cut-to-disk"
     assert settings != _settings({"flattening_method": "slim"})
 
 

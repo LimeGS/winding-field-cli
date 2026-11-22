@@ -10,9 +10,15 @@ charts that already agree on every shared vertex, so nothing is welded and the o
 seams are the explicit disk cuts. The existing rasterizer, CT sampling and TIFXYZ
 export read those charts unchanged.
 
-A piece that cannot be flattened this way (non-manifold input, a failed or folded
-solve) falls back to the chart route under its own component and is listed in the
-receipt; nothing is dropped silently.
+Real level meshes are not clean: a pinched vertex, a third face on an edge, a flipped
+or a duplicated face would each make a whole sheet non-manifold. Faces therefore stay
+joined only across regular edges (two faces, opposite directions) and every vertex is
+copied once per fan of faces joined that way (``_manifold_pieces``); geometry and
+source ids are untouched, and the receipt counts the copies.
+
+A piece that still cannot be flattened this way (a failed or folded solve) falls back
+to the chart route under its own component and is listed in the receipt; nothing is
+dropped silently.
 """
 
 import json
@@ -33,27 +39,159 @@ from .native_charts import (
 )
 
 SCHEMA = "native-sheet-flatten-v1"
+
+
 # One Flatboi call per group keeps process start-up amortized over small pieces.
 GROUP_FACES = 4_000_000
 
 
-def _edge_pieces(faces):
-    """Edge-connected face groups (a point contact does not join two pieces)."""
-    edges = np.sort(np.concatenate([faces[:, [0, 1]], faces[:, [1, 2]], faces[:, [2, 0]]]), axis=1)
-    _, edge_ids, counts = np.unique(edges, axis=0, return_inverse=True, return_counts=True)
-    face_of = np.tile(np.arange(len(faces)), 3)
-    order = np.argsort(edge_ids, kind="stable")
-    sorted_ids, sorted_faces = edge_ids[order], face_of[order]
-    same = sorted_ids[1:] == sorted_ids[:-1]
-    graph = coo_matrix(
-        (np.ones(int(same.sum()), np.uint8), (sorted_faces[:-1][same], sorted_faces[1:][same])),
-        shape=(len(faces), len(faces)),
+class _NeedsDisk(Exception):
+    """A piece flattened with its holes kept came out distorted: cut it to a disk."""
+
+
+def _manifold_pieces(faces):
+    """Split vertices so faces meet only across regular edges; group faces into pieces.
+
+    A regular edge has exactly two faces that run along it in opposite directions. Each
+    vertex gets one copy per fan of faces joined across regular edges, so irregular
+    contacts (pinched vertices, edges with three or more faces, flipped or duplicated
+    faces) come apart instead of making a piece non-manifold. Copies are numbered in
+    source-vertex order: a clean mesh comes back unchanged.
+
+    Returns ``(split, parent, groups, repair)``: faces over the copies, the source vertex
+    of each copy, the face rows of every edge-connected piece (ordered by first face)
+    and the counts of what was separated.
+    """
+    count = len(faces)
+    tail = faces.ravel()  # corner 3*f+i sits on vertex faces[f, i]
+    head = np.roll(faces, -1, axis=1).ravel()  # half-edge 3*f+i runs tail -> head
+    low, high = np.minimum(tail, head), np.maximum(tail, head)
+    order = np.lexsort((high, low))
+    low, high = low[order], high[order]
+    first = np.flatnonzero(np.r_[True, (low[1:] != low[:-1]) | (high[1:] != high[:-1])])
+    size = np.diff(np.r_[first, len(order)])
+    pair = first[size == 2]
+    a, b = order[pair], order[pair + 1]
+    opposite = tail[a] != tail[b]
+    a, b = a[opposite], b[opposite]
+
+    def following(corner):
+        return corner - corner % 3 + (corner + 1) % 3
+
+    # Across a regular edge the two faces share both end vertices: join those corners.
+    joined = coo_matrix(
+        (
+            np.ones(2 * len(a), np.uint8),
+            (np.concatenate([a, following(a)]), np.concatenate([following(b), b])),
+        ),
+        shape=(3 * count, 3 * count),
     )
-    count, labels = connected_components(graph, directed=False)
-    order = np.argsort(labels, kind="stable")
-    bounds = np.flatnonzero(np.diff(labels[order])) + 1
-    groups = np.split(order, bounds)
-    return sorted(groups, key=lambda g: int(g[0]))
+    _, fan = connected_components(joined, directed=False)
+    _, corner = np.unique(fan, return_index=True)
+    rank = np.lexsort((corner, tail[corner]))
+    number = np.empty(len(rank), np.int64)
+    number[rank] = np.arange(len(rank))
+    parent = tail[corner][rank]
+    split = number[fan].reshape(count, 3)
+    adjacency = coo_matrix((np.ones(len(a), np.uint8), (a // 3, b // 3)), shape=(count, count))
+    _, labels = connected_components(adjacency, directed=False)
+    by_label = np.argsort(labels, kind="stable")
+    groups = np.split(by_label, np.flatnonzero(np.diff(labels[by_label])) + 1)
+    repair = dict(
+        vertex_copies=int(len(parent) - len(np.unique(tail))),
+        irregular_edges=int((size > 2).sum() + (size == 2).sum() - len(a)),
+    )
+    return split, parent, sorted(groups, key=lambda g: int(g[0])), repair
+
+
+def _minimal_cut(vertices, faces, check):
+    """Cut a piece only where it cannot lie flat; holes stay holes.
+
+    ``cut_component`` joins every hole to the outer boundary, and each of those cuts can
+    open or overlap in the render. A hole in a near-developable sheet needs none: its rim
+    turns by about -2*pi (Gauss-Bonnet), while the outer boundary turns by about +2*pi and
+    either end of a closed wrap by about 0. Loops that turn by less than -pi are capped
+    for the topological cut only, so just wraps and handles are cut.
+
+    Returns ``(cut, topology)`` like ``cut_component``, or None when there is no hole to
+    keep. Raises ValueError when the result is not a planar domain.
+    """
+    import igl
+
+    from ..tifxyz_guide import _cut_flags
+    from .native_sheet import _input, _topology_report
+
+    areas = _input(vertices, faces, check)
+    f = faces.astype(np.int64, copy=False)
+    original = _topology_report(vertices, f, areas, check)
+    loops = [np.asarray(loop, np.int64) for loop in igl.boundary_loop_all(f)]
+    if len(loops) < 2:
+        return None
+    angle = np.zeros(len(vertices))
+    corners = vertices[f]
+    for i in range(3):
+        a = corners[:, (i + 1) % 3] - corners[:, i]
+        b = corners[:, (i + 2) % 3] - corners[:, i]
+        cosine = (a * b).sum(1) / (np.linalg.norm(a, axis=1) * np.linalg.norm(b, axis=1))
+        np.add.at(angle, f[:, i], np.arccos(np.clip(cosine, -1.0, 1.0)))
+    turning = np.array([float((np.pi - angle[loop]).sum()) for loop in loops])
+    outer = int(np.argmax(turning))
+    holes = [k for k in range(len(loops)) if turning[k] < -np.pi and k != outer]
+    if not holes:
+        return None
+    # Cap each hole with a fan around one extra vertex; the fan reverses the rim edges.
+    loop_of = np.full(len(vertices), -1, np.int64)
+    for index, k in enumerate(holes):
+        loop_of[loops[k]] = len(vertices) + index
+    tail, head = f.ravel(), np.roll(f, -1, axis=1).ravel()
+    key = np.minimum(tail, head) * len(vertices) + np.maximum(tail, head)
+    _, inverse, counts = np.unique(key, return_inverse=True, return_counts=True)
+    rim = (counts[inverse] == 1).reshape(-1, 3)
+    capped_rim = rim.ravel() & (loop_of[tail] >= 0)
+    caps = np.column_stack([head[capped_rim], tail[capped_rim], loop_of[tail[capped_rim]]])
+    capped = np.concatenate([f, caps])
+    if original["euler_characteristic"] + len(holes) == 1:
+        paths = []
+    else:
+        paths = igl.cut_to_disk(capped)
+    if check:
+        check()
+    # A path may follow a kept rim or cross a cap: only interior edges of real faces are cut.
+    flags = _cut_flags(capped, paths, len(vertices) + len(holes))[: len(f)] & ~rim
+    if flags.any():
+        v, cf, parent = igl.cut_mesh(vertices, f, flags)
+        if (
+            len(cf) != len(f)
+            or not np.array_equal(v, vertices[parent])
+            or not np.array_equal(parent[cf], f)
+        ):
+            raise ValueError("cut changed source correspondence")
+    else:
+        v, cf, parent = vertices, f, np.arange(len(vertices))
+    cf = cf.astype(np.int32 if len(v) <= np.iinfo(np.int32).max else np.int64, copy=False)
+    topology = _topology_report(v, cf, areas, check)
+    kept = len(igl.boundary_loop_all(cf.astype(np.int64))) - 1
+    if kept < 1 or topology["euler_characteristic"] != 1 - kept:
+        raise ValueError("minimal cut is not a planar domain")
+    boundary = igl.boundary_loop(cf.astype(np.int64)).astype(np.int64)
+    return dict(vertices=v, faces=cf, parent=parent.astype(np.int64), boundary=boundary), dict(
+        original=original, cut=topology, seam_duplicates=len(v) - len(vertices), holes=kept
+    )
+
+
+def _planar_seed(cut):
+    """Global LSCM for a planar domain with holes; None when it folds."""
+    from .matrix import _global_lscm
+
+    uv, pins, _ = _global_lscm(cut)
+    tri = uv[cut["faces"]]
+    signed = cross2(tri[:, 1] - tri[:, 0], tri[:, 2] - tri[:, 0])
+    if signed.sum() < 0:
+        uv[:, 0] *= -1
+        signed = -signed
+    if not np.isfinite(uv).all() or (signed <= 0).any():
+        return None
+    return uv, dict(method="LSCM", backend="libigl", pins=pins.tolist())
 
 
 def _stats(vertices, faces, uv):
@@ -235,40 +373,60 @@ def flatten_sheet(reader, store, chart_faces=1024, *, app_run=None, offline=Fals
         store.set("source_area", float(areas.sum() / 2))
         store.set("last_face", int(rows[-1, 0]))
     done = set(store.get("sheet_pieces", []))
-    receipt = store.get("sheet_receipt", dict(schema=SCHEMA, pieces=[], fallback=[]))
+    split, parent, groups, repair = _manifold_pieces(faces)
+    receipt = store.get("sheet_receipt", dict(schema=SCHEMA, repair=repair, pieces=[], fallback=[]))
     cut_base = int(ids.max()) + 1
     prepared = []
-    for group in _edge_pieces(faces):
-        store.check()
-        component = int(rows[group[0], 0])
-        group = np.sort(group)
-        used, local = np.unique(faces[group], return_inverse=True)
-        piece = dict(
-            component=component,
-            vertices=xyz[used],
-            faces=local.reshape(-1, 3),
-            face_ids=rows[group, 0],
-            vertex_ids=ids[used],
-        )
-        base = cut_base
-        # A cut adds at most two copies per split edge; reserve the worst case per piece.
-        cut_base += 8 * len(used) + 16
-        if component in done:
-            continue
+
+    def prepare(piece, minimal):
+        piece.pop("error", None)
         try:
             with tempfile.TemporaryDirectory(prefix="sheet-seed-") as scratch:
-                cut, topology = cut_component(piece["vertices"], piece["faces"], store.check)
-                seed, initialization = _lscm_seed(cut, store.check, scratch)
+                made = seeded = None
+                if minimal:
+                    try:
+                        made = _minimal_cut(piece["vertices"], piece["faces"], store.check)
+                        seeded = made and _planar_seed(made[0])
+                    except ValueError:
+                        seeded = None
+                if seeded:
+                    (cut, topology), (seed, initialization) = made, seeded
+                else:
+                    cut, topology = cut_component(piece["vertices"], piece["faces"], store.check)
+                    seed, initialization = _lscm_seed(cut, store.check, scratch)
             tri = seed[cut["faces"]]
             if not np.isfinite(seed).all() or np.any(
                 cross2(tri[:, 1] - tri[:, 0], tri[:, 2] - tri[:, 0]) <= 0
             ):
                 raise ValueError("no valid whole-sheet seed")
             piece.update(
-                cut=cut, seed=seed, topology=topology, initialization=initialization, cut_base=base
+                cut=cut,
+                seed=seed,
+                topology=topology,
+                initialization=initialization,
+                minimal=bool(seeded),
             )
-        except (ValueError, RuntimeError) as error:
-            piece["error"] = str(error)
+        except (ValueError, RuntimeError, MemoryError) as error:
+            piece["error"] = str(error) or type(error).__name__
+
+    for group in groups:
+        store.check()
+        component = int(rows[group[0], 0])
+        group = np.sort(group)
+        used, local = np.unique(split[group], return_inverse=True)
+        piece = dict(
+            component=component,
+            vertices=xyz[parent[used]],
+            faces=local.reshape(-1, 3),
+            face_ids=rows[group, 0],
+            vertex_ids=ids[parent[used]],
+        )
+        piece["cut_base"] = cut_base
+        # A cut adds at most two copies per split edge; reserve the worst case per piece.
+        cut_base += 8 * len(used) + 16
+        if component in done:
+            continue
+        prepare(piece, True)
         prepared.append(piece)
 
     def commit(piece, uv, solver):
@@ -279,6 +437,10 @@ def flatten_sheet(reader, store, chart_faces=1024, *, app_run=None, offline=Fals
             raise ValueError("whole-sheet solve folded or is not finite")
         uv = _orient(cut["vertices"], uv)
         stats = _stats(cut["vertices"], cut["faces"].astype(np.int64), uv)
+        stretch = stats["edge_stretch"]
+        if piece["minimal"] and not (stretch["p01"] > 0.5 and stretch["p99"] < 2.0):
+            # A kept hole was really a wrap: flatten this piece as a disk instead.
+            raise _NeedsDisk
         quality = dict(
             method="SLIM",
             backend="flatboi",
@@ -303,6 +465,7 @@ def flatten_sheet(reader, store, chart_faces=1024, *, app_run=None, offline=Fals
                 component=piece["component"],
                 faces=int(len(cut["faces"])),
                 seam_vertex_copies=int(piece["topology"]["seam_duplicates"]),
+                holes=int(piece["topology"].get("holes", 0)),
                 euler_characteristic=piece["topology"]["original"]["euler_characteristic"],
                 boundary_edges=piece["topology"]["original"]["boundary_edges"],
                 initialization=quality["initialization"],
@@ -375,6 +538,12 @@ def flatten_sheet(reader, store, chart_faces=1024, *, app_run=None, offline=Fals
         for piece, uv in zip(group, uvs):
             try:
                 commit(piece, uv, solver)
+            except _NeedsDisk:
+                prepare(piece, False)
+                if "error" in piece:
+                    chart_route(piece, piece["error"])
+                else:
+                    queue.append([piece])
             except ValueError as error:
                 chart_route(piece, str(error))
     receipt["seconds"] = time.monotonic() - started
