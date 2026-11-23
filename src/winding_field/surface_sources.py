@@ -2,8 +2,9 @@
 
 NPY files are hashed once, mapped through that same open inode, and checked for
 immutable inode/size/mtime/ctime/header identity before and after each crop.
-Checkpoint metadata and touched payloads are checked on every read, including
-cache hits. Concurrent writers are unsupported: detected changes fail closed.
+The checkpoint manifest is hashed at open and again by ``validate``; on every read,
+including cache hits, it and the touched payloads are checked for the same immutable
+identity. Concurrent writers are unsupported: detected changes fail closed.
 No source directory entries, writer leases or checkpoints are ever created.
 """
 
@@ -207,19 +208,32 @@ class _Npy:
             self.array._mmap.close()  # type: ignore[attr-defined]
 
 
-def chunk_cache_floor(field, geometry):
-    """Bytes that retain one decoded chunk of a chunked field (float64 values and mask).
+CACHE_FLOOR_CAP = 256 * 1024**2
 
-    A field stored as a few large blocks (a one-block coarse is a single chunk) is decoded
-    again for every read unless the reader may keep one chunk: meshing one level of a
+
+def chunk_cache_floor(field, geometry):
+    """Bytes a tile-ordered reader of a chunked field keeps decoded (float64 values and mask).
+
+    Never less than one chunk: a field stored as a few large blocks (a one-block coarse is
+    a single chunk) is decoded again for every read otherwise; meshing one level of a
     625x404x482 one-block field took 42 min with no cache and 77 s with it.
+
+    Meshing reads tiles in Z, Y, X order and each tile touches up to 2x2x2 chunks, so a
+    reader that keeps one chunk decodes every chunk up to eight times. Two X rows of two
+    Z planes bring that down to two; the allowance stops at 256 MiB because one reader
+    runs per level. The first 1,612 tiles of one level of a 2500x1616x1928 field in 64^3
+    chunks took 67.8 s with one chunk, 33.8 s with 256 MiB and 25.0 s with both planes
+    (3 GiB, ``cache_bytes``).
     """
     if not isinstance(field, dict) or field.get("kind") != "chunks":
         return 0
     try:
         chunk = int(json.loads(Path(field["path"]).read_bytes())["chunk"])
-        return math.prod(min(chunk, int(n)) for n in geometry["shape_zyx"]) * 9 + 4096
-    except (OSError, KeyError, TypeError, ValueError):
+        shape = [int(n) for n in geometry["shape_zyx"]]
+        one = math.prod(min(chunk, n) for n in shape) * 9 + 4096
+        rows = 4 * -(-shape[2] // chunk)
+        return max(one, min(rows * one, CACHE_FLOOR_CAP))
+    except (OSError, KeyError, TypeError, ValueError, ZeroDivisionError):
         return 0  # the reader reports malformed inputs itself
 
 
@@ -239,7 +253,7 @@ class FieldSource:
 
     Manifest paths, keys and all payload sizes are checked at open. Payload
     hashes and safe decoding are lazy and consume the same byte snapshot.
-    ``validate`` checks immutable metadata and all referenced file stats.
+    ``validate`` checks immutable metadata, all referenced file stats and the manifest hash.
     Cache budgets charge retained delta/bitpack arrays plus 512 bytes per chunk;
     working memory also includes the requested crop and one decoded chunk.
     Instances are serial readers, with no concurrent read/close guarantee.
@@ -408,16 +422,24 @@ class FieldSource:
             info = self._root.lstat()
             if not stat.S_ISDIR(info.st_mode) or (info.st_dev, info.st_ino) != self._root_identity:
                 raise ValueError("checkpoint directory changed")
-            self._file.read()
+            # Hashed at open and by validate(); between reads the manifest is pinned like
+            # every payload, by its stat signature. Hashing it around every read was 40% of
+            # a whole-scroll level (a 4.6 MB manifest, twice per tile, 32,240 tiles).
+            self._file.check()
             if payloads:
                 for file in self._payloads.values():
                     file.check()
 
     def validate(self, *, hashes: bool = False) -> None:
-        """Fail on changed metadata or referenced files, including cached files."""
+        """Fail on changed metadata or referenced files, including cached files.
+
+        Hashes the checkpoint manifest again; ``hashes`` also hashes every payload.
+        """
         if self._remote is not None:
             return self._remote.validate(hashes=hashes)
         self._validate(payloads=True)
+        if self._kind == "chunks":
+            self._file.read()
         if hashes:
             for file in self._payloads.values():
                 file.read()

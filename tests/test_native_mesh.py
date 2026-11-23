@@ -142,6 +142,35 @@ def test_bounds_none_and_cancel_resume_preserve_committed_geometry(tmp_path):
     compare(tmp_path / "reference", tmp_path / "fallback")
 
 
+@pytest.mark.parametrize("seconds", [0.0, 1e9])
+def test_grouped_commits_keep_the_mesh_and_a_crash_resumes_from_the_last_commit(
+    tmp_path, monkeypatch, seconds
+):
+    from winding_field.native_mesh import extract_mesh
+
+    monkeypatch.setattr(reference, "COMMIT_SECONDS", seconds)
+    reference.extract_mesh(Field(), tmp_path / "reference", [0.0, 2.0], tile=3)
+    calls = 0
+
+    def crash():
+        nonlocal calls
+        calls += 1
+        if calls > 5:
+            raise KeyboardInterrupt
+        return False
+
+    with pytest.raises(KeyboardInterrupt):
+        extract_mesh(Field(), tmp_path / "actual", [0.0, 2.0], tile=3, stop=crash)
+    with sqlite3.connect(tmp_path / "actual/mesh.sqlite") as db:
+        durable = db.execute("SELECT count(*) FROM tiles").fetchone()[0]
+    assert durable == (5 if seconds == 0 else 0)  # every tile, or none before the clock
+    assert (
+        extract_mesh(Field(), tmp_path / "actual", [0.0, 2.0], tile=3, resume=True)["status"]
+        == "MESH_READY"
+    )
+    compare(tmp_path / "reference", tmp_path / "actual")
+
+
 def test_batched_resume_rebuilds_derived_state_without_changing_geometry(tmp_path):
     from winding_field.native_mesh import extract_mesh
 

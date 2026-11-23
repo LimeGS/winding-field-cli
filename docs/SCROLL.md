@@ -137,6 +137,18 @@ wf scroll render-ct --mesh /outputs/meshes/level-0000 --source "$CT" --voxel-um 
   --level 0 --render-pitch-um 8.64 --output /outputs/render/level-0000
 ```
 
+**What one level costs.** `--parallel-levels` runs one process per level, and each walks
+every 64-node tile of the field in order (32,240 for PHerc0175A at 34.56 µm): levels fill
+the cores, one level never uses more than one. A PHerc0175A level of 12.07 M faces took
+230 bytes per face in `mesh.sqlite` (2.77 GB) and under 0.6 GB of RAM. Leave free at least
+the size of that database again for the closing step, which rewrites the component of
+nearly every face in one transaction and then writes the `.obj` (about 50 bytes per face):
+a run with 0.66 GB free was still growing its rollback journal at 0.28 GB when it was
+stopped. Write meshes to local NVMe; on a rotational disk the commits were 24 % of the
+time, on NVMe 4 %. The field reader keeps up to 256 MiB of decoded chunks per level;
+`--cache-bytes` large enough for two Z planes of chunks (1.7 GB for that field) removes
+the remaining repeated decodes (25.0 s against 33.8 s on the first 1,612 tiles).
+
 `render-ct` uses the same native flatten/render path as `run`, with these differences:
 
 - **Pitch and level.** Pixels are `--render-pitch-um` (a `run` renders at the field
