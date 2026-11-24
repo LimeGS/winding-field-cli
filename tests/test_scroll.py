@@ -162,6 +162,7 @@ def test_coarse_correction_removes_each_tiles_own_drift(tmp_path):
             workers=1,
             allow_missing=False,
             coarse_sigma_mm=0,
+            join="none",
         )
     )
     assert raw["worst_seam_p95_abs_dW"] >= 0.5
@@ -172,6 +173,7 @@ def test_coarse_correction_removes_each_tiles_own_drift(tmp_path):
             workers=1,
             allow_missing=False,
             coarse_sigma_mm=0.5,
+            join="coarse",
         )
     )
     with open_field(tmp_path / "merged") as source:
@@ -187,13 +189,46 @@ def test_coarse_correction_removes_each_tiles_own_drift(tmp_path):
     )
 
 
+def test_overlap_join_levels_tiles_against_each_other_without_the_coarse(tmp_path):
+    from winding_field.field import open_field
+
+    # Each tile is offset by its own constant; the coarse is not consulted.
+    root, tiles = plan_two_biased_tiles(tmp_path, bias=(-0.2, 0.3, 0.1))
+    result = scroll.merge(
+        Namespace(plan=root, output=tmp_path / "merged", workers=1, allow_missing=False)
+    )
+    with open_field(tmp_path / "merged") as source:
+        values, valid = source.read([0, 0, 0], GRID["shape_zyx"])
+    assert valid.all()
+    error = values - truth(np.arange(320))
+    # Agreement everywhere; the common level is the tiles' mean offset.
+    assert np.ptp(error) <= 1e-5
+    assert error.mean() == pytest.approx(np.mean([-0.2, 0.3, 0.1]), abs=1e-5)
+    assert result["worst_seam_p95_abs_dW"] <= 0.002
+    meta = json.loads((tmp_path / "merged/FIELD.json").read_text())
+    assert meta["join"]["method"] == "overlap" and meta["join"]["pairs"] == 2
+    assert meta["join"]["rms_before"]["worst"] == pytest.approx(0.5, abs=1e-6)
+    assert meta["join"]["rms_after"]["worst"] <= 1e-6
+    assert meta["coarse_correction"] is None
+
+
+def test_unknown_join_is_refused(tmp_path):
+    root, tiles = plan_two_biased_tiles(tmp_path)
+    with pytest.raises(ValueError, match="--join"):
+        scroll.merge(
+            Namespace(plan=root, output=tmp_path / "m", workers=1, allow_missing=False, join="best")
+        )
+
+
 def test_merge_blends_tiles_into_one_readable_field_and_reports_seams(tmp_path):
     from winding_field.field import open_field
 
     root, tiles = plan_two_biased_tiles(tmp_path)
     out = tmp_path / "merged"
     result = scroll.merge(
-        Namespace(plan=root, output=out, workers=1, allow_missing=False, coarse_sigma_mm=0)
+        Namespace(
+            plan=root, output=out, workers=1, allow_missing=False, coarse_sigma_mm=0, join="none"
+        )
     )
     assert result["status"] == "MERGED" and result["tiles"] == 3
 
@@ -235,6 +270,7 @@ def test_merge_refuses_tiles_off_the_plan_grid(tmp_path):
                 workers=1,
                 allow_missing=False,
                 coarse_sigma_mm=0,
+                join="none",
             )
         )
 
@@ -248,6 +284,7 @@ def test_merge_requires_every_supported_tile_unless_allowed(tmp_path):
         workers=1,
         allow_missing=False,
         coarse_sigma_mm=0,
+        join="none",
     )
     with pytest.raises(ValueError, match="no completed field"):
         scroll.merge(args)

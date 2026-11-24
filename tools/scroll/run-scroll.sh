@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# One scroll, one machine: coarse -> plan -> tiles -> merge -> gate -> meshes -> renders.
+# One scroll, one machine: counted -> coarse -> plan -> tiles -> merge -> gate -> meshes -> renders.
 # Every stage is resumable: rerun the script and it continues where it stopped.
 #
 #   ROOT=/workspace/175A ./run-scroll.sh            # all stages
@@ -48,7 +48,18 @@ COARSE_DIR=${COARSE_DIR:-$ROOT/coarse}
 # run --offline with a budget above the cache size, so none of them evicts it.
 TILE_CACHE=${TILE_CACHE:-}
 TILE_CACHE_GIB=${TILE_CACHE_GIB:-20}
-FINE_SWEEPS=${FINE_SWEEPS:-8}
+FINE_SWEEPS=${FINE_SWEEPS:-1}
+# Sheet density counted on Lasagna cos (October 2026 recipe) instead of Lasagna grad_mag,
+# which reads 1.4-1.7x the real sheets on PHerc0175A. COUNTED=0 keeps grad_mag.
+COUNTED=${COUNTED:-1}
+COUNTED_JOBS=${COUNTED_JOBS:-1}
+# Fibre weight of the fine tiles. 1000 keeps levels on one sheet at 34.56 um; the coarse
+# keeps weight 1 (at 138 um strong fibres compress the winding count).
+FIBRE_WEIGHT=${FIBRE_WEIGHT:-1000}
+# Fine tiles are solved as one block each (sweeps of 64-node blocks drift ~1 sheet with
+# strong fibres): TILE_NODES core + 2*OVERLAP_NODES per axis must fit the GPU.
+TILE_NODES=${TILE_NODES:-128}
+OVERLAP_NODES=${OVERLAP_NODES:-64}
 # Solver caches: the first sweep builds, later sweeps reuse (~2.5x cheaper on 175A).
 CACHE_BYTES=${CACHE_BYTES:-40000000000}
 # Native install: PYTHON=/workspace/venv/bin/python (CLI built from the branch).
@@ -70,6 +81,34 @@ say() { echo "[$(date -Is)] $*" | tee -a "$LOG/run-scroll.log"; }
 done_stage() { [[ -f "$ROOT/.done-$1" ]]; }
 mark() { touch "$ROOT/.done-$1"; say "stage $1 done"; }
 
+# The Lasagna manifest every field stage reads: the counted one once it exists.
+lasagna() {
+  if [[ "$COUNTED" == 1 ]]; then echo "$ROOT/counted/counted.lasagna.json"; else echo "$LASAGNA"; fi
+}
+
+counted() {
+  [[ "$COUNTED" == 1 ]] || return 0
+  done_stage counted && return
+  say "counted: sheet density on Lasagna cos, $COUNTED_JOBS processes"
+  local pids=() k
+  for ((k = 0; k < COUNTED_JOBS; k++)); do
+    local gpu=()
+    [[ -n "${COUNTED_GPUS:-}" ]] && gpu=("CUDA_VISIBLE_DEVICES=$(cut -d, -f$((k + 1)) <<<"$COUNTED_GPUS")")
+    env "${gpu[@]}" "${WF[@]}" scroll counted-density --lasagna-input "$LASAGNA" --output "$ROOT/counted" \
+      --bounds "$((Z0 * 4))" "$((Z1 * 4))" "$((Y0 * 4))" "$((Y1 * 4))" "$((X0 * 4))" "$((X1 * 4))" \
+      --part "$k" "$COUNTED_JOBS" >>"$LOG/counted-$k.log" 2>&1 &
+    pids+=($!)
+  done
+  for k in "${pids[@]}"; do wait "$k" || true; done
+  # The last part to finish writes the manifest; a rerun of one part completes it.
+  [[ -f "$ROOT/counted/counted.lasagna.json" ]] \
+    || "${WF[@]}" scroll counted-density --lasagna-input "$LASAGNA" --output "$ROOT/counted" \
+      --bounds "$((Z0 * 4))" "$((Z1 * 4))" "$((Y0 * 4))" "$((Y1 * 4))" "$((X0 * 4))" "$((X1 * 4))" \
+      >>"$LOG/counted.log" 2>&1
+  [[ -f "$ROOT/counted/counted.lasagna.json" ]] || { say "counted failed; see $LOG/counted*.log"; exit 1; }
+  mark counted
+}
+
 coarse() {
   done_stage coarse && return
   if [[ -f "$COARSE_DIR/RUN.json" ]]; then
@@ -80,7 +119,7 @@ coarse() {
     say "coarse: level 2 stride 4, chunk $COARSE_CHUNK, halo $COARSE_HALO, $COARSE_SWEEPS sweeps"
     "${WF[@]}" run --source "$CT" --voxel-um "$VOXEL_UM" --level 2 --stride 4 \
       --roi "$Z0" "$Z1" "$Y0" "$Y1" "$X0" "$X1" --field-spacing-um "$COARSE_UM" \
-      --fibres "$AFV" --lasagna-input "$LASAGNA" --device cuda \
+      --fibres "$AFV" --lasagna-input "$(lasagna)" --device cuda \
       --sweeps "$COARSE_SWEEPS" --field-chunk "$COARSE_CHUNK" --field-halo "$COARSE_HALO" \
       --constraint-cache-bytes "$CACHE_BYTES" --observation-cache-bytes "$CACHE_BYTES" \
       --prepared-cache-bytes "$((CACHE_BYTES / 4))" \
@@ -94,13 +133,17 @@ coarse() {
 plan() {
   done_stage plan && return
   rm -rf "$ROOT/plan"
-  local extra=()
-  [[ -n "$TILE_CACHE" ]] && extra=(--run-arg=--offline "--run-arg=--cache-gib=$TILE_CACHE_GIB")
+  local extra=(
+    "--run-arg=--fibre-weight=$FIBRE_WEIGHT"
+    "--run-arg=--field-chunk=$((TILE_NODES + 2 * OVERLAP_NODES))"
+    --run-arg=--rtol=1e-7 --run-arg=--maxiter=50000 --run-arg=--nonconvergence-policy=continue
+  )
+  [[ -n "$TILE_CACHE" ]] && extra+=(--run-arg=--offline "--run-arg=--cache-gib=$TILE_CACHE_GIB")
   say "plan: $FINE_UM um tiles on coarse $COARSE_DIR${TILE_CACHE:+ (tiles offline on $TILE_CACHE)}"
   "${WF[@]}" scroll plan --source "$CT" --voxel-um "$VOXEL_UM" --level 2 \
     --field-spacing-um "$FINE_UM" --bounds "$Z0" "$Z1" "$Y0" "$Y1" "$X0" "$X1" \
-    --tile-nodes 512 --overlap-nodes 64 --coarse "$COARSE_DIR" "${extra[@]}" \
-    --fibres "$AFV" --lasagna-input "$LASAGNA" --sweeps "$FINE_SWEEPS" \
+    --tile-nodes "$TILE_NODES" --overlap-nodes "$OVERLAP_NODES" --coarse "$COARSE_DIR" "${extra[@]}" \
+    --fibres "$AFV" --lasagna-input "$(lasagna)" --sweeps "$FINE_SWEEPS" \
     --threads 4 --import-workers 4 --output "$ROOT/plan" | tee -a "$LOG/plan.log"
   mark plan
 }
@@ -194,6 +237,6 @@ PY2
   mark surfaces
 }
 
-stages=("${@:-coarse plan tiles merge gate surfaces}")
+stages=("${@:-counted coarse plan tiles merge gate surfaces}")
 for stage in ${stages[*]}; do "$stage"; done
 say "finished: ${stages[*]}"

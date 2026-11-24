@@ -5,6 +5,7 @@ global field grid, runs them, merges them into one chunk checkpoint that the exi
 readers (``open_field``, ``prepared mesh``/``surfaces``) accept, and renders single
 meshes against CT at a chosen pitch and level:
 
+    counted-density  sheet density counted on Lasagna cos (October recipe) as a manifest
     plan      choose tile ROIs on one global grid and write TILES.json
     tiles     run/continue the planned tiles with bounded local concurrency
     merge     blend tiles into MERGED/field/CHECKPOINT.json, FIELD.json, LEVELS.json
@@ -12,8 +13,9 @@ meshes against CT at a chosen pitch and level:
 
 Every tile is an ordinary ``winding-field run`` (imported fibres and Lasagna,
 ``--field-prior`` coarse field, ``--field-scope supported``); nothing here changes
-how a tile is solved. The merge is a weighted blend, not a global solve: seams are
-measured and reported, never certified.
+how a tile is solved. The merge is not a global solve: tiles are first levelled against
+each other on the nodes they share (one constant and one tilt per tile, all overlaps
+solved together), then blended. Seams are measured and reported, never certified.
 """
 
 from __future__ import annotations
@@ -39,6 +41,7 @@ from .util import atomic_json, file_sha
 
 PLAN_SCHEMA = "winding-scroll-plan-v1"
 MERGE_SCHEMA = "winding-scroll-merge-v1"
+JOINS = ("overlap", "coarse", "none")
 FIELD_CHUNK = 64
 SEAM_BINS = np.concatenate([np.linspace(0.0, 1.0, 1001), [2.0, 4.0, np.inf]])
 
@@ -533,8 +536,7 @@ class _Tile:
         self.core_lo = np.asarray(tile["core_lo"])
         self.core_hi = np.asarray(tile["core_hi"])
         manifest = _json(self.run / "field/CHECKPOINT.json")
-        if manifest["chunk"] != FIELD_CHUNK:
-            raise ValueError("tile field chunk must be 64")
+        self.chunk = int(manifest["chunk"])
         self.chunks = [tuple(map(int, k.split("-"))) for k in manifest["chunks"]]
 
     def close(self):
@@ -563,6 +565,8 @@ def tile_correction(task):
     tile = _Tile(plan_root, tile_info, grid)
     step = CORRECTION_STEP
     try:
+        if tile.chunk != FIELD_CHUNK:
+            raise ValueError("--join coarse needs tiles solved with --field-chunk 64")
         prior = FieldPrior(coarse_dir, tile.geometry, tile.prepared.get("source"))
         shape = np.asarray(tile.geometry["shape_zyx"])
         reduced = (shape + step - 1) // step
@@ -603,6 +607,149 @@ def tile_correction(task):
         tile.close()
 
 
+JOIN_STEP = 4
+JOIN_MINIMUM = 16
+JOIN_TILT_WEIGHT = 0.1
+
+
+def pair_moments(task):
+    """Normal equations of one tile pair for the overlap join.
+
+    On the nodes both tiles observed, their fields may differ only by what the two
+    corrections explain: ``C_a - C_b = W_a - W_b`` with ``C = constant + tilt · position``.
+    Nodes are taken every JOIN_STEP on the global grid; positions are measured from each
+    tile's centre in half-tiles, so the four unknowns of a tile have comparable scale.
+    """
+    plan_root, first, second, grid = task
+    a, b = _Tile(plan_root, first, grid), _Tile(plan_root, second, grid)
+    gram, rhs, count, square = np.zeros((8, 8)), np.zeros(8), 0, 0.0
+    try:
+        lo, hi = np.maximum(a.lo, b.lo), np.minimum(a.hi, b.hi) + 1
+        blocks = [
+            range(int(l) // FIELD_CHUNK * FIELD_CHUNK, int(h), FIELD_CHUNK) for l, h in zip(lo, hi)
+        ]
+        for corner in itertools.product(*blocks) if (hi > lo).all() else ():
+            first_node = np.maximum(lo, corner)
+            first_node += -first_node % JOIN_STEP
+            last_node = np.minimum(hi, np.asarray(corner) + FIELD_CHUNK)
+            if (last_node <= first_node).any():
+                continue
+            pick = (slice(None, None, JOIN_STEP),) * 3
+            va, seen = a.observed.read((first_node - a.lo).tolist(), (last_node - a.lo).tolist())
+            va, seen = va[pick], seen[pick]
+            if not seen.any():
+                continue
+            vb, other = b.observed.read((first_node - b.lo).tolist(), (last_node - b.lo).tolist())
+            seen = seen & other[pick]
+            if not seen.any():
+                continue
+            nodes = np.stack(
+                np.meshgrid(
+                    *[np.arange(f, l, JOIN_STEP) for f, l in zip(first_node, last_node)],
+                    indexing="ij",
+                ),
+                -1,
+            )[seen].astype(np.float64)
+            design = np.empty((len(nodes), 8))
+            for column, tile, sign in ((0, a, 1.0), (4, b, -1.0)):
+                centre = (tile.lo + tile.hi) / 2
+                design[:, column] = sign
+                design[:, column + 1 : column + 4] = sign * (
+                    (nodes - centre) / np.maximum((tile.hi - tile.lo) / 2, 1.0)
+                )
+            difference = (va - vb[pick])[seen]
+            gram += design.T @ design
+            rhs += design.T @ difference
+            count += len(difference)
+            square += float(difference @ difference)
+    finally:
+        a.close()
+        b.close()
+    return first["id"], second["id"], gram, rhs, count, square
+
+
+def join_tiles(plan_root, tiles, grid, workers, tilt_weight=JOIN_TILT_WEIGHT):
+    """One constant and one tilt per tile, from every overlap at once.
+
+    A tile solved on its own follows the sheets inside it, but its level and a gentle
+    slope are set by its single gauge node and its boundaries, so neighbours disagree on
+    the nodes they share. Pulling each tile to the coarse field removes that disagreement
+    and also the tile's sheet-following, because the coarse grid is wider than the sheet
+    spacing. Here the tiles are corrected against each other instead: the least-squares
+    corrections that make all overlaps agree, the smallest ones among those (the mean
+    level and slope the tiles took from their prior stay).
+    """
+    from scipy.sparse import coo_matrix, diags
+    from scipy.sparse.linalg import spsolve
+
+    index = {t["id"]: k for k, t in enumerate(tiles)}
+    jobs = [
+        (str(plan_root), a, b, grid)
+        for a, b in itertools.combinations(tiles, 2)
+        if (np.asarray(a["nodes_lo"]) <= b["nodes_hi"]).all()
+        and (np.asarray(b["nodes_lo"]) <= a["nodes_hi"]).all()
+    ]
+    size = 4 * len(tiles)
+    rows, cols, vals = [], [], []
+    rhs = np.zeros(size)
+    pairs = []
+    if jobs:
+        with ProcessPoolExecutor(max_workers=workers, mp_context=_spawn()) as pool:
+            for a, b, gram, vector, count, square in pool.map(pair_moments, jobs):
+                if count < JOIN_MINIMUM:
+                    continue
+                where = np.concatenate([np.arange(4) + 4 * index[a], np.arange(4) + 4 * index[b]])
+                rows.append(np.repeat(where, 8))
+                cols.append(np.tile(where, 8))
+                vals.append(gram.ravel())
+                rhs[where] += vector
+                pairs.append((a, b, where, gram, vector, count, square))
+    solution = np.zeros(size)
+    if pairs:
+        matrix = coo_matrix(
+            (np.concatenate(vals), (np.concatenate(rows), np.concatenate(cols))), (size, size)
+        ).tocsc()
+        # The same constant and slope added to every tile changes no overlap, and inside a
+        # narrow overlap a tilt across it is almost a constant. Tilts are therefore charged
+        # (tilt_weight per shared node and half-tile unit), so a step between tiles becomes
+        # constants, not ramps; the tiny ridge on constants leaves the mean level alone.
+        shared = matrix.diagonal()[0::4]
+        penalty = np.repeat(1e-9 * shared.max(), size)
+        for axis in (1, 2, 3):
+            penalty[axis::4] += tilt_weight * shared
+        solution = np.asarray(spsolve(matrix + diags(penalty, format="csc"), rhs))
+    before, after = [], []
+    for a, b, where, gram, vector, count, square in pairs:
+        p = solution[where]
+        before.append(math.sqrt(square / count))
+        after.append(math.sqrt(max(0.0, square - 2 * p @ vector + p @ gram @ p) / count))
+    corrections = {}
+    for tile in tiles:
+        constant, *tilt = solution[4 * index[tile["id"]] :][:4].tolist()
+        extent = np.asarray(tile["nodes_hi"]) - tile["nodes_lo"]
+        corrections[tile["id"]] = dict(
+            affine=dict(
+                constant=constant,
+                tilt=tilt,
+                centre=(extent / 2).tolist(),
+                scale=np.maximum(extent / 2, 1.0).tolist(),
+            )
+        )
+    summary = dict(
+        method="overlap",
+        step=JOIN_STEP,
+        pairs=len(pairs),
+        pairs_without_shared_nodes=len(jobs) - len(pairs),
+        rms_before=dict(median=float(np.median(before)), worst=float(np.max(before)))
+        if pairs
+        else None,
+        rms_after=dict(median=float(np.median(after)), worst=float(np.max(after)))
+        if pairs
+        else None,
+    )
+    return corrections, summary
+
+
 _WORKER = {}
 
 
@@ -628,10 +775,22 @@ def _worker_tile(tile_id):
 
 
 def _correction(tile_id, local_lo, local_hi):
-    """Trilinear value of a tile's reduced low-pass correction on local nodes."""
+    """A tile's correction on local nodes: its join constant and tilt, or the trilinear
+    value of its reduced low-pass against the coarse field."""
     record = _WORKER["corrections"].get(tile_id)
     if record is None:
         return 0.0
+    if "affine" in record:
+        affine = record["affine"]
+        value = np.full([b - a for a, b in zip(local_lo, local_hi)], affine["constant"])
+        for axis in range(3):
+            along = (np.arange(local_lo[axis], local_hi[axis]) - affine["centre"][axis]) / affine[
+                "scale"
+            ][axis]
+            value += (affine["tilt"][axis] * along).reshape(
+                [-1 if i == axis else 1 for i in range(3)]
+            )
+        return value
     if tile_id not in _WORKER["low"]:
         if file_sha(record["path"]) != record["sha256"]:
             raise ValueError("tile correction changed: " + tile_id)
@@ -765,8 +924,8 @@ def merge(args):
         try:
             geometries[tile["id"]] = probe.geometry
             for key in probe.chunks:
-                node_lo = probe.lo + np.asarray(key) * FIELD_CHUNK
-                node_hi = np.minimum(node_lo + FIELD_CHUNK, probe.hi + 1) - 1
+                node_lo = probe.lo + np.asarray(key) * probe.chunk
+                node_hi = np.minimum(node_lo + probe.chunk, probe.hi + 1) - 1
                 for merged in itertools.product(
                     *(
                         range(a // FIELD_CHUNK, b // FIELD_CHUNK + 1)
@@ -801,7 +960,13 @@ def merge(args):
     fcntl.flock(lease, fcntl.LOCK_EX | fcntl.LOCK_NB)
     started = time.time()
     corrections = {}
-    if args.coarse_sigma_mm > 0:
+    join = None
+    method = getattr(args, "join", "overlap")
+    if method not in JOINS:
+        raise ValueError("--join must be one of " + ", ".join(JOINS))
+    if method == "overlap":
+        corrections, join = join_tiles(root, tiles, grid, args.workers)
+    elif method == "coarse" and args.coarse_sigma_mm > 0:
         correction_dir = output / "corrections"
         correction_dir.mkdir()
         coarse = document["coarse"]
@@ -859,13 +1024,14 @@ def merge(args):
             for tid in geometries
         },
         blend="linear cross-fade over 2*overlap+1 nodes on interior tile faces",
+        join=dict(method="overlap", step=JOIN_STEP, tiles=corrections) if join else None,
         coarse_correction=dict(
             sigma_mm=args.coarse_sigma_mm,
             reduced_step=CORRECTION_STEP,
             coarse_checkpoint_sha256=document["coarse"]["checkpoint_sha256"],
             tiles={tid: c["sha256"] for tid, c in corrections.items()},
         )
-        if corrections
+        if corrections and not join
         else None,
     )
     manifest = dict(
@@ -874,7 +1040,9 @@ def merge(args):
         chunk=FIELD_CHUNK,
         chunks=chunks,
         progress=dict(merged_chunks=len(chunks), physical_acceptance=False),
-        initialization="weighted blend of field-prior tiles; not a global solve",
+        initialization="field-prior tiles joined on their overlaps and blended; not a global solve"
+        if join
+        else "weighted blend of field-prior tiles; not a global solve",
     )
     atomic_json(field_dir / "CHECKPOINT.json", manifest)
     os.close(lease)
@@ -917,15 +1085,19 @@ def merge(args):
         missing_tiles=missing,
         merged_chunks=len(chunks),
         worst_seam_p95_abs_dW=worst,
+        join=join,
         coarse_correction=dict(
             sigma_mm=args.coarse_sigma_mm,
             p95_abs_correction={tid: c["p95_abs_correction"] for tid, c in corrections.items()},
         )
-        if corrections
+        if corrections and not join
         else None,
         global_converged=False,
         physical_acceptance=False,
-        numerical_status="blend of independently solved field-prior tiles; seams in SEAMS.json",
+        numerical_status="independently solved field-prior tiles, joined on their overlaps "
+        "and blended; seams in SEAMS.json"
+        if join
+        else "blend of independently solved field-prior tiles; seams in SEAMS.json",
         seconds=time.time() - started,
     )
     atomic_json(output / "FIELD.json", field_meta)
@@ -1361,6 +1533,36 @@ def _parser():
     parser = argparse.ArgumentParser(prog="winding-field scroll", description=__doc__)
     sub = parser.add_subparsers(dest="action", required=True)
 
+    p = sub.add_parser(
+        "counted-density",
+        help="count sheets on the Lasagna cos channel (October recipe) and write a manifest",
+    )
+    p.add_argument("--lasagna-input", required=True, help="Lasagna manifest with a cos group")
+    p.add_argument("--output", required=True, help="directory (rerun to continue)")
+    p.add_argument(
+        "--bounds",
+        type=int,
+        nargs=6,
+        metavar=("Z0", "Z1", "Y0", "Y1", "X0", "X1"),
+        help="level-0 (base grid) voxel bounds; default the whole cos array",
+    )
+    p.add_argument("--tile", type=int, default=192, help="cos voxels per tile edge (x64)")
+    p.add_argument("--device", default="cuda")
+    p.add_argument(
+        "--part",
+        type=int,
+        nargs=2,
+        default=(0, 1),
+        metavar=("K", "N"),
+        help="compute every N-th tile starting at K (one process per GPU)",
+    )
+    p.add_argument(
+        "--min-fill",
+        type=float,
+        default=0.01,
+        help="skip tiles whose cos is nonzero on less than this fraction",
+    )
+
     p = sub.add_parser("plan", help="choose overlapping tile ROIs on one global field grid")
     p.add_argument("--source", required=True)
     p.add_argument("--voxel-um", type=float, required=True)
@@ -1403,11 +1605,21 @@ def _parser():
     p.add_argument("--workers", type=int, default=max(1, (os.cpu_count() or 2) // 2))
     p.add_argument("--allow-missing", action="store_true")
     p.add_argument(
+        "--join",
+        choices=JOINS,
+        default="overlap",
+        help="how tiles are made to agree before blending: overlap (default) gives each "
+        "tile one constant and one tilt from all the nodes tiles share and keeps their "
+        "sheet-following; coarse pulls each tile to the coarse field above "
+        "--coarse-sigma-mm (crosses sheets where the coarse grid is wider than the sheet "
+        "spacing); none blends the raw tiles",
+    )
+    p.add_argument(
         "--coarse-sigma-mm",
         type=float,
         default=0.5,
-        help="replace each tile's (tile - coarse) content above this Gaussian scale by the "
-        "coarse field before blending (0 disables)",
+        help="with --join coarse: replace each tile's (tile - coarse) content above this "
+        "Gaussian scale by the coarse field before blending (0 disables)",
     )
 
     p = sub.add_parser("render-ct", help="flatten and render one mesh bundle against CT")
@@ -1516,7 +1728,11 @@ def main(argv=None):
         ),
     )
     try:
-        if args.action == "plan":
+        if args.action == "counted-density":
+            from .counted_density import build
+
+            result = build(args)
+        elif args.action == "plan":
             result = plan(args)
         elif args.action == "tiles":
             result = run_tiles(args)

@@ -6,10 +6,36 @@ into a single field that the existing mesh and render commands read. Every tile 
 ordinary `winding-field run`; nothing here changes how a tile is solved.
 
 ```text
-coarse run ──► scroll plan ──► scroll tiles ──► scroll merge ──► prepared mesh ──► scroll render-ct
- (prior)        TILES.json      tiles/<id>/       MERGED/          per W level       CT at full pitch
-                fibres/<id>.afv                   field/, LEVELS.json
+scroll counted-density ──► coarse run ──► scroll plan ──► scroll tiles ──► scroll merge ──► prepared mesh ──► scroll render-ct
+ counted.lasagna.json       (prior)        TILES.json      tiles/<id>/       MERGED/          per W level       CT at full pitch
+                                           fibres/<id>.afv                   field/, LEVELS.json
 ```
+
+## 0. Sheet density counted on Lasagna `cos`
+
+```sh
+wf scroll counted-density --lasagna-input /data/lasagna/input.lasagna.json \
+  --bounds 1488 11488 2144 8608 992 8704 --output /outputs/counted
+```
+
+Every later stage takes `/outputs/counted/counted.lasagna.json` as `--lasagna-input`.
+
+**Why.** Lasagna's `grad_mag` is a learned sheet frequency. On PHerc0175A it reads
+1.4-1.7 times the sheets that are there (median 1.57 against the `cos` channel; `cos`
+itself matches CT in 23 of 23 checked regions), and fields solved with it count that
+many windings: their level surfaces cross a sheet every few millimetres. The October 2026
+PHerc0175A fields counted sheets on the sheet mask instead, and their meshes stay on one
+sheet where the sheets are ordered. This command is that recipe, unchanged: threshold
+`cos` at mid-grey, structure-tensor normals of the mask, mask crossings one voxel along
+the normal on both sides (x 1/4), Gaussian 6 voxels; planar sheets of period 16 return
+1/16 within 2 %. It writes `grad_mag`/`nx`/`ny` on the `cos` grid (17.28 µm for
+PHerc0175A) and a copy of the manifest pointing at them; `cos` is kept.
+
+On a 5 mm PHerc0175A pilot (34.56 µm, one block): 0.99 field units per sheet instead of
+1.70. `--bounds` are level-0 voxels; tiles of `--tile` cos voxels (default 192) are
+computed on the GPU with a 40-voxel halo, tiles with less than `--min-fill` nonzero `cos`
+are skipped, and a rerun continues. `--part K N` splits the tiles between processes
+(one per GPU); the last part to finish writes the manifest.
 
 ## 1. Coarse field (the prior)
 
@@ -70,6 +96,28 @@ wf scroll plan --source "$CT" --voxel-um 8.64 --level 2 --field-spacing-um 34.56
 - **Tile runs** use `--field-prior <coarse> --field-scope supported --until field`,
   the plan's level/stride/spacing, `--sweeps` (default 8) and any `--run-arg` flags.
 
+### Strong fibres, one block per tile
+
+With counted density, fibres decide whether a level stays on its sheet. Fibres mostly
+run along one sheet (72 % stay within half a sheet spacing), but at the default weight 1
+the field does not follow them. Measured on a 22 mm PHerc0175A box at 34.56 µm, solved as
+one block, against the Lasagna sheet channel along the October meshes' own lines:
+
+| Fine field | Units per mm | Net drift off the sheet over ~20 mm | Back and forth per cm |
+|---|---|---|---|
+| Lasagna grad_mag, fibres 1 | 12.1 | 0.7 sheets | 2.2 |
+| counted density, `--fibre-weight 1000` | 7.6 | 0.2 sheets | 0.9 |
+
+Strong fibres need the tile solved as **one block** (`--run-arg=--field-chunk=N` with N at
+least the tile's nodes per axis, `--sweeps 1`, `--rtol 1e-7 --maxiter 50000`): the same
+tiles solved as 64-node blocks for 8 sweeps counted 8.7-10.1 units per mm and differed
+from the one-block solution by a 95th percentile of 0.75-0.93 sheets (halo 16; 1.5 with
+the default halo 2). Use smaller tiles (`--tile-nodes 128 --overlap-nodes 64`, 256 nodes
+per axis) so one block fits the GPU. Keep weight 1 for the 138 µm coarse: there strong
+fibres compress the count (weight 1000: 2.2 units per mm where 6.3 sheets per mm are).
+`tools/scroll/run-scroll.sh` sets all of this (`FIBRE_WEIGHT`, `TILE_NODES`,
+`OVERLAP_NODES`).
+
 ### Level 2 or stride 4
 
 At a 34.56 µm field, `--level 2 --stride 1` and `--level 0 --stride 4` read the same
@@ -109,7 +157,21 @@ Writes `merged/field/CHECKPOINT.json` in the ordinary chunk-checkpoint format
   (each node counted once, by the tile whose core owns it) and the resulting W levels.
 - `surface-run.json`: a ready `prepared mesh`/`surfaces` request for those levels.
 
-**Coarse-grid correction (default on).** A tile is gauged by a single prior node and
+**Overlap join (default, `--join overlap`).** Tiles are solved independently, so each
+has its own level and a gentle slope (set by its single gauge node and its boundaries),
+and neighbours disagree on the nodes they share. The merge gives every tile one constant
+and one tilt (four numbers) and solves them together from all overlaps (every 4th shared
+node), choosing the smallest corrections; tilts are charged (0.1 per shared node), so a
+step between two tiles becomes constants, not ramps. The tiles' sheet-following stays
+untouched. On the 22 mm PHerc0175A box split into 4 tiles of the October recipe, against
+the same box solved as one block: median |ΔW| 0.14 sheets, 95th percentile 0.52; the
+joined level followed the sheet like the one-block one (net drift 0.6 sheets in 20 mm).
+`FIELD.json` → `join` reports the overlap RMS before and after (there 4.7 → 0.21).
+
+**Coarse-grid correction (`--join coarse`).** The previous default. Pulling each tile to
+the coarse field also removes its sheet-following wherever the coarse grid is wider than
+the sheet spacing: on the same box the joined level drifted 14 sheets in 16 mm. Kept for
+fields whose tiles do not follow sheets and for comparison. A tile is gauged by a single prior node and
 relaxed for a few sweeps, so its low frequencies drift from the coarse field, differently
 in every tile. On the PHerc0175A pilot two neighbouring tiles disagreed in their overlap
 by a median 0.21 and a 95th percentile of 1.0 winding (21% of nodes by more than half a
@@ -119,7 +181,8 @@ detail below that scale comes from the tile, everything coarser from the one coa
 solve that spans all tiles. On the pilot this gave a median 0.018 and a 95th percentile
 of 0.135 (0.26% of nodes over half a winding). Smaller sigma agrees better but keeps less
 fine detail (sigma 0.25 mm: 0.043; 1 mm: 0.31). The global winding structure therefore
-comes from the coarse field. `--coarse-sigma-mm 0` blends the raw tiles.
+comes from the coarse field. `--join none` (or `--coarse-sigma-mm 0`) blends the raw
+tiles.
 
 Blending is a linear cross-fade over the whole overlap on interior tile faces. Nodes
 inside a solved chunk keep their value; observed support is the union of the tiles'
