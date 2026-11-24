@@ -101,7 +101,7 @@ jobs:
             --mount "type=bind,src=$RUNNER_TEMP/wf/scratch,dst=/scratch" \
             --mount "type=bind,src=$RUNNER_TEMP/wf/outputs,dst=/outputs" \
             --mount "type=bind,src=$RUNNER_TEMP/wf/cache,dst=/cache" \
-            winding-field:cpu-tests -q --durations=30 -o pythonpath= -o cache_dir=/scratch/pytest-cache /tests
+            winding-field:cpu-tests -q --durations=30 -o pythonpath= -o faulthandler_timeout=600 -o cache_dir=/scratch/pytest-cache /tests
 
   publish:
     # Rolling: every push to main publishes the CPU image the cpu job just built and qualified,

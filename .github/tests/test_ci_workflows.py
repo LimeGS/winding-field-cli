@@ -289,3 +289,13 @@ def test_release_default_image_is_cuda_qualified_on_a_gpu_before_publishing():
     # The default tags carry no variant suffix; the CPU variant keeps -cpu.
     assert 'for tag in "$version" latest; do' in runs[order["push"]]
     assert "winding-field:cuda" in runs[order["push"]]
+
+
+def test_installed_suite_dumps_stacks_when_a_test_hangs():
+    # Three of five main runs stalled mid-suite until the job limit with no output; a test
+    # running past 10 minutes now prints every thread's stack (the result is unchanged).
+    run = "\n".join(step.get("run", "") for step in workflow("docker.yml")["jobs"]["cpu"]["steps"])
+    assert (
+        "-o pythonpath= -o faulthandler_timeout=600 -o cache_dir=/scratch/pytest-cache /tests"
+        in run
+    )
