@@ -45,9 +45,19 @@ docker pull ghcr.io/limegs/winding-field-cli:1.6.6-cpu    # one release
 Tags: `cpu` follows `main`; `<version>-cpu` and `sha-<commit>-cpu` identify one
 build. Use a version or commit tag (or the image digest) for work you need to
 reproduce. Only the CPU image is published; build the CUDA image as described below.
-The image runs the CLI directly, so use it like the `wf` function in
-[Persistent paths and resource limits](#persistent-paths-and-resource-limits) with
-`IMAGE=ghcr.io/limegs/winding-field-cli:1.6.6-cpu`.
+The image runs the CLI directly. For a quick start, mount only the current
+directory as `/outputs`; any UID works, and caches, temporary files and models then
+stay inside the container (`--rm` discards them):
+
+```sh
+wf() { docker run --rm --init --user "$(id -u):$(id -g)" -v "$PWD:/outputs" \
+  ghcr.io/limegs/winding-field-cli:1.6.6-cpu "$@"; }
+wf doctor
+```
+
+To keep caches and models between runs, or to set memory limits, use the `wf`
+function in [Persistent paths and resource limits](#persistent-paths-and-resource-limits)
+with `IMAGE=ghcr.io/limegs/winding-field-cli:1.6.6-cpu`.
 
 ## Shared installation recipe
 
@@ -153,7 +163,9 @@ apply; container limits do not make an oversized scroll feasible.
 Mount the **models subdirectory**, not the whole home/cache tree. The image's
 default Lasagna symlink must remain visible. The default container user is
 10001:10001; the example overrides it with the host UID/GID. Mounted directories
-must already be writable by that UID. The entrypoint runs the CLI directly;
+must already be writable by that UID; the unmounted `/cache`, `/scratch` and models
+directories are world-writable (sticky) inside the image, so any UID can run it.
+The entrypoint runs the CLI directly;
 `--init` forwards signals and reaps orphaned child processes.
 PyTorch's compiler/profiler cache uses `/scratch/torchinductor`, so host UIDs
 without an account inside the image work without a username lookup.

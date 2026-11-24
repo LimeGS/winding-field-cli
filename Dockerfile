@@ -62,7 +62,8 @@ RUN mkdir -p /opt/accelerators && \
     ln -s /cache /home/worker/.cache/winding-field/ct && \
     ln -s /cache /home/worker/.cache/winding-field/patch-ct && \
     chmod -R a+rX /opt/accelerators && \
-    chown -R worker:worker /home/worker /cache /scratch /outputs
+    chown -R worker:worker /home/worker /cache /scratch /outputs && \
+    chmod 1777 /cache /scratch /home/worker/.cache/winding-field/models
 
 FROM build AS assembly
 ARG TORCH_VARIANT=cpu
@@ -108,7 +109,8 @@ RUN sed -i -E 's|http://[^ ]+/ubuntu/?|https://snapshot.ubuntu.com/ubuntu/202611
     ln -s /opt/lasagna /home/worker/.cache/winding-field/lasagna-venv && \
     ln -s /cache /home/worker/.cache/winding-field/ct && \
     ln -s /cache /home/worker/.cache/winding-field/patch-ct && \
-    chown -R worker:worker /home/worker /cache /scratch /outputs
+    chown -R worker:worker /home/worker /cache /scratch /outputs && \
+    chmod 1777 /cache /scratch /home/worker/.cache/winding-field/models
 COPY --from=uv /uv /usr/local/bin/uv
 # One copy preserves hardlinks across the two isolated Python environments.
 COPY --from=assembly /opt /opt
