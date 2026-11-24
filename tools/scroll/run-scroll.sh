@@ -40,7 +40,7 @@ SEAM_LIMIT=${SEAM_LIMIT:-0.05}
 # Render mesh decimation (1/N of the faces; 1 disables).
 DECIMATE=${DECIMATE:-9}
 # Slab rendered around each level, in micrometres (0: the single surface layer).
-THICKNESS_UM=${THICKNESS_UM:-120}
+THICKNESS_UM=${THICKNESS_UM:-70}
 # The coarse prior: built here by the coarse stage, or an existing run (e.g. a one-block
 # global coarse solved on a larger GPU) given as COARSE_DIR with .done-coarse present.
 COARSE_DIR=${COARSE_DIR:-$ROOT/coarse}

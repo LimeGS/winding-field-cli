@@ -198,12 +198,15 @@ the remaining repeated decodes (25.0 s against 33.8 s on the first 1,612 tiles).
   stay on one: on PHerc0175A five levels were on a Lasagna sheet over 48-58% of their area
   (52.6% of the papyrus volume is sheet) and swung between sheet and gap 2.7-5.0 times per
   centimetre. `render-ct` therefore samples the CT every `--render-pitch-um` along the
-  mesh normal over `--thickness-um` (default 120: 15 layers at 8.64 µm) and writes their
-  `--composite` (`max`, default, or `mean`); `--thickness-um 0` is the single surface
-  layer and `--keep-layers` also stores every layer per tile. On a 6 x 7 mm patch the
-  single layer showed dark patches where the surface left the sheet, the 120 µm maximum a
-  continuous fibre grid, and 240 µm started to overlay the next sheet. CT sampling took
-  about eight times longer with 15 layers. The image mixes stretches of neighbouring
+  mesh normal over `--thickness-um` and writes their `--composite` (`max`, default, or
+  `mean`); `--thickness-um 0` is the single surface layer and `--keep-layers` also stores
+  every layer per tile. The default is 70 µm (9 layers at 8.64 µm), about half the sheet
+  spacing: a thinner slab leaves gaps, a thicker one reaches the neighbouring sheet.
+  PHerc0175A sheets are 142 µm apart (median of 141 zones of the Lasagna `cos` channel;
+  13% of the zones under 120 µm). On a 6 x 7 mm patch the single layer showed dark patches
+  where the surface left the sheet, 70 µm and 120 µm a continuous fibre grid (a few darker
+  spots left at 70), and 240 µm started to overlay the next sheet. CT sampling took about
+  eight times longer with 15 layers. The image still mixes stretches of neighbouring
   sheets wherever the level crosses from one to the next.
 - **`--decimate N`** collapses the mesh to 1/N of its faces (libigl qslim) before
   flattening; `DECIMATION.json` records the deviation of a vertex sample from the new

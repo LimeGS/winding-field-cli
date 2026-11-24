@@ -1423,9 +1423,10 @@ def _parser():
     p.add_argument(
         "--thickness-um",
         type=float,
-        default=120.0,
+        default=70.0,
         help="render a slab this thick around the surface, one layer per render pitch along "
-        "the normal (default 120: 15 layers at 8.64 um); 0 renders the single surface layer",
+        "the normal (default 70: 9 layers at 8.64 um, about half the sheet spacing); "
+        "0 renders the single surface layer",
     )
     p.add_argument(
         "--composite",
