@@ -39,6 +39,8 @@ COARSE_HALO=${COARSE_HALO:-32}
 SEAM_LIMIT=${SEAM_LIMIT:-0.05}
 # Render mesh decimation (1/N of the faces; 1 disables).
 DECIMATE=${DECIMATE:-9}
+# Slab rendered around each level, in micrometres (0: the single surface layer).
+THICKNESS_UM=${THICKNESS_UM:-120}
 # The coarse prior: built here by the coarse stage, or an existing run (e.g. a one-block
 # global coarse solved on a larger GPU) given as COARSE_DIR with .done-coarse present.
 COARSE_DIR=${COARSE_DIR:-$ROOT/coarse}
@@ -148,7 +150,8 @@ render_one() {
   local WF=("$PYTHON" -m winding_field)
   [[ -f "$out/LEVEL.json" ]] && return 0
   "${WF[@]}" scroll render-ct --mesh "$bundle" --source "$CT" --voxel-um "$VOXEL_UM" \
-    --level 0 --render-pitch-um "$VOXEL_UM" --decimate "$DECIMATE" --offline \
+    --level 0 --render-pitch-um "$VOXEL_UM" --decimate "$DECIMATE" \
+    --thickness-um "$THICKNESS_UM" --offline \
     --cache "$ROOT/ct-cache-l0" --cache-gib "${RENDER_CACHE_GIB:-900}" --output "$out" \
     >"$LOG/render-$(basename "$out").log" 2>&1 \
     || echo "render $out failed" >>"$LOG/render-failures.log"
@@ -157,7 +160,7 @@ render_one() {
   return 0
 }
 export -f render_one
-export ROOT CT VOXEL_UM LOG CODE PYTHON PYTHONPATH RENDER_CACHE_GIB DECIMATE
+export ROOT CT VOXEL_UM LOG CODE PYTHON PYTHONPATH RENDER_CACHE_GIB DECIMATE THICKNESS_UM
 
 surfaces() {
   done_stage surfaces && return

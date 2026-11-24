@@ -194,6 +194,17 @@ the remaining repeated decodes (25.0 s against 33.8 s on the first 1,612 tiles).
   turns by about -2 pi is left as a hole; only closed wraps and handles are cut. On a
   synthetic 73,527-face sheet with 12 holes, cutting every hole to the boundary cost
   642 seam vertices and 0.88% ambiguous + 0.90% missing pixels; keeping them costs none.
+- **A slab, not one layer.** A level of the field runs parallel to the sheets but does not
+  stay on one: on PHerc0175A five levels were on a Lasagna sheet over 48-58% of their area
+  (52.6% of the papyrus volume is sheet) and swung between sheet and gap 2.7-5.0 times per
+  centimetre. `render-ct` therefore samples the CT every `--render-pitch-um` along the
+  mesh normal over `--thickness-um` (default 120: 15 layers at 8.64 µm) and writes their
+  `--composite` (`max`, default, or `mean`); `--thickness-um 0` is the single surface
+  layer and `--keep-layers` also stores every layer per tile. On a 6 x 7 mm patch the
+  single layer showed dark patches where the surface left the sheet, the 120 µm maximum a
+  continuous fibre grid, and 240 µm started to overlay the next sheet. CT sampling took
+  about eight times longer with 15 layers. The image mixes stretches of neighbouring
+  sheets wherever the level crosses from one to the next.
 - **`--decimate N`** collapses the mesh to 1/N of its faces (libigl qslim) before
   flattening; `DECIMATION.json` records the deviation of a vertex sample from the new
   surface. Triangles only need to follow the surface: CT is still sampled at every

@@ -1156,6 +1156,12 @@ def render_ct(args):
     if args.no_ct_texture:
         # Opt-in key: absent by default so existing render identities are unchanged.
         config["ct_texture"] = False
+    if args.thickness_um:
+        config.update(render_thickness_um=float(args.thickness_um), render_composite=args.composite)
+        if args.keep_layers:
+            config["render_keep_layers"] = True
+    elif args.keep_layers:
+        raise ValueError("--keep-layers needs --thickness-um above 0")
     if args.cache_gib is not None:
         config["cache_bytes"] = int(args.cache_gib * (1 << 30))
     output = Path(args.output)
@@ -1196,7 +1202,9 @@ def render_ct(args):
             # an online render re-verifies each chunk against the source per epoch, one
             # HTTPS connection at a time (53 of 77 s on a PHerc0175A winding).
             t = time.time()
-            keys = mesh_ct_chunks(reader, volume)
+            # The slab reaches half its thickness to each side of the mesh.
+            reach = math.ceil(args.thickness_um / 2 / min(volume.spacing_xyz))
+            keys = mesh_ct_chunks(reader, volume, margin=1 + reach)
             need = len(keys) * math.prod(volume.chunks) * volume.dtype.itemsize
             config["cache_bytes"] = max(config.get("cache_bytes", 2 << 30), int(need * 1.25))
             volume.close()
@@ -1412,6 +1420,24 @@ def _parser():
     p.add_argument("--cache-gib", type=float)
     p.add_argument("--offline", action="store_true")
     p.add_argument("--render-pitch-um", type=float, required=True)
+    p.add_argument(
+        "--thickness-um",
+        type=float,
+        default=120.0,
+        help="render a slab this thick around the surface, one layer per render pitch along "
+        "the normal (default 120: 15 layers at 8.64 um); 0 renders the single surface layer",
+    )
+    p.add_argument(
+        "--composite",
+        default="max",
+        choices=("max", "mean"),
+        help="how the layers of the slab become the image (default: max)",
+    )
+    p.add_argument(
+        "--keep-layers",
+        action="store_true",
+        help="also store every layer per tile (ct_layers); large",
+    )
     p.add_argument("--chart-faces", type=int, default=1024)
     p.add_argument("--flattening-method", default="slim", choices=("slim", "default"))
     p.add_argument(

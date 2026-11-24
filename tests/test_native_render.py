@@ -959,3 +959,58 @@ def test_partial_tifxyz_mask_resume_rejects_corruption_and_rebinding(tmp_path):
             _tifxyz(store, prefix, grid, volume, 1)
     with pytest.raises(ValueError, match="payload changed"):
         Journal(tmp_path / "out", identity)
+
+
+@pytest.mark.parametrize("composite, shift", [("max", 3.0), ("mean", 0.0)])
+def test_slab_render_composites_layers_along_the_normal(tmp_path, composite, shift):
+    from winding_field.native_render import render
+
+    (tmp_path / "one").mkdir()
+    (tmp_path / "slab").mkdir()
+    with ready_plane(tmp_path / "one") as store, analytic_ct(tmp_path / "one") as volume:
+        single = render(store, volume, 0.5)
+        folder = store.root / single["components"][0]["path"]
+        base = np.array(Image.open(folder / "sheet.png"))
+        assert "slab" not in single["components"][0]
+        first = next(n for (n,) in store.db.execute("SELECT name FROM rendered ORDER BY y,x"))
+        surface = store.load_arrays(first)
+    # The plane lies at z = 4 and CT = x + 2y + 3z: five layers 0.5 apart span z = 3..5.
+    with ready_plane(tmp_path / "slab") as store, analytic_ct(tmp_path / "slab") as volume:
+        result = render(store, volume, 0.5, thickness_um=2.0, composite=composite, keep_layers=True)
+        record = result["components"][0]
+        assert record["slab"] == dict(layers=5, step_um=0.5, composite=composite, keep_layers=True)
+        image = np.array(Image.open(store.root / record["path"] / "sheet.png"))
+        observed = (image[..., 1] > 0) & (base[..., 1] > 0)
+        assert observed.sum() > 20
+        # PNG gray levels are rounded half to even, so they agree to one level.
+        assert (
+            np.abs(image[..., 0][observed].astype(int) - base[..., 0][observed] - int(shift)) <= 1
+        ).all()
+        tile = store.load_arrays(
+            next(n for (n,) in store.db.execute("SELECT name FROM rendered ORDER BY y,x"))
+        )
+        layers, seen = tile["ct_layers"], tile["mask"] == 2
+        assert layers.shape == (5, *tile["mask"].shape)
+        np.testing.assert_array_equal(seen, surface["mask"] == 2)
+        np.testing.assert_allclose(tile["ct"][seen], surface["ct"][seen] + shift, atol=1e-4)
+        np.testing.assert_allclose(np.ptp(layers[:, seen], axis=0), 6.0, atol=1e-4)
+        np.testing.assert_allclose(
+            tile["ct"][seen], getattr(np, composite)(layers[:, seen], axis=0), atol=1e-5
+        )
+        with pytest.raises(ValueError, match="render identity changed"):
+            render(store, volume, 0.5)
+
+
+def test_slab_render_rejects_invalid_requests(tmp_path):
+    from winding_field.native_render import layer_offsets, render
+
+    np.testing.assert_allclose(layer_offsets(120.0, 8.64), np.arange(-7, 8) * 8.64)
+    assert len(layer_offsets(0.0, 8.64)) == 1
+    with ready_plane(tmp_path) as store, analytic_ct(tmp_path) as volume:
+        for bad in (
+            dict(thickness_um=-1.0),
+            dict(thickness_um=2.0, composite="median"),
+            dict(keep_layers=True),
+        ):
+            with pytest.raises(ValueError):
+                render(store, volume, 0.5, **bad)
