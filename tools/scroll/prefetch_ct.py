@@ -39,6 +39,19 @@ volume = open_volume(
         cache_bytes=int(args.cache_gib * 2**30),
     )
 )
+# Runs also read the metadata of the finer levels (level 0 sets the frame); an offline run
+# refuses a cache without it, so fetch those small documents too.
+for finer in range(args.level):
+    other = open_volume(
+        dict(
+            source=args.source,
+            voxel_um=args.voxel_um,
+            level=finer,
+            cache=args.cache,
+            cache_bytes=int(args.cache_gib * 2**30),
+        )
+    )
+    getattr(other, "close", lambda: None)()
 if args.ledger:
     ledger = sqlite3.connect(f"file:{args.ledger}/source.sqlite?mode=ro", uri=True)
     keys = [key for (key,) in ledger.execute("SELECT key FROM chunks")]
