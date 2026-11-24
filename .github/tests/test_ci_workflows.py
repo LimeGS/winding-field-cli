@@ -205,3 +205,28 @@ def test_installed_sdist_checks_have_their_build_dependencies():
     )
     packages = set(shlex.split(setup)[4:])
     assert {"build", "pytest", "wheel", "pytest-xdist", "packaging"} <= packages
+
+
+def test_only_qualified_main_builds_are_published():
+    docker = workflow("docker.yml")
+    publish = docker["jobs"]["publish"]
+    # Publishing waits for the qualified CPU build and never runs for pull requests.
+    assert publish["needs"] == "cpu"
+    assert publish["if"] == "github.event_name == 'push' && github.ref == 'refs/heads/main'"
+    assert publish["permissions"] == {"contents": "read", "packages": "write"}
+    # Only the publish job may write packages; the build that tests run under stays read-only.
+    assert docker["permissions"] == {"contents": "read"}
+    for name, job in docker["jobs"].items():
+        if name != "publish":
+            assert "packages" not in job.get("permissions", {})
+    steps = publish["steps"]
+    for step in steps:
+        if "uses" in step:
+            assert re.fullmatch(r"[\w./-]+@[0-9a-f]{40}", step["uses"]), step["uses"]
+    bake = next(step for step in steps if step.get("uses", "").startswith("docker/bake-action@"))
+    assert bake["with"]["targets"] == "cpu" and bake["with"].get("push", "false") == "false"
+    assert "cache-to" not in bake["with"]["set"]
+    login = next(step for step in steps if step.get("uses", "").startswith("docker/login-action@"))
+    assert login["with"]["registry"] == "ghcr.io"
+    push = "\n".join(step.get("run", "") for step in steps)
+    assert 'docker push "$image:$tag"' in push and '"$version-cpu"' in push

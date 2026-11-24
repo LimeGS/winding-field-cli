@@ -92,6 +92,42 @@ jobs:
             --mount "type=bind,src=$RUNNER_TEMP/wf/cache,dst=/cache" \
             winding-field:cpu-tests -q --durations=30 -o pythonpath= -o cache_dir=/scratch/pytest-cache /tests
 
+  publish:
+    # Pushes to main publish the CPU image that the cpu job just built and qualified.
+    needs: cpu
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+        id: buildx
+      - name: Rebuild the qualified CPU image from its cache
+        uses: docker/bake-action@5be5f02ff8819ecd3092ea6b2e6261c31774f2b4 # v6
+        with:
+          builder: ${{ steps.buildx.outputs.name }}
+          source: .
+          targets: cpu
+          load: true
+          set: |
+            cpu.cache-from=type=gha,scope=winding-field-cli-cpu
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Publish ghcr.io/<owner>/winding-field-cli
+        run: |
+          version=$(python3 -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')
+          image="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/winding-field-cli"
+          for tag in cpu "$version-cpu" "sha-${GITHUB_SHA::7}-cpu"; do
+            docker tag winding-field:cpu "$image:$tag"
+            docker push "$image:$tag"
+          done
+
   cuda:
     needs: preflight
     if: github.event_name == 'workflow_dispatch' && inputs.cuda

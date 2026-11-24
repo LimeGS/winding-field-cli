@@ -29,6 +29,23 @@ configuration files are not translated.
 The `wf()` function in [Persistent paths](#persistent-paths-and-resource-limits) is
 the equivalent plain `docker run`, for hosts without Compose or for custom options.
 
+## Published image
+
+Every push to `main` whose CPU image passes the container checks above also
+publishes it, so you can run the CLI without building anything:
+
+```sh
+docker pull ghcr.io/limegs/winding-field-cli:cpu          # latest main
+docker pull ghcr.io/limegs/winding-field-cli:1.6.5-cpu    # one release
+```
+
+Tags: `cpu` follows `main`; `<version>-cpu` and `sha-<commit>-cpu` identify one
+build. Use a version or commit tag (or the image digest) for work you need to
+reproduce. Only the CPU image is published; build the CUDA image as described below.
+The image runs the CLI directly, so use it like the `wf` function in
+[Persistent paths and resource limits](#persistent-paths-and-resource-limits) with
+`IMAGE=ghcr.io/limegs/winding-field-cli:1.6.5-cpu`.
+
 ## Shared installation recipe
 
 The README's manual install, Ubuntu quick installer and Docker build all use
