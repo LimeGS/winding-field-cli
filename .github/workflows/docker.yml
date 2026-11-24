@@ -60,6 +60,14 @@ jobs:
             --mount "type=bind,src=$RUNNER_TEMP/wf/scratch,dst=/scratch" \
             --entrypoint sh winding-field:cpu -ec \
             'python /opt/runtime-provenance/docker/verify-runtime.py --variant cpu && python /opt/runtime-provenance/docker/smoke.py --output /outputs/smoke'
+      - name: Any UID with only /outputs mounted
+        # The documented one-mount use: caches, scratch and models stay writable inside the image.
+        run: |
+          mkdir -p "$RUNNER_TEMP/wf-one"
+          docker run --rm --init --network=none --user "$(id -u):$(id -g)" --memory=6g --memory-swap=6g \
+            -v "$RUNNER_TEMP/wf-one:/outputs" --entrypoint sh winding-field:cpu -ec \
+            'for d in /cache /scratch /home/worker/.cache/winding-field/models /home/worker/.cache/winding-field/patch-ct/; do touch "$d/w" && rm "$d/w"; done
+             python /opt/runtime-provenance/docker/smoke.py --output /outputs/smoke'
       - name: Installed suite with official native checkpoint qualification
         # The image build and offline smoke above still gate pull requests; the full in-image suite runs on main.
         if: github.event_name != 'pull_request'
