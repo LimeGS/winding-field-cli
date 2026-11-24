@@ -59,9 +59,9 @@ COUNTED_JOBS=${COUNTED_JOBS:-1}
 FIBRE_WEIGHT=${FIBRE_WEIGHT:-1000}
 # Fine tiles are solved as one block each (sweeps of 64-node blocks drift ~1 sheet with
 # strong fibres). TILE_NODES=auto picks the largest tile the GPUs hold (6 GB: 128-node
-# cores, 24 GB: 320, 80 GB: 576); GPU_MEMORY_GIB plans for GPUs other than this machine's.
+# cores, 24 GB: 384, 80 GB: 640); GPU_MEMORY_GIB plans for GPUs other than this machine's.
 TILE_NODES=${TILE_NODES:-auto}
-OVERLAP_NODES=${OVERLAP_NODES:-64}
+OVERLAP_NODES=${OVERLAP_NODES:-32}
 JOBS_PER_GPU=${JOBS_PER_GPU:-1}
 GPU_MEMORY_GIB=${GPU_MEMORY_GIB:-}
 # Solver caches: the first sweep builds, later sweeps reuse (~2.5x cheaper on 175A).

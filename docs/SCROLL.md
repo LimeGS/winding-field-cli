@@ -76,15 +76,17 @@ other measured pitfalls of a whole-scroll run are in
 wf scroll plan --source "$CT" --voxel-um 8.64 --level 2 --field-spacing-um 34.56 \
   --coarse /outputs/coarse --fibres /data/scroll.afv \
   --lasagna-input /data/lasagna/input.lasagna.json \
-  --tile-nodes 512 --overlap-nodes 64 --output /outputs/plan
+  --gpu-memory-gib 80 --output /outputs/plan
 ```
 
 - **One global grid.** The field spacing must be a whole multiple of the selected CT
   level's spacing (34.56 µm is 4 × 8.64 at level 0 and 1 × 34.56 at level 2). Tile ROIs
   start on that grid, so every tile's nodes coincide with the global nodes.
 - **Tiles.** Cores of `--tile-nodes` partition each axis; each tile adds
-  `--overlap-nodes` on interior sides. Both are multiples of 64 (the field chunk), so a
-  tile chunk is exactly one merged chunk.
+  `--overlap-nodes` (default 32, a multiple of 16) on interior sides. Cores are
+  multiples of 64 (the field chunk); the merge reads tiles at any node offset. 32 nodes
+  per side (1.1 mm) is twice the overlap the 22 mm PHerc0175A box was joined with
+  (0.14 sheets median); 64 needs ~1.7x the node solves.
 - **Skipped tiles.** Tiles whose box has no observed support in the coarse field are
   marked `supported: false` and never run.
 - **Per-tile fibres.** By default the plan writes `fibres/<tile>.afv` with every whole
@@ -118,10 +120,9 @@ the count (weight 1000: 2.2 units per mm where 6.3 sheets per mm are).
 ### Tile size from GPU memory (`--tile-nodes auto`, the default)
 
 A one-block tile holds its whole system on one GPU, and every tile also solves its
-overlap, so the largest tile that fits is the cheapest: with 64 overlap nodes per side,
-PHerc0175A needs 49.6 G node solves with 128-node cores, 22.5 G with 256 and 13.5 G with
-512. `scroll plan` therefore picks the largest core (a multiple of 64) whose tile fits the
-GPU: `--gpu-memory-gib` when given (plan for the machine that will run the tiles), else
+overlap: with 64 overlap nodes per side PHerc0175A needs 49.6 G node solves with 128-node
+cores, 22.5 G with 256 and 13.5 G with 512. `scroll plan` picks the largest core (a
+multiple of 64) whose tile fits the GPU: `--gpu-memory-gib` when given (plan for the machine that will run the tiles), else
 the smallest GPU visible here; `--jobs-per-gpu N` divides it between N tiles. Auto tiles
 run as one block (`--field-chunk` = the tile edge, one sweep, `--rtol 1e-7
 --maxiter 50000`); `--run-arg` flags still come last and win. `TILES.json` →
@@ -134,14 +135,20 @@ spacing). Checked on a 256³ PHerc0175A tile: 3.1 GB measured, 3.4 GB modelled.
 
 | GPU memory | 6 GB | 16 GB | 24 GB | 32 GB | 48 GB | 80 GB | 96 GB | 192 GB |
 |---|---|---|---|---|---|---|---|---|
-| Core nodes per axis (34.56 µm) | 128 | 256 | 320 | 384 | 448 | 576 | 640 | 832 |
+| Core nodes per axis (34.56 µm, overlap 32) | 192 | 320 | 384 | 448 | 512 | 640 | 704 | 896 |
 
+**Larger is not cheaper per node.** Measured alone on a GTX 1660, the solve took 24 s for
+128³ nodes, 142 s for 192³ and 538 s for 256³: 11, 20 and 32 µs per node, about the tile
+edge to the power 1.5 (iterations grow with the tile), with the memory controller busy
+100 % of the solve (bandwidth-bound). Extrapolated to PHerc0175A with 64-node overlaps,
+cores of 256-320 need the least GPU time and 576 about 40 % more; beyond 256³ this is not
+measured. Measure a mid-size and a large tile on the target GPU before a whole run.
 `scroll tiles` runs one tile per visible GPU at a time (times the plan's jobs per GPU),
 each process seeing only its GPU (`CUDA_VISIBLE_DEVICES`); `--gpus 0,2` picks GPUs and
 `--jobs` overrides the count.
 
-Measured cost of that 256³ tile (16.8 M nodes, 752,370 fibre rows) on a GTX 1660, whose
-float64 rate is 1/32 of its float32 rate: 12.8 min in all (prepare 39 s, fibres 9 s,
+Measured cost of that 256³ tile (16.8 M nodes, 752,370 fibre rows) on a GTX 1660
+(192 GB/s): 12.8 min in all (prepare 39 s, fibres 9 s,
 field 12 min of which 9 min solving); with fibre weight 1 the solve took 5 min.
 `tools/scroll/run-scroll.sh` sets all of this (`FIBRE_WEIGHT`, `TILE_NODES=auto`,
 `OVERLAP_NODES`, `JOBS_PER_GPU`, `GPU_MEMORY_GIB`).

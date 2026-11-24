@@ -13,6 +13,10 @@ def test_tile_cores_partition_the_axis_and_tiles_add_overlap():
     assert [t["nodes"] for t in tiles] == [(0, 191), (64, 299), (192, 299)]
     with pytest.raises(ValueError, match="multiples of 64"):
         scroll.tile_ranges(300, 100, 64)
+    with pytest.raises(ValueError, match="multiples of 16"):
+        scroll.tile_ranges(300, 128, 20)
+    narrow = scroll.tile_ranges(300, 128, 32)
+    assert [t["nodes"] for t in narrow] == [(0, 159), (96, 287), (224, 299)]
 
 
 def test_global_grid_counts_nodes_on_the_field_pitch():
@@ -87,11 +91,11 @@ def write_tile(root, tile, bias):
     atomic_json(run / "RUN.json", dict(stages=dict(field={})))
 
 
-def plan_two_biased_tiles(tmp_path, bias=(0.0, 0.004, 0.0)):
+def plan_two_biased_tiles(tmp_path, bias=(0.0, 0.004, 0.0), overlap=64):
     from winding_field.util import atomic_json
 
     tiles = []
-    for k, t in enumerate(scroll.tile_ranges(320, 128, 64)):
+    for k, t in enumerate(scroll.tile_ranges(320, 128, overlap)):
         tiles.append(
             dict(
                 id=f"000-000-{k:03d}",
@@ -112,7 +116,7 @@ def plan_two_biased_tiles(tmp_path, bias=(0.0, 0.004, 0.0)):
         dict(
             schema=scroll.PLAN_SCHEMA,
             grid=GRID,
-            overlap_nodes=64,
+            overlap_nodes=overlap,
             tiles=tiles,
             run_args=[],
             coarse=coarse,
@@ -210,6 +214,23 @@ def test_overlap_join_levels_tiles_against_each_other_without_the_coarse(tmp_pat
     assert meta["join"]["rms_before"]["worst"] == pytest.approx(0.5, abs=1e-6)
     assert meta["join"]["rms_after"]["worst"] <= 1e-6
     assert meta["coarse_correction"] is None
+
+
+def test_overlap_join_with_tiles_off_the_chunk_grid(tmp_path):
+    from winding_field.field import open_field
+
+    # 32-node overlaps: tiles start between 64-node chunks of the merged grid.
+    root, tiles = plan_two_biased_tiles(tmp_path, bias=(-0.2, 0.3, 0.1), overlap=32)
+    assert tiles[1]["nodes_lo"][2] % 64
+    result = scroll.merge(
+        Namespace(plan=root, output=tmp_path / "merged", workers=1, allow_missing=False)
+    )
+    with open_field(tmp_path / "merged") as source:
+        values, valid = source.read([0, 0, 0], GRID["shape_zyx"])
+    assert valid.all()
+    error = values - truth(np.arange(320))
+    assert np.ptp(error) <= 1e-5
+    assert result["worst_seam_p95_abs_dW"] <= 0.002
 
 
 def test_unknown_join_is_refused(tmp_path):
@@ -637,10 +658,11 @@ def test_auto_plan_sizes_tiles_for_the_gpu_and_solves_each_as_one_block(tmp_path
     result = scroll.plan(args)
     document = json.loads((tmp_path / "plan/TILES.json").read_text())
     memory = document["tile_memory"]
-    assert memory["mode"] == "auto" and memory["core_nodes"] == 64
-    assert document["tile_nodes"] == 64 and result["tiles"] == 5
+    assert memory["mode"] == "auto" and memory["core_nodes"] == 128
+    assert document["tile_nodes"] == 128 and document["overlap_nodes"] == 32
+    assert result["tiles"] == 3
     run_args = document["run_args"]
-    # The largest tile (64 core + 2 x 64 overlap along x) is one solver block.
+    # The largest tile (128 core + 2 x 32 overlap along x) is one solver block.
     assert run_args[run_args.index("--field-chunk") + 1] == "192"
     assert run_args[run_args.index("--sweeps") + 1] == "1"
     assert run_args[run_args.index("--maxiter") + 1] == "50000"

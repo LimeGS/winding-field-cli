@@ -43,6 +43,11 @@ PLAN_SCHEMA = "winding-scroll-plan-v1"
 MERGE_SCHEMA = "winding-scroll-merge-v1"
 JOINS = ("overlap", "coarse", "none")
 FIELD_CHUNK = 64
+# Overlaps need not fill whole chunks: the merge reads tiles at any node offset. 32 nodes
+# per side (1.1 mm at 34.56 um) joined a 22 mm PHerc0175A box to 0.14 sheets (median)
+# with only 32 shared nodes in all; 64 costs ~1.7x the node solves of 32.
+OVERLAP_STEP = 16
+DEFAULT_OVERLAP = 32
 SEAM_BINS = np.concatenate([np.linspace(0.0, 1.0, 1001), [2.0, 4.0, np.inf]])
 
 
@@ -66,8 +71,10 @@ def _integer_ratio(field_um, level_um):
 
 def tile_ranges(nodes, core, overlap):
     """Inclusive node ranges per axis: cores partition [0, nodes); tiles add overlap."""
-    if core % FIELD_CHUNK or overlap % FIELD_CHUNK or core <= 0 or overlap < 0:
-        raise ValueError(f"tile and overlap nodes must be positive multiples of {FIELD_CHUNK}")
+    if core % FIELD_CHUNK or core <= 0:
+        raise ValueError(f"tile nodes must be positive multiples of {FIELD_CHUNK}")
+    if overlap % OVERLAP_STEP or overlap < 0:
+        raise ValueError(f"overlap nodes must be nonnegative multiples of {OVERLAP_STEP}")
     out = []
     for start in range(0, nodes, core):
         end = min(nodes, start + core) - 1
@@ -1720,7 +1727,12 @@ def _parser():
         default=1,
         help="with --tile-nodes auto: tiles solved at once on one GPU (memory is divided)",
     )
-    p.add_argument("--overlap-nodes", type=int, default=64, help="extra nodes per side (×64)")
+    p.add_argument(
+        "--overlap-nodes",
+        type=int,
+        default=DEFAULT_OVERLAP,
+        help=f"extra nodes per side (x{OVERLAP_STEP}, default {DEFAULT_OVERLAP})",
+    )
     p.add_argument("--coarse", required=True, help="completed coarse field run (the prior)")
     p.add_argument("--fibres", required=True)
     p.add_argument("--lasagna-input", required=True)
