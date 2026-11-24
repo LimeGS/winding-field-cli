@@ -41,9 +41,13 @@ also the NVIDIA Container Toolkit):
 wf docker-install
 ```
 
-This builds the image (GPU or CPU, chosen automatically) and checks it. Without
-Docker, run `wf native-install` instead: it installs on the host (Ubuntu 24.04,
-uses `sudo` for system packages) and the same `wf` commands keep working.
+This picks GPU or CPU automatically and checks the image. The CPU image is
+downloaded from [GHCR](https://github.com/LimeGS/winding-field-cli/pkgs/container/winding-field-cli)
+(`ghcr.io/limegs/winding-field-cli`), the build `main` published for your exact commit;
+a GPU image, local changes or an unpublished commit are built from the checkout
+instead (`WF_BUILD=1` always builds). Without Docker, run `wf native-install`
+instead: it installs on the host (Ubuntu 24.04, uses `sudo` for system packages)
+and the same `wf` commands keep working.
 
 Options and details: [CPU and CUDA containers](docs/DOCKER.md).
 
