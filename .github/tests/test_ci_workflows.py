@@ -299,3 +299,12 @@ def test_installed_suite_dumps_stacks_when_a_test_hangs():
         "-o pythonpath= -o faulthandler_timeout=600 -o cache_dir=/scratch/pytest-cache /tests"
         in run
     )
+
+
+def test_a_stalled_level_worker_prints_its_stack():
+    # faulthandler_timeout only dumps the pytest process; the stall is in a spawned worker.
+    run = "\n".join(step.get("run", "") for step in workflow("docker.yml")["jobs"]["cpu"]["steps"])
+    assert "--name wf-suite" in run and "-e PYTHONFAULTHANDLER=1" in run
+    assert "sleep 2700" in run and "multiprocessing[.]spawn" in run and "kill -ABRT" in run
+    # The suite's own exit status is kept, and the watchdog never outlives the step.
+    assert "/tests || status=$?" in run and 'kill "$watchdog"' in run and 'exit "$status"' in run
