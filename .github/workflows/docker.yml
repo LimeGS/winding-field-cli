@@ -140,8 +140,9 @@ jobs:
           done
 
   release:
-    # Stable: pushing the git tag vX.Y.Z promotes the image main qualified and published for
-    # that exact commit to X.Y.Z-cpu and cpu. Nothing is rebuilt; a release is never overwritten.
+    # Stable, CPU variant: pushing the git tag vX.Y.Z promotes the image main qualified and
+    # published for that exact commit to X.Y.Z-cpu and cpu. Nothing is rebuilt; a release is
+    # never overwritten. The default (CUDA) image of the release comes from release-cuda.
     if: github.event_name == 'push' && github.ref_type == 'tag'
     runs-on: ubuntu-24.04
     timeout-minutes: 15
@@ -172,6 +173,53 @@ jobs:
             echo "::error::$version-cpu is already published with other contents; releases are never overwritten"; exit 1
           fi
           docker buildx imagetools create --tag "$image:$version-cpu" --tag "$image:cpu" "$source"
+
+  release-cuda:
+    # Stable, default image: the CUDA build, published as X.Y.Z and latest. It is built and
+    # qualified on the GPU runner (real CUDA operations and model inference), only for releases.
+    needs: release
+    if: github.event_name == 'push' && github.ref_type == 'tag'
+    runs-on: [self-hosted, linux, x64, nvidia]
+    timeout-minutes: 180
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+      - name: Refuse to overwrite a published release
+        run: |
+          version=$(python3 -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')
+          image="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/winding-field-cli"
+          if docker buildx imagetools inspect "$image:$version" > /dev/null 2>&1; then
+            echo "::error::$image:$version is already published; releases are never overwritten"; exit 1
+          fi
+      - run: docker buildx bake cuda --load
+      - name: CUDA imports without GPU execution
+        run: docker run --rm --entrypoint python winding-field:cuda /opt/runtime-provenance/docker/verify-runtime.py --variant cu128
+      - name: Real GPU operations and pinned model inference
+        run: |
+          mkdir -p "$RUNNER_TEMP/wf-release"/{outputs,models,cache,scratch}
+          docker run --rm --init --gpus 'device=0' --user "$(id -u):$(id -g)" --memory=16g --memory-swap=16g \
+            --mount "type=bind,src=$RUNNER_TEMP/wf-release/outputs,dst=/outputs" \
+            --mount "type=bind,src=$RUNNER_TEMP/wf-release/models,dst=/home/worker/.cache/winding-field/models" \
+            --mount "type=bind,src=$RUNNER_TEMP/wf-release/cache,dst=/cache" \
+            --mount "type=bind,src=$RUNNER_TEMP/wf-release/scratch,dst=/scratch" \
+            --entrypoint sh winding-field:cuda -ec \
+            'python /opt/runtime-provenance/docker/verify-runtime.py --variant cu128 --gpu && python /opt/runtime-provenance/docker/smoke.py --output /outputs/smoke --models --device cuda:0'
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Publish ghcr.io/<owner>/winding-field-cli (default tags)
+        run: |
+          version=$(python3 -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')
+          image="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/winding-field-cli"
+          for tag in "$version" latest; do
+            docker tag winding-field:cuda "$image:$tag"
+            docker push "$image:$tag"
+          done
 
   cuda:
     needs: preflight

@@ -34,41 +34,51 @@ the equivalent plain `docker run`, for hosts without Compose or for custom optio
 
 ## Published image
 
-The CPU image is published to GHCR in two cadences, so you can run the CLI without
-building anything:
+Images are published to GHCR, so you can run the CLI without building anything.
+The default image has GPU support (CUDA); the CPU variant carries a `-cpu` suffix and
+is meant for CI, quick checks and troubleshooting:
 
 ```sh
-docker pull ghcr.io/limegs/winding-field-cli:1.6.6-cpu    # stable: one release
-docker pull ghcr.io/limegs/winding-field-cli:cpu          # stable: the latest release
-docker pull ghcr.io/limegs/winding-field-cli:edge-cpu     # rolling: latest main
+docker pull ghcr.io/limegs/winding-field-cli:1.6.7        # stable, GPU: one release
+docker pull ghcr.io/limegs/winding-field-cli:latest       # stable, GPU: the latest release
+docker pull ghcr.io/limegs/winding-field-cli:1.6.7-cpu    # stable, CPU variant
+docker pull ghcr.io/limegs/winding-field-cli:edge-cpu     # rolling: latest main (CPU only)
 ```
 
-| Tag | Cadence | Published when |
-| --- | --- | --- |
-| `<version>-cpu` | Stable | the git tag `v<version>` is pushed; never overwritten |
-| `cpu` | Stable | moves to each new release |
-| `edge-cpu` | Rolling | every push to `main` whose CPU image passes the container checks above |
-| `sha-<commit>-cpu` | Rolling | the same pushes; identifies one exact build |
+| Tag | Image | Cadence | Published when |
+| --- | --- | --- | --- |
+| `<version>` | CUDA | Stable | the git tag `v<version>` is pushed; never overwritten |
+| `latest` | CUDA | Stable | moves to each new release |
+| `<version>-cpu` | CPU | Stable | the same tag push; never overwritten |
+| `cpu` | CPU | Stable | moves to each new release |
+| `edge-cpu` | CPU | Rolling | every push to `main` whose CPU image passes the container checks above |
+| `sha-<commit>-cpu` | CPU | Rolling | the same pushes; identifies one exact build |
 
-A release rebuilds nothing: pushing `v<version>` promotes the `sha-<commit>-cpu` image
-that `main` already qualified for that commit. The tag must match the version in
-`pyproject.toml` and point at a `main` commit whose image was published. Use a version
-tag (or `sha-<commit>-cpu`, or the image digest) for work you need to reproduce. Only
-the CPU image is published; build the CUDA image as described below.
+Pushing `v<version>` makes a release. The tag must match the version in
+`pyproject.toml` and point at a `main` commit whose CPU image was published.
+- The CPU variant is not rebuilt: the `sha-<commit>-cpu` image `main` already qualified
+  for that commit is promoted.
+- The CUDA image is built on the GPU runner and published only after real CUDA
+  operations and pinned model inference pass there. It is not built for ordinary pushes
+  to `main`, so there is no rolling GPU image; build one as described below.
+
+Use a version tag (or `sha-<commit>-cpu`, or the image digest) for work you need to
+reproduce.
 
 The image runs the CLI directly. For a quick start, mount only the current
 directory as `/outputs`; any UID works, and caches, temporary files and models then
 stay inside the container (`--rm` discards them):
 
 ```sh
-wf() { docker run --rm --init --user "$(id -u):$(id -g)" -v "$PWD:/outputs" \
-  ghcr.io/limegs/winding-field-cli:1.6.6-cpu "$@"; }
+wf() { docker run --rm --init --gpus all --user "$(id -u):$(id -g)" -v "$PWD:/outputs" \
+  ghcr.io/limegs/winding-field-cli:1.6.7 "$@"; }
 wf doctor
 ```
 
-To keep caches and models between runs, or to set memory limits, use the `wf`
-function in [Persistent paths and resource limits](#persistent-paths-and-resource-limits)
-with `IMAGE=ghcr.io/limegs/winding-field-cli:1.6.6-cpu`.
+Without an NVIDIA GPU, use the `-cpu` tag and drop `--gpus all`. To keep caches and
+models between runs, or to set memory limits, use the `wf` function in
+[Persistent paths and resource limits](#persistent-paths-and-resource-limits) with
+`IMAGE=ghcr.io/limegs/winding-field-cli:1.6.7` (see [CUDA](#cuda) for its options).
 
 ## Shared installation recipe
 
@@ -323,7 +333,9 @@ they do not establish scientific acceptance or full-scroll resource feasibility.
 The `containers` workflow builds CPU and runs the installed suite on pull requests.
 Manual dispatch can also build CUDA on a self-hosted runner labelled `linux`,
 `x64`, `nvidia`, with Docker access and at least 60 GiB free disk. Enable its
-separate `gpu` option to run GPU kernels and real model inference. Test tooling
+separate `gpu` option to run GPU kernels and real model inference. A release tag builds
+CUDA on that same runner, always runs the GPU checks, and publishes the result as the
+default image; the runner must be online for a release to complete. Test tooling
 is installed only in the derivative `docker/testing.Dockerfile` image.
 
 ### CT cache fix end-to-end qualification
