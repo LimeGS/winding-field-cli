@@ -217,7 +217,7 @@ def test_only_qualified_main_builds_are_published():
     # Only the publish job may write packages; the build that tests run under stays read-only.
     assert docker["permissions"] == {"contents": "read"}
     for name, job in docker["jobs"].items():
-        if name not in ("publish", "release"):
+        if name not in ("publish", "release", "release-cuda"):
             assert "packages" not in job.get("permissions", {})
     steps = publish["steps"]
     for step in steps:
@@ -257,3 +257,35 @@ def test_release_tags_promote_the_qualified_image_without_rebuilding():
     assert 'source="$image:sha-${GITHUB_SHA::7}-cpu"' in run
     assert '[ "$released" != "$qualified" ]' in run
     assert 'imagetools create --tag "$image:$version-cpu" --tag "$image:cpu" "$source"' in run
+
+
+def test_release_default_image_is_cuda_qualified_on_a_gpu_before_publishing():
+    docker = workflow("docker.yml")
+    job = docker["jobs"]["release-cuda"]
+    # Only for release tags, after the tag was validated, and only on the GPU runner.
+    assert job["needs"] == "release"
+    assert job["if"] == "github.event_name == 'push' && github.ref_type == 'tag'"
+    assert job["runs-on"] == ["self-hosted", "linux", "x64", "nvidia"]
+    assert job["permissions"] == {"contents": "read", "packages": "write"}
+    steps = job["steps"]
+    for step in steps:
+        if "uses" in step:
+            assert re.fullmatch(r"[\w./-]+@[0-9a-f]{40}", step["uses"]), step["uses"]
+    runs = [step.get("run", "") for step in steps]
+    order = {
+        key: next(i for i, run in enumerate(runs) if needle in run)
+        for key, needle in {
+            "refuse": "releases are never overwritten",
+            "build": "docker buildx bake cuda --load",
+            "gpu": "--variant cu128 --gpu",
+            "push": 'docker push "$image:$tag"',
+        }.items()
+    }
+    assert order["refuse"] < order["build"] < order["gpu"] < order["push"]
+    # GPU qualification is unconditional here, with real model inference.
+    gpu = steps[order["gpu"]]
+    assert "if" not in gpu and "--gpus" in gpu["run"]
+    assert "--models --device cuda:0" in gpu["run"]
+    # The default tags carry no variant suffix; the CPU variant keeps -cpu.
+    assert 'for tag in "$version" latest; do' in runs[order["push"]]
+    assert "winding-field:cuda" in runs[order["push"]]
