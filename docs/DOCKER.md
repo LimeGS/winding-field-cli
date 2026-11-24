@@ -34,17 +34,28 @@ the equivalent plain `docker run`, for hosts without Compose or for custom optio
 
 ## Published image
 
-Every push to `main` whose CPU image passes the container checks above also
-publishes it, so you can run the CLI without building anything:
+The CPU image is published to GHCR in two cadences, so you can run the CLI without
+building anything:
 
 ```sh
-docker pull ghcr.io/limegs/winding-field-cli:cpu          # latest main
-docker pull ghcr.io/limegs/winding-field-cli:1.6.6-cpu    # one release
+docker pull ghcr.io/limegs/winding-field-cli:1.6.6-cpu    # stable: one release
+docker pull ghcr.io/limegs/winding-field-cli:cpu          # stable: the latest release
+docker pull ghcr.io/limegs/winding-field-cli:edge-cpu     # rolling: latest main
 ```
 
-Tags: `cpu` follows `main`; `<version>-cpu` and `sha-<commit>-cpu` identify one
-build. Use a version or commit tag (or the image digest) for work you need to
-reproduce. Only the CPU image is published; build the CUDA image as described below.
+| Tag | Cadence | Published when |
+| --- | --- | --- |
+| `<version>-cpu` | Stable | the git tag `v<version>` is pushed; never overwritten |
+| `cpu` | Stable | moves to each new release |
+| `edge-cpu` | Rolling | every push to `main` whose CPU image passes the container checks above |
+| `sha-<commit>-cpu` | Rolling | the same pushes; identifies one exact build |
+
+A release rebuilds nothing: pushing `v<version>` promotes the `sha-<commit>-cpu` image
+that `main` already qualified for that commit. The tag must match the version in
+`pyproject.toml` and point at a `main` commit whose image was published. Use a version
+tag (or `sha-<commit>-cpu`, or the image digest) for work you need to reproduce. Only
+the CPU image is published; build the CUDA image as described below.
+
 The image runs the CLI directly. For a quick start, mount only the current
 directory as `/outputs`; any UID works, and caches, temporary files and models then
 stay inside the container (`--rm` discards them):

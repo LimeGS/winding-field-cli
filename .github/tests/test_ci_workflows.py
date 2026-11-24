@@ -217,7 +217,7 @@ def test_only_qualified_main_builds_are_published():
     # Only the publish job may write packages; the build that tests run under stays read-only.
     assert docker["permissions"] == {"contents": "read"}
     for name, job in docker["jobs"].items():
-        if name != "publish":
+        if name not in ("publish", "release"):
             assert "packages" not in job.get("permissions", {})
     steps = publish["steps"]
     for step in steps:
@@ -229,4 +229,31 @@ def test_only_qualified_main_builds_are_published():
     login = next(step for step in steps if step.get("uses", "").startswith("docker/login-action@"))
     assert login["with"]["registry"] == "ghcr.io"
     push = "\n".join(step.get("run", "") for step in steps)
-    assert 'docker push "$image:$tag"' in push and '"$version-cpu"' in push
+    # Rolling tags only: a version tag must never follow main.
+    assert 'docker push "$image:$tag"' in push
+    assert 'for tag in edge-cpu "sha-${GITHUB_SHA::7}-cpu"; do' in push and "version" not in push
+
+
+def test_release_tags_promote_the_qualified_image_without_rebuilding():
+    docker = workflow("docker.yml")
+    assert docker["on"]["push"] == {"branches": ["main"], "tags": ["v*"]}
+    release = docker["jobs"]["release"]
+    assert release["if"] == "github.event_name == 'push' && github.ref_type == 'tag'"
+    assert "needs" not in release
+    assert release["permissions"] == {"contents": "read", "packages": "write"}
+    # A tag push builds and tests nothing: every other job hangs off preflight or is manual.
+    jobs = docker["jobs"]
+    assert jobs["preflight"]["if"] == "github.ref_type != 'tag'"
+    assert jobs["cpu"]["needs"] == "preflight" and jobs["publish"]["needs"] == "cpu"
+    assert "workflow_dispatch" in jobs["cuda"]["if"]
+    for step in release["steps"]:
+        if "uses" in step:
+            assert re.fullmatch(r"[\w./-]+@[0-9a-f]{40}", step["uses"]), step["uses"]
+            assert not step["uses"].startswith(("docker/bake-action@", "docker/build-push-action@"))
+    run = "\n".join(step.get("run", "") for step in release["steps"])
+    assert "docker build " not in run and "bake" not in run and "docker push" not in run
+    # The tag must be this version, the commit's image must exist, and a release is immutable.
+    assert '"$GITHUB_REF_NAME" != "v$version"' in run
+    assert 'source="$image:sha-${GITHUB_SHA::7}-cpu"' in run
+    assert '[ "$released" != "$qualified" ]' in run
+    assert 'imagetools create --tag "$image:$version-cpu" --tag "$image:cpu" "$source"' in run
