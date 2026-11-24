@@ -11,14 +11,17 @@ with a small ROI. ARM hosts are not qualified for these x86-64 images.
 
 ## Quick use: `tools/wf`
 
-`wf docker-install` builds the image from this checkout through
-[`compose.yaml`](../compose.yaml) (CUDA when an NVIDIA GPU and the NVIDIA runtime are
-available, otherwise CPU), records it in `.wf-runtime` and runs `doctor`. Afterwards
+`wf docker-install` gets the image for [`compose.yaml`](../compose.yaml) (CUDA when
+an NVIDIA GPU and the NVIDIA runtime are available, otherwise CPU), records it in
+`.wf-runtime` and runs `doctor`. The CPU image is pulled from GHCR
+(`ghcr.io/limegs/winding-field-cli:sha-<commit>-cpu`, see [Published image](#published-image))
+when the checkout is an unmodified commit that `main` published; otherwise, and always
+for CUDA, it is built from this checkout. Afterwards
 `wf <arguments>` runs `winding-field <arguments>` in that image: it creates `data/`,
 `outputs/`, `models/`, `cache/` and `scratch/` in the workspace (`WF_HOME`, default:
 the current directory) and runs as your UID/GID with the mounts and limits described
-below. `WF_VARIANT=cpu|cuda` forces an image and `WF_BUILD=1` rebuilds it after
-updating the checkout. `WF_MEMORY` / `WF_MEMORY_SWAP` set the container RAM /
+below. `WF_VARIANT=cpu|cuda` forces an image and `WF_BUILD=1` builds (or rebuilds) it
+from the checkout instead of pulling. `WF_MEMORY` / `WF_MEMORY_SWAP` set the container RAM /
 RAM+swap limits (default `21g` / `85g`).
 
 `wf native-install` instead runs the host installer (`tools/install.sh`) for this
