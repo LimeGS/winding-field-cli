@@ -117,6 +117,47 @@ def test_docker_install_builds_checks_and_later_runs_the_selected_image(wf):
         assert (work / name).is_dir()
 
 
+def _commit(checkout):
+    git = ["git", "-C", str(checkout), "-c", "user.name=t", "-c", "user.email=t@example.invalid"]
+    subprocess.run(["git", "init", "-q", str(checkout)], check=True)
+    subprocess.run([*git, "add", "-A"], check=True)
+    subprocess.run([*git, "commit", "-q", "-m", "x"], check=True)
+    head = ["git", "-C", str(checkout), "rev-parse", "--short=7", "HEAD"]
+    return subprocess.run(head, check=True, capture_output=True, text=True).stdout.strip()
+
+
+def test_docker_install_pulls_the_cpu_image_published_for_this_commit(wf):
+    run, checkout, _ = wf
+    commit = _commit(checkout)
+    done, calls = run("docker-install")
+    assert done.returncode == 0, done.stderr
+    image = f"ghcr.io/limegs/winding-field-cli:sha-{commit}-cpu"
+    assert calls[0]["args"] == ["pull", image]
+    assert calls[1]["args"] == ["tag", image, "winding-field:cpu"]
+    assert not any("build" in call["args"] for call in calls)
+    assert calls[-1]["args"][-3:] == ["-T", "cpu", "doctor"]
+    assert (checkout / ".wf-runtime").read_text().split() == ["docker", "cpu"]
+
+
+def test_docker_install_builds_when_nothing_matching_is_published(wf):
+    run, checkout, _ = wf
+    _commit(checkout)
+    # The pull fails: an unpublished commit (FAKE_EXIT makes every recorded call fail).
+    done, calls = run("docker-install", FAKE_EXIT="1")
+    assert done.returncode != 0 and calls[0]["args"][0] == "pull"
+    assert calls[1]["args"][-4:] == ["--profile", "cpu", "build", "cpu"]
+    assert "no published image" in done.stdout
+    # Local changes or WF_BUILD=1 never pull.
+    (checkout / "compose.yaml").write_text((checkout / "compose.yaml").read_text() + "\n")
+    _, calls = run("docker-install")
+    assert calls[-2]["args"][-2:] == ["build", "cpu"] and calls[-3]["args"][0] != "pull"
+    _commit(checkout)
+    _, calls = run("docker-install", WF_BUILD="1")
+    assert (
+        calls[-2]["args"][-2:] == ["build", "cpu"] and calls[-3]["args"][-1] != "winding-field:cpu"
+    )
+
+
 def test_docker_install_selects_cuda_only_with_a_gpu_and_the_nvidia_runtime(wf):
     run, checkout, _ = wf
     run("docker-install", gpu=True)

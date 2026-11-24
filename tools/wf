@@ -1,13 +1,15 @@
 #!/usr/bin/env bash
 # winding-field launcher.
 #
-#   wf docker-install    build the container image (GPU or CPU, detected) and check it
+#   wf docker-install    get the container image (GPU or CPU, detected) and check it; CPU is
+#                        pulled from GHCR when this exact commit was published, else built
 #   wf native-install    install on this host instead (Ubuntu; tools/install.sh)
 #   wf <arguments>       run `winding-field <arguments>` with the installed runtime
 #
 # Inputs live in $WF_HOME/data (read as /data/...), runs in $WF_HOME/outputs (/outputs/...);
 # WF_HOME defaults to the current directory. Native runs translate those two prefixes.
-# Docker options: WF_VARIANT=cpu|cuda, WF_BUILD=1 (rebuild), WF_MEMORY, WF_MEMORY_SWAP.
+# Docker options: WF_VARIANT=cpu|cuda, WF_BUILD=1 (build instead of pulling, or rebuild),
+# WF_MEMORY, WF_MEMORY_SWAP.
 set -euo pipefail
 
 checkout=$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)
@@ -56,6 +58,18 @@ run_docker() {
         run "${options[@]}" "$variant" "$@"
 }
 
+# Pull the CPU image main published for this exact, unmodified commit and tag it as the
+# Compose image. Fails (and the caller builds) for local changes or unpublished commits.
+pull_published() {
+    local registry=${WF_REGISTRY:-ghcr.io/limegs/winding-field-cli} commit image
+    command -v git >/dev/null 2>&1 || return 1
+    git -C "$checkout" diff --quiet HEAD -- 2>/dev/null || return 1
+    commit=$(git -C "$checkout" rev-parse --short=7 HEAD 2>/dev/null) || return 1
+    image="$registry:sha-$commit-cpu"
+    echo "wf: pulling $image"
+    docker pull "$image" && docker tag "$image" winding-field:cpu
+}
+
 run_native() {
     local cli="$checkout/.venv/bin/winding-field"
     [[ -x "$cli" ]] || die "native install is incomplete; run: wf native-install"
@@ -82,8 +96,14 @@ case "${1:-}" in
         command -v docker >/dev/null 2>&1 || die "Docker is not installed; see https://docs.docker.com/engine/install/"
         docker compose version >/dev/null 2>&1 || die "Docker Compose is missing; install the docker-compose-plugin package"
         variant=$(detect_variant)
-        echo "wf: building the $variant image (first time: several minutes)"
-        compose --profile "$variant" build "$variant"
+        if [[ "$variant" == cpu && "${WF_BUILD:-0}" != 1 ]] && pull_published; then
+            :
+        else
+            [[ "$variant" == cpu && "${WF_BUILD:-0}" != 1 ]] &&
+                echo "wf: no published image for this checkout; building it instead"
+            echo "wf: building the $variant image (first time: several minutes)"
+            compose --profile "$variant" build "$variant"
+        fi
         echo "docker $variant" >"$state"
         run_docker "$variant" doctor
         ;;
