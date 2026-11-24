@@ -121,6 +121,77 @@ def _coarse_supported(coarse, grid, nodes_lo, nodes_hi):
     return bool(valid.any())
 
 
+# --- tile size from GPU memory ------------------------------------------------------------
+
+# A tile solved as one block holds its whole system on one GPU. Model, in float64: 121 bytes
+# per node and 419 per fibre constraint row (the one-block PHerc0175A coarse), 25 %
+# allocator overhead, plus the CUDA context. Fibre rows per node grow with the square of
+# the field spacing (rows ~ fibre length / spacing, nodes ~ volume / spacing^3); at 34.56 um
+# the densest measured PHerc0175A tile had 0.045 (752,370 rows on 256^3 nodes, 3.1 GB peak
+# on the GPU), taken here with 1.5x margin. The model predicts 3.6 GB for that tile.
+BYTES_PER_NODE = 121.0
+BYTES_PER_FIBRE_ROW = 419.0
+FIBRE_ROWS_PER_NODE_34UM = 0.045 * 1.5
+ALLOCATOR_OVERHEAD = 1.25
+GPU_RESERVE_BYTES = 0.5e9
+GPU_USABLE = 0.85
+# One block per tile: the solver settings the 34.56 um tiles were measured with.
+ONE_BLOCK_RUN_ARGS = ("--rtol", "1e-7", "--maxiter", "50000", "--nonconvergence-policy", "continue")
+
+
+def tile_bytes_per_node(spacing_um):
+    rows = FIBRE_ROWS_PER_NODE_34UM * (float(spacing_um) / 34.56) ** 2
+    return ALLOCATOR_OVERHEAD * (BYTES_PER_NODE + BYTES_PER_FIBRE_ROW * rows)
+
+
+def auto_tile_nodes(memory_bytes, spacing_um, overlap):
+    """Largest core (a multiple of 64 nodes) whose tile, core + 2*overlap nodes per axis,
+    fits ``memory_bytes`` of GPU memory when solved as one block."""
+    per_node = tile_bytes_per_node(spacing_um)
+    usable = GPU_USABLE * float(memory_bytes) - GPU_RESERVE_BYTES
+    edge = int((max(usable, 0.0) / per_node) ** (1.0 / 3.0) + 1e-9)
+    core = (edge - 2 * overlap) // FIELD_CHUNK * FIELD_CHUNK
+    if core < FIELD_CHUNK:
+        raise ValueError(
+            f"{memory_bytes / 2**30:.1f} GiB per tile cannot hold a {FIELD_CHUNK}-node core "
+            f"plus {overlap} overlap nodes per side as one block; use a larger GPU, fewer "
+            "--jobs-per-gpu, a smaller --overlap-nodes or an explicit --tile-nodes"
+        )
+    tile = core + 2 * overlap
+    return core, dict(
+        bytes_per_node=per_node,
+        tile_nodes_per_axis=tile,
+        estimated_peak_bytes=tile**3 * per_node + GPU_RESERVE_BYTES,
+    )
+
+
+def visible_gpus():
+    """[(id, total memory bytes)] of the GPUs a child process may use.
+
+    Queried in a short-lived interpreter so this process never holds a CUDA context.
+    Ids follow CUDA_VISIBLE_DEVICES when it is set.
+    """
+    code = (
+        "import json, torch\n"
+        "n = torch.cuda.device_count() if torch.cuda.is_available() else 0\n"
+        "print(json.dumps([torch.cuda.get_device_properties(i).total_memory for i in range(n)]))"
+    )
+    try:
+        done = subprocess.run(
+            [sys.executable, "-c", code], capture_output=True, text=True, timeout=300, check=True
+        )
+        memory = [int(v) for v in json.loads(done.stdout.strip().splitlines()[-1])]
+    except (OSError, subprocess.SubprocessError, ValueError, IndexError):
+        return []
+    visible = os.environ.get("CUDA_VISIBLE_DEVICES")
+    ids = (
+        [v.strip() for v in visible.split(",") if v.strip()]
+        if visible
+        else [str(i) for i in range(len(memory))]
+    )
+    return list(zip(ids, memory))
+
+
 AFV_APPLICATION_ID = 1447249475
 
 
@@ -300,7 +371,37 @@ def plan(args):
         coarse_meta["geometry"],
         cache_bytes=256 << 20,
     )
-    axes = [tile_ranges(n, args.tile_nodes, args.overlap_nodes) for n in grid["shape_zyx"]]
+    tile_memory = None
+    tile_nodes = args.tile_nodes
+    if str(tile_nodes) == "auto":
+        if args.gpu_memory_gib:
+            memory = float(args.gpu_memory_gib) * 2**30
+            source = "--gpu-memory-gib"
+        else:
+            gpus = visible_gpus()
+            if not gpus:
+                raise ValueError(
+                    "--tile-nodes auto needs a visible GPU or --gpu-memory-gib (the memory of "
+                    "each GPU that will run the tiles)"
+                )
+            memory = min(m for _, m in gpus)
+            source = f"smallest of {len(gpus)} visible GPUs"
+        if args.jobs_per_gpu < 1:
+            raise ValueError("--jobs-per-gpu must be at least 1")
+        tile_nodes, sizing = auto_tile_nodes(
+            memory / args.jobs_per_gpu, grid["spacing_um"], args.overlap_nodes
+        )
+        tile_memory = dict(
+            mode="auto",
+            gpu_memory_bytes=int(memory),
+            source=source,
+            jobs_per_gpu=int(args.jobs_per_gpu),
+            core_nodes=int(tile_nodes),
+            **sizing,
+        )
+    else:
+        tile_nodes = int(tile_nodes)
+    axes = [tile_ranges(n, tile_nodes, args.overlap_nodes) for n in grid["shape_zyx"]]
     tiles = []
     with coarse:
         for key in itertools.product(*(range(len(a)) for a in axes)):
@@ -338,20 +439,26 @@ def plan(args):
         "--field-scope", "supported",
         # Tiles orient sheets from the scroll centre and use the coarse's spacing.
         "--field-prior-calibration", "inherit",
-        "--sweeps", str(args.sweeps),
+        "--sweeps", str(1 if tile_memory else args.sweeps),
         "--device", args.device,
         "--threads", str(args.threads),
         "--import-workers", str(args.import_workers),
         "--until", "field",
-    ] + list(args.run_arg or [])  # fmt: skip
+    ]  # fmt: skip
+    if tile_memory:
+        # One block per tile: the largest tile edge is the solver block.
+        edge = max(t["nodes_hi"][i] - t["nodes_lo"][i] + 1 for t in tiles for i in range(3))
+        run_args += ["--field-chunk", str(edge), *ONE_BLOCK_RUN_ARGS]
+    run_args += list(args.run_arg or [])
     document = dict(
         schema=PLAN_SCHEMA,
         created_unix=time.time(),
         ct=ct,
         grid=grid,
         field_chunk=FIELD_CHUNK,
-        tile_nodes=args.tile_nodes,
+        tile_nodes=tile_nodes,
         overlap_nodes=args.overlap_nodes,
+        tile_memory=tile_memory,
         coarse=dict(path=str(coarse_dir), checkpoint_sha256=coarse_meta["checkpoint_sha256"]),
         run_args=run_args,
         tiles=tiles,
@@ -405,6 +512,16 @@ def run_tiles(args):
     executable = (
         list(args.executable) if args.executable else [sys.executable, "-m", "winding_field"]
     )
+    run_args = list(document.get("run_args", []))
+    on_cpu = "--device" in run_args and run_args[run_args.index("--device") + 1].startswith("cpu")
+    if args.gpus is not None:
+        gpus = [g.strip() for g in args.gpus.split(",") if g.strip()]
+    else:
+        gpus = [] if on_cpu else [g for g, _ in visible_gpus()]
+    per_gpu = int((document.get("tile_memory") or {}).get("jobs_per_gpu", 1))
+    jobs = args.jobs or (len(gpus) * per_gpu if gpus else 1)
+    # Each tile process sees one GPU; tiles go to the least loaded one.
+    load = {g: 0 for g in gpus}
     running = {}
     results = {}
     stopping = False
@@ -419,7 +536,7 @@ def run_tiles(args):
     try:
         pending = list(queue)
         while pending or running:
-            while pending and len(running) < args.jobs and not stopping:
+            while pending and len(running) < jobs and not stopping:
                 tile = pending.pop(0)
                 run = root / "tiles" / tile["id"]
                 if _tile_done(run):
@@ -449,17 +566,26 @@ def run_tiles(args):
                 log = open(root / "logs" / f"{tile['id']}.log", "ab")
                 log.write(f"\n# {time.strftime('%FT%T')} {' '.join(command)}\n".encode())
                 log.flush()
-                process = subprocess.Popen(command, stdout=log, stderr=subprocess.STDOUT)
-                running[tile["id"]] = (process, log, time.time())
+                gpu, env = None, None
+                if gpus:
+                    gpu = min(gpus, key=lambda g: load[g])
+                    load[gpu] += 1
+                    env = dict(os.environ, CUDA_VISIBLE_DEVICES=gpu)
+                    log.write(f"# GPU {gpu}\n".encode())
+                    log.flush()
+                process = subprocess.Popen(command, stdout=log, stderr=subprocess.STDOUT, env=env)
+                running[tile["id"]] = (process, log, time.time(), gpu)
             if not running:
                 break
             time.sleep(1.0)
-            for tile_id, (process, log, started) in list(running.items()):
+            for tile_id, (process, log, started, gpu) in list(running.items()):
                 code = process.poll()
                 if code is None:
                     continue
                 log.close()
                 del running[tile_id]
+                if gpu is not None:
+                    load[gpu] -= 1
                 done = _tile_done(root / "tiles" / tile_id)
                 state = "DONE" if done else ("STOPPED" if stopping else "FAILED")
                 results[tile_id] = state
@@ -471,7 +597,12 @@ def run_tiles(args):
         for s, handler in previous.items():
             signal.signal(s, handler)
     counts = {s: sum(v == s for v in results.values()) for s in ("DONE", "FAILED", "STOPPED")}
-    return dict(status="TILES_DONE" if counts["DONE"] == len(queue) else "INCOMPLETE", **counts)
+    return dict(
+        status="TILES_DONE" if counts["DONE"] == len(queue) else "INCOMPLETE",
+        jobs=jobs,
+        gpus=gpus,
+        **counts,
+    )
 
 
 # --- merge ------------------------------------------------------------------------------
@@ -1570,7 +1701,25 @@ def _parser():
     p.add_argument("--stride", type=int, help="observation stride (default: field/CT ratio)")
     p.add_argument("--field-spacing-um", type=float, required=True)
     p.add_argument("--bounds", type=int, nargs=6, metavar=("Z0", "Z1", "Y0", "Y1", "X0", "X1"))
-    p.add_argument("--tile-nodes", type=int, default=512, help="core nodes per axis (×64)")
+    p.add_argument(
+        "--tile-nodes",
+        default="auto",
+        help="core nodes per axis (x64), or auto (default): the largest tile that one GPU "
+        "solves as one block (--gpu-memory-gib, else the smallest visible GPU); auto tiles "
+        "run as one block with one sweep",
+    )
+    p.add_argument(
+        "--gpu-memory-gib",
+        type=float,
+        help="with --tile-nodes auto: memory of each GPU that will run the tiles (default: "
+        "detect on this machine)",
+    )
+    p.add_argument(
+        "--jobs-per-gpu",
+        type=int,
+        default=1,
+        help="with --tile-nodes auto: tiles solved at once on one GPU (memory is divided)",
+    )
     p.add_argument("--overlap-nodes", type=int, default=64, help="extra nodes per side (×64)")
     p.add_argument("--coarse", required=True, help="completed coarse field run (the prior)")
     p.add_argument("--fibres", required=True)
@@ -1590,7 +1739,16 @@ def _parser():
 
     p = sub.add_parser("tiles", help="run or continue the planned tiles")
     p.add_argument("plan")
-    p.add_argument("--jobs", type=int, default=1)
+    p.add_argument(
+        "--jobs",
+        type=int,
+        help="tiles at once (default: GPUs x the plan's jobs per GPU, or 1 without GPUs)",
+    )
+    p.add_argument(
+        "--gpus",
+        help="comma-separated GPU ids for the tiles, one per tile process (default: all "
+        "visible GPUs; empty string: none)",
+    )
     p.add_argument("--ids", nargs="*")
     p.add_argument("--executable", nargs="+", help="command prefix (default: this Python)")
     p.add_argument(

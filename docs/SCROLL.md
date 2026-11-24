@@ -112,11 +112,39 @@ Strong fibres need the tile solved as **one block** (`--run-arg=--field-chunk=N`
 least the tile's nodes per axis, `--sweeps 1`, `--rtol 1e-7 --maxiter 50000`): the same
 tiles solved as 64-node blocks for 8 sweeps counted 8.7-10.1 units per mm and differed
 from the one-block solution by a 95th percentile of 0.75-0.93 sheets (halo 16; 1.5 with
-the default halo 2). Use smaller tiles (`--tile-nodes 128 --overlap-nodes 64`, 256 nodes
-per axis) so one block fits the GPU. Keep weight 1 for the 138 µm coarse: there strong
-fibres compress the count (weight 1000: 2.2 units per mm where 6.3 sheets per mm are).
-`tools/scroll/run-scroll.sh` sets all of this (`FIBRE_WEIGHT`, `TILE_NODES`,
-`OVERLAP_NODES`).
+the default halo 2). Keep weight 1 for the 138 µm coarse: there strong fibres compress
+the count (weight 1000: 2.2 units per mm where 6.3 sheets per mm are).
+
+### Tile size from GPU memory (`--tile-nodes auto`, the default)
+
+A one-block tile holds its whole system on one GPU, and every tile also solves its
+overlap, so the largest tile that fits is the cheapest: with 64 overlap nodes per side,
+PHerc0175A needs 49.6 G node solves with 128-node cores, 22.5 G with 256 and 13.5 G with
+512. `scroll plan` therefore picks the largest core (a multiple of 64) whose tile fits the
+GPU: `--gpu-memory-gib` when given (plan for the machine that will run the tiles), else
+the smallest GPU visible here; `--jobs-per-gpu N` divides it between N tiles. Auto tiles
+run as one block (`--field-chunk` = the tile edge, one sweep, `--rtol 1e-7
+--maxiter 50000`); `--run-arg` flags still come last and win. `TILES.json` →
+`tile_memory` records the choice.
+
+The memory model is 121 bytes per node and 419 per fibre constraint row in float64, 25 %
+allocator overhead, 0.5 GB for the CUDA context, at most 85 % of the GPU, and 1.5x the
+densest measured fibre rows (0.045 per node at 34.56 µm, scaled with the square of the
+spacing). Checked on a 256³ PHerc0175A tile: 3.1 GB measured, 3.4 GB modelled.
+
+| GPU memory | 6 GB | 16 GB | 24 GB | 32 GB | 48 GB | 80 GB | 96 GB | 192 GB |
+|---|---|---|---|---|---|---|---|---|
+| Core nodes per axis (34.56 µm) | 128 | 256 | 320 | 384 | 448 | 576 | 640 | 832 |
+
+`scroll tiles` runs one tile per visible GPU at a time (times the plan's jobs per GPU),
+each process seeing only its GPU (`CUDA_VISIBLE_DEVICES`); `--gpus 0,2` picks GPUs and
+`--jobs` overrides the count.
+
+Measured cost of that 256³ tile (16.8 M nodes, 752,370 fibre rows) on a GTX 1660, whose
+float64 rate is 1/32 of its float32 rate: 12.8 min in all (prepare 39 s, fibres 9 s,
+field 12 min of which 9 min solving); with fibre weight 1 the solve took 5 min.
+`tools/scroll/run-scroll.sh` sets all of this (`FIBRE_WEIGHT`, `TILE_NODES=auto`,
+`OVERLAP_NODES`, `JOBS_PER_GPU`, `GPU_MEMORY_GIB`).
 
 ### Level 2 or stride 4
 

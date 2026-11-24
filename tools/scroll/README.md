@@ -32,8 +32,9 @@ method.
    machine and move only the prepared run to the GPU host.
 5. **`run-scroll.sh plan tiles merge gate surfaces`** with `COARSE_DIR` pointing at the
    coarse, `TILE_CACHE` at the prefetched level-2 CT, and everything `--offline`. Tiles
-   use `--fibre-weight 1000` and are solved as one block each (`TILE_NODES=128`,
-   `OVERLAP_NODES=64`); the merge joins them on their overlaps, not to the coarse.
+   use `--fibre-weight 1000` and are solved as one block each, sized to fill the GPU
+   (`TILE_NODES=auto`; one tile per GPU at a time); the merge joins them on their
+   overlaps, not to the coarse.
 6. **`winding-field scroll site`** for the Deep Zoom viewer.
 
 `field_status.py RUN` (under `watch`) shows phase, progress, ETA and per-sweep changes.

@@ -590,3 +590,119 @@ def test_decimation_refuses_a_mesh_with_a_non_manifold_edge(tmp_path):
     with pytest.raises(scroll.DecimationRefused):
         scroll.decimate_bundle(bundle, 4, tmp_path / "decimated")
     assert not (tmp_path / "decimated").exists()
+
+
+def test_auto_tile_size_grows_with_gpu_memory_and_fits_the_measured_tile():
+    sizes = {}
+    for gib in (6, 16, 24, 32, 48, 80, 96, 192):
+        core, sizing = scroll.auto_tile_nodes(gib * 2**30, 34.56, 64)
+        assert core % 64 == 0 and sizing["tile_nodes_per_axis"] == core + 128
+        assert sizing["estimated_peak_bytes"] <= scroll.GPU_USABLE * gib * 2**30
+        sizes[gib] = core
+    assert list(sizes.values()) == sorted(sizes.values())
+    # A 6 GB GTX 1660 ran the 256^3 PHerc0175A tile (3.1 GB peak); the model keeps it.
+    assert sizes[6] == 128
+    _, sizing = scroll.auto_tile_nodes(6 * 2**30, 34.56, 64)
+    assert 3.1e9 <= sizing["estimated_peak_bytes"] <= 6 * 2**30
+    assert sizes[80] >= 512
+    # Two tiles per GPU get half the memory each.
+    assert scroll.auto_tile_nodes(80 * 2**30 / 2, 34.56, 64)[0] < sizes[80]
+    with pytest.raises(ValueError, match="cannot hold"):
+        scroll.auto_tile_nodes(2**30, 34.56, 64)
+
+
+class _FakeVolume:
+    spacing_xyz = (1.0, 1.0, 1.0)
+    shape = (4, 6, 640)
+    origin_xyz = (0.0, 0.0, 0.0)
+    identity = dict(test="volume")
+
+    def close(self):
+        pass
+
+
+def test_auto_plan_sizes_tiles_for_the_gpu_and_solves_each_as_one_block(tmp_path, monkeypatch):
+    from winding_field import workflow
+
+    monkeypatch.setattr(workflow, "open_volume", lambda config: _FakeVolume())
+    coarse = write_coarse(tmp_path / "coarse")
+    args = scroll._parser().parse_args(
+        [
+            "plan", "--source", "ct.zarr", "--voxel-um", "1", "--field-spacing-um", "2",
+            "--coarse", coarse["path"], "--fibres", "f.afv", "--lasagna-input", "l.json",
+            "--gpu-memory-gib", "2", "--no-split-fibres", "--run-arg=--fibre-weight=1000",
+            "--output", str(tmp_path / "plan"),
+        ]
+    )  # fmt: skip
+    result = scroll.plan(args)
+    document = json.loads((tmp_path / "plan/TILES.json").read_text())
+    memory = document["tile_memory"]
+    assert memory["mode"] == "auto" and memory["core_nodes"] == 64
+    assert document["tile_nodes"] == 64 and result["tiles"] == 5
+    run_args = document["run_args"]
+    # The largest tile (64 core + 2 x 64 overlap along x) is one solver block.
+    assert run_args[run_args.index("--field-chunk") + 1] == "192"
+    assert run_args[run_args.index("--sweeps") + 1] == "1"
+    assert run_args[run_args.index("--maxiter") + 1] == "50000"
+    # Extra run flags come last, so they override the defaults above.
+    assert run_args[-1] == "--fibre-weight=1000"
+
+
+def test_auto_plan_without_gpu_or_memory_is_refused(tmp_path, monkeypatch):
+    from winding_field import workflow
+
+    monkeypatch.setattr(workflow, "open_volume", lambda config: _FakeVolume())
+    monkeypatch.setattr(scroll, "visible_gpus", lambda: [])
+    coarse = write_coarse(tmp_path / "coarse")
+    args = scroll._parser().parse_args(
+        [
+            "plan", "--source", "ct.zarr", "--voxel-um", "1", "--field-spacing-um", "2",
+            "--coarse", coarse["path"], "--fibres", "f.afv", "--lasagna-input", "l.json",
+            "--no-split-fibres", "--output", str(tmp_path / "plan"),
+        ]
+    )  # fmt: skip
+    with pytest.raises(ValueError, match="gpu-memory-gib"):
+        scroll.plan(args)
+
+
+def test_tiles_run_one_process_per_gpu_each_seeing_only_its_gpu(tmp_path, monkeypatch):
+    import sys
+
+    from winding_field.util import atomic_json
+
+    monkeypatch.setattr(scroll, "visible_gpus", lambda: [("3", 8 << 30), ("5", 8 << 30)])
+    root = tmp_path / "plan"
+    root.mkdir()
+    tiles = [
+        dict(id=f"000-000-00{k}", supported=True, roi=[0, 2, 0, 2, k, k + 2]) for k in range(4)
+    ]
+    atomic_json(
+        root / "TILES.json",
+        dict(
+            schema=scroll.PLAN_SCHEMA,
+            tiles=tiles,
+            run_args=["--device", "cuda"],
+            tile_memory=dict(mode="auto", jobs_per_gpu=1),
+        ),
+    )
+    fake = tmp_path / "fake.py"
+    fake.write_text(
+        "import json, os, sys, pathlib, time\n"
+        "out = pathlib.Path(sys.argv[sys.argv.index('--output') + 1])\n"
+        "out.mkdir(parents=True)\n"
+        "start = time.time(); time.sleep(1.5)\n"
+        "(out / 'GPU.json').write_text(json.dumps(\n"
+        "    [os.environ.get('CUDA_VISIBLE_DEVICES'), start, time.time()]))\n"
+        "(out / 'RUN.json').write_text(json.dumps({'stages': {'field': {}}}))\n"
+        "(out / 'FIELD.json').write_text('{}')\n"
+    )
+    result = scroll.run_tiles(
+        scroll._parser().parse_args(["tiles", str(root), "--executable", sys.executable, str(fake)])
+    )
+    assert result["status"] == "TILES_DONE" and result["jobs"] == 2
+    assert result["gpus"] == ["3", "5"]
+    runs = [json.loads((root / "tiles" / t["id"] / "GPU.json").read_text()) for t in tiles]
+    assert {gpu for gpu, _, _ in runs} == {"3", "5"}
+    for gpu in ("3", "5"):
+        spans = sorted((a, b) for g, a, b in runs if g == gpu)
+        assert all(spans[i][1] <= spans[i + 1][0] for i in range(len(spans) - 1))

@@ -12,9 +12,9 @@
 # Online mode re-verifies every cached chunk against S3 one at a time (tens of minutes).
 #
 # Two scrolls on one machine (e.g. 128 cores / 256 GB): give each its share and GPU:
-#   CUDA_VISIBLE_DEVICES=0 TILE_JOBS=16 RENDER_JOBS=48 CACHE_BYTES=20000000000 ROOT=/workspace/A ./run-scroll.sh
-#   CUDA_VISIBLE_DEVICES=1 TILE_JOBS=16 RENDER_JOBS=48 CACHE_BYTES=20000000000 ROOT=/workspace/B ./run-scroll.sh
-# (one GPU with >=24 GB can serve both: set CUDA_VISIBLE_DEVICES=0 for both).
+#   CUDA_VISIBLE_DEVICES=0 RENDER_JOBS=48 CACHE_BYTES=20000000000 ROOT=/workspace/A ./run-scroll.sh
+#   CUDA_VISIBLE_DEVICES=1 RENDER_JOBS=48 CACHE_BYTES=20000000000 ROOT=/workspace/B ./run-scroll.sh
+# Tiles are sized to fill each GPU and run one per GPU (JOBS_PER_GPU to share a GPU).
 # CLEANUP=1 deletes tile inputs after the merge. Full meshes are always dropped per batch.
 set -euo pipefail
 
@@ -24,7 +24,8 @@ source "$ROOT/scroll.env"
 : "${CT:?}" "${VOXEL_UM:?}" "${AFV:?}" "${LASAGNA:?}" "${BOUNDS_L2:?}"
 CODE=${CODE:-/workspace/wf-cli-dev}
 CORES=${CORES:-$(nproc)}
-TILE_JOBS=${TILE_JOBS:-$((CORES / 4))}
+# Tiles at once: default one per visible GPU (times JOBS_PER_GPU), decided by scroll tiles.
+TILE_JOBS=${TILE_JOBS:-}
 RENDER_JOBS=${RENDER_JOBS:-$((CORES / 2))}
 MERGE_WORKERS=${MERGE_WORKERS:-$((CORES < 32 ? CORES : 32))}
 CLEANUP=${CLEANUP:-0}
@@ -57,9 +58,12 @@ COUNTED_JOBS=${COUNTED_JOBS:-1}
 # keeps weight 1 (at 138 um strong fibres compress the winding count).
 FIBRE_WEIGHT=${FIBRE_WEIGHT:-1000}
 # Fine tiles are solved as one block each (sweeps of 64-node blocks drift ~1 sheet with
-# strong fibres): TILE_NODES core + 2*OVERLAP_NODES per axis must fit the GPU.
-TILE_NODES=${TILE_NODES:-128}
+# strong fibres). TILE_NODES=auto picks the largest tile the GPUs hold (6 GB: 128-node
+# cores, 24 GB: 320, 80 GB: 576); GPU_MEMORY_GIB plans for GPUs other than this machine's.
+TILE_NODES=${TILE_NODES:-auto}
 OVERLAP_NODES=${OVERLAP_NODES:-64}
+JOBS_PER_GPU=${JOBS_PER_GPU:-1}
+GPU_MEMORY_GIB=${GPU_MEMORY_GIB:-}
 # Solver caches: the first sweep builds, later sweeps reuse (~2.5x cheaper on 175A).
 CACHE_BYTES=${CACHE_BYTES:-40000000000}
 # Native install: PYTHON=/workspace/venv/bin/python (CLI built from the branch).
@@ -133,11 +137,8 @@ coarse() {
 plan() {
   done_stage plan && return
   rm -rf "$ROOT/plan"
-  local extra=(
-    "--run-arg=--fibre-weight=$FIBRE_WEIGHT"
-    "--run-arg=--field-chunk=$((TILE_NODES + 2 * OVERLAP_NODES))"
-    --run-arg=--rtol=1e-7 --run-arg=--maxiter=50000 --run-arg=--nonconvergence-policy=continue
-  )
+  local extra=("--run-arg=--fibre-weight=$FIBRE_WEIGHT" --jobs-per-gpu "$JOBS_PER_GPU")
+  [[ -n "$GPU_MEMORY_GIB" ]] && extra+=(--gpu-memory-gib "$GPU_MEMORY_GIB")
   [[ -n "$TILE_CACHE" ]] && extra+=(--run-arg=--offline "--run-arg=--cache-gib=$TILE_CACHE_GIB")
   say "plan: $FINE_UM um tiles on coarse $COARSE_DIR${TILE_CACHE:+ (tiles offline on $TILE_CACHE)}"
   "${WF[@]}" scroll plan --source "$CT" --voxel-um "$VOXEL_UM" --level 2 \
@@ -150,10 +151,11 @@ plan() {
 
 tiles() {
   done_stage tiles && return
-  say "tiles: $TILE_JOBS at a time"
+  say "tiles: ${TILE_JOBS:-one per GPU} at a time"
   local cache=()
   [[ -n "$TILE_CACHE" ]] && cache=(--cache "$TILE_CACHE")
-  "${WF[@]}" scroll tiles "$ROOT/plan" --jobs "$TILE_JOBS" "${cache[@]}" | tee -a "$LOG/tiles.log"
+  [[ -n "$TILE_JOBS" ]] && cache+=(--jobs "$TILE_JOBS")
+  "${WF[@]}" scroll tiles "$ROOT/plan" "${cache[@]}" | tee -a "$LOG/tiles.log"
   grep -q '"TILES_DONE"' <(tail -1 "$LOG/tiles.log") || { say "tiles incomplete"; exit 1; }
   mark tiles
 }
