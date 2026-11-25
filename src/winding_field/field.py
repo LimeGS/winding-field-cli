@@ -333,6 +333,9 @@ def solve(run, config, stop=None, *, sweep_target=None, convergence=None):
     preconditioner = config.get("preconditioner", "jacobi")
     if preconditioner not in ("jacobi", "amg"):
         raise ValueError("block workflows require preconditioner='jacobi' or 'amg'")
+    status_policy = config.get("field_status_policy", "all")
+    if status_policy not in ("all", "checkpoints"):
+        raise ValueError("field_status_policy must be all or checkpoints")
     run = Path(run)
     meta = json.loads((run / "PREPARED.json").read_bytes())
     fibres = json.loads((run / "FIBRES.json").read_bytes())
@@ -434,6 +437,9 @@ def solve(run, config, stop=None, *, sweep_target=None, convergence=None):
     if preconditioner != "jacobi":
         # Only a non-default policy is passed: Jacobi run identities stay unchanged.
         options["preconditioner"] = preconditioner
+    if status_policy != "all":
+        # Execution choice, not checkpoint identity: STATUS fsyncs only at checkpoints.
+        options["status_policy"] = status_policy
     if bounded:
         options["max_bytes"] = config.get("bounded_bytes", 12 << 30) // 8
     prior = None

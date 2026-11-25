@@ -725,3 +725,12 @@ def test_general_solver_accepts_amg_preconditioner():
 
     validate_config({"preconditioner": "amg"})
     validate_config({"preconditioner": "jacobi"})
+
+
+def test_general_solver_validates_field_status_policy():
+    from winding_field.config import validate_config
+
+    validate_config({"field_status_policy": "checkpoints"})
+    validate_config({"field_status_policy": "all"})
+    with pytest.raises(ValueError, match="field_status_policy"):
+        validate_config({"field_status_policy": "never"})

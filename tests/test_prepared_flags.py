@@ -691,3 +691,19 @@ def test_solver_preconditioner_reaches_options_only_when_not_jacobi(tmp_path, po
     path.write_text(json.dumps(config))
     with pytest.raises(ValueError):
         field_workflow.load_run_config(path)
+
+
+def test_status_policy_checkpoints_matches_default_field(tmp_path):
+    path, config = prepared(tmp_path)
+    field_workflow.run_field(path, tmp_path / "all")
+    config["execution"]["status_policy"] = "checkpoints"
+    path.write_text(json.dumps(config))
+    result = field_workflow.run_field(path, tmp_path / "checkpoints")
+    assert result["status"] == "SWEEP_BUDGET_REACHED"
+    _, expected, _ = stored(tmp_path / "all")
+    _, field, _ = stored(tmp_path / "checkpoints")
+    np.testing.assert_array_equal(field, expected)
+    config["execution"]["status_policy"] = "never"
+    path.write_text(json.dumps(config))
+    with pytest.raises(ValueError, match="status_policy"):
+        field_workflow.load_run_config(path)
