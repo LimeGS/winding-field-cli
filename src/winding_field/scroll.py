@@ -70,14 +70,27 @@ def _integer_ratio(field_um, level_um):
 
 
 def tile_ranges(nodes, core, overlap):
-    """Inclusive node ranges per axis: cores partition [0, nodes); tiles add overlap."""
+    """Inclusive node ranges per axis: cores partition [0, nodes); tiles add overlap.
+
+    ``core`` is the largest core. The axis takes as few tiles as that allows, and their
+    cores share its 64-node chunks evenly, the larger ones last (the last chunk may be
+    partial). A plain ``core`` + remainder split left a narrow tile beside a wide one:
+    on the 2026-11-25 PHerc0175A dry-run box (256 nodes, overlap 32), cores 192 + 64
+    (tile edges 224 / 96) put 9.31% of seam nodes over half a winding apart, and cores
+    128 + 128 (edges 160 / 160) 1.77%.
+    """
     if core % FIELD_CHUNK or core <= 0:
         raise ValueError(f"tile nodes must be positive multiples of {FIELD_CHUNK}")
     if overlap % OVERLAP_STEP or overlap < 0:
         raise ValueError(f"overlap nodes must be nonnegative multiples of {OVERLAP_STEP}")
+    count = -(-nodes // core)
+    base, extra = divmod(-(-nodes // FIELD_CHUNK), count)
+    starts = [0]
+    for k in range(count - 1):
+        starts.append(starts[-1] + (base + (k >= count - extra)) * FIELD_CHUNK)
     out = []
-    for start in range(0, nodes, core):
-        end = min(nodes, start + core) - 1
+    for k, start in enumerate(starts):
+        end = (starts[k + 1] if k + 1 < count else nodes) - 1
         out.append(
             dict(
                 core=(start, end),
@@ -1796,7 +1809,8 @@ def _parser():
     p.add_argument(
         "--tile-nodes",
         default="auto",
-        help="core nodes per axis (x64), or auto (default): the largest tile that one GPU "
+        help="largest core nodes per axis (x64; an axis's cores share its 64-node chunks "
+        "evenly), or auto (default): the largest tile that one GPU "
         "solves as one block (--gpu-memory-gib, else the smallest visible GPU); auto tiles "
         "run as one block with one sweep",
     )

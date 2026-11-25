@@ -82,9 +82,13 @@ wf scroll plan --source "$CT" --voxel-um 8.64 --level 2 --field-spacing-um 34.56
 - **One global grid.** The field spacing must be a whole multiple of the selected CT
   level's spacing (34.56 µm is 4 × 8.64 at level 0 and 1 × 34.56 at level 2). Tile ROIs
   start on that grid, so every tile's nodes coincide with the global nodes.
-- **Tiles.** Cores of `--tile-nodes` partition each axis; each tile adds
-  `--overlap-nodes` (default 32, a multiple of 16) on interior sides. Cores are
-  multiples of 64 (the field chunk); the merge reads tiles at any node offset. 32 nodes
+- **Tiles.** Cores partition each axis; each tile adds `--overlap-nodes` (default 32,
+  a multiple of 16) on interior sides. `--tile-nodes` is the largest core: an axis takes
+  as few tiles as that allows, and their cores share its 64-node chunks evenly, so no
+  narrow remainder tile sits beside a wide one. On the 256-node dry-run box with overlap
+  32, cores 192 + 64 (tiles 224 / 96 nodes) put 9.31% of seam nodes over half a winding
+  apart, and cores 128 + 128 (tiles 160 / 160) 1.77%. Cores start on multiples of 64
+  (the field chunk); the merge reads tiles at any node offset. 32 nodes
   per side (1.1 mm) is twice the overlap the 22 mm PHerc0175A box was joined with
   (0.14 sheets median); 64 needs ~1.7x the node solves.
 - **Skipped tiles.** Tiles whose box has no observed support in the coarse field are
