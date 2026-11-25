@@ -635,13 +635,17 @@ def _tifxyz(store, prefix, grid, volume, component=None):
     return dict(counts, status="WRITTEN", path=prefix + "/tifxyz", manifest=result)
 
 
-def render(store, volume, pitch_um, export_tifxyz=False, *, keep_xyz=True, tiled=False):
+def render(
+    store, volume, pitch_um, export_tifxyz=False, *, keep_xyz=True, tiled=False, ct_texture=True
+):
     """Rasterize mapped charts and sample CT per TILE x TILE pixel tile.
 
     Defaults keep the historical outputs. ``keep_xyz=False`` stores only CT and mask per
     tile (XYZ/normal are recomputable from the retained charts and UVs; TIFXYZ needs
     them). ``tiled=True`` writes one PNG per tile under ``<component>/png/`` instead of
     whole-canvas sheet/mask PNGs, which lifts the 100M-pixel canvas bound.
+    ``ct_texture=False`` rasterizes geometry (and TIFXYZ) without reading CT: every
+    mapped pixel stays mask 1 with NaN CT, and the PNGs carry no observed alpha.
     """
     if type(pitch_um) not in (int, float) or not math.isfinite(pitch_um) or pitch_um <= 0:
         raise ValueError("positive physical render pitch required")
@@ -657,6 +661,8 @@ def render(store, volume, pitch_um, export_tifxyz=False, *, keep_xyz=True, tiled
         identity["keep_xyz"] = False
     if tiled:
         identity["tiled"] = True
+    if not ct_texture:
+        identity["ct_texture"] = False
     old = store.get("render_identity")
     if old is not None and old != identity:
         raise ValueError("render identity changed")
@@ -715,7 +721,7 @@ def render(store, volume, pitch_um, export_tifxyz=False, *, keep_xyz=True, tiled
                     )
                     valid = mask == 1
                     values = np.full(shape, np.nan, np.float32)
-                    if valid.any():
+                    if ct_texture and valid.any():
                         store.phase = "sample_ct"
                         samples, observed = sample_ct(volume, xyz[valid])
                         if not np.isfinite(samples[observed]).all():

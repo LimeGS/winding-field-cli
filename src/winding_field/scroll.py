@@ -1080,10 +1080,13 @@ def render_ct(args):
         flattening_scope=args.flattening_scope if args.flattening_scope != "charts" else None,
         surface_time_limit_s=args.surface_time_limit,
         coverage_target=args.coverage_target,
-        export_tifxyz=args.export_tifxyz,
-        render_keep_xyz=args.export_tifxyz,
+        export_tifxyz=args.export_tifxyz or args.no_ct_texture,
+        render_keep_xyz=args.export_tifxyz or args.no_ct_texture,
         render_tiled=not args.whole_png,
     )
+    if args.no_ct_texture:
+        # Opt-in key: absent by default so existing render identities are unchanged.
+        config["ct_texture"] = False
     if args.cache_gib is not None:
         config["cache_bytes"] = int(args.cache_gib * (1 << 30))
     output = Path(args.output)
@@ -1107,7 +1110,12 @@ def render_ct(args):
         receipts["decimation"]["seconds"] = time.time() - started
     with MeshReader(mesh) as reader:
         volume = open_volume({k: v for k, v in config.items() if v is not None})
-        if volume.remote and not args.offline and args.prefetch_workers > 0:
+        if (
+            volume.remote
+            and not args.offline
+            and args.prefetch_workers > 0
+            and not args.no_ct_texture
+        ):
             # Prefetch every touched chunk over parallel connections, then render offline:
             # an online render re-verifies each chunk against the source per epoch, one
             # HTTPS connection at a time (53 of 77 s on a PHerc0175A winding).
@@ -1342,8 +1350,16 @@ def _parser():
     p.add_argument("--coverage-target", type=float, default=1.0)
     p.add_argument(
         "--export-tifxyz",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="write TIFXYZ and keep per-pixel XYZ (default: on; --export-tifxyz is kept as a "
+        "no-op); --no-export-tifxyz stores only CT and mask",
+    )
+    p.add_argument(
+        "--no-ct-texture",
         action="store_true",
-        help="also write TIFXYZ; keeps per-pixel XYZ, otherwise only CT and mask are stored",
+        help="flatten and write TIFXYZ without sampling CT for the texture (implies "
+        "--export-tifxyz; skips the CT prefetch)",
     )
     p.add_argument(
         "--whole-png",

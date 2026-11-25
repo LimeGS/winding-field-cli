@@ -527,8 +527,17 @@ def main(argv=None):
         p.add_argument(
             "--export-tifxyz",
             action=argparse.BooleanOptionalAction,
-            default=False,
-            help="add mesh-derived XYZ TIFFs to native/original CT renders; not direct-field export",
+            default=True,
+            help="mesh-derived XYZ TIFFs with native/original CT renders (default: on; "
+            "--export-tifxyz is kept as a no-op); not direct-field export",
+        )
+        p.add_argument(
+            "--no-ct-texture",
+            dest="ct_texture",
+            action="store_false",
+            default=argparse.SUPPRESS,
+            help="native only: flatten and write mesh-derived TIFXYZ without sampling CT for the "
+            "flattened texture (implies --export-tifxyz)",
         )
         p.add_argument(
             "--tifxyz-config",
@@ -709,8 +718,9 @@ def main(argv=None):
     p.add_argument(
         "--export-tifxyz",
         action=argparse.BooleanOptionalAction,
-        default=False,
-        help="add mesh-derived float32 XYZ TIFFs and validity mask alongside CT renders",
+        default=True,
+        help="mesh-derived float32 XYZ TIFFs and validity mask alongside CT renders "
+        "(default: on; --export-tifxyz is kept as a no-op)",
     )
     p.add_argument(
         "--stages",
@@ -921,6 +931,9 @@ def main(argv=None):
                 )
             elif original or original_flags:
                 raise ValueError("--flattening-config requires --flattening-method original")
+            if config.get("ct_texture") is False:
+                # The mesh-only output is the TIFXYZ, so the flag implies it.
+                config["export_tifxyz"] = True
             request = config.pop("tifxyz_config")
             has_tifxyz = any(name.startswith("tifxyz_") for name in config) or request is not None
             if config["surface_output"] == "tifxyz":

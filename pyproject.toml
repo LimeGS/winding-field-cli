@@ -23,6 +23,8 @@ dependencies = [
   "dynamic-network-architectures==0.4.4",
   "avf-spline-generator @ https://github.com/Qualzz/AVF_SPLINE_GENERATOR/archive/3c8b73628ca56cb28042b9b2e79439b2e1c693d2.tar.gz",
   "vc-reader @ https://github.com/LimeGS/villa/archive/84207424c3a988e6cafe6b50fe7d4d7e5f839929.tar.gz#subdirectory=vc_reader",
+  # TIFXYZ is the default flattened output, so its writer is no longer optional.
+  "tifffile>=2023.7",
 ]
 
 [project.optional-dependencies]
