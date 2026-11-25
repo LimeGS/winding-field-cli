@@ -248,6 +248,9 @@ class CPUFieldInputs:
                     source = max(source, sum(i.file_size for i in archive.infolist()))
         requested = workers
         nodes = max(int(np.prod(np.subtract(hi, lo))) for lo, hi in self.boxes)
+        # Preparation scales with block volume (~28 us/node measured on a 256^3 coarse
+        # block, ~8 min): wait up to 100 us/node, never less than the class bound.
+        self.timeout_seconds = max(type(self).timeout_seconds, 1e-4 * nodes)
         workers = admit_workers(
             workers,
             max_bytes,

@@ -13,6 +13,10 @@ def test_tile_cores_partition_the_axis_and_tiles_add_overlap():
     assert [t["nodes"] for t in tiles] == [(0, 191), (64, 299), (192, 299)]
     with pytest.raises(ValueError, match="multiples of 64"):
         scroll.tile_ranges(300, 100, 64)
+    with pytest.raises(ValueError, match="multiples of 16"):
+        scroll.tile_ranges(300, 128, 20)
+    narrow = scroll.tile_ranges(300, 128, 32)
+    assert [t["nodes"] for t in narrow] == [(0, 159), (96, 287), (224, 299)]
 
 
 def test_global_grid_counts_nodes_on_the_field_pitch():
@@ -87,11 +91,11 @@ def write_tile(root, tile, bias):
     atomic_json(run / "RUN.json", dict(stages=dict(field={})))
 
 
-def plan_two_biased_tiles(tmp_path, bias=(0.0, 0.004, 0.0)):
+def plan_two_biased_tiles(tmp_path, bias=(0.0, 0.004, 0.0), overlap=64):
     from winding_field.util import atomic_json
 
     tiles = []
-    for k, t in enumerate(scroll.tile_ranges(320, 128, 64)):
+    for k, t in enumerate(scroll.tile_ranges(320, 128, overlap)):
         tiles.append(
             dict(
                 id=f"000-000-{k:03d}",
@@ -112,7 +116,7 @@ def plan_two_biased_tiles(tmp_path, bias=(0.0, 0.004, 0.0)):
         dict(
             schema=scroll.PLAN_SCHEMA,
             grid=GRID,
-            overlap_nodes=64,
+            overlap_nodes=overlap,
             tiles=tiles,
             run_args=[],
             coarse=coarse,
@@ -162,6 +166,7 @@ def test_coarse_correction_removes_each_tiles_own_drift(tmp_path):
             workers=1,
             allow_missing=False,
             coarse_sigma_mm=0,
+            join="none",
         )
     )
     assert raw["worst_seam_p95_abs_dW"] >= 0.5
@@ -172,6 +177,7 @@ def test_coarse_correction_removes_each_tiles_own_drift(tmp_path):
             workers=1,
             allow_missing=False,
             coarse_sigma_mm=0.5,
+            join="coarse",
         )
     )
     with open_field(tmp_path / "merged") as source:
@@ -187,13 +193,63 @@ def test_coarse_correction_removes_each_tiles_own_drift(tmp_path):
     )
 
 
+def test_overlap_join_levels_tiles_against_each_other_without_the_coarse(tmp_path):
+    from winding_field.field import open_field
+
+    # Each tile is offset by its own constant; the coarse is not consulted.
+    root, tiles = plan_two_biased_tiles(tmp_path, bias=(-0.2, 0.3, 0.1))
+    result = scroll.merge(
+        Namespace(plan=root, output=tmp_path / "merged", workers=1, allow_missing=False)
+    )
+    with open_field(tmp_path / "merged") as source:
+        values, valid = source.read([0, 0, 0], GRID["shape_zyx"])
+    assert valid.all()
+    error = values - truth(np.arange(320))
+    # Agreement everywhere; the common level is the tiles' mean offset.
+    assert np.ptp(error) <= 1e-5
+    assert error.mean() == pytest.approx(np.mean([-0.2, 0.3, 0.1]), abs=1e-5)
+    assert result["worst_seam_p95_abs_dW"] <= 0.002
+    meta = json.loads((tmp_path / "merged/FIELD.json").read_text())
+    assert meta["join"]["method"] == "overlap" and meta["join"]["pairs"] == 2
+    assert meta["join"]["rms_before"]["worst"] == pytest.approx(0.5, abs=1e-6)
+    assert meta["join"]["rms_after"]["worst"] <= 1e-6
+    assert meta["coarse_correction"] is None
+
+
+def test_overlap_join_with_tiles_off_the_chunk_grid(tmp_path):
+    from winding_field.field import open_field
+
+    # 32-node overlaps: tiles start between 64-node chunks of the merged grid.
+    root, tiles = plan_two_biased_tiles(tmp_path, bias=(-0.2, 0.3, 0.1), overlap=32)
+    assert tiles[1]["nodes_lo"][2] % 64
+    result = scroll.merge(
+        Namespace(plan=root, output=tmp_path / "merged", workers=1, allow_missing=False)
+    )
+    with open_field(tmp_path / "merged") as source:
+        values, valid = source.read([0, 0, 0], GRID["shape_zyx"])
+    assert valid.all()
+    error = values - truth(np.arange(320))
+    assert np.ptp(error) <= 1e-5
+    assert result["worst_seam_p95_abs_dW"] <= 0.002
+
+
+def test_unknown_join_is_refused(tmp_path):
+    root, tiles = plan_two_biased_tiles(tmp_path)
+    with pytest.raises(ValueError, match="--join"):
+        scroll.merge(
+            Namespace(plan=root, output=tmp_path / "m", workers=1, allow_missing=False, join="best")
+        )
+
+
 def test_merge_blends_tiles_into_one_readable_field_and_reports_seams(tmp_path):
     from winding_field.field import open_field
 
     root, tiles = plan_two_biased_tiles(tmp_path)
     out = tmp_path / "merged"
     result = scroll.merge(
-        Namespace(plan=root, output=out, workers=1, allow_missing=False, coarse_sigma_mm=0)
+        Namespace(
+            plan=root, output=out, workers=1, allow_missing=False, coarse_sigma_mm=0, join="none"
+        )
     )
     assert result["status"] == "MERGED" and result["tiles"] == 3
 
@@ -235,6 +291,7 @@ def test_merge_refuses_tiles_off_the_plan_grid(tmp_path):
                 workers=1,
                 allow_missing=False,
                 coarse_sigma_mm=0,
+                join="none",
             )
         )
 
@@ -248,6 +305,7 @@ def test_merge_requires_every_supported_tile_unless_allowed(tmp_path):
         workers=1,
         allow_missing=False,
         coarse_sigma_mm=0,
+        join="none",
     )
     with pytest.raises(ValueError, match="no completed field"):
         scroll.merge(args)
@@ -497,3 +555,176 @@ def test_seam_percentile_in_the_open_last_bin_is_finite_json():
     assert p95 == 4.0
     json.dumps({"p95_abs_dW": p95}, allow_nan=False)
     assert scroll._percentile(hist, 0.05) == float(scroll.SEAM_BINS[1])
+
+
+def _npz_bundle(tmp_path, vertices, faces):
+    from winding_field.surface_mesh import import_mesh
+    from winding_field.util import file_sha
+
+    path = tmp_path / "source.npz"
+    np.savez(path, vertices_xyz=np.asarray(vertices, float), faces=np.asarray(faces))
+    meta = dict(frame="test", origin_xyz=[0.0, 0.0, 0.0], spacing_xyz=[1.0, 1.0, 1.0],
+                shape_zyx=[40, 40, 40], voxel_um=1.0, sheet_step=1.0)  # fmt: skip
+    import_mesh({"path": str(path), "sha256": file_sha(path)}, tmp_path / "mesh", meta)
+    return tmp_path / "mesh"
+
+
+def _grid(n, origin, first=0):
+    x, y = np.meshgrid(np.arange(float(n)), np.arange(float(n)))
+    vertices = np.column_stack([x.ravel(), y.ravel(), np.zeros(x.size)]) + origin
+    faces = []
+    for row in range(n - 1):
+        for col in range(n - 1):
+            a = first + row * n + col
+            faces.extend([(a, a + 1, a + n), (a + 1, a + n + 1, a + n)])
+    return vertices, np.array(faces)
+
+
+def test_decimation_splits_a_vertex_shared_by_two_sheets_and_reuses_its_output(tmp_path):
+    import igl
+
+    n = 12
+    va, fa = _grid(n, [2.0, 2.0, 5.0])
+    vb, fb = _grid(n, [2.0 + n - 1, 2.0 + n - 1, 5.0], first=n * n)
+    # The two sheets touch at one corner: make them share that vertex (a bow-tie).
+    fb = np.where(fb == n * n, n * n - 1, fb)
+    vertices, faces = np.concatenate([va, vb]), np.concatenate([fa, fb])
+    refused = igl.qslim(np.asfortranarray(vertices), np.asfortranarray(faces.astype(np.int32)), 60)
+    assert len(refused[1]) == 0  # libigl refuses the raw mesh
+    bundle = _npz_bundle(tmp_path, vertices, faces)
+    mesh, receipt = scroll.decimate_bundle(bundle, 4, tmp_path / "decimated")
+    assert 0 < receipt["faces"] <= len(faces) // 4 + 2
+    assert receipt["split_vertex_fans"] == 1 and receipt["dropped_degenerate_faces"] == 0
+    assert receipt["deviation_um"]["max"] < 1e-9
+    again = scroll.decimate_bundle(bundle, 4, tmp_path / "decimated")
+    assert again == (mesh, receipt)
+    (tmp_path / "decimated/DECIMATION.json").unlink()  # an interrupted attempt is redone
+    assert scroll.decimate_bundle(bundle, 4, tmp_path / "decimated")[1]["faces"] == receipt["faces"]
+
+
+def test_decimation_refuses_a_mesh_with_a_non_manifold_edge(tmp_path):
+    vertices, faces = _grid(8, [2.0, 2.0, 5.0])
+    fin = len(vertices)
+    vertices = np.concatenate([vertices, [[2.5, 2.5, 9.0]]])
+    faces = np.concatenate([faces, [[0, 1, fin]]])  # a third face on the edge 0-1
+    bundle = _npz_bundle(tmp_path, vertices, faces)
+    with pytest.raises(scroll.DecimationRefused):
+        scroll.decimate_bundle(bundle, 4, tmp_path / "decimated")
+    assert not (tmp_path / "decimated").exists()
+
+
+def test_auto_tile_size_grows_with_gpu_memory_and_fits_the_measured_tile():
+    sizes = {}
+    for gib in (6, 16, 24, 32, 48, 80, 96, 192):
+        core, sizing = scroll.auto_tile_nodes(gib * 2**30, 34.56, 64)
+        assert core % 64 == 0 and sizing["tile_nodes_per_axis"] == core + 128
+        assert sizing["estimated_peak_bytes"] <= scroll.GPU_USABLE * gib * 2**30
+        sizes[gib] = core
+    assert list(sizes.values()) == sorted(sizes.values())
+    # A 6 GB GTX 1660 ran the 256^3 PHerc0175A tile (3.1 GB peak); the model keeps it.
+    assert sizes[6] == 128
+    _, sizing = scroll.auto_tile_nodes(6 * 2**30, 34.56, 64)
+    assert 3.1e9 <= sizing["estimated_peak_bytes"] <= 6 * 2**30
+    assert sizes[80] >= 512
+    # Two tiles per GPU get half the memory each.
+    assert scroll.auto_tile_nodes(80 * 2**30 / 2, 34.56, 64)[0] < sizes[80]
+    with pytest.raises(ValueError, match="cannot hold"):
+        scroll.auto_tile_nodes(2**30, 34.56, 64)
+
+
+class _FakeVolume:
+    spacing_xyz = (1.0, 1.0, 1.0)
+    shape = (4, 6, 640)
+    origin_xyz = (0.0, 0.0, 0.0)
+    identity = dict(test="volume")
+
+    def close(self):
+        pass
+
+
+def test_auto_plan_sizes_tiles_for_the_gpu_and_solves_each_as_one_block(tmp_path, monkeypatch):
+    from winding_field import workflow
+
+    monkeypatch.setattr(workflow, "open_volume", lambda config: _FakeVolume())
+    coarse = write_coarse(tmp_path / "coarse")
+    args = scroll._parser().parse_args(
+        [
+            "plan", "--source", "ct.zarr", "--voxel-um", "1", "--field-spacing-um", "2",
+            "--coarse", coarse["path"], "--fibres", "f.afv", "--lasagna-input", "l.json",
+            "--gpu-memory-gib", "2", "--no-split-fibres", "--run-arg=--fibre-weight=1000",
+            "--output", str(tmp_path / "plan"),
+        ]
+    )  # fmt: skip
+    result = scroll.plan(args)
+    document = json.loads((tmp_path / "plan/TILES.json").read_text())
+    memory = document["tile_memory"]
+    assert memory["mode"] == "auto" and memory["core_nodes"] == 128
+    assert document["tile_nodes"] == 128 and document["overlap_nodes"] == 32
+    assert result["tiles"] == 3
+    run_args = document["run_args"]
+    # The largest tile (128 core + 2 x 32 overlap along x) is one solver block.
+    assert run_args[run_args.index("--field-chunk") + 1] == "192"
+    assert run_args[run_args.index("--sweeps") + 1] == "1"
+    assert run_args[run_args.index("--maxiter") + 1] == "50000"
+    # Extra run flags come last, so they override the defaults above.
+    assert run_args[-1] == "--fibre-weight=1000"
+
+
+def test_auto_plan_without_gpu_or_memory_is_refused(tmp_path, monkeypatch):
+    from winding_field import workflow
+
+    monkeypatch.setattr(workflow, "open_volume", lambda config: _FakeVolume())
+    monkeypatch.setattr(scroll, "visible_gpus", lambda: [])
+    coarse = write_coarse(tmp_path / "coarse")
+    args = scroll._parser().parse_args(
+        [
+            "plan", "--source", "ct.zarr", "--voxel-um", "1", "--field-spacing-um", "2",
+            "--coarse", coarse["path"], "--fibres", "f.afv", "--lasagna-input", "l.json",
+            "--no-split-fibres", "--output", str(tmp_path / "plan"),
+        ]
+    )  # fmt: skip
+    with pytest.raises(ValueError, match="gpu-memory-gib"):
+        scroll.plan(args)
+
+
+def test_tiles_run_one_process_per_gpu_each_seeing_only_its_gpu(tmp_path, monkeypatch):
+    import sys
+
+    from winding_field.util import atomic_json
+
+    monkeypatch.setattr(scroll, "visible_gpus", lambda: [("3", 8 << 30), ("5", 8 << 30)])
+    root = tmp_path / "plan"
+    root.mkdir()
+    tiles = [
+        dict(id=f"000-000-00{k}", supported=True, roi=[0, 2, 0, 2, k, k + 2]) for k in range(4)
+    ]
+    atomic_json(
+        root / "TILES.json",
+        dict(
+            schema=scroll.PLAN_SCHEMA,
+            tiles=tiles,
+            run_args=["--device", "cuda"],
+            tile_memory=dict(mode="auto", jobs_per_gpu=1),
+        ),
+    )
+    fake = tmp_path / "fake.py"
+    fake.write_text(
+        "import json, os, sys, pathlib, time\n"
+        "out = pathlib.Path(sys.argv[sys.argv.index('--output') + 1])\n"
+        "out.mkdir(parents=True)\n"
+        "start = time.time(); time.sleep(1.5)\n"
+        "(out / 'GPU.json').write_text(json.dumps(\n"
+        "    [os.environ.get('CUDA_VISIBLE_DEVICES'), start, time.time()]))\n"
+        "(out / 'RUN.json').write_text(json.dumps({'stages': {'field': {}}}))\n"
+        "(out / 'FIELD.json').write_text('{}')\n"
+    )
+    result = scroll.run_tiles(
+        scroll._parser().parse_args(["tiles", str(root), "--executable", sys.executable, str(fake)])
+    )
+    assert result["status"] == "TILES_DONE" and result["jobs"] == 2
+    assert result["gpus"] == ["3", "5"]
+    runs = [json.loads((root / "tiles" / t["id"] / "GPU.json").read_text()) for t in tiles]
+    assert {gpu for gpu, _, _ in runs} == {"3", "5"}
+    for gpu in ("3", "5"):
+        spans = sorted((a, b) for g, a, b in runs if g == gpu)
+        assert all(spans[i][1] <= spans[i + 1][0] for i in range(len(spans) - 1))

@@ -635,8 +635,53 @@ def _tifxyz(store, prefix, grid, volume, component=None):
     return dict(counts, status="WRITTEN", path=prefix + "/tifxyz", manifest=result)
 
 
+COMPOSITES = ("max", "mean")
+
+
+def layer_offsets(thickness_um, pitch_um):
+    """Offsets along the surface normal, one render pitch apart, centred on the surface."""
+    if (
+        type(thickness_um) not in (int, float)
+        or not math.isfinite(thickness_um)
+        or thickness_um < 0
+    ):
+        raise ValueError("render thickness must be a nonnegative finite length")
+    half = int(round(thickness_um / 2 / pitch_um))
+    return np.arange(-half, half + 1) * float(pitch_um)
+
+
+def sample_layers(volume, xyz, normal, offsets, composite):
+    """CT through a slab around the surface: (composite, observed, per-layer values).
+
+    A level surface of the field runs parallel to the sheets but not on one of them, so a
+    single layer alternates between papyrus and the gap beside it. Every layer is sampled
+    from the original CT at ``xyz + offset * normal``; layers outside the volume are
+    left out of the composite and a pixel is observed when any layer is.
+    """
+    stack = np.full((len(offsets), len(xyz)), np.nan, np.float32)
+    for index, offset in enumerate(offsets):
+        samples, observed = sample_ct(volume, xyz + offset * normal)
+        stack[index, observed] = samples[observed]
+    observed = np.isfinite(stack).any(0)
+    values = np.zeros(len(xyz), np.float32)
+    if observed.any():
+        seen = stack[:, observed]
+        values[observed] = np.nanmax(seen, 0) if composite == "max" else np.nanmean(seen, 0)
+    return values, observed, stack
+
+
 def render(
-    store, volume, pitch_um, export_tifxyz=False, *, keep_xyz=True, tiled=False, ct_texture=True
+    store,
+    volume,
+    pitch_um,
+    export_tifxyz=False,
+    *,
+    keep_xyz=True,
+    tiled=False,
+    thickness_um=0.0,
+    composite="max",
+    keep_layers=False,
+    ct_texture=True,
 ):
     """Rasterize mapped charts and sample CT per TILE x TILE pixel tile.
 
@@ -646,11 +691,24 @@ def render(
     whole-canvas sheet/mask PNGs, which lifts the 100M-pixel canvas bound.
     ``ct_texture=False`` rasterizes geometry (and TIFXYZ) without reading CT: every
     mapped pixel stays mask 1 with NaN CT, and the PNGs carry no observed alpha.
+
+    ``thickness_um`` renders a slab instead of one layer: CT is sampled every
+    ``pitch_um`` along the normal over that thickness and ``composite`` (max or mean)
+    becomes the image. ``keep_layers`` also stores the layers per tile (``ct_layers``,
+    NaN outside the volume; their order follows the mesh normal).
     """
     if type(pitch_um) not in (int, float) or not math.isfinite(pitch_um) or pitch_um <= 0:
         raise ValueError("positive physical render pitch required")
     if export_tifxyz and not keep_xyz:
         raise ValueError("TIFXYZ export needs per-pixel XYZ (keep_xyz)")
+    offsets = layer_offsets(thickness_um, pitch_um)
+    if composite not in COMPOSITES or type(keep_layers) is not bool:
+        raise ValueError("render composite must be max or mean; keep_layers a boolean")
+    slab = len(offsets) > 1
+    if keep_layers and not slab:
+        raise ValueError("keep_layers needs a render thickness of at least two layers")
+    if slab and not ct_texture:
+        raise ValueError("a render slab samples CT; it cannot be combined with ct_texture=False")
     identity = dict(
         volume=volume.identity,
         pitch_um=pitch_um,
@@ -663,6 +721,11 @@ def render(
         identity["tiled"] = True
     if not ct_texture:
         identity["ct_texture"] = False
+    if slab:
+        # Opt-in: single-layer identities are unchanged.
+        identity["slab"] = dict(layers=len(offsets), step_um=float(pitch_um), composite=composite)
+        if keep_layers:
+            identity["slab"]["keep_layers"] = True
     old = store.get("render_identity")
     if old is not None and old != identity:
         raise ValueError("render identity changed")
@@ -721,9 +784,18 @@ def render(
                     )
                     valid = mask == 1
                     values = np.full(shape, np.nan, np.float32)
+                    layers = None
                     if ct_texture and valid.any():
                         store.phase = "sample_ct"
-                        samples, observed = sample_ct(volume, xyz[valid])
+                        if slab:
+                            samples, observed, stack = sample_layers(
+                                volume, xyz[valid], normal[valid], offsets, composite
+                            )
+                            if keep_layers:
+                                layers = np.full((len(offsets), *shape), np.nan, np.float32)
+                                layers[:, valid] = stack
+                        else:
+                            samples, observed = sample_ct(volume, xyz[valid])
                         if not np.isfinite(samples[observed]).all():
                             raise ValueError("nonfinite original CT samples")
                         values[valid] = samples
@@ -732,6 +804,12 @@ def render(
                     tile = {"xyz_um": xyz, "normal": normal, "mask": mask, "ct": values}
                     if not keep_xyz:
                         tile = {"mask": mask, "ct": values}
+                    if keep_layers:
+                        tile["ct_layers"] = (
+                            np.full((len(offsets), *shape), np.nan, np.float32)
+                            if layers is None
+                            else layers
+                        )
                     store.phase = "save_tiles"
                     store.save_arrays(name, **tile)
                     with store.db:
@@ -770,6 +848,7 @@ def render(
             ct_value_range=[value_min, value_max] if math.isfinite(value_min) else None,
             tifxyz_requested=export_tifxyz,
             tifxyz_receipt="TIFXYZ.json",
+            **(dict(slab=identity["slab"]) if slab else {}),
             physical_acceptance=False,
             field_coverage_certified=False,
         )
