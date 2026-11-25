@@ -135,7 +135,26 @@ spacing). Checked on a 256³ PHerc0175A tile: 3.1 GB measured, 3.4 GB modelled.
 
 | GPU memory | 6 GB | 16 GB | 24 GB | 32 GB | 48 GB | 80 GB | 96 GB | 192 GB |
 |---|---|---|---|---|---|---|---|---|
-| Core nodes per axis (34.56 µm, overlap 32) | 192 | 320 | 384 | 448 | 512 | 640 | 704 | 896 |
+| Core nodes per axis (Jacobi, the default) | 192 | 320 | 384 | 448 | 512 | 640 | 704 | 896 |
+| Core nodes per axis, `--tile-preconditioner auto` (AMG) | 128 | 192 | 256 | 256 | 320 | 384 | 448 | 576 |
+
+(34.56 µm, overlap 32.)
+
+**Preconditioner (`--tile-preconditioner`, default `jacobi`).** AMG (`amg`, or `auto`:
+AMG on the largest tile that fits its memory model down to 192 nodes per axis, Jacobi
+below) is opt-in. Measured on one real 192³ PHerc0175A tile (fibre weight 1000, one
+block, rtol 1e-7, GTX 1660), same solution to 6e-5:
+
+| | CG iterations | Solve | Field stage | GPU peak | Host peak |
+|---|---|---|---|---|---|
+| Jacobi | 5,586 | 142 s | 221 s | 183 B/node | 415 B/node |
+| AMG | 618 | 196 s | 275 s | 620 B/node | 1,386 B/node |
+
+AMG needs 9x fewer iterations but each costs ~12x a Jacobi one, and strong fibre pairs
+weaken its aggregation (41 iterations on a 128³ tile with weak fibres). Fixed
+`--tile-nodes` solve 64-node blocks and keep Jacobi under `auto`. `TILES.json` →
+`tile_memory.preconditioner` records the choice; the solver records it in each tile's
+block identity, so a tile keeps it when resumed.
 
 **Larger is not cheaper per node.** Measured alone on a GTX 1660, the solve took 24 s for
 128³ nodes, 142 s for 192³ and 538 s for 256³: 11, 20 and 32 µs per node, about the tile

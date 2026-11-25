@@ -144,17 +144,29 @@ GPU_RESERVE_BYTES = 0.5e9
 GPU_USABLE = 0.85
 # One block per tile: the solver settings the 34.56 um tiles were measured with.
 ONE_BLOCK_RUN_ARGS = ("--rtol", "1e-7", "--maxiter", "50000", "--nonconvergence-policy", "continue")
+# AMG (smoothed aggregation, built on the solve device) adds its hierarchy to the Jacobi
+# footprint. Measured on a real 192^3 PHerc0175A tile (fibre weight 1000, one block, rtol
+# 1e-7, GTX 1660): AMG peaked at 620 bytes per node on the GPU and 1,386 on the host
+# (Jacobi: 183 and 415), and needed 618 CG iterations against Jacobi's 5,586, but each
+# V-cycle iteration costs ~12x a Jacobi one: 196 s of solve against 142 s. Strong fibre
+# pairs weaken the aggregation (41 iterations on a 128^3 tile with weak fibres), so Jacobi
+# is the default and AMG stays opt-in (--tile-preconditioner auto or amg).
+AMG_HIERARCHY_BYTES_PER_NODE = 350.0
+# Below this tile edge the AMG setup is not paid back: auto uses Jacobi for smaller tiles.
+AMG_MIN_TILE_NODES = 192
+TILE_PRECONDITIONERS = ("auto", "amg", "jacobi")
 
 
-def tile_bytes_per_node(spacing_um):
+def tile_bytes_per_node(spacing_um, preconditioner="jacobi"):
     rows = FIBRE_ROWS_PER_NODE_34UM * (float(spacing_um) / 34.56) ** 2
-    return ALLOCATOR_OVERHEAD * (BYTES_PER_NODE + BYTES_PER_FIBRE_ROW * rows)
+    extra = AMG_HIERARCHY_BYTES_PER_NODE if preconditioner == "amg" else 0.0
+    return ALLOCATOR_OVERHEAD * (BYTES_PER_NODE + extra + BYTES_PER_FIBRE_ROW * rows)
 
 
-def auto_tile_nodes(memory_bytes, spacing_um, overlap):
+def auto_tile_nodes(memory_bytes, spacing_um, overlap, preconditioner="jacobi"):
     """Largest core (a multiple of 64 nodes) whose tile, core + 2*overlap nodes per axis,
-    fits ``memory_bytes`` of GPU memory when solved as one block."""
-    per_node = tile_bytes_per_node(spacing_um)
+    fits ``memory_bytes`` of GPU memory when solved as one block with ``preconditioner``."""
+    per_node = tile_bytes_per_node(spacing_um, preconditioner)
     usable = GPU_USABLE * float(memory_bytes) - GPU_RESERVE_BYTES
     edge = int((max(usable, 0.0) / per_node) ** (1.0 / 3.0) + 1e-9)
     core = (edge - 2 * overlap) // FIELD_CHUNK * FIELD_CHUNK
@@ -166,10 +178,28 @@ def auto_tile_nodes(memory_bytes, spacing_um, overlap):
         )
     tile = core + 2 * overlap
     return core, dict(
+        preconditioner=preconditioner,
         bytes_per_node=per_node,
         tile_nodes_per_axis=tile,
         estimated_peak_bytes=tile**3 * per_node + GPU_RESERVE_BYTES,
     )
+
+
+def auto_tile_size(memory_bytes, spacing_um, overlap, preconditioner="auto"):
+    """Tile core and sizing for one GPU share. ``auto``: AMG with the largest tile that fits
+    its memory model, as long as the tile is at least AMG_MIN_TILE_NODES per axis; below
+    that, Jacobi with the largest tile that fits Jacobi's (smaller) footprint."""
+    if preconditioner not in TILE_PRECONDITIONERS:
+        raise ValueError(f"tile preconditioner must be one of {', '.join(TILE_PRECONDITIONERS)}")
+    if preconditioner != "auto":
+        return auto_tile_nodes(memory_bytes, spacing_um, overlap, preconditioner)
+    try:
+        core, sizing = auto_tile_nodes(memory_bytes, spacing_um, overlap, "amg")
+    except ValueError:
+        core, sizing = None, None
+    if core is not None and sizing["tile_nodes_per_axis"] >= AMG_MIN_TILE_NODES:
+        return core, sizing
+    return auto_tile_nodes(memory_bytes, spacing_um, overlap, "jacobi")
 
 
 def visible_gpus():
@@ -376,7 +406,10 @@ def plan(args):
             support_policy="observed",
         ),
         coarse_meta["geometry"],
-        cache_bytes=256 << 20,
+        # Hold the decoded coarse in memory across tiles: a one-block coarse is a single
+        # chunk (PHerc0175A: 625 x 404 x 482 nodes, ~1.1 GB decoded); with a smaller budget
+        # every tile decoded it again (336 tiles: 48 min of planning instead of seconds).
+        cache_bytes=4 << 30,
     )
     tile_memory = None
     tile_nodes = args.tile_nodes
@@ -395,8 +428,11 @@ def plan(args):
             source = f"smallest of {len(gpus)} visible GPUs"
         if args.jobs_per_gpu < 1:
             raise ValueError("--jobs-per-gpu must be at least 1")
-        tile_nodes, sizing = auto_tile_nodes(
-            memory / args.jobs_per_gpu, grid["spacing_um"], args.overlap_nodes
+        tile_nodes, sizing = auto_tile_size(
+            memory / args.jobs_per_gpu,
+            grid["spacing_um"],
+            args.overlap_nodes,
+            args.tile_preconditioner,
         )
         tile_memory = dict(
             mode="auto",
@@ -408,6 +444,12 @@ def plan(args):
         )
     else:
         tile_nodes = int(tile_nodes)
+    # Fixed-size tiles are solved in 64-node blocks, where the AMG setup does not pay off.
+    preconditioner = (
+        tile_memory["preconditioner"]
+        if tile_memory
+        else ("jacobi" if args.tile_preconditioner == "auto" else args.tile_preconditioner)
+    )
     axes = [tile_ranges(n, tile_nodes, args.overlap_nodes) for n in grid["shape_zyx"]]
     tiles = []
     with coarse:
@@ -456,6 +498,8 @@ def plan(args):
         # One block per tile: the largest tile edge is the solver block.
         edge = max(t["nodes_hi"][i] - t["nodes_lo"][i] + 1 for t in tiles for i in range(3))
         run_args += ["--field-chunk", str(edge), *ONE_BLOCK_RUN_ARGS]
+    if preconditioner == "amg":
+        run_args += ["--preconditioner", "amg"]
     run_args += list(args.run_arg or [])
     document = dict(
         schema=PLAN_SCHEMA,
@@ -507,6 +551,29 @@ def _tile_done(run):
     return "field" in state.get("stages", {}) and (run / "FIELD.json").is_file()
 
 
+def _run_until(run_args):
+    """The stage a tile run stops after: the last --until wins, as in argparse."""
+    until = "field"
+    for k, arg in enumerate(run_args):
+        if arg == "--until" and k + 1 < len(run_args):
+            until = run_args[k + 1]
+        elif arg.startswith("--until="):
+            until = arg.split("=", 1)[1]
+    return until
+
+
+def _tile_prepared(run, until):
+    """True when a plan that stops before the field (e.g. --run-arg=--until=fibres) left
+    this tile at that stage: its inputs are ready for `scroll tiles` to solve later."""
+    if until == "field":
+        return False
+    try:
+        state = _json(run / "RUN.json")
+    except (OSError, ValueError):
+        return False
+    return until in state.get("stages", {})
+
+
 def run_tiles(args):
     root = Path(args.plan).resolve()
     document = _json(root / "TILES.json")
@@ -525,6 +592,7 @@ def run_tiles(args):
         gpus = [g.strip() for g in args.gpus.split(",") if g.strip()]
     else:
         gpus = [] if on_cpu else [g for g, _ in visible_gpus()]
+    until = _run_until(run_args)
     per_gpu = int((document.get("tile_memory") or {}).get("jobs_per_gpu", 1))
     jobs = args.jobs or (len(gpus) * per_gpu if gpus else 1)
     # Each tile process sees one GPU; tiles go to the least loaded one.
@@ -593,8 +661,13 @@ def run_tiles(args):
                 del running[tile_id]
                 if gpu is not None:
                     load[gpu] -= 1
-                done = _tile_done(root / "tiles" / tile_id)
-                state = "DONE" if done else ("STOPPED" if stopping else "FAILED")
+                run = root / "tiles" / tile_id
+                if _tile_done(run):
+                    state = "DONE"
+                elif code == 0 and _tile_prepared(run, until):
+                    state = "PREPARED"
+                else:
+                    state = "STOPPED" if stopping else "FAILED"
                 results[tile_id] = state
                 atomic_json(
                     root / "status" / f"{tile_id}.json",
@@ -603,9 +676,18 @@ def run_tiles(args):
     finally:
         for s, handler in previous.items():
             signal.signal(s, handler)
-    counts = {s: sum(v == s for v in results.values()) for s in ("DONE", "FAILED", "STOPPED")}
+    counts = {
+        s: sum(v == s for v in results.values()) for s in ("DONE", "PREPARED", "FAILED", "STOPPED")
+    }
+    if counts["DONE"] == len(queue):
+        status = "TILES_DONE"
+    elif counts["PREPARED"] and counts["DONE"] + counts["PREPARED"] == len(queue):
+        # Every tile stopped where the plan asked (--until): rerun to solve them.
+        status = "TILES_PREPARED"
+    else:
+        status = "INCOMPLETE"
     return dict(
-        status="TILES_DONE" if counts["DONE"] == len(queue) else "INCOMPLETE",
+        status=status,
         jobs=jobs,
         gpus=gpus,
         **counts,
@@ -1729,6 +1811,15 @@ def _parser():
         type=int,
         default=1,
         help="with --tile-nodes auto: tiles solved at once on one GPU (memory is divided)",
+    )
+    p.add_argument(
+        "--tile-preconditioner",
+        choices=TILE_PRECONDITIONERS,
+        default="jacobi",
+        help="jacobi (default); auto: with --tile-nodes auto, AMG on the largest tile that "
+        f"fits the GPU down to {AMG_MIN_TILE_NODES} nodes per axis, else Jacobi; amg forces "
+        "AMG. AMG needs ~3.4x the GPU and host memory of Jacobi and was slower with strong "
+        "fibres (docs/SCROLL.md)",
     )
     p.add_argument(
         "--overlap-nodes",
