@@ -5,6 +5,7 @@ import itertools
 import json
 import marshal
 import math
+import time
 from pathlib import Path
 from importlib.metadata import version
 
@@ -345,10 +346,12 @@ def extract_mesh(
         first = store.get("next_tile")
         if type(first) is not int or not 0 <= first <= total:
             raise ValueError("invalid mesh cursor")
+        committed = time.monotonic()
         for index, key in enumerate(itertools.product(*(range(n) for n in grid))):
             if index < first:
                 continue
             if (output / "STOP").exists() or stop and stop():
+                store.db.commit()  # tiles since the last grouped commit
                 result = dict(
                     status="CHECKPOINTED_STOP",
                     next_tile=index,
@@ -383,24 +386,26 @@ def extract_mesh(
                     output, reserve_bytes=reserve_bytes + int(np.prod(high - low)) * 128
                 )
                 values, valid = source.read(low, high + 1)
-            with store.db:
-                for start in range(0, len(eligible), level_batch):
-                    for j in eligible[start : start + level_batch]:
-                        keys, vertices, faces = core._tile_mesh(
-                            values, valid, low, levels[j], source.origin, source.spacing
-                        )
-                        if len(faces):
-                            store.add(j, keys, vertices, faces)
-                store.checkpoint_tile(index)
-            atomic_json(
-                output / "STATUS.json",
-                dict(
-                    status="EXTRACTING",
-                    next_tile=index + 1,
-                    total_tiles=total,
-                    range_excluded=not eligible,
-                ),
-            )
+            for start in range(0, len(eligible), level_batch):
+                for j in eligible[start : start + level_batch]:
+                    keys, vertices, faces = core._tile_mesh(
+                        values, valid, low, levels[j], source.origin, source.spacing
+                    )
+                    if len(faces):
+                        store.add(j, keys, vertices, faces)
+            store.checkpoint_tile(index)
+            if index + 1 == total or time.monotonic() - committed >= core.COMMIT_SECONDS:
+                store.db.commit()
+                atomic_json(
+                    output / "STATUS.json",
+                    dict(
+                        status="EXTRACTING",
+                        next_tile=index + 1,
+                        total_tiles=total,
+                        range_excluded=not eligible,
+                    ),
+                )
+                committed = time.monotonic()
         source.validate()
         details = store.finish()
     result = core._manifest(metadata, identity, details, total, file_sha(output / "mesh.sqlite"))

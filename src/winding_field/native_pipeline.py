@@ -82,6 +82,26 @@ def _settings(config):
             if not result["export_tifxyz"]:
                 raise ValueError("ct_texture false requires export_tifxyz (the mesh-only output)")
             result["ct_texture"] = False
+    if config.get("render_thickness_um"):
+        if result.get("ct_texture") is False:
+            raise ValueError("render thickness needs CT texture (ct_texture false renders no CT)")
+        from .native_render import COMPOSITES
+
+        # Opt-in slab render (layers along the normal); absent or 0 keeps identities unchanged.
+        thickness = config["render_thickness_um"]
+        composite = config.get("render_composite", "max")
+        if (
+            type(thickness) not in (int, float)
+            or not math.isfinite(thickness)
+            or thickness < 0
+            or composite not in COMPOSITES
+            or type(config.get("render_keep_layers", False)) is not bool
+        ):
+            raise ValueError("invalid render thickness, composite or keep_layers")
+        result["render_thickness_um"] = float(thickness)
+        result["render_composite"] = composite
+        if config.get("render_keep_layers", False):
+            result["render_keep_layers"] = True
     if result["export_tifxyz"]:
         try:
             import tifffile  # noqa: F401
@@ -220,6 +240,9 @@ def _geometry_and_render(reader, store, volume, settings, pitch, until, *, offli
         keep_xyz=settings.get("render_keep_xyz", True),
         tiled=settings.get("render_tiled", False),
         ct_texture=settings.get("ct_texture", True),
+        thickness_um=settings.get("render_thickness_um", 0.0),
+        composite=settings.get("render_composite", "max"),
+        keep_layers=settings.get("render_keep_layers", False),
     )
     reader.validate()
     # observed_ct counts in-bounds samples, including fill; image contrast is not physical acceptance.
