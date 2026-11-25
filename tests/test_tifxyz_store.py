@@ -7,7 +7,6 @@ import json
 import os
 from pathlib import Path
 import resource
-import signal
 import sqlite3
 import stat
 import struct

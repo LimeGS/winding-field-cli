@@ -11,7 +11,6 @@ import pytest
 from winding_field.flattening.flatboi import supported_platform
 
 from test_cli import invoke
-from test_native_runtime import field_case
 
 
 @pytest.mark.parametrize("value", [0.0, -1.0, 1.1, float("nan"), True])

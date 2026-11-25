@@ -7,7 +7,6 @@ import itertools
 import json
 import os
 from copy import deepcopy
-from urllib.parse import urlsplit
 
 import numpy as np
 import pytest

@@ -17,10 +17,10 @@ args = parser.parse_args()
 assert platform.system() == "Linux" and platform.machine() == "x86_64", "linux/amd64 required"
 assert sys.version_info[:3] == (3, 12, 12), "unexpected CLI Python"
 
-import igl
-import matplotlib
+import igl  # noqa: F401
+import matplotlib  # noqa: F401
 import torch
-from vc_reader import _reader
+from vc_reader import _reader  # noqa: F401
 from vc_reader.reader import ObjectStore, decode_chunk
 from winding_field.lasagna import runtime_identity
 from winding_field.patch_pipeline import check_flatboi

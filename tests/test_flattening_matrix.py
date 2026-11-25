@@ -463,7 +463,7 @@ def test_native_checkpoint_interrupt_resumes_without_rewriting_prior_batch(tmp_p
     publish = r.publish_checkpoint
 
     def interrupt(*a, **kw):
-        result = publish(*a, **kw)
+        publish(*a, **kw)
         raise InterruptedError("after durable native checkpoint")
 
     monkeypatch.setattr(r, "publish_checkpoint", interrupt)

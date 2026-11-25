@@ -260,7 +260,6 @@ def test_pause_resume_does_not_repeat_sweeps_or_verifications(tmp_path, monkeypa
     for path in (root, reference):
         state = json.loads((path / "convergence/STATE.json").read_bytes())["data"]
         assert [r["sweep"] for r in state["records"]] == list(range(13))
-    from winding_field.surface_sources import FieldSource
 
     a = json.loads((root / "field/CHECKPOINT.json").read_bytes())
     b = json.loads((reference / "field/CHECKPOINT.json").read_bytes())

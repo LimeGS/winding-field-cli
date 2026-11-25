@@ -44,8 +44,6 @@ def receipts(evidence):
     audits = load_json(root / "TASK2-AUDITS.json")
     for entry in audits or []:
         if entry.get("returncode") is not None and entry.get("w") is not None:
-            receipt = entry.get("result") or {}
-            overlap = receipt.get("overlap") or {}
             record(
                 entry["w"],
                 "audit",

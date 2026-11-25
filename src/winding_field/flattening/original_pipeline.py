@@ -105,7 +105,8 @@ def available_memory():
         report = memory_report()
         return report["effective_headroom_bytes"] if report["known"] else None
     if sys.platform == "darwin":
-        import re, subprocess
+        import re
+        import subprocess
 
         text = subprocess.check_output(["vm_stat"], text=True)
         page = int(re.search(r"page size of (\d+) bytes", text)[1])
@@ -221,7 +222,7 @@ def export_mesh(
             "original CT resume identity changed; use the original v1.5.0 runtime for pre-cutover runs"
         )
     try:
-        import igl
+        import igl  # noqa: F401
     except ImportError as error:
         raise ValueError(
             "original flattening requires pip install 'winding-field-cli[tifxyz]'"

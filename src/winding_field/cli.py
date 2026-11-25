@@ -882,7 +882,8 @@ def main(argv=None):
             finally:
                 volume.close()
         elif args.command == "doctor":
-            import platform, torch
+            import platform
+            import torch
 
             result = dict(
                 version=__version__,

@@ -9,7 +9,6 @@ import hashlib
 import heapq
 import json
 import itertools
-import math
 import os
 from pathlib import Path
 import sys
@@ -296,7 +295,6 @@ def probe_roots(pilot_path, guides_root, conformance_path, out, candidate):
     import resource
     from types import SimpleNamespace
     from winding_field.tifxyz_contract import Blocked
-    from winding_field.tifxyz_field import read_metadata
     from winding_field.tifxyz_project import make_grid, project_tile
     from winding_field.util import atomic_json, file_sha
 
@@ -483,7 +481,6 @@ def boundary_witnesses(
     pilot_path, guides_root, conformance_path, out, candidate, native_rank=False
 ):
     import numpy as np
-    from winding_field.tifxyz_contract import Blocked
     from winding_field.tifxyz_project import make_grid, ray_batch
     from winding_field.util import atomic_json, file_sha
     from validate_tifxyz_witness import exact_ray_segments

@@ -1,7 +1,6 @@
 """Atlas layout must preserve CT pixels, masks and physical coordinates."""
 
 import json
-from pathlib import Path
 
 import numpy as np
 from PIL import Image

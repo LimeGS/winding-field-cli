@@ -208,7 +208,6 @@ def _exact_roots(values, a, b, level, tolerance):
     p = _exact_polynomial(values, a, b, level)
     if len(p) == 1:
         return None if p[0] == 0 else []
-    original = p.copy()
     derivative = _derivative(p)
     found = []
     for x in (Q(0), Q(1)):

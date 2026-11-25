@@ -1,7 +1,6 @@
 """Small synthetic diagnostics: no extra solves, verifications or acceptance."""
 
 from copy import deepcopy
-import hashlib
 import itertools
 import json
 

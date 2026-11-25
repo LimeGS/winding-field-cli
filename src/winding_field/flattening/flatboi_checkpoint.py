@@ -50,7 +50,7 @@ def native_envelope(memory_max, swap_max):
         ) from error
     if ram <= 0 or not 0 <= swap <= SWAP_CEILING:
         raise ValueError(
-            "Flatboi cgroup limits are unusable: MemoryMax=%d MemorySwapMax=%d" % (ram, swap)
+            f"Flatboi cgroup limits are unusable: MemoryMax={ram} MemorySwapMax={swap}"
         )
     return ram, swap
 

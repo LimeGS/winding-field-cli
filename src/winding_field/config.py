@@ -7,13 +7,6 @@ import numpy as np
 from .flattening.selection import RUN_METHODS
 
 
-def read_tifxyz_request(path):
-    from .tifxyz_contract import validate_request
-    from .tifxyz_field import read_metadata
-
-    return validate_request(read_metadata(Path(path).expanduser())[0])
-
-
 def tifxyz_settings(out, request=None, *, resume=False):
     """Reuse the worker's frozen effective settings; never resolve geometry here."""
     from .tifxyz_contract import Settings, validate_request

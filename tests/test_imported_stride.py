@@ -11,7 +11,7 @@ import pytest
 
 from ct_fixture import write_ct
 from test_lasagna_input import forbid_models
-from test_lasagna_stream import http_root
+from test_lasagna_stream import http_root  # noqa: F401 (pytest fixtures)
 from test_splines import upstream_curves
 from winding_field import workflow
 from winding_field.artifacts import Tiles

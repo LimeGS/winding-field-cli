@@ -171,7 +171,7 @@ class Volume:
         self.stream_policy = stream_policy
         self.metadata_pins = metadata_pins or {}
         try:
-            from vc_reader.reader import ObjectStore, ZarrReader, ArrayMeta, decode_chunk
+            from vc_reader.reader import ObjectStore, ZarrReader, ArrayMeta, decode_chunk  # noqa: F401
         except ImportError as exc:
             raise RuntimeError(
                 "vc_reader with bounded object reads and decode_chunk is required; install the pinned runtime"

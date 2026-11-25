@@ -1,4 +1,3 @@
-from pathlib import Path
 from types import SimpleNamespace
 import pytest
 
@@ -194,7 +193,8 @@ def test_cuda_bootstrap_requires_operator_uuid_and_cpu_stays_disabled(monkeypatc
 
 @pytest.mark.skipif(__import__("sys").platform != "linux", reason="Linux DATA enforcement")
 def test_cuda_data_guard_allows_virtual_reservation_but_blocks_heap(tmp_path, monkeypatch):
-    import subprocess, sys
+    import subprocess
+    import sys
     from winding_field.tifxyz_runtime import worker_environment
 
     monkeypatch.setenv("WINDING_TIFXYZ_CUDA_DEVICE", "GPU-00000000-0000-0000-0000-000000000000")
@@ -234,7 +234,6 @@ def test_negative_controller_rss_is_invalid():
 
 def test_public_entry_points_reject_unsupported_runtime_before_source_parse(tmp_path, monkeypatch):
     import sys
-    from winding_field import tifxyz_runtime as code
     from winding_field.tifxyz import export_field, verify_export
 
     monkeypatch.setattr(sys, "platform", "darwin")
@@ -339,7 +338,6 @@ def test_worker_module_import_is_torch_and_numpy_free():
 
 @pytest.mark.skipif(__import__("sys").platform != "linux", reason="Linux runtime enforcement")
 def test_linux_bootstrap_limits_precede_heavy_imports(tmp_path):
-    import os
     import subprocess
     import sys
     from winding_field.tifxyz_runtime import worker_environment

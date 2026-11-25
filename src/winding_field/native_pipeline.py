@@ -84,7 +84,7 @@ def _settings(config):
             result["ct_texture"] = False
     if result["export_tifxyz"]:
         try:
-            import tifffile
+            import tifffile  # noqa: F401
         except ImportError as error:
             raise ValueError("native TIFXYZ requires the optional tifffile dependency") from error
     return result

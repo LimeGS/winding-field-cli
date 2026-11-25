@@ -9,7 +9,6 @@ import scipy.sparse.linalg as sla
 from scipy.spatial import Delaunay
 
 from winding_field import native_global as global_uv
-from winding_field import flattening_matrix as matrix
 
 
 def graded_disk(count=3000, seed=0, ratio=1.35):

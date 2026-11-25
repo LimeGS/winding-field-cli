@@ -1,13 +1,11 @@
 """Advisor on/off must preserve science and the existing verification cadence."""
 
-from copy import deepcopy
 import json
 
 import numpy as np
 import pytest
 
 from winding_field import field, field_advice, global_residual
-from winding_field.util import file_sha
 
 
 @pytest.mark.parametrize("route", ["ordinary", "bounded", "automatic"])
