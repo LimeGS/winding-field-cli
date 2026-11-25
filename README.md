@@ -470,6 +470,10 @@ field-level calibration see [prepared inputs](docs/PREPARED.md#extract-or-import
 **Results:** `level-*.obj` and `renders/*.png` under the output directory. These
 are geometry views; original CT/TIFXYZ needs the matching CT and the
 [export-sheets recipe](docs/FLATTENING.md).
+To flatten right after extraction, add `--then-flatten DIR --flatten-cli-config
+flatten.yaml` to `prepared mesh`: once the meshes are ready it runs `export-sheets` on
+them as a separate step with its own receipts
+([chained flattening](docs/FLATTENING.md)).
 
 For several field levels, add `--parallel-levels` to `prepared mesh` or
 `prepared surfaces`. CPU, available RAM and disk headroom bound the number of
@@ -566,6 +570,7 @@ Use `--lasagna-cos-downsample`, `--lasagna-grad-mag-downsample`,
 | `--no-ct-texture` | Native only: flatten and write TIFXYZ without sampling CT for the texture |
 | `--tifxyz-config FILE` | Separate request for the Linux-only experimental direct route |
 | `--coverage-target 1 --surface-time-limit 1800` | Native mapped mesh-area target / cumulative active seconds per W |
+| `--preconditioner jacobi\|amg` | Field PCG preconditioner: Jacobi (default) or algebraic multigrid, far fewer iterations on large blocks; Jacobi runs keep their identity |
 | `--level-workers 1` | Native W levels computed in parallel processes; each needs its own memory; outputs equal a serial run |
 | `--import-workers 1` | Local import workers (`0` = resource-admitted automatic); results written in input order |
 | `--cache-gib 2 --reserve-gib 1` | CT payload cache cap / free disk reserve, not RAM |
