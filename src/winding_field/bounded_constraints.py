@@ -156,6 +156,19 @@ class PairCatalog:
                 self.stats["bytes"] += charge
         return None if template is None else template.restrict(read_nodes)
 
+    def exterior(self, lo, hi):
+        """Exterior (row, node, coefficient) terms of the rows ``__call__`` returns for a box.
+
+        The core's coarse correction uses them to keep cut pairs exact in its Galerkin operator.
+        """
+        key = tuple(map(int, (*lo, *hi)))
+        template = (
+            self._templates[key]
+            if key in self._templates
+            else self._prepare(np.asarray(lo), np.asarray(hi))
+        )
+        return None if template is None else template.exterior()
+
     def _prepare(self, lo, hi):
         query = """SELECT p.points FROM bounds b JOIN pairs p ON p.id=b.id
             WHERE b.x1>=? AND b.x0<? AND b.y1>=? AND b.y0<? AND b.z1>=? AND b.z0<? ORDER BY p.id"""

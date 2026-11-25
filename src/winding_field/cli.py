@@ -463,6 +463,14 @@ def main(argv=None):
             "a wider overlap reaches the global solution in fewer sweeps",
         )
         p.add_argument(
+            "--field-coarse-factor",
+            type=int,
+            default=argparse.SUPPRESS,
+            help="0 (default) or >= 2: open every field sweep with a global coarse correction on "
+            "every F-th node (two-level Schwarz); large-scale structure then crosses all blocks "
+            "in each sweep instead of one overlap per sweep",
+        )
+        p.add_argument(
             "--field-prior-calibration",
             choices=["own", "inherit"],
             default=argparse.SUPPRESS,

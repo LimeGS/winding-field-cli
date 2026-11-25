@@ -437,6 +437,12 @@ def solve(run, config, stop=None, *, sweep_target=None, convergence=None):
     if preconditioner != "jacobi":
         # Only a non-default policy is passed: Jacobi run identities stay unchanged.
         options["preconditioner"] = preconditioner
+    coarse_factor = config.get("field_coarse_factor", 0)
+    if type(coarse_factor) is not int or coarse_factor < 0 or coarse_factor == 1:
+        raise ValueError("field_coarse_factor must be 0 (off) or at least 2")
+    if coarse_factor:
+        # Only when enabled: the core adds the coarse space to the problem identity.
+        options["coarse_factor"] = coarse_factor
     if status_policy != "all":
         # Execution choice, not checkpoint identity: STATUS fsyncs only at checkpoints.
         options["status_policy"] = status_policy

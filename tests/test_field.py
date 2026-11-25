@@ -734,3 +734,37 @@ def test_general_solver_validates_field_status_policy():
     validate_config({"field_status_policy": "all"})
     with pytest.raises(ValueError, match="field_status_policy"):
         validate_config({"field_status_policy": "never"})
+
+
+def test_field_coarse_factor_is_part_of_the_problem_and_cuts_the_error(tmp_path):
+    from winding_field.config import validate_config
+    from winding_field.field import open_field, solve
+
+    validate_config(dict(field_coarse_factor=0))
+    validate_config(dict(field_coarse_factor=4))
+    for bad in (1, -2):
+        with pytest.raises(ValueError):
+            validate_config(dict(field_coarse_factor=bad))
+
+    def field_after(name, **config):
+        run = prepared_run(tmp_path / name, shape=(6, 6, 32), chunk=8, variable=True)
+        result = solve(run, dict(config, rtol=1e-10, maxiter=10000))
+        assert result["status"] == "FIELD_READY"
+        identity = json.loads((run / "field/CHECKPOINT.json").read_bytes())["identity"]
+        with open_field(run) as source:
+            values, _ = source.read([0, 0, 0], [6, 6, 32])
+        return run, identity, values - values.mean()
+
+    _, _, exact = field_after("global", sweeps=1, field_chunk=64)
+    one_run, one, one_level = field_after("one", sweeps=2, field_chunk=8)
+    _, two, two_level = field_after("two", sweeps=2, field_chunk=8, field_coarse_factor=4)
+    assert "coarse" not in one and two["coarse"] == dict(kind="trilinear", factor=4)
+    assert np.abs(two_level - exact).max() < 0.1 * np.abs(one_level - exact).max()
+    status = json.loads((tmp_path / "two/field/STATUS.json").read_bytes())
+    assert status["coarse"]["factor"] == 4
+    residuals = [s["relative_residual"] for s in status["completed_sweeps"]]
+    assert 0 < residuals[-1] < residuals[0] <= 1
+    with pytest.raises(ValueError, match="identity|differ"):
+        solve(
+            one_run, dict(sweeps=2, field_chunk=8, field_coarse_factor=4, rtol=1e-10, maxiter=10000)
+        )
