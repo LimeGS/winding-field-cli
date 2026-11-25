@@ -112,7 +112,8 @@ def test_parallel_preparation_preserves_serial_field_and_commit_order(tmp_path, 
     digests = []
     for workers in (0, 2):
         run = prepared_run(tmp_path / str(workers), shape=(6, 6, 32), variable=True)
-        config = dict(sweeps=3, field_chunk=8, constraint_cache_bytes=1 << 20)
+        # Without the RAM tiers' observation cache every box is prepared by the pool.
+        config = dict(sweeps=3, field_chunk=8, constraint_cache_bytes=1 << 20, field_memory="disk")
         if workers:
             config.update(field_cpu_workers=workers, field_cpu_buffer_bytes=16 << 20)
         commits.clear()
@@ -143,7 +144,14 @@ def test_cpu_pool_stop_resume_preserves_field(tmp_path, monkeypatch):
 
     monkeypatch.setattr(field_cpu, "headroom_bytes", lambda: 8 << 30)
     run = prepared_run(tmp_path / "run", shape=(6, 6, 32), variable=True)
-    config = dict(sweeps=2, field_chunk=8, field_cpu_workers=2, field_cpu_buffer_bytes=16 << 20)
+    # The stop below watches the checkpoint advance block by block: block checkpoints.
+    config = dict(
+        sweeps=2,
+        field_chunk=8,
+        field_cpu_workers=2,
+        field_cpu_buffer_bytes=16 << 20,
+        field_memory="disk",
+    )
 
     def stop():
         cp = run / "field/CHECKPOINT.json"

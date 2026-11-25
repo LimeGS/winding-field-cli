@@ -214,7 +214,8 @@ def test_constraint_cache_retains_empty_blocks(tmp_path):
 def test_constraint_cache_resume_and_changed_source_preserve_checkpoint(tmp_path):
     from winding_field import field
 
-    config = dict(sweeps=3, field_chunk=8, constraint_cache_bytes=1 << 20)
+    # The stop below watches the checkpoint advance block by block: block checkpoints.
+    config = dict(sweeps=3, field_chunk=8, constraint_cache_bytes=1 << 20, field_memory="disk")
     run = prepared_run(tmp_path / "run")
 
     def stop():
@@ -790,6 +791,10 @@ def test_field_memory_tiers_give_the_same_field_and_are_reported(tmp_path):
     assert memory_plan(busy, shape, 64, 8, available=60 * gib)["tier"] == "field"
     advised = memory_plan(dict(field_advice=True), shape, 64, 8, available=60 * gib)
     assert advised["tier"] == "all" and advised["checkpoint"] == "block" and advised["note"]
+    bounded = memory_plan({}, shape, 64, 8, bounded=True, available=60 * gib)
+    assert bounded["checkpoint"] == "block" and "bounded" in bounded["note"]
+    small = memory_plan(dict(field_cache_bytes=0), shape, 64, 8, available=60 * gib)
+    assert small["checkpoint"] == "block" and "field_cache_bytes" in small["note"]
 
     def field_after(name, **config):
         run = prepared_run(tmp_path / name, shape=(6, 6, 32), chunk=8, variable=True)

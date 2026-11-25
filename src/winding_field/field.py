@@ -311,12 +311,13 @@ def _constraint_rows(
     )
 
 
-def memory_plan(config, shape, chunk, halo, *, convergence=False, available=None):
+def memory_plan(config, shape, chunk, halo, *, convergence=False, bounded=False, available=None):
     """Host-memory tier for this solve (``field_memory``: auto, disk, field or all).
 
-    Configured cache budgets count as workspace. Sweep checkpoints are not used with
-    field advice or automatic convergence, which read the checkpoint at block
-    boundaries; the field and observations are still cached.
+    Configured cache budgets count as workspace and explicit cache sizes win. Sweep
+    checkpoints need the whole field cached, and are not used with field advice or
+    automatic convergence (they read the checkpoint at block boundaries) nor with a
+    bounded field (its disk cap admits one block at a time); the caches still apply.
     """
     from field_memory import plan_memory
 
@@ -335,13 +336,20 @@ def memory_plan(config, shape, chunk, halo, *, convergence=False, available=None
         workspace_bytes=workspace,
         **({} if available is None else {"available": available}),
     )
-    if plan["checkpoint"] == "sweep" and (convergence or config.get("field_advice")):
-        plan.update(
-            checkpoint="block",
-            note="block checkpoints: "
-            + ("automatic convergence" if convergence else "field advice")
-            + " reads the checkpoint at every block boundary",
-        )
+    explicit = config.get("field_cache_bytes")
+    reason = (
+        "automatic convergence reads the checkpoint at every block boundary"
+        if convergence
+        else "field advice reads the checkpoint at every block boundary"
+        if config.get("field_advice")
+        else "the bounded disk cap admits one block at a time"
+        if bounded
+        else "field_cache_bytes is smaller than the field"
+        if explicit is not None and explicit < plan["field_bytes"]
+        else None
+    )
+    if plan["checkpoint"] == "sweep" and reason:
+        plan.update(checkpoint="block", note="block checkpoints: " + reason)
     return plan
 
 
@@ -484,7 +492,14 @@ def solve(run, config, stop=None, *, sweep_target=None, convergence=None):
     if status_policy != "all":
         # Execution choice, not checkpoint identity: STATUS fsyncs only at checkpoints.
         options["status_policy"] = status_policy
-    memory = memory_plan(config, shape, chunk, options["halo"], convergence=convergence is not None)
+    memory = memory_plan(
+        config,
+        shape,
+        chunk,
+        options["halo"],
+        convergence=convergence is not None,
+        bounded=bool(bounded),
+    )
     if "field_cache_bytes" not in config:
         field_cache_bytes = max(field_cache_bytes, memory["field_cache_bytes"])
         options["cache_bytes"] = field_cache_bytes
