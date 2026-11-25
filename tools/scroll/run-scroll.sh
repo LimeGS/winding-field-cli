@@ -58,10 +58,13 @@ COUNTED_JOBS=${COUNTED_JOBS:-1}
 # keeps weight 1 (at 138 um strong fibres compress the winding count).
 FIBRE_WEIGHT=${FIBRE_WEIGHT:-1000}
 # Fine tiles are solved as one block each (sweeps of 64-node blocks drift ~1 sheet with
-# strong fibres). TILE_NODES=auto picks the largest tile the GPUs hold (6 GB: 128-node
-# cores, 24 GB: 384, 80 GB: 640); GPU_MEMORY_GIB plans for GPUs other than this machine's.
+# strong fibres). TILE_NODES=auto picks the largest tile the GPUs hold with AMG (6 GB:
+# 128-node cores, 24 GB: 256, 80 GB: 384), Jacobi below a 192-node tile;
+# GPU_MEMORY_GIB plans for GPUs other than this machine's.
 TILE_NODES=${TILE_NODES:-auto}
 OVERLAP_NODES=${OVERLAP_NODES:-32}
+# auto: AMG above a 192-node tile, Jacobi below (amg or jacobi force one).
+TILE_PRECONDITIONER=${TILE_PRECONDITIONER:-auto}
 JOBS_PER_GPU=${JOBS_PER_GPU:-1}
 GPU_MEMORY_GIB=${GPU_MEMORY_GIB:-}
 # Solver caches: the first sweep builds, later sweeps reuse (~2.5x cheaper on 175A).
@@ -137,7 +140,8 @@ coarse() {
 plan() {
   done_stage plan && return
   rm -rf "$ROOT/plan"
-  local extra=("--run-arg=--fibre-weight=$FIBRE_WEIGHT" --jobs-per-gpu "$JOBS_PER_GPU")
+  local extra=("--run-arg=--fibre-weight=$FIBRE_WEIGHT" --jobs-per-gpu "$JOBS_PER_GPU"
+    --tile-preconditioner "$TILE_PRECONDITIONER")
   [[ -n "$GPU_MEMORY_GIB" ]] && extra+=(--gpu-memory-gib "$GPU_MEMORY_GIB")
   [[ -n "$TILE_CACHE" ]] && extra+=(--run-arg=--offline "--run-arg=--cache-gib=$TILE_CACHE_GIB")
   say "plan: $FINE_UM um tiles on coarse $COARSE_DIR${TILE_CACHE:+ (tiles offline on $TILE_CACHE)}"

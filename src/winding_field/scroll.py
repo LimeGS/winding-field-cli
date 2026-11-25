@@ -144,17 +144,27 @@ GPU_RESERVE_BYTES = 0.5e9
 GPU_USABLE = 0.85
 # One block per tile: the solver settings the 34.56 um tiles were measured with.
 ONE_BLOCK_RUN_ARGS = ("--rtol", "1e-7", "--maxiter", "50000", "--nonconvergence-policy", "continue")
+# AMG (smoothed aggregation, built on the solve device) adds its hierarchy to the Jacobi
+# footprint. A real 192^3 PHerc0175A tile peaked at 4.37 GB on the GTX 1660 (before a 2x
+# COO transient was removed from the setup); this term keeps the model above that peak.
+# On that tile AMG needed 41 CG iterations instead of Jacobi's 2,888 (7.8 s vs 18.3 s), and
+# Jacobi's iterations grow with the tile (6,972 at 256^3) while AMG's barely do.
+AMG_HIERARCHY_BYTES_PER_NODE = 350.0
+# Below this tile edge the AMG setup is not paid back: smaller tiles use Jacobi.
+AMG_MIN_TILE_NODES = 192
+TILE_PRECONDITIONERS = ("auto", "amg", "jacobi")
 
 
-def tile_bytes_per_node(spacing_um):
+def tile_bytes_per_node(spacing_um, preconditioner="jacobi"):
     rows = FIBRE_ROWS_PER_NODE_34UM * (float(spacing_um) / 34.56) ** 2
-    return ALLOCATOR_OVERHEAD * (BYTES_PER_NODE + BYTES_PER_FIBRE_ROW * rows)
+    extra = AMG_HIERARCHY_BYTES_PER_NODE if preconditioner == "amg" else 0.0
+    return ALLOCATOR_OVERHEAD * (BYTES_PER_NODE + extra + BYTES_PER_FIBRE_ROW * rows)
 
 
-def auto_tile_nodes(memory_bytes, spacing_um, overlap):
+def auto_tile_nodes(memory_bytes, spacing_um, overlap, preconditioner="jacobi"):
     """Largest core (a multiple of 64 nodes) whose tile, core + 2*overlap nodes per axis,
-    fits ``memory_bytes`` of GPU memory when solved as one block."""
-    per_node = tile_bytes_per_node(spacing_um)
+    fits ``memory_bytes`` of GPU memory when solved as one block with ``preconditioner``."""
+    per_node = tile_bytes_per_node(spacing_um, preconditioner)
     usable = GPU_USABLE * float(memory_bytes) - GPU_RESERVE_BYTES
     edge = int((max(usable, 0.0) / per_node) ** (1.0 / 3.0) + 1e-9)
     core = (edge - 2 * overlap) // FIELD_CHUNK * FIELD_CHUNK
@@ -166,10 +176,28 @@ def auto_tile_nodes(memory_bytes, spacing_um, overlap):
         )
     tile = core + 2 * overlap
     return core, dict(
+        preconditioner=preconditioner,
         bytes_per_node=per_node,
         tile_nodes_per_axis=tile,
         estimated_peak_bytes=tile**3 * per_node + GPU_RESERVE_BYTES,
     )
+
+
+def auto_tile_size(memory_bytes, spacing_um, overlap, preconditioner="auto"):
+    """Tile core and sizing for one GPU share. ``auto``: AMG with the largest tile that fits
+    its memory model, as long as the tile is at least AMG_MIN_TILE_NODES per axis; below
+    that, Jacobi with the largest tile that fits Jacobi's (smaller) footprint."""
+    if preconditioner not in TILE_PRECONDITIONERS:
+        raise ValueError(f"tile preconditioner must be one of {', '.join(TILE_PRECONDITIONERS)}")
+    if preconditioner != "auto":
+        return auto_tile_nodes(memory_bytes, spacing_um, overlap, preconditioner)
+    try:
+        core, sizing = auto_tile_nodes(memory_bytes, spacing_um, overlap, "amg")
+    except ValueError:
+        core, sizing = None, None
+    if core is not None and sizing["tile_nodes_per_axis"] >= AMG_MIN_TILE_NODES:
+        return core, sizing
+    return auto_tile_nodes(memory_bytes, spacing_um, overlap, "jacobi")
 
 
 def visible_gpus():
@@ -395,8 +423,11 @@ def plan(args):
             source = f"smallest of {len(gpus)} visible GPUs"
         if args.jobs_per_gpu < 1:
             raise ValueError("--jobs-per-gpu must be at least 1")
-        tile_nodes, sizing = auto_tile_nodes(
-            memory / args.jobs_per_gpu, grid["spacing_um"], args.overlap_nodes
+        tile_nodes, sizing = auto_tile_size(
+            memory / args.jobs_per_gpu,
+            grid["spacing_um"],
+            args.overlap_nodes,
+            args.tile_preconditioner,
         )
         tile_memory = dict(
             mode="auto",
@@ -408,6 +439,12 @@ def plan(args):
         )
     else:
         tile_nodes = int(tile_nodes)
+    # Fixed-size tiles are solved in 64-node blocks, where the AMG setup does not pay off.
+    preconditioner = (
+        tile_memory["preconditioner"]
+        if tile_memory
+        else ("jacobi" if args.tile_preconditioner == "auto" else args.tile_preconditioner)
+    )
     axes = [tile_ranges(n, tile_nodes, args.overlap_nodes) for n in grid["shape_zyx"]]
     tiles = []
     with coarse:
@@ -456,6 +493,8 @@ def plan(args):
         # One block per tile: the largest tile edge is the solver block.
         edge = max(t["nodes_hi"][i] - t["nodes_lo"][i] + 1 for t in tiles for i in range(3))
         run_args += ["--field-chunk", str(edge), *ONE_BLOCK_RUN_ARGS]
+    if preconditioner == "amg":
+        run_args += ["--preconditioner", "amg"]
     run_args += list(args.run_arg or [])
     document = dict(
         schema=PLAN_SCHEMA,
@@ -1729,6 +1768,14 @@ def _parser():
         type=int,
         default=1,
         help="with --tile-nodes auto: tiles solved at once on one GPU (memory is divided)",
+    )
+    p.add_argument(
+        "--tile-preconditioner",
+        choices=TILE_PRECONDITIONERS,
+        default="auto",
+        help="auto (default): with --tile-nodes auto, AMG on the largest tile that fits the "
+        f"GPU, down to {AMG_MIN_TILE_NODES} nodes per axis, else Jacobi; fixed --tile-nodes "
+        "(64-node blocks) use Jacobi. amg or jacobi force one",
     )
     p.add_argument(
         "--overlap-nodes",

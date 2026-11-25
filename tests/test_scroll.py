@@ -632,6 +632,31 @@ def test_auto_tile_size_grows_with_gpu_memory_and_fits_the_measured_tile():
         scroll.auto_tile_nodes(2**30, 34.56, 64)
 
 
+def test_auto_tile_size_prefers_amg_down_to_its_floor_then_jacobi():
+    # A 6 GB GTX 1660 holds a 192^3 AMG tile (the real PHerc0175A tile peaked at 4.37 GB).
+    core, sizing = scroll.auto_tile_size(6 * 2**30, 34.56, 32)
+    assert sizing["preconditioner"] == "amg" and core == 128
+    assert sizing["tile_nodes_per_axis"] == scroll.AMG_MIN_TILE_NODES
+    assert 4.37e9 <= sizing["estimated_peak_bytes"] <= scroll.GPU_USABLE * 6 * 2**30
+    # Below the floor AMG is not worth its setup: Jacobi with its own, larger tile.
+    core, sizing = scroll.auto_tile_size(4 * 2**30, 34.56, 32)
+    assert sizing["preconditioner"] == "jacobi"
+    assert (core, sizing) == scroll.auto_tile_nodes(4 * 2**30, 34.56, 32)
+    # AMG tiles are smaller than Jacobi's on the same GPU (its hierarchy needs memory).
+    amg, sizing = scroll.auto_tile_size(80 * 2**30, 34.56, 32)
+    assert sizing["preconditioner"] == "amg"
+    assert amg < scroll.auto_tile_nodes(80 * 2**30, 34.56, 32)[0]
+    assert sizing["estimated_peak_bytes"] <= scroll.GPU_USABLE * 80 * 2**30
+    # Forcing one preconditioner sizes with its model only.
+    assert scroll.auto_tile_size(80 * 2**30, 34.56, 32, "jacobi") == scroll.auto_tile_nodes(
+        80 * 2**30, 34.56, 32
+    )
+    with pytest.raises(ValueError, match="cannot hold"):
+        scroll.auto_tile_size(2**30, 34.56, 32, "amg")
+    with pytest.raises(ValueError, match="preconditioner"):
+        scroll.auto_tile_size(6 * 2**30, 34.56, 32, "spectral")
+
+
 class _FakeVolume:
     spacing_xyz = (1.0, 1.0, 1.0)
     shape = (4, 6, 640)
@@ -666,8 +691,48 @@ def test_auto_plan_sizes_tiles_for_the_gpu_and_solves_each_as_one_block(tmp_path
     assert run_args[run_args.index("--field-chunk") + 1] == "192"
     assert run_args[run_args.index("--sweeps") + 1] == "1"
     assert run_args[run_args.index("--maxiter") + 1] == "50000"
+    # 2 GiB is below the AMG floor: Jacobi, the solver's default, so no flag.
+    assert memory["preconditioner"] == "jacobi" and "--preconditioner" not in run_args
     # Extra run flags come last, so they override the defaults above.
     assert run_args[-1] == "--fibre-weight=1000"
+
+
+def _plan_args(tmp_path, coarse, *extra):
+    return scroll._parser().parse_args(
+        [
+            "plan", "--source", "ct.zarr", "--voxel-um", "1", "--field-spacing-um", "2",
+            "--coarse", coarse["path"], "--fibres", "f.afv", "--lasagna-input", "l.json",
+            "--no-split-fibres", *extra, "--output", str(tmp_path / "plan"),
+        ]
+    )  # fmt: skip
+
+
+def test_auto_plan_solves_tiles_above_the_floor_with_amg(tmp_path, monkeypatch):
+    from winding_field import workflow
+
+    monkeypatch.setattr(workflow, "open_volume", lambda config: _FakeVolume())
+    coarse = write_coarse(tmp_path / "coarse")
+    scroll.plan(_plan_args(tmp_path, coarse, "--gpu-memory-gib", "8"))
+    document = json.loads((tmp_path / "plan/TILES.json").read_text())
+    assert document["tile_memory"]["preconditioner"] == "amg"
+    run_args = document["run_args"]
+    assert run_args[run_args.index("--preconditioner") + 1] == "amg"
+    assert run_args[run_args.index("--field-chunk") + 1] == "192"
+
+
+def test_fixed_tiles_use_jacobi_unless_amg_is_forced(tmp_path, monkeypatch):
+    from winding_field import workflow
+
+    monkeypatch.setattr(workflow, "open_volume", lambda config: _FakeVolume())
+    coarse = write_coarse(tmp_path / "coarse")
+    scroll.plan(_plan_args(tmp_path, coarse, "--tile-nodes", "128"))
+    document = json.loads((tmp_path / "plan/TILES.json").read_text())
+    assert document["tile_memory"] is None and "--preconditioner" not in document["run_args"]
+    forced = tmp_path / "forced"
+    forced.mkdir()
+    scroll.plan(_plan_args(forced, coarse, "--tile-nodes", "128", "--tile-preconditioner", "amg"))
+    run_args = json.loads((forced / "plan/TILES.json").read_text())["run_args"]
+    assert run_args[run_args.index("--preconditioner") + 1] == "amg"
 
 
 def test_auto_plan_without_gpu_or_memory_is_refused(tmp_path, monkeypatch):
