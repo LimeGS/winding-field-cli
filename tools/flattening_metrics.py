@@ -3,7 +3,7 @@
 from pathlib import Path
 import numpy as np
 
-from winding_field.flatten import cross2, iter_overlap_pairs
+from winding_field.flattening.legacy_charts import cross2, iter_overlap_pairs
 from winding_field.surface_atlas import face_components
 from bench_flattening import case_arrays, locked, seal
 

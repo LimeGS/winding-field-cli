@@ -60,7 +60,7 @@ def quality_fixture(n):
 
 @pytest.mark.parametrize("n", [0, 1, 4096, 8201])
 def test_quality_exact_frozen_masks_reductions_and_percentile(n):
-    from winding_field.original_recipe import face_quality
+    from winding_field.flattening.original import face_quality
 
     v, f, uv = quality_fixture(n)
     with np.errstate(invalid="ignore", divide="ignore"):
@@ -77,7 +77,7 @@ def test_quality_exact_frozen_masks_reductions_and_percentile(n):
 
 
 def test_quality_degenerate_only_retains_nan_area_and_no_percentile():
-    from winding_field.original_recipe import face_quality
+    from winding_field.flattening.original import face_quality
 
     with np.errstate(invalid="ignore", divide="ignore"):
         display, scientific, report = face_quality(np.zeros((3, 3)), [[0, 1, 2]], np.zeros((3, 2)))
@@ -94,7 +94,7 @@ def test_quality_degenerate_only_retains_nan_area_and_no_percentile():
 
 
 def test_quality_bounds_linalg_workspace_across_multiple_blocks(monkeypatch):
-    from winding_field.original_recipe import face_quality
+    from winding_field.flattening.original import face_quality
 
     for name in ("det", "inv", "svd"):
         original = getattr(np.linalg, name)
@@ -113,8 +113,8 @@ def test_export_releases_source_arrays_before_real_raster(tmp_path, monkeypatch)
     import weakref
     from contextlib import contextmanager
     from test_patch_mapping import source
-    from winding_field import patch_pipeline as p
-    from winding_field.patch_mapping import PatchMapping
+    from winding_field.flattening import patches as p
+    from winding_field.flattening.patch_mapping import PatchMapping
 
     reader, ids = source()
     reader.metadata = {"voxel_um": 1.0}

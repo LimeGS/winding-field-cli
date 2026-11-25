@@ -255,3 +255,15 @@ def test_resume_native_runtime_mismatch_preserves_run_and_stop(tmp_path):
     with pytest.raises(ValueError, match="native runtime"):
         run(config, resume=True)
     assert {p.relative_to(root): file_sha(p) for p in root.rglob("*") if p.is_file()} == before
+
+
+def test_tool_errors_are_reported_without_traceback(tmp_path, monkeypatch, capsys):
+    from winding_field import field_advice
+    from winding_field.cli import main
+
+    def fail(source):
+        raise ValueError("unreadable run")
+
+    monkeypatch.setattr(field_advice, "report", fail)
+    assert main(["field-advice", str(tmp_path)]) == 1
+    assert capsys.readouterr().err == "winding-field field-advice: unreadable run\n"

@@ -10,7 +10,7 @@ import numpy as np
 import pytest
 from test_io import served  # noqa: F401 (pytest fixtures)
 
-from winding_field.original_recipe import sample_points
+from winding_field.flattening.original import sample_points
 
 
 def sampler_class():
@@ -116,7 +116,7 @@ def test_original_sampling_uses_checked_native_path(tmp_path, monkeypatch):
     from contextlib import closing
     from test_io import make_volume
     from winding_field.io import Volume
-    from winding_field import original_pipeline as original
+    from winding_field.flattening import original_pipeline as original
 
     def refused(*args, **kwargs):
         raise AssertionError("scalar production sampler called")
@@ -149,7 +149,7 @@ def test_preview_preserves_calibration_and_authoritative_sparse_fill(served):
 def test_patch_native_hashes_detect_change_after_eviction(tmp_path):
     sampler_class()
     pytest.importorskip("vc_reader._reader")
-    from winding_field.patch_pipeline import PatchCT, settings
+    from winding_field.flattening.patches import PatchCT, settings
 
     source = tmp_path / "source"
     source.mkdir()
@@ -195,7 +195,7 @@ def test_patch_native_hashes_detect_change_after_eviction(tmp_path):
 
 def test_patch_remote_cache_preserves_missing_and_real_zero(served):
     pytest.importorskip("vc_reader._reader")
-    from winding_field.patch_pipeline import PatchCT, settings
+    from winding_field.flattening.patches import PatchCT, settings
 
     root, url, _ = served
     (root / "ct.zarr/0/0.0.0").write_bytes(bytes(12))
@@ -231,7 +231,7 @@ def test_patch_remote_cache_preserves_missing_and_real_zero(served):
 
 
 def test_patch_remote_zero_disk_cache_uses_shared_checked_reader(served):
-    from winding_field.patch_pipeline import PatchCT, settings
+    from winding_field.flattening.patches import PatchCT, settings
 
     root, url, _ = served
     output = root / "patch"
@@ -261,7 +261,7 @@ def test_patch_remote_zero_disk_cache_uses_shared_checked_reader(served):
 def test_patch_local_compressed_chunk_layout(tmp_path, order):
     pytest.importorskip("vc_reader._reader")
     from numcodecs import Blosc
-    from winding_field.patch_pipeline import PatchCT, settings
+    from winding_field.flattening.patches import PatchCT, settings
 
     source = tmp_path / "source"
     source.mkdir()
@@ -307,7 +307,7 @@ def test_patch_local_compressed_chunk_layout(tmp_path, order):
 def test_patch_failed_ledger_initialization_closes_connections(tmp_path, monkeypatch):
     pytest.importorskip("vc_reader._reader")
     import sqlite3
-    from winding_field.patch_pipeline import PatchCT, settings
+    from winding_field.flattening.patches import PatchCT, settings
 
     source = tmp_path / "source"
     source.mkdir()
@@ -358,7 +358,7 @@ def test_patch_failed_ledger_initialization_closes_connections(tmp_path, monkeyp
 @pytest.mark.parametrize("cached", ["stale-missing", "changed-payload"])
 def test_native_cache_validates_payload_before_missing_marker(served, cached):
     pytest.importorskip("vc_reader._reader")
-    from winding_field.patch_pipeline import PatchCT, settings
+    from winding_field.flattening.patches import PatchCT, settings
 
     root, url, expected = served
     cfg = settings(

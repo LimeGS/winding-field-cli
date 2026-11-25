@@ -560,7 +560,7 @@ def source_phase(store, request, out):
 
 def register_global(store, source, cut, uv, valid, component, whole_faces, whole_area):
     import numpy as np
-    from winding_field.native_geometry import _schema
+    from winding_field.flattening.native_charts import _schema
 
     _schema(store)
     selected = np.flatnonzero(valid)
@@ -697,7 +697,7 @@ def execute_phase(out, phase, request, remaining_s, stop=None):
                     else None
                 )
                 if phase == "cut":
-                    math_api = importlib.import_module("winding_field.native_global")
+                    math_api = importlib.import_module("winding_field.flattening.native_sheet")
                     arrays, report = math_api.cut_component(
                         source["vertices"], source["faces"], check=store.check
                     )
@@ -725,7 +725,7 @@ def execute_phase(out, phase, request, remaining_s, stop=None):
                 else:
                     cut = unit(out, "cut", request)
                     if phase in ("mvc", "arap", "qualification"):
-                        math_api = importlib.import_module("winding_field.native_global")
+                        math_api = importlib.import_module("winding_field.flattening.native_sheet")
                         if phase == "mvc":
                             uv, report = math_api.mean_value_map(cut, check=store.check)
                         elif phase == "arap":
@@ -1425,7 +1425,7 @@ def main():
         p.error("--mesh, --component, --ct, --frame and --pitch-um are required")
     if not args.resume and find_spec("igl") is None:
         p.error("the experimental numerical recipe requires existing optional libigl")
-    if find_spec("winding_field.native_global") is None:
+    if find_spec("winding_field.flattening.native_sheet") is None:
         raise ValueError("native_global numerical API is not integrated")
     request = make_request(args)
     result = run(request, args.output, args.resume, preflight_s=time.monotonic() - entered)

@@ -14,10 +14,10 @@ from winding_field.util import atomic_json, file_sha
 
 
 def matrix():
-    assert importlib.util.find_spec("winding_field.flattening_matrix"), (
+    assert importlib.util.find_spec("winding_field.flattening.matrix"), (
         "flattening matrix is missing"
     )
-    from winding_field import flattening_matrix
+    from winding_field.flattening import matrix as flattening_matrix
 
     return flattening_matrix
 
@@ -221,7 +221,7 @@ def source_bundle(tmp_path):
 @pytest.mark.skipif(sys.platform != "linux", reason="Linux process-tree resource guard")
 def test_field_config_extracts_scalar_mesh_and_resumes_verified_export(tmp_path, kind, scope):
     from winding_field.cli import main
-    from winding_field.patch_mapping import PatchMapping
+    from winding_field.flattening.patch_mapping import PatchMapping
     from field_store import BlockStore
 
     _, ct = source_bundle(tmp_path)
@@ -288,7 +288,7 @@ def test_cli_matrix_ct_xyz_keys_and_completed_resume(tmp_path, capsys, solver, s
     if solver != "lscm" and not app:
         pytest.skip("native qualification requires MATRIX_NATIVE_APP and bounded Linux cgroup")
     from winding_field.cli import main
-    from winding_field.patch_mapping import PatchMapping
+    from winding_field.flattening.patch_mapping import PatchMapping
 
     mesh, ct = source_bundle(tmp_path)
     req = request(tmp_path)
@@ -408,7 +408,7 @@ def cli_fixture(tmp_path):
 @pytest.mark.skipif(sys.platform != "linux", reason="Linux process-tree resource guard")
 def test_interrupted_render_retains_map_and_evidence_then_resumes(tmp_path, monkeypatch):
     from winding_field.cli import main
-    from winding_field import patch_pipeline as p
+    from winding_field.flattening import patches as p
 
     out, ct, args = cli_fixture(tmp_path)
     real = p.render_map
@@ -452,7 +452,7 @@ def test_incomplete_publication_rejects_lost_ct_provenance_and_symlinks(tmp_path
 
 @pytest.mark.skipif(sys.platform != "linux", reason="Linux process-tree resource guard")
 def test_native_checkpoint_interrupt_resumes_without_rewriting_prior_batch(tmp_path, monkeypatch):
-    from winding_field import flatboi_checkpoint as r
+    from winding_field.flattening import flatboi_checkpoint as r
     from test_flatboi_checkpoint import fake_native
 
     m = matrix()
@@ -509,7 +509,7 @@ def uv_args(tmp_path, mesh, out, stages, ct=None):
 @pytest.mark.skipif(sys.platform != "linux", reason="Linux process-tree resource guard")
 def test_uv_stage_publishes_without_opening_ct(tmp_path):
     from winding_field.cli import main
-    from winding_field import matrix_pipeline as pipeline
+    from winding_field.flattening import matrix_pipeline as pipeline
 
     mesh, _ = source_bundle(tmp_path)
     out = tmp_path / "uv-only"
@@ -518,7 +518,7 @@ def test_uv_stage_publishes_without_opening_ct(tmp_path):
         raise AssertionError("UV publication must not open the CT")
 
     pipeline.PatchCT = forbidden if hasattr(pipeline, "PatchCT") else None
-    import winding_field.patch_pipeline as patch
+    import winding_field.flattening.patches as patch
 
     original = patch.PatchCT
     patch.PatchCT = forbidden
@@ -538,7 +538,7 @@ def test_uv_stage_publishes_without_opening_ct(tmp_path):
 @pytest.mark.skipif(sys.platform != "linux", reason="Linux process-tree resource guard")
 def test_ct_stage_consumes_published_uv_without_solving(tmp_path, monkeypatch):
     from winding_field.cli import main
-    from winding_field import matrix_pipeline as pipeline
+    from winding_field.flattening import matrix_pipeline as pipeline
 
     mesh, ct = source_bundle(tmp_path)
     out = tmp_path / "split"
@@ -581,7 +581,7 @@ def test_uv_stage_rejects_ct_inputs(tmp_path, capsys):
 
 def test_render_contract_ignores_solver_and_runtime_identity():
     """The CT stage must not need the native binary to agree on its identity."""
-    from winding_field import matrix_pipeline as pipeline
+    from winding_field.flattening import matrix_pipeline as pipeline
     from winding_field.util import digest
 
     identity = dict(

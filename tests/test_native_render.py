@@ -10,7 +10,7 @@ from test_native_geometry import plane_bundle
 
 def ready_plane(tmp_path):
     from winding_field.surface_mesh import MeshReader
-    from winding_field.native_geometry import flatten_mesh, assemble
+    from winding_field.flattening.native_charts import flatten_mesh, assemble
     from winding_field.native_store import Journal
 
     with MeshReader(plane_bundle(tmp_path)) as reader:
@@ -299,7 +299,7 @@ def test_completed_mesh_export_revalidates_the_original_ct_payload(tmp_path):
 def uv_budget_clock(monkeypatch):
     import time
     from types import SimpleNamespace
-    import winding_field.native_geometry as geometry
+    import winding_field.flattening.native_charts as geometry
     import winding_field.native_store as storage
 
     clock = [1000.0]
@@ -338,7 +338,7 @@ def test_uv_budget_leaves_time_to_publish_a_partial_render(tmp_path, uv_budget_c
 
 def test_render_refuses_to_reuse_tiles_after_geometry_changes(tmp_path):
     from winding_field.surface_mesh import MeshReader
-    from winding_field.native_geometry import flatten_mesh, assemble
+    from winding_field.flattening.native_charts import flatten_mesh, assemble
     from winding_field.native_store import Journal, Paused
     from winding_field.native_render import render
 
@@ -419,7 +419,7 @@ def test_optional_tiff_cancel_keeps_published_image_and_hides_incomplete_segment
 def test_changing_parameterizer_runtime_cannot_relabel_completed_geometry(tmp_path, monkeypatch):
     from winding_field.surface_mesh import MeshReader
     from winding_field.native_pipeline import render_mesh
-    import winding_field.native_geometry as geometry
+    import winding_field.flattening.native_charts as geometry
 
     with MeshReader(plane_bundle(tmp_path)) as reader, analytic_ct(tmp_path) as volume:
         out = tmp_path / "render"
@@ -464,7 +464,7 @@ def test_tifxyz_cannot_fill_a_source_mesh_hole_inside_valid_corners(
     from winding_field.surface_mesh import import_mesh, MeshReader
     from winding_field.native_pipeline import render_mesh
     from winding_field.util import file_sha
-    import winding_field.native_geometry as geometry
+    import winding_field.flattening.native_charts as geometry
 
     def analytic_projection(v, f):
         return v[:, :2] - v[:, :2].min(0), {
@@ -532,7 +532,7 @@ def test_frozen_ct_snapshot_is_not_the_mutable_working_ledger(tmp_path):
 def ring_bundle(tmp_path, monkeypatch, size=6, low=2.2, high=2.3):
     from winding_field.surface_mesh import import_mesh
     from winding_field.util import file_sha
-    import winding_field.native_geometry as geometry
+    import winding_field.flattening.native_charts as geometry
 
     def xy_projection(v, f):
         return v[:, :2] - v[:, :2].min(0), {
@@ -656,7 +656,7 @@ def test_partial_tifxyz_masks_cross_tile_corners_and_tails(tmp_path, monkeypatch
     from ct_fixture import write_ct
     from winding_field.io import Volume
     from winding_field.surface_mesh import MeshReader
-    from winding_field.native_geometry import flatten_mesh, assemble
+    from winding_field.flattening.native_charts import flatten_mesh, assemble
     from winding_field.native_render import render
     from winding_field.native_store import Journal
 
@@ -700,7 +700,7 @@ def test_partial_tifxyz_resume_preserves_committed_masks_and_projection(
     tmp_path, monkeypatch, interrupt
 ):
     from winding_field.surface_mesh import MeshReader
-    from winding_field.native_geometry import flatten_mesh, assemble
+    from winding_field.flattening.native_charts import flatten_mesh, assemble
     from winding_field.native_render import render
     from winding_field.native_store import Journal, Paused
     from winding_field.io import Volume
@@ -759,7 +759,7 @@ def test_partial_tifxyz_resume_preserves_committed_masks_and_projection(
 def frozen_plane(tmp_path, xyz, mask=None, seam=None):
     """A frozen raster plus real planar chart/boundary inputs to the local gates."""
     from winding_field.native_store import Journal
-    from winding_field.native_geometry import _schema
+    from winding_field.flattening.native_charts import _schema
 
     store = Journal(tmp_path / "out", {"source": "frozen-plane"})
     _schema(store)

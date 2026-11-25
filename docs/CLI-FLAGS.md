@@ -101,7 +101,7 @@ provided value must equal the saved setting; omission reuses it. See
 |---|---|---|
 | Prepared field geometry | `frame`, `voxel_um`, `grid.origin_xyz`, `grid.spacing_xyz`, `grid.shape_zyx`, `sheet_step`, `calibration` | Field strings/scales, XYZ numeric triples, integer ZYX triple; distinct from CT selected level |
 | Prepared input artifacts | `observations.target`, `.weights`, `.observed`, optional `fixed`, `constraints`, `order` | Each contains an explicit local path and lowercase SHA256; corresponding named artifact/pin flags |
-| Prepared solver | `device`, `dtype`, `rtol`, `maxiter`, `preconditioner` | Existing choices/types/defaults; no new backend or bypass |
+| Prepared solver | `device`, `dtype`, `rtol`, `maxiter`, `preconditioner` | Existing choices/types/defaults; `preconditioner` is `jacobi` (default) or `amg` |
 | Prepared execution | `chunk`, `halo`, `sweeps`, `cache_bytes`, `read_workers`, `constraint_cache_bytes`, `prepared_cache_bytes`, `max_bytes`, `reserve_bytes` | Integer counts/bytes; distinguish missing/zero where accepted |
 | Prepared GPU lease | `index`, `uuid`, `lock_path`, `min_free_bytes`, `deadline` | Existing `GpuLease` validator; path has its own base; CPU/GPU mismatch still errors |
 | Extra provenance | `source_identity` | Repeated `--source-identity KEY JSON_VALUE`, preserving arbitrary value types; duplicate/nonfinite values reject |
@@ -130,7 +130,7 @@ never a hidden requirement for another handwritten JSON file.
 | `sheet_step`, `calibration` | `--sheet-step`, `--calibration` | raw field units/sheet, provenance string |
 | `observations.target/weights/observed` | `--target/--weights/--observed` and each `--NAME-sha256` | local array path and lowercase SHA256 |
 | `fixed`, `constraints`, `order` | `--fixed/--constraints/--order` and each `--NAME-sha256` | local NPY/NPZ data path and SHA256 |
-| `solver.*` | `--device`, `--dtype`, `--rtol`, `--maxiter`, `--preconditioner` | existing solver types/defaults; preconditioner stays Jacobi |
+| `solver.*` | `--device`, `--dtype`, `--rtol`, `--maxiter`, `--preconditioner` | existing solver types/defaults; `--preconditioner jacobi` (default) or `amg` |
 | `execution.*` | `--chunk`, `--halo`, `--sweeps`, `--cache-bytes`, `--read-workers`, `--constraint-cache-bytes`, `--prepared-cache-bytes`, `--max-bytes`, `--reserve-bytes` | integer node counts, counts or bytes as named |
 | `gpu.*` | `--gpu-index`, `--gpu-uuid`, `--gpu-lock-path`, `--gpu-min-free-bytes`, `--gpu-deadline` | index, explicit UUID, local lock path, bytes, epoch seconds |
 | `source_identity` | repeated `--source-identity KEY JSON_VALUE` | strict JSON values; duplicate keys reject |

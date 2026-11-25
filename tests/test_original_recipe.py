@@ -3,7 +3,7 @@ import pytest
 
 
 def test_original_raster_missing_and_capture():
-    from winding_field.original_recipe import raster_sheet
+    from winding_field.flattening.original import raster_sheet
 
     v = np.array([[0.0, 0.0, 0.0], [4.0, 0.0, 0.0], [0.0, 4.0, 0.0]])
     f = np.array([[0, 1, 2]])
@@ -24,7 +24,7 @@ def test_original_raster_missing_and_capture():
 
 
 def test_original_raster_ambiguous_overlap():
-    from winding_field.original_recipe import raster_sheet
+    from winding_field.flattening.original import raster_sheet
 
     v = np.array(
         [
@@ -66,7 +66,7 @@ def test_original_method_independent_of_resolution():
 
 def test_original_map_preserves_source_geometry():
     pytest.importorskip("igl")
-    from winding_field.original_recipe import make_map
+    from winding_field.flattening.original import make_map
 
     v = np.array([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [1.0, 1.0, 0.0], [0.0, 1.0, 0.0]])
     f = np.array([[0, 1, 2], [0, 2, 3]])
@@ -77,7 +77,7 @@ def test_original_map_preserves_source_geometry():
 
 
 def test_original_frame_and_admission():
-    from winding_field.original_pipeline import frame_coordinates, admit, settings
+    from winding_field.flattening.original_pipeline import frame_coordinates, admit, settings
 
     frame = dict(id="another-scroll", origin_xyz_um=[10.0, 20.0, 30.0], voxel_um=2.0)
     assert np.array_equal(
@@ -90,7 +90,7 @@ def test_original_frame_and_admission():
 
 
 def test_original_tifxyz_readback(tmp_path):
-    from winding_field.original_tifxyz import export_xyz
+    from winding_field.flattening.original_tifxyz import export_xyz
     from PIL import Image
 
     yy, xx = np.mgrid[:12, :12]
@@ -134,7 +134,7 @@ def test_original_tifxyz_readback(tmp_path):
 
 
 def test_original_ct_positive_weight_support():
-    from winding_field.original_recipe import sample_points
+    from winding_field.flattening.original import sample_points
 
     data = np.arange(8, dtype=np.uint8).reshape(2, 2, 2)
 
@@ -156,7 +156,7 @@ def test_original_bundle_resume_and_tamper(tmp_path, monkeypatch):
     from winding_field.field import solve
     from winding_field.meshes import mesh
     from winding_field.io import Volume
-    from winding_field import original_pipeline as pipeline
+    from winding_field.flattening import original_pipeline as pipeline
 
     run = prepared_run(tmp_path / "run")
     solve(run, {"sweeps": 1, "field_chunk": 8})
@@ -249,7 +249,7 @@ def test_original_cli_requires_frame_and_rejects_direct_branch(tmp_path, capsys)
 
 
 def test_external_world_units_and_missing_ct(monkeypatch):
-    from winding_field.original_pipeline import frame_coordinates
+    from winding_field.flattening.original_pipeline import frame_coordinates
 
     frame = dict(id="scan", origin_xyz_um=[8.64, 17.28, 25.92], voxel_um=8.64)
     assert np.allclose(
@@ -259,7 +259,7 @@ def test_external_world_units_and_missing_ct(monkeypatch):
 
 def test_missing_local_ct_is_bound():
     from types import SimpleNamespace
-    from winding_field.original_pipeline import sample_ct
+    from winding_field.flattening.original_pipeline import sample_ct
 
     def absent(key):
         raise FileNotFoundError(key)
@@ -280,7 +280,7 @@ def test_missing_local_ct_is_bound():
 
 
 def test_original_resume_requires_complete_inventory(tmp_path):
-    from winding_field.original_pipeline import verify_level
+    from winding_field.flattening.original_pipeline import verify_level
     from winding_field.util import atomic_json
 
     atomic_json(tmp_path / "LEVEL.json", dict(identity={}, files={}))
@@ -292,7 +292,7 @@ def test_original_resume_requires_complete_inventory(tmp_path):
     "frame", [None, [], {"id": "x", "origin_xyz_um": [0, 0, 0], "voxel_um": True}]
 )
 def test_original_rejects_invalid_frame(frame):
-    from winding_field.original_pipeline import settings
+    from winding_field.flattening.original_pipeline import settings
 
     with pytest.raises(ValueError, match="frame"):
         settings({"output_frame": frame})
@@ -317,7 +317,7 @@ def test_integrated_resume_binds_missing_ct(tmp_path):
 
 def test_original_old_reader_rejected_before_creating_publication_index(tmp_path):
     from types import SimpleNamespace
-    from winding_field.original_pipeline import export_mesh
+    from winding_field.flattening.original_pipeline import export_mesh
     from winding_field.util import atomic_json
 
     out = tmp_path / "old"

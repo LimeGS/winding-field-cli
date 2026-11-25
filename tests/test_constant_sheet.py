@@ -11,16 +11,16 @@ from winding_field.util import atomic_json, file_sha
 
 
 def preparation():
-    assert importlib.util.find_spec("winding_field.sheet_prepare"), (
+    assert importlib.util.find_spec("winding_field.flattening.sheet_prepare"), (
         "installed preparation is missing"
     )
-    from winding_field import sheet_prepare
+    from winding_field.flattening import sheet_prepare
 
     return sheet_prepare
 
 
 def test_render_rejects_old_ct_identity_before_creating_output(tmp_path):
-    from winding_field.sheet_finish import render
+    from winding_field.flattening.sheet_finish import render
 
     source = tmp_path / "validated"
     source.mkdir()
@@ -117,10 +117,10 @@ def test_wrong_w_and_invalid_reference_do_not_publish(tmp_path):
 
 
 def finishing():
-    assert importlib.util.find_spec("winding_field.sheet_finish"), (
+    assert importlib.util.find_spec("winding_field.flattening.sheet_finish"), (
         "installed validation/render is missing"
     )
-    from winding_field import sheet_finish
+    from winding_field.flattening import sheet_finish
 
     return sheet_finish
 
@@ -142,8 +142,8 @@ def test_isotropic_calibration_z_orientation_and_exact_anchor():
 
 
 def native_fixture(prepared, tmp_path, recipe="installed-2f89bfc9"):
-    from winding_field import flatboi_checkpoint as r
-    from winding_field.patch_pipeline import LAUNCHER_SHA, NATIVE_RECIPES
+    from winding_field.flattening import flatboi_checkpoint as r
+    from winding_field.flattening.patches import LAUNCHER_SHA, NATIVE_RECIPES
 
     record, mapped = preparation().load_prepared(prepared)
     root = tmp_path / "native"
@@ -217,7 +217,7 @@ def test_validate_rebinds_source_geometry_and_centerline(tmp_path, recipe):
 def test_installed_stage_dispatch_renders_ct_and_feeds_atlas(tmp_path, capsys):
     finishing()
     from winding_field.cli import main
-    from winding_field.sheet_atlas import query_pixel
+    from winding_field.flattening.sheet_atlas import query_pixel
 
     mesh = extracted(tmp_path)
     cp = tmp_path / "centerline.json"
@@ -321,7 +321,7 @@ def test_installed_stage_dispatch_renders_ct_and_feeds_atlas(tmp_path, capsys):
     assert record["files"].get("ct/ct-chunks.sqlite") == file_sha(sheet / "ct/ct-chunks.sqlite")
     assert (atlas / "sheets/sheet-000/ct/ct-chunks.sqlite").is_file()
     (sheet / "ct/ct-chunks.sqlite").write_bytes(b"changed")
-    from winding_field.sheet_atlas import build_atlas
+    from winding_field.flattening.sheet_atlas import build_atlas
 
     with pytest.raises(ValueError, match="hash"):
         build_atlas([sheet / "SHEET.json"], tmp_path / "bad-ledger")

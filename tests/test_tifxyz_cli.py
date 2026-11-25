@@ -194,7 +194,7 @@ def integrated(tmp_path, request_file, monkeypatch):
         pytest.fail("direct branch entered native mesh/flatten/gallery")
 
     monkeypatch.setattr("winding_field.meshes.mesh", forbidden)
-    monkeypatch.setattr("winding_field.flatten.flatten", forbidden)
+    monkeypatch.setattr("winding_field.flattening.legacy_charts.flatten", forbidden)
     monkeypatch.setattr("winding_field.demo.gallery", forbidden)
     source = synthetic(tmp_path / "ct.zarr")
     root = tmp_path / "run"

@@ -52,7 +52,7 @@ def saved_run(tmp_path, request):
 @pytest.fixture
 def small_raster(monkeypatch):
     pytest.importorskip("igl")
-    from winding_field import original_pipeline as pipeline
+    from winding_field.flattening import original_pipeline as pipeline
 
     raster = pipeline.raster_sheet
 

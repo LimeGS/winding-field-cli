@@ -63,7 +63,7 @@ def test_component_workspace_reduced_on_multiblock_strip():
 
 
 def test_seam_targets_released_before_quality_and_geometry_preserved(tmp_path, monkeypatch):
-    from winding_field import patch_pipeline as p
+    from winding_field.flattening import patches as p
 
     side = 9
     y, x = np.mgrid[:side, :side]

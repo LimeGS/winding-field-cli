@@ -144,7 +144,7 @@ def test_join_rejects_gaps_and_recipe_incompatibility(tmp_path):
 def test_scalar_export_guard_before_ct_or_optional_dependencies(tmp_path, inner):
     r = recipe(tmp_path)
     api().extract_range(r, [-61, -60], tmp_path / "range")
-    from winding_field.original_pipeline import export_mesh
+    from winding_field.flattening.original_pipeline import export_mesh
 
     path = tmp_path / "range" / ("mesh" if inner else "")
     with pytest.raises(ValueError, match="continuous_range"):

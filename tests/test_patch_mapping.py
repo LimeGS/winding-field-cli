@@ -25,7 +25,7 @@ def source():
 
 
 def test_read_level_keeps_large_keys_in_sqlite_and_exact_int64_ids():
-    from winding_field.patch_pipeline import read_level
+    from winding_field.flattening.patches import read_level
 
     reader, ids = source()
     v, f, vi, fi, vk, fk = read_level(reader, 0, memory_gib=0.1)
@@ -42,7 +42,7 @@ def test_read_level_keeps_large_keys_in_sqlite_and_exact_int64_ids():
 
 
 def test_numeric_reads_use_bounded_fetches_without_key_columns():
-    from winding_field.patch_pipeline import read_level
+    from winding_field.flattening.patches import read_level
 
     reader, ids = source()
 
@@ -71,7 +71,7 @@ def test_numeric_reads_use_bounded_fetches_without_key_columns():
 
 
 def test_mapping_reader_preserves_projection_and_legacy_keys(tmp_path):
-    from winding_field.patch_mapping import SourceKeys, write_key_mapping, PatchMapping
+    from winding_field.flattening.patch_mapping import SourceKeys, write_key_mapping, PatchMapping
 
     reader, ids = source()
     root = tmp_path / "v2"
@@ -111,8 +111,8 @@ def test_mapping_reader_preserves_projection_and_legacy_keys(tmp_path):
 
 def test_large_key_export_never_materializes_unicode(tmp_path, monkeypatch):
     from contextlib import contextmanager
-    from winding_field import patch_pipeline as p
-    from winding_field.patch_mapping import SourceKeys, PatchMapping
+    from winding_field.flattening import patches as p
+    from winding_field.flattening.patch_mapping import SourceKeys, PatchMapping
 
     reader, ids = source()
     reader.db.execute("UPDATE vertices SET key=key || ?", ("long-key" * 15000,))
@@ -166,7 +166,7 @@ def test_large_key_export_never_materializes_unicode(tmp_path, monkeypatch):
 
 
 def test_mapping_reader_rejects_fractional_source_ids(tmp_path):
-    from winding_field.patch_mapping import PatchMapping
+    from winding_field.flattening.patch_mapping import PatchMapping
 
     np.savez(
         tmp_path / "map.npz",
@@ -182,8 +182,8 @@ def test_mapping_reader_rejects_fractional_source_ids(tmp_path):
 
 def test_shared_vertex_export_falls_back_before_repeated_key_gather(tmp_path, monkeypatch):
     from contextlib import contextmanager
-    from winding_field import patch_pipeline as p
-    from winding_field.patch_mapping import PatchMapping, SourceKeys
+    from winding_field.flattening import patches as p
+    from winding_field.flattening.patch_mapping import PatchMapping, SourceKeys
 
     reader, _ = source()
     db = reader.db

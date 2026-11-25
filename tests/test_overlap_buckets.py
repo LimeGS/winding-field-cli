@@ -3,7 +3,7 @@ import time
 import numpy as np
 import pytest
 
-import winding_field.flatten as flatten
+import winding_field.flattening.legacy_charts as flatten
 
 
 def mesh(triangles):

@@ -1,4 +1,4 @@
-"""The flattening package layout and its compatibility aliases."""
+"""The flattening package layout; the pre-2.0 top-level module names are gone."""
 
 import importlib
 from pathlib import Path
@@ -32,19 +32,16 @@ ALIASES = {
 
 
 @pytest.mark.parametrize("old,new", sorted(ALIASES.items()))
-def test_old_module_names_are_the_moved_module(old, new, monkeypatch):
+def test_old_module_names_are_gone(old, new):
     moved = importlib.import_module(f"winding_field.flattening.{new}")
-    alias = importlib.import_module(f"winding_field.{old}")
-    assert alias is moved
     assert Path(moved.__file__).parent.name == "flattening"
-    # Monkeypatching through the old name patches the module the code actually uses.
-    monkeypatch.setattr(alias, "_layout_probe", object(), raising=False)
-    assert moved._layout_probe is alias._layout_probe
+    with pytest.raises(ModuleNotFoundError):
+        importlib.import_module(f"winding_field.{old}")
 
 
-def test_old_module_entrypoint_still_runs():
+def test_flattening_module_entrypoint_runs():
     result = subprocess.run(
-        [sys.executable, "-m", "winding_field.patch_continue", "--help"],
+        [sys.executable, "-m", "winding_field.flattening.patch_continue", "--help"],
         capture_output=True,
         text=True,
     )

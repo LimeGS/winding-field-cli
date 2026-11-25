@@ -10,7 +10,7 @@ import pytest
 from PIL import Image
 
 from winding_field import native_render as native
-from winding_field.native_geometry import _schema
+from winding_field.flattening.native_charts import _schema
 from winding_field.native_store import Journal, Paused
 
 

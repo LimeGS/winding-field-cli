@@ -11,9 +11,9 @@ import numpy as np
 from PIL import Image
 
 from winding_field.io import Volume
-from winding_field.flatten import cross2
+from winding_field.flattening.legacy_charts import cross2
 from winding_field.native_ct_sampling import NativeCTSampler
-from winding_field.original_recipe import raster_sheet
+from winding_field.flattening.original import raster_sheet
 from winding_field.util import atomic_json, digest, file_sha
 from bench_flattening import case_arrays, locked, read_json, safe, seal, verify
 

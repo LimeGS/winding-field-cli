@@ -24,9 +24,10 @@ fields, frozen inspection cases and custom geometry integrations.
 | Read supported fields from Python | `winding_field.surface_sources` |
 
 Each command also works as `python -m winding_field.<module_name>`; replace
-hyphens with underscores. `patch-visuals`, for example, uses
-`winding_field.patch_visuals`. `patch_check.evaluate_patch`, `sample_field` and
-`load_patch` remain numerical-library APIs.
+hyphens with underscores. Flattening tools live in the `flattening` package:
+`patch-visuals`, for example, is `winding_field.flattening.patch_visuals`.
+`patch_check.evaluate_patch`, `sample_field` and `load_patch` remain numerical-library
+APIs.
 
 Implementation-bound resumes made with the old packages require those packages;
 otherwise use a new output directory. This migration does not rewrite old receipts.

@@ -37,7 +37,7 @@ def plane_bundle(tmp_path, nx=5, ny=4, copies=1):
 def test_global_plane_preserves_every_face_and_shared_seams(tmp_path):
     from winding_field.surface_mesh import MeshReader
     from winding_field.native_store import Journal
-    from winding_field.native_geometry import flatten_mesh, assemble
+    from winding_field.flattening.native_charts import flatten_mesh, assemble
 
     with (
         MeshReader(plane_bundle(tmp_path)) as reader,
@@ -73,7 +73,7 @@ def test_global_plane_preserves_every_face_and_shared_seams(tmp_path):
 
 
 def test_overlap_predicate_catches_long_slivers_but_not_boundary_contacts():
-    from winding_field.flatten import overlap_pairs
+    from winding_field.flattening.legacy_charts import overlap_pairs
 
     uv = np.array(
         [
@@ -94,7 +94,7 @@ def test_overlap_predicate_catches_long_slivers_but_not_boundary_contacts():
 def test_large_seam_graph_does_not_rescan_every_edge_per_chart(tmp_path):
     from winding_field.surface_mesh import MeshReader
     from winding_field.native_store import Journal
-    from winding_field.native_geometry import flatten_mesh, assemble
+    from winding_field.flattening.native_charts import flatten_mesh, assemble
 
     with (
         MeshReader(plane_bundle(tmp_path, nx=33, ny=33)) as reader,
@@ -119,7 +119,7 @@ def test_large_seam_graph_does_not_rescan_every_edge_per_chart(tmp_path):
 def test_disconnected_components_remain_separate(tmp_path):
     from winding_field.surface_mesh import MeshReader
     from winding_field.native_store import Journal
-    from winding_field.native_geometry import flatten_mesh, assemble
+    from winding_field.flattening.native_charts import flatten_mesh, assemble
 
     with (
         MeshReader(plane_bundle(tmp_path, copies=2)) as reader,
@@ -135,7 +135,7 @@ def test_cancelled_flatten_resumes_without_replacing_committed_charts(tmp_path):
     import pytest
     from winding_field.surface_mesh import MeshReader
     from winding_field.native_store import Journal, Paused
-    from winding_field.native_geometry import flatten_mesh, assemble
+    from winding_field.flattening.native_charts import flatten_mesh, assemble
 
     source = plane_bundle(tmp_path)
     with (
@@ -164,7 +164,7 @@ def test_cancelled_flatten_resumes_without_replacing_committed_charts(tmp_path):
 def test_rotated_planar_patch_overlap_validation_has_bounded_cpu_work():
     import signal
     import pytest
-    from winding_field.flatten import overlap_pairs
+    from winding_field.flattening.legacy_charts import overlap_pairs
 
     if not hasattr(signal, "ITIMER_VIRTUAL"):
         pytest.skip("CPU timer unavailable")
@@ -189,7 +189,7 @@ def test_rotated_planar_patch_overlap_validation_has_bounded_cpu_work():
 
 
 def test_thin_planar_chart_preserves_native_area():
-    from winding_field.native_geometry import _pieces
+    from winding_field.flattening.native_charts import _pieces
 
     v = np.array([[0.0, 0.0, 0.0], [1e6, 0.0, 0.0], [0.0, 1e-4, 0.0], [1e6, 1e-4, 0.0]])
     f = np.array([[0, 1, 2], [1, 3, 2]])
@@ -204,7 +204,7 @@ def test_thin_planar_chart_preserves_native_area():
 
 
 def test_recursive_face_halves_are_reconnected_before_parameterization():
-    from winding_field.native_geometry import _pieces, _validate
+    from winding_field.flattening.native_charts import _pieces, _validate
 
     vertices = np.array(
         [
@@ -237,7 +237,7 @@ def test_recursive_face_halves_are_reconnected_before_parameterization():
 
 
 def test_point_contacts_do_not_make_one_parameterization_chart():
-    from winding_field.native_geometry import _pieces
+    from winding_field.flattening.native_charts import _pieces
 
     v = np.array(
         [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [-1.0, 0.0, 0.0], [0.0, -1.0, 0.0]]
@@ -251,7 +251,7 @@ def test_point_contacts_do_not_make_one_parameterization_chart():
 
 
 def test_connected_planar_piece_keeps_its_geometry_ids_and_uv():
-    from winding_field.native_geometry import _pieces
+    from winding_field.flattening.native_charts import _pieces
 
     v = np.array([[0.0, 0.0, 0.0], [4.0, 0.0, 0.0], [0.0, 2.0, 0.0], [4.0, 2.0, 0.0]])
     f = np.array([[0, 1, 2], [1, 3, 2]])
@@ -277,7 +277,7 @@ def test_real_disconnected_failed_chart_retains_every_source_face():
     import pytest
 
     pytest.importorskip("igl")
-    from winding_field.native_geometry import _pieces, _validate
+    from winding_field.flattening.native_charts import _pieces, _validate
 
     root = os.environ.get("WINDING_NATIVE_PIECES_PROOF")
     if not root:
@@ -313,7 +313,7 @@ def test_real_disconnected_failed_chart_retains_every_source_face():
 
 
 def test_overlap_is_invariant_to_large_uv_translation():
-    from winding_field.flatten import overlap_pairs
+    from winding_field.flattening.legacy_charts import overlap_pairs
 
     uv = np.array([[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]]) + 1e8
     assert overlap_pairs(uv, np.array([[0, 1, 2], [0, 1, 2]])) == 1
@@ -324,7 +324,7 @@ def test_optional_libigl_lscm_keeps_curved_strip_geometry():
 
     pytest.importorskip("igl")
     from test_meshes import curved_strip
-    from winding_field.native_geometry import _lscm
+    from winding_field.flattening.native_charts import _lscm
 
     v, f = curved_strip()
     uv, quality = _lscm(v, f)
@@ -441,7 +441,7 @@ def test_failed_cotangent_seam_recovers_with_exact_targets_and_unchanged_gates()
     import pytest
 
     pytest.importorskip("igl")
-    from winding_field.native_geometry import weld, _validate
+    from winding_field.flattening.native_charts import weld, _validate
 
     vertices, faces, uv, fixed, target = failed_seam_chart()
     _validate(vertices, faces, uv)
@@ -455,7 +455,7 @@ def test_weld_fallback_does_not_accept_collapsed_or_infeasible_seams():
     import pytest
 
     pytest.importorskip("igl")
-    from winding_field.native_geometry import weld
+    from winding_field.flattening.native_charts import weld
 
     vertices, faces, uv, fixed, target = failed_seam_chart()
     stretched = target.copy()
@@ -467,17 +467,17 @@ def test_weld_fallback_does_not_accept_collapsed_or_infeasible_seams():
 
 def test_failed_weld_stays_rejected_without_optional_solver(monkeypatch):
     import pytest
-    from winding_field.native_geometry import weld
+    from winding_field.flattening.native_charts import weld
 
     vertices, faces, uv, fixed, target = failed_seam_chart()
-    monkeypatch.setattr("winding_field.native_geometry._solver", lambda: None)
+    monkeypatch.setattr("winding_field.flattening.native_charts._solver", lambda: None)
     with pytest.raises(ValueError, match="inverted or overlapping"):
         weld(uv, faces, fixed, target, vertices)
 
 
 def test_valid_cotangent_weld_does_not_invoke_slim(monkeypatch):
     import pytest
-    from winding_field.native_geometry import weld
+    from winding_field.flattening.native_charts import weld
 
     uv = np.array([[0.0, 0.0], [1.0, 0.0], [0.0, 1.0], [1.0, 1.0]])
     faces = np.array([[0, 1, 2], [1, 3, 2]])
@@ -485,7 +485,7 @@ def test_valid_cotangent_weld_does_not_invoke_slim(monkeypatch):
     fixed = np.array([0, 1])
     target = uv[fixed] + [3.0, 4.0]
     monkeypatch.setattr(
-        "winding_field.native_geometry._solver", lambda: pytest.fail("unnecessary SLIM")
+        "winding_field.flattening.native_charts._solver", lambda: pytest.fail("unnecessary SLIM")
     )
     result, _ = weld(uv, faces, fixed, target, vertices)
     np.testing.assert_allclose(result, uv + [3.0, 4.0], atol=1e-12)
@@ -494,7 +494,7 @@ def test_valid_cotangent_weld_does_not_invoke_slim(monkeypatch):
 def test_assembly_rejects_contradictory_shared_vertex_targets(tmp_path):
     from winding_field.surface_mesh import MeshReader
     from winding_field.native_store import Journal
-    from winding_field.native_geometry import flatten_mesh, assemble
+    from winding_field.flattening.native_charts import flatten_mesh, assemble
 
     with (
         MeshReader(plane_bundle(tmp_path)) as reader,
@@ -527,7 +527,7 @@ def test_assembly_rejects_contradictory_shared_vertex_targets(tmp_path):
 
 def test_coupled_recovery_is_lazy_and_publishes_only_the_child(tmp_path, monkeypatch):
     import pytest
-    import winding_field.native_geometry as geometry
+    import winding_field.flattening.native_charts as geometry
     from winding_field.surface_mesh import MeshReader
     from winding_field.native_store import Journal, Paused
 
@@ -588,7 +588,7 @@ def frozen_coupled_store(tmp_path):
     import sqlite3
     import pytest
     from winding_field.native_store import Journal
-    from winding_field.native_geometry import _schema, _queue
+    from winding_field.flattening.native_charts import _schema, _queue
 
     source = os.environ.get("WINDING_NATIVE_COUPLED_PROOF")
     if not source:
@@ -634,7 +634,7 @@ def test_frozen_child_recovers_with_immutable_parent_and_stop_resume(tmp_path, m
     import pytest
 
     igl = pytest.importorskip("igl")
-    import winding_field.native_geometry as geometry
+    import winding_field.flattening.native_charts as geometry
     from winding_field.native_store import Journal, Paused
     from winding_field.util import file_sha
 
@@ -698,7 +698,7 @@ def coupled_triangles():
 
 def test_coupled_seed_rejects_oversized_or_conflicting_sources_before_solver(monkeypatch):
     import pytest
-    import winding_field.native_geometry as geometry
+    import winding_field.flattening.native_charts as geometry
 
     monkeypatch.setattr(geometry, "_solver", lambda: pytest.fail("invalid patch reached solver"))
     for invalid in ("oversized", "unused-vertices", "xyz", "face-ids", "outer-targets"):
@@ -721,7 +721,7 @@ def test_coupled_seed_rejects_oversized_or_conflicting_sources_before_solver(mon
 def test_coupled_seed_bounds_iterations_and_rejects_unqualified_phases(monkeypatch):
     from types import SimpleNamespace
     import pytest
-    import winding_field.native_geometry as geometry
+    import winding_field.flattening.native_charts as geometry
     from winding_field.native_store import Paused
 
     for mode in ("valid", "invalid-merged", "invalid-child", "invalid-initial", "stop"):

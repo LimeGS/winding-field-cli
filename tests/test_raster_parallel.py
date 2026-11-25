@@ -1,7 +1,7 @@
 import threading
 import numpy as np
 import pytest
-from winding_field import patch_pipeline as p
+from winding_field.flattening import patches as p
 
 
 def mapped_square():

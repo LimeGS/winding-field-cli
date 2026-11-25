@@ -6,7 +6,6 @@ The underlying gate's exit 0 can mean UNMEASURED, so inspect its receipt.
 """
 
 import argparse
-import hashlib
 import json
 import subprocess
 import sys
@@ -19,12 +18,9 @@ import tifffile
 from dataset_config import frame as validate_frame
 from dataset_config import positive
 
+from .util import file_sha as sha
+
 TOOLS = ("helena_tifxyz_geometry_gate.py", "helena_audit_mesh_integrity.py")
-
-
-def sha(path):
-    with open(path, "rb") as stream:
-        return hashlib.file_digest(stream, "sha256").hexdigest()
 
 
 def save_json(path, value):
