@@ -2,10 +2,10 @@
   "origin": "https://github.com/LimeGS/winding-field",
   "distribution": "winding-field",
   "version": "1.7.0",
-  "revision": "b16d4002dd47e9c30d6392e64666f9406855dc2e",
-  "install_url": "git+https://github.com/LimeGS/winding-field@b16d4002dd47e9c30d6392e64666f9406855dc2e",
+  "revision": "b81f47deb1cdac94d8b92824c4c43aa10ec7d535",
+  "install_url": "git+https://github.com/LimeGS/winding-field@b81f47deb1cdac94d8b92824c4c43aa10ec7d535",
   "verification": "git commit object id plus source_sha256, checked after install by tools/install-runtime.sh",
-  "changes": "Core branch for LimeGS/winding-field#21 (version label still 1.7.0): adds solve_blocks(coarse_factor=F), an out-of-core trilinear Galerkin coarse correction before every sweep (field_block_coarse.py, recorded in the block identity only when set) and StencilConstraints template exterior terms (constraint_templates.py); also everything of LimeGS/winding-field#20 (preconditioner='amg', field_schwarz.py). Identities and checkpoints without coarse_factor unchanged",
+  "changes": "Core branch for LimeGS/winding-field#21 (version label still 1.7.0): adds solve_blocks(coarse_factor=F), an out-of-core trilinear Galerkin coarse correction before every sweep (field_block_coarse.py, recorded in the block identity only when set) and StencilConstraints template exterior terms (constraint_templates.py); solve_blocks(checkpoint='sweep', memory_report=...) with BlockStore(write_back=True) background per-sweep flushes, and the host-memory tier plan field_memory.py (execution choices, not identity); also everything of LimeGS/winding-field#20 (preconditioner='amg', field_schwarz.py). Identities and checkpoints without coarse_factor unchanged",
   "migrated_workflows": {
     "revision": "baf8052ed7115bddd8cbba08b3197ea31695ac4b",
     "changes": "moved to winding_field with tests, examples and wrappers; package imports, prepared command routing and module-based supervised launch",
@@ -32,9 +32,9 @@
     }
   },
   "source_sha256": {
-    "field_store.py": "5b2ef1b8fbfb9fd80b1725985ad4a94d0ac500d3776a0d8ab4c9942e031dd35b",
+    "field_store.py": "43489d4a2b5bfdedeca3d60858c5b3f9d0eec9cc2413ded770be389a437532cc",
     "field_runtime.py": "1d0ad1f0346c12daab3e8c9fdcc4ee16eba6f6d9d3a6dd24c7dc9b9dc549cd45",
-    "block_solver.py": "27c0c8b364b659098f52df6eb676737745d5b3b1aaec67041e22ff9290d8fc72",
+    "block_solver.py": "14aa7c14d49b1c1102f68aa7ceaeff5c143e7125da8b8c772a80d49931dd6636",
     "field_solver.py": "b1e973a1346fd2bed13dd0ef03e1978a34950a6de6cb2a2977e7f2270fbb0c1e",
     "field_prefetch.py": "3ac983503f5a41661302b0cdd2a0b8526e5a96e86c201e10a18081bd00cb84f8",
     "field_constraints.py": "71065fb4f0b5c03d689d2b5514c34a8551398dc5801e3def2d571152a162d84a",
@@ -42,6 +42,7 @@
     "constraint_templates.py": "ace5d045dca1cac49ff04e3f1382ded773ed3868109d6c4ee96af5069c6b442a",
     "field_observations.py": "be10f03b4bcf07f5b5b43bfcdd382701b843a3ee6516a7beefa0c724f66a249e",
     "field_amg.py": "d3f4763c75940ae44c13f229b9fdd3641e42d9963a3013a905976412038a0b5c",
-    "field_block_coarse.py": "59b9757087a506c7926794e8b7364ba5f55c42908b888ded24bfc8dca81d6eeb"
+    "field_block_coarse.py": "9641e4002b120c41cc7f586e206e8180a34a8642af507030b9f0d8f44b15ed60",
+    "field_memory.py": "3df151fdc1ae165e72b170c386a21f8a63276ccb4ef68b06f028138b188c452d"
   }
 }

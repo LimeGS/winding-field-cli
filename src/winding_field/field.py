@@ -4,6 +4,7 @@ import io
 import itertools
 import json
 import math
+import sys
 import time
 from pathlib import Path
 import sqlite3
@@ -310,6 +311,43 @@ def _constraint_rows(
     )
 
 
+def memory_plan(config, shape, chunk, halo, *, convergence=False, available=None):
+    """Host-memory tier for this solve (``field_memory``: auto, disk, field or all).
+
+    Configured cache budgets count as workspace. Sweep checkpoints are not used with
+    field advice or automatic convergence, which read the checkpoint at block
+    boundaries; the field and observations are still cached.
+    """
+    from field_memory import plan_memory
+
+    tier = config.get("field_memory", "auto")
+    if tier not in MEMORY_TIERS:
+        raise ValueError("field_memory must be auto, disk, field or all")
+    workspace = sum(
+        config.get(name, 0) or 0
+        for name in ("prepared_cache_bytes", "constraint_cache_bytes", "field_cpu_buffer_bytes")
+    )
+    plan = plan_memory(
+        shape,
+        chunk,
+        halo,
+        tier=tier,
+        workspace_bytes=workspace,
+        **({} if available is None else {"available": available}),
+    )
+    if plan["checkpoint"] == "sweep" and (convergence or config.get("field_advice")):
+        plan.update(
+            checkpoint="block",
+            note="block checkpoints: "
+            + ("automatic convergence" if convergence else "field advice")
+            + " reads the checkpoint at every block boundary",
+        )
+    return plan
+
+
+MEMORY_TIERS = ("auto", "disk", "field", "all")
+
+
 def solve(run, config, stop=None, *, sweep_target=None, convergence=None):
     validate_field_cpu(config, convergence=convergence is not None)
     from .field_advice import observer_options, require_observer, record_verification, finish
@@ -446,6 +484,19 @@ def solve(run, config, stop=None, *, sweep_target=None, convergence=None):
     if status_policy != "all":
         # Execution choice, not checkpoint identity: STATUS fsyncs only at checkpoints.
         options["status_policy"] = status_policy
+    memory = memory_plan(config, shape, chunk, options["halo"], convergence=convergence is not None)
+    if "field_cache_bytes" not in config:
+        field_cache_bytes = max(field_cache_bytes, memory["field_cache_bytes"])
+        options["cache_bytes"] = field_cache_bytes
+    if "observation_cache_bytes" not in config:
+        observation_budget = memory["observation_cache_bytes"]
+    memory.update(field_cache_bytes=field_cache_bytes, observation_cache_bytes=observation_budget)
+    if memory["checkpoint"] != "block":
+        # Execution choice, not checkpoint identity: may differ on another host or resume.
+        options["checkpoint"] = memory["checkpoint"]
+    options["memory_report"] = memory
+    if memory["warning"]:
+        print(f"[field] WARNING: {memory['warning']}", file=sys.stderr, flush=True)
     if bounded:
         options["max_bytes"] = config.get("bounded_bytes", 12 << 30) // 8
     prior = None

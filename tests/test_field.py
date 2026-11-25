@@ -768,3 +768,48 @@ def test_field_coarse_factor_is_part_of_the_problem_and_cuts_the_error(tmp_path)
         solve(
             one_run, dict(sweeps=2, field_chunk=8, field_coarse_factor=4, rtol=1e-10, maxiter=10000)
         )
+
+
+def test_field_memory_tiers_give_the_same_field_and_are_reported(tmp_path):
+    from winding_field.config import validate_config
+    from winding_field.field import memory_plan, open_field, solve
+
+    for tier in ("auto", "disk", "field", "all"):
+        validate_config(dict(field_memory=tier))
+    with pytest.raises(ValueError, match="field_memory"):
+        validate_config(dict(field_memory="ram"))
+
+    gib = 1 << 30
+    shape = (1000, 1000, 1000)
+    assert memory_plan({}, shape, 64, 8, available=2 * gib)["tier"] == "disk"
+    assert memory_plan({}, shape, 64, 8, available=2 * gib)["warning"]
+    assert memory_plan({}, shape, 64, 8, available=12 * gib)["tier"] == "field"
+    assert memory_plan({}, shape, 64, 8, available=60 * gib)["tier"] == "all"
+    # Configured caches count as workspace and can push a host down a tier.
+    busy = dict(prepared_cache_bytes=40 * gib)
+    assert memory_plan(busy, shape, 64, 8, available=60 * gib)["tier"] == "field"
+    advised = memory_plan(dict(field_advice=True), shape, 64, 8, available=60 * gib)
+    assert advised["tier"] == "all" and advised["checkpoint"] == "block" and advised["note"]
+
+    def field_after(name, **config):
+        run = prepared_run(tmp_path / name, shape=(6, 6, 32), chunk=8, variable=True)
+        result = solve(run, dict(config, sweeps=2, field_chunk=8, rtol=1e-10, maxiter=10000))
+        assert result["status"] == "FIELD_READY"
+        status = json.loads((run / "field/STATUS.json").read_bytes())
+        with open_field(run) as source:
+            values, _ = source.read([0, 0, 0], [6, 6, 32])
+        return status, values
+
+    reference, expected = field_after("disk", field_memory="disk")
+    assert reference["memory"]["tier"] == "disk"
+    assert reference["checkpoint_policy"]["policy"] == "block"
+    for tier in ("field", "all"):
+        status, values = field_after(tier, field_memory=tier)
+        np.testing.assert_array_equal(values, expected)
+        assert status["memory"]["tier"] == tier and status["memory"]["requested"] == tier
+        assert status["checkpoint_policy"]["policy"] == "sweep"
+        assert status["checkpoint_policy"]["pending_chunks"] == 0
+        assert status["memory"]["field_cache_bytes"] >= status["memory"]["field_bytes"]
+    status, _ = field_after("auto")
+    assert status["memory"]["requested"] == "auto"
+    assert status["memory"]["tier"] in ("disk", "field", "all")

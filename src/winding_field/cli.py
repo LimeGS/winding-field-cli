@@ -381,6 +381,15 @@ def main(argv=None):
             help="decoded field-checkpoint chunk cache for block solves (default: 64 MiB); not a total RSS cap",
         )
         p.add_argument(
+            "--field-memory",
+            choices=("auto", "disk", "field", "all"),
+            default=argparse.SUPPRESS,
+            help="host RAM use of the field solve (default auto: measured at start). disk: read and "
+            "write every block on disk; field: keep the whole field in RAM and checkpoint once per "
+            "sweep in the background, spending what is left on observations; all: field and every "
+            "block's observations in RAM. Explicit --field-cache-bytes/--observation-cache-bytes win",
+        )
+        p.add_argument(
             "--field-cpu-workers",
             type=int,
             default=0,
