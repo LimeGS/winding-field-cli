@@ -707,12 +707,14 @@ def _plan_args(tmp_path, coarse, *extra):
     )  # fmt: skip
 
 
-def test_auto_plan_solves_tiles_above_the_floor_with_amg(tmp_path, monkeypatch):
+def test_auto_preconditioner_solves_tiles_above_the_floor_with_amg(tmp_path, monkeypatch):
     from winding_field import workflow
 
     monkeypatch.setattr(workflow, "open_volume", lambda config: _FakeVolume())
     coarse = write_coarse(tmp_path / "coarse")
-    scroll.plan(_plan_args(tmp_path, coarse, "--gpu-memory-gib", "8"))
+    scroll.plan(
+        _plan_args(tmp_path, coarse, "--gpu-memory-gib", "8", "--tile-preconditioner", "auto")
+    )
     document = json.loads((tmp_path / "plan/TILES.json").read_text())
     assert document["tile_memory"]["preconditioner"] == "amg"
     run_args = document["run_args"]
@@ -725,7 +727,9 @@ def test_fixed_tiles_use_jacobi_unless_amg_is_forced(tmp_path, monkeypatch):
 
     monkeypatch.setattr(workflow, "open_volume", lambda config: _FakeVolume())
     coarse = write_coarse(tmp_path / "coarse")
-    scroll.plan(_plan_args(tmp_path, coarse, "--tile-nodes", "128"))
+    scroll.plan(
+        _plan_args(tmp_path, coarse, "--tile-nodes", "128", "--tile-preconditioner", "auto")
+    )
     document = json.loads((tmp_path / "plan/TILES.json").read_text())
     assert document["tile_memory"] is None and "--preconditioner" not in document["run_args"]
     forced = tmp_path / "forced"

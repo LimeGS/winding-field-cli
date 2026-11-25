@@ -145,12 +145,14 @@ GPU_USABLE = 0.85
 # One block per tile: the solver settings the 34.56 um tiles were measured with.
 ONE_BLOCK_RUN_ARGS = ("--rtol", "1e-7", "--maxiter", "50000", "--nonconvergence-policy", "continue")
 # AMG (smoothed aggregation, built on the solve device) adds its hierarchy to the Jacobi
-# footprint. A real 192^3 PHerc0175A tile peaked at 4.37 GB on the GTX 1660 (before a 2x
-# COO transient was removed from the setup); this term keeps the model above that peak.
-# On that tile AMG needed 41 CG iterations instead of Jacobi's 2,888 (7.8 s vs 18.3 s), and
-# Jacobi's iterations grow with the tile (6,972 at 256^3) while AMG's barely do.
+# footprint. Measured on a real 192^3 PHerc0175A tile (fibre weight 1000, one block, rtol
+# 1e-7, GTX 1660): AMG peaked at 620 bytes per node on the GPU and 1,386 on the host
+# (Jacobi: 183 and 415), and needed 618 CG iterations against Jacobi's 5,586, but each
+# V-cycle iteration costs ~12x a Jacobi one: 196 s of solve against 142 s. Strong fibre
+# pairs weaken the aggregation (41 iterations on a 128^3 tile with weak fibres), so Jacobi
+# is the default and AMG stays opt-in (--tile-preconditioner auto or amg).
 AMG_HIERARCHY_BYTES_PER_NODE = 350.0
-# Below this tile edge the AMG setup is not paid back: smaller tiles use Jacobi.
+# Below this tile edge the AMG setup is not paid back: auto uses Jacobi for smaller tiles.
 AMG_MIN_TILE_NODES = 192
 TILE_PRECONDITIONERS = ("auto", "amg", "jacobi")
 
@@ -1810,10 +1812,11 @@ def _parser():
     p.add_argument(
         "--tile-preconditioner",
         choices=TILE_PRECONDITIONERS,
-        default="auto",
-        help="auto (default): with --tile-nodes auto, AMG on the largest tile that fits the "
-        f"GPU, down to {AMG_MIN_TILE_NODES} nodes per axis, else Jacobi; fixed --tile-nodes "
-        "(64-node blocks) use Jacobi. amg or jacobi force one",
+        default="jacobi",
+        help="jacobi (default); auto: with --tile-nodes auto, AMG on the largest tile that "
+        f"fits the GPU down to {AMG_MIN_TILE_NODES} nodes per axis, else Jacobi; amg forces "
+        "AMG. AMG needs ~3.4x the GPU and host memory of Jacobi and was slower with strong "
+        "fibres (docs/SCROLL.md)",
     )
     p.add_argument(
         "--overlap-nodes",
