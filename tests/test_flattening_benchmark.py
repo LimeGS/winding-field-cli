@@ -624,7 +624,13 @@ def test_175a_legacy_requires_saved_job_map(bench, tmp_path):
 
 @pytest.mark.parametrize(
     "name",
-    ["native_global", "native_mesh", "native_cache_index", "flattening.obj", "flattening.topology"],
+    [
+        "flattening.native_sheet",
+        "native_mesh",
+        "native_cache_index",
+        "flattening.obj",
+        "flattening.topology",
+    ],
 )
 def test_identity_binds_consumed_project_implementations(bench, tmp_path, monkeypatch, name):
     module = importlib.import_module("winding_field." + name)

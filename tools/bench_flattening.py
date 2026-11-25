@@ -688,6 +688,8 @@ def tool_identity():
     from importlib import import_module
     from importlib.metadata import version
 
+    from winding_field.flattening import module_file
+
     modules = (
         "native_global",
         "flattening_matrix",
@@ -724,9 +726,7 @@ def tool_identity():
                 "flattening_review",
             )
         },
-        implementations={
-            name: file_sha(import_module("winding_field." + name).__file__) for name in modules
-        },
+        implementations={name: file_sha(module_file(name)) for name in modules},
         numerical_store=file_sha(import_module("field_store").__file__),
         runtime={
             name: version(name) for name in ("numpy", "scipy", "libigl", "Pillow", "vc-reader")

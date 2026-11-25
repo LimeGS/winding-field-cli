@@ -22,14 +22,30 @@ Modules:
 from pathlib import Path
 
 
-# Patch receipts key their kernel hashes by the module names in use before this package
-# existed; the keys stay stable and resolve to the module that now holds that code.
+# Receipts and benchmark identities key implementation hashes by the module names used
+# before this package existed; the keys stay stable and resolve to the module that now
+# holds that code.
 KERNEL_MODULES = {
-    "patch_pipeline": "flattening.patches",
-    "patch_mapping": "flattening.patch_mapping",
-    "original_recipe": "flattening.original",
+    "constant_sheet": "flattening.constant_sheet",
+    "flatboi_checkpoint": "flattening.flatboi_checkpoint",
+    "flatten": "flattening.legacy_charts",
+    "flattening_matrix": "flattening.matrix",
+    "matrix_pipeline": "flattening.matrix_pipeline",
+    "native_geometry": "flattening.native_charts",
+    "native_global": "flattening.native_sheet",
     "original_pipeline": "flattening.original_pipeline",
+    "original_recipe": "flattening.original",
     "original_tifxyz": "flattening.original_tifxyz",
+    "patch_continue": "flattening.patch_continue",
+    "patch_mapping": "flattening.patch_mapping",
+    "patch_pipeline": "flattening.patches",
+    "patch_visuals": "flattening.patch_visuals",
+    "run_sheet_export": "flattening.run_sheet_export",
+    "sheet_atlas": "flattening.sheet_atlas",
+    "sheet_atlas_verify": "flattening.sheet_atlas_verify",
+    "sheet_atlas_view": "flattening.sheet_atlas_view",
+    "sheet_finish": "flattening.sheet_finish",
+    "sheet_prepare": "flattening.sheet_prepare",
 }
 
 
