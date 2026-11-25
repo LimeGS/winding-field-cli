@@ -7,7 +7,7 @@ from functools import partial
 
 import pytest
 
-from test_io import served
+from test_io import served  # noqa: F401 (pytest fixtures)
 
 
 @pytest.fixture(autouse=True)

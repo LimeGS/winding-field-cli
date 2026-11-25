@@ -6,10 +6,36 @@ into a single field that the existing mesh and render commands read. Every tile 
 ordinary `winding-field run`; nothing here changes how a tile is solved.
 
 ```text
-coarse run ──► scroll plan ──► scroll tiles ──► scroll merge ──► prepared mesh ──► scroll render-ct
- (prior)        TILES.json      tiles/<id>/       MERGED/          per W level       CT at full pitch
-                fibres/<id>.afv                   field/, LEVELS.json
+scroll counted-density ──► coarse run ──► scroll plan ──► scroll tiles ──► scroll merge ──► prepared mesh ──► scroll render-ct
+ counted.lasagna.json       (prior)        TILES.json      tiles/<id>/       MERGED/          per W level       CT at full pitch
+                                           fibres/<id>.afv                   field/, LEVELS.json
 ```
+
+## 0. Sheet density counted on Lasagna `cos`
+
+```sh
+wf scroll counted-density --lasagna-input /data/lasagna/input.lasagna.json \
+  --bounds 1488 11488 2144 8608 992 8704 --output /outputs/counted
+```
+
+Every later stage takes `/outputs/counted/counted.lasagna.json` as `--lasagna-input`.
+
+**Why.** Lasagna's `grad_mag` is a learned sheet frequency. On PHerc0175A it reads
+1.4-1.7 times the sheets that are there (median 1.57 against the `cos` channel; `cos`
+itself matches CT in 23 of 23 checked regions), and fields solved with it count that
+many windings: their level surfaces cross a sheet every few millimetres. The October 2026
+PHerc0175A fields counted sheets on the sheet mask instead, and their meshes stay on one
+sheet where the sheets are ordered. This command is that recipe, unchanged: threshold
+`cos` at mid-grey, structure-tensor normals of the mask, mask crossings one voxel along
+the normal on both sides (x 1/4), Gaussian 6 voxels; planar sheets of period 16 return
+1/16 within 2 %. It writes `grad_mag`/`nx`/`ny` on the `cos` grid (17.28 µm for
+PHerc0175A) and a copy of the manifest pointing at them; `cos` is kept.
+
+On a 5 mm PHerc0175A pilot (34.56 µm, one block): 0.99 field units per sheet instead of
+1.70. `--bounds` are level-0 voxels; tiles of `--tile` cos voxels (default 192) are
+computed on the GPU with a 40-voxel halo, tiles with less than `--min-fill` nonzero `cos`
+are skipped, and a rerun continues. `--part K N` splits the tiles between processes
+(one per GPU); the last part to finish writes the manifest.
 
 ## 1. Coarse field (the prior)
 
@@ -20,8 +46,29 @@ level-2 tiles). A 138.24 µm coarse field at level 2 is stride 4:
 ```sh
 wf run --source "$CT" --voxel-um 8.64 --level 2 --stride 4 --field-spacing-um 138.24 \
   --fibres /data/scroll.afv --lasagna-input /data/lasagna/input.lasagna.json \
-  --sweeps 32 --until field --output /outputs/coarse
+  --field-chunk 640 --sweeps 1 --rtol 1e-7 --maxiter 50000 --until field \
+  --output /outputs/coarse
 ```
+
+**Solve the coarse as one block** (`--field-chunk` at least the largest grid dimension,
+one sweep): the merge takes every scale above `--coarse-sigma-mm` from it, so an
+unconverged coarse puts the wrong winding count into the whole scroll. Blocks exchange
+information only through their overlap, and with the default 2-node halo a whole-scroll
+coarse does not converge. Measured on PHerc0175A (625 × 404 × 482 nodes) against the
+one-block solution, after removing the constant offset:
+
+| Coarse | Median \|dW\| | p99 | Nodes over half a winding |
+|---|---|---|---|
+| 12 blocks of 256, halo 2, 8 sweeps | 10.98 | 65.9 | 97 % |
+| halo 32 (`--field-halo 32`), 8 sweeps | 1.57 | 3.04 | 86 % |
+| halo 32, 16 sweeps | 0.38 | 0.62 | 16 % |
+| one block | 0 (reference) | | |
+
+The per-sweep change does not show this (halo 32, sweep 16: 0.148). One block needs GPU
+memory for the whole system in float64, about 121 bytes per node plus about 419 bytes per
+fibre constraint row (~50 GB here; 19 min on a 96 GB GPU). Operational scripts and the
+other measured pitfalls of a whole-scroll run are in
+[tools/scroll](../tools/scroll/README.md).
 
 ## 2. Plan
 
@@ -29,15 +76,17 @@ wf run --source "$CT" --voxel-um 8.64 --level 2 --stride 4 --field-spacing-um 13
 wf scroll plan --source "$CT" --voxel-um 8.64 --level 2 --field-spacing-um 34.56 \
   --coarse /outputs/coarse --fibres /data/scroll.afv \
   --lasagna-input /data/lasagna/input.lasagna.json \
-  --tile-nodes 512 --overlap-nodes 64 --output /outputs/plan
+  --gpu-memory-gib 80 --output /outputs/plan
 ```
 
 - **One global grid.** The field spacing must be a whole multiple of the selected CT
   level's spacing (34.56 µm is 4 × 8.64 at level 0 and 1 × 34.56 at level 2). Tile ROIs
   start on that grid, so every tile's nodes coincide with the global nodes.
 - **Tiles.** Cores of `--tile-nodes` partition each axis; each tile adds
-  `--overlap-nodes` on interior sides. Both are multiples of 64 (the field chunk), so a
-  tile chunk is exactly one merged chunk.
+  `--overlap-nodes` (default 32, a multiple of 16) on interior sides. Cores are
+  multiples of 64 (the field chunk); the merge reads tiles at any node offset. 32 nodes
+  per side (1.1 mm) is twice the overlap the 22 mm PHerc0175A box was joined with
+  (0.14 sheets median); 64 needs ~1.7x the node solves.
 - **Skipped tiles.** Tiles whose box has no observed support in the coarse field are
   marked `supported: false` and never run.
 - **Per-tile fibres.** By default the plan writes `fibres/<tile>.afv` with every whole
@@ -48,6 +97,61 @@ wf scroll plan --source "$CT" --voxel-um 8.64 --level 2 --field-spacing-um 34.56
   `--no-split-fibres` passes the full AFV instead.
 - **Tile runs** use `--field-prior <coarse> --field-scope supported --until field`,
   the plan's level/stride/spacing, `--sweeps` (default 8) and any `--run-arg` flags.
+
+### Strong fibres, one block per tile
+
+With counted density, fibres decide whether a level stays on its sheet. Fibres mostly
+run along one sheet (72 % stay within half a sheet spacing), but at the default weight 1
+the field does not follow them. Measured on a 22 mm PHerc0175A box at 34.56 µm, solved as
+one block, against the Lasagna sheet channel along the October meshes' own lines:
+
+| Fine field | Units per mm | Net drift off the sheet over ~20 mm | Back and forth per cm |
+|---|---|---|---|
+| Lasagna grad_mag, fibres 1 | 12.1 | 0.7 sheets | 2.2 |
+| counted density, `--fibre-weight 1000` | 7.6 | 0.2 sheets | 0.9 |
+
+Strong fibres need the tile solved as **one block** (`--run-arg=--field-chunk=N` with N at
+least the tile's nodes per axis, `--sweeps 1`, `--rtol 1e-7 --maxiter 50000`): the same
+tiles solved as 64-node blocks for 8 sweeps counted 8.7-10.1 units per mm and differed
+from the one-block solution by a 95th percentile of 0.75-0.93 sheets (halo 16; 1.5 with
+the default halo 2). Keep weight 1 for the 138 µm coarse: there strong fibres compress
+the count (weight 1000: 2.2 units per mm where 6.3 sheets per mm are).
+
+### Tile size from GPU memory (`--tile-nodes auto`, the default)
+
+A one-block tile holds its whole system on one GPU, and every tile also solves its
+overlap: with 64 overlap nodes per side PHerc0175A needs 49.6 G node solves with 128-node
+cores, 22.5 G with 256 and 13.5 G with 512. `scroll plan` picks the largest core (a
+multiple of 64) whose tile fits the GPU: `--gpu-memory-gib` when given (plan for the machine that will run the tiles), else
+the smallest GPU visible here; `--jobs-per-gpu N` divides it between N tiles. Auto tiles
+run as one block (`--field-chunk` = the tile edge, one sweep, `--rtol 1e-7
+--maxiter 50000`); `--run-arg` flags still come last and win. `TILES.json` →
+`tile_memory` records the choice.
+
+The memory model is 121 bytes per node and 419 per fibre constraint row in float64, 25 %
+allocator overhead, 0.5 GB for the CUDA context, at most 85 % of the GPU, and 1.5x the
+densest measured fibre rows (0.045 per node at 34.56 µm, scaled with the square of the
+spacing). Checked on a 256³ PHerc0175A tile: 3.1 GB measured, 3.4 GB modelled.
+
+| GPU memory | 6 GB | 16 GB | 24 GB | 32 GB | 48 GB | 80 GB | 96 GB | 192 GB |
+|---|---|---|---|---|---|---|---|---|
+| Core nodes per axis (34.56 µm, overlap 32) | 192 | 320 | 384 | 448 | 512 | 640 | 704 | 896 |
+
+**Larger is not cheaper per node.** Measured alone on a GTX 1660, the solve took 24 s for
+128³ nodes, 142 s for 192³ and 538 s for 256³: 11, 20 and 32 µs per node, about the tile
+edge to the power 1.5 (iterations grow with the tile), with the memory controller busy
+100 % of the solve (bandwidth-bound). Extrapolated to PHerc0175A with 64-node overlaps,
+cores of 256-320 need the least GPU time and 576 about 40 % more; beyond 256³ this is not
+measured. Measure a mid-size and a large tile on the target GPU before a whole run.
+`scroll tiles` runs one tile per visible GPU at a time (times the plan's jobs per GPU),
+each process seeing only its GPU (`CUDA_VISIBLE_DEVICES`); `--gpus 0,2` picks GPUs and
+`--jobs` overrides the count.
+
+Measured cost of that 256³ tile (16.8 M nodes, 752,370 fibre rows) on a GTX 1660
+(192 GB/s): 12.8 min in all (prepare 39 s, fibres 9 s,
+field 12 min of which 9 min solving); with fibre weight 1 the solve took 5 min.
+`tools/scroll/run-scroll.sh` sets all of this (`FIBRE_WEIGHT`, `TILE_NODES=auto`,
+`OVERLAP_NODES`, `JOBS_PER_GPU`, `GPU_MEMORY_GIB`).
 
 ### Level 2 or stride 4
 
@@ -88,7 +192,21 @@ Writes `merged/field/CHECKPOINT.json` in the ordinary chunk-checkpoint format
   (each node counted once, by the tile whose core owns it) and the resulting W levels.
 - `surface-run.json`: a ready `prepared mesh`/`surfaces` request for those levels.
 
-**Coarse-grid correction (default on).** A tile is gauged by a single prior node and
+**Overlap join (default, `--join overlap`).** Tiles are solved independently, so each
+has its own level and a gentle slope (set by its single gauge node and its boundaries),
+and neighbours disagree on the nodes they share. The merge gives every tile one constant
+and one tilt (four numbers) and solves them together from all overlaps (every 4th shared
+node), choosing the smallest corrections; tilts are charged (0.1 per shared node), so a
+step between two tiles becomes constants, not ramps. The tiles' sheet-following stays
+untouched. On the 22 mm PHerc0175A box split into 4 tiles of the October recipe, against
+the same box solved as one block: median |ΔW| 0.14 sheets, 95th percentile 0.52; the
+joined level followed the sheet like the one-block one (net drift 0.6 sheets in 20 mm).
+`FIELD.json` → `join` reports the overlap RMS before and after (there 4.7 → 0.21).
+
+**Coarse-grid correction (`--join coarse`).** The previous default. Pulling each tile to
+the coarse field also removes its sheet-following wherever the coarse grid is wider than
+the sheet spacing: on the same box the joined level drifted 14 sheets in 16 mm. Kept for
+fields whose tiles do not follow sheets and for comparison. A tile is gauged by a single prior node and
 relaxed for a few sweeps, so its low frequencies drift from the coarse field, differently
 in every tile. On the PHerc0175A pilot two neighbouring tiles disagreed in their overlap
 by a median 0.21 and a 95th percentile of 1.0 winding (21% of nodes by more than half a
@@ -98,7 +216,8 @@ detail below that scale comes from the tile, everything coarser from the one coa
 solve that spans all tiles. On the pilot this gave a median 0.018 and a 95th percentile
 of 0.135 (0.26% of nodes over half a winding). Smaller sigma agrees better but keeps less
 fine detail (sigma 0.25 mm: 0.043; 1 mm: 0.31). The global winding structure therefore
-comes from the coarse field. `--coarse-sigma-mm 0` blends the raw tiles.
+comes from the coarse field. `--join none` (or `--coarse-sigma-mm 0`) blends the raw
+tiles.
 
 Blending is a linear cross-fade over the whole overlap on interior tile faces. Nodes
 inside a solved chunk keep their value; observed support is the union of the tiles'
@@ -115,6 +234,18 @@ wf prepared mesh --config /outputs/merged/surface-run.json --output /outputs/mes
 wf scroll render-ct --mesh /outputs/meshes/level-0000 --source "$CT" --voxel-um 8.64 \
   --level 0 --render-pitch-um 8.64 --output /outputs/render/level-0000
 ```
+
+**What one level costs.** `--parallel-levels` runs one process per level, and each walks
+every 64-node tile of the field in order (32,240 for PHerc0175A at 34.56 µm): levels fill
+the cores, one level never uses more than one. A PHerc0175A level of 12.07 M faces took
+230 bytes per face in `mesh.sqlite` (2.77 GB) and under 0.6 GB of RAM. Leave free at least
+the size of that database again for the closing step, which rewrites the component of
+nearly every face in one transaction and then writes the `.obj` (about 50 bytes per face):
+a run with 0.66 GB free was still growing its rollback journal at 0.28 GB when it was
+stopped. Write meshes to local NVMe; on a rotational disk the commits were 24 % of the
+time, on NVMe 4 %. The field reader keeps up to 256 MiB of decoded chunks per level;
+`--cache-bytes` large enough for two Z planes of chunks (1.7 GB for that field) removes
+the remaining repeated decodes (25.0 s against 33.8 s on the first 1,612 tiles).
 
 `render-ct` uses the same native flatten/render path as `run`, with these differences:
 
@@ -161,6 +292,20 @@ wf scroll render-ct --mesh /outputs/meshes/level-0000 --source "$CT" --voxel-um 
   turns by about -2 pi is left as a hole; only closed wraps and handles are cut. On a
   synthetic 73,527-face sheet with 12 holes, cutting every hole to the boundary cost
   642 seam vertices and 0.88% ambiguous + 0.90% missing pixels; keeping them costs none.
+- **A slab, not one layer.** A level of the field runs parallel to the sheets but does not
+  stay on one: on PHerc0175A five levels were on a Lasagna sheet over 48-58% of their area
+  (52.6% of the papyrus volume is sheet) and swung between sheet and gap 2.7-5.0 times per
+  centimetre. `render-ct` therefore samples the CT every `--render-pitch-um` along the
+  mesh normal over `--thickness-um` and writes their `--composite` (`max`, default, or
+  `mean`); `--thickness-um 0` is the single surface layer and `--keep-layers` also stores
+  every layer per tile. The default is 70 µm (9 layers at 8.64 µm), about half the sheet
+  spacing: a thinner slab leaves gaps, a thicker one reaches the neighbouring sheet.
+  PHerc0175A sheets are 142 µm apart (median of 141 zones of the Lasagna `cos` channel;
+  13% of the zones under 120 µm). On a 6 x 7 mm patch the single layer showed dark patches
+  where the surface left the sheet, 70 µm and 120 µm a continuous fibre grid (a few darker
+  spots left at 70), and 240 µm started to overlay the next sheet. CT sampling took about
+  eight times longer with 15 layers. The image still mixes stretches of neighbouring
+  sheets wherever the level crosses from one to the next.
 - **`--decimate N`** collapses the mesh to 1/N of its faces (libigl qslim) before
   flattening; `DECIMATION.json` records the deviation of a vertex sample from the new
   surface. Triangles only need to follow the surface: CT is still sampled at every

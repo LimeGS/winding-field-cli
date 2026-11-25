@@ -109,7 +109,7 @@ def surface_maps(volume, root, config, lo, hi, stop=None):
             )
 
         def read(start, end):
-            return read_axes([np.arange(a, b) + l for a, b, l in zip(start, end, lo)])
+            return read_axes([np.arange(a, b) + low for a, b, low in zip(start, end, lo)])
 
         maps = NativeMaps(tuple(map(int, hi - lo)), read)
         factor = min(factors["grad_mag"], factors["nx"])
@@ -117,7 +117,9 @@ def surface_maps(volume, root, config, lo, hi, stop=None):
         shape = (hi - 1 - first) // factor + 1
 
         def reduced(start, end):
-            return read_axes([np.arange(a, b) * factor + l for a, b, l in zip(start, end, first)])
+            return read_axes(
+                [np.arange(a, b) * factor + low for a, b, low in zip(start, end, first)]
+            )
 
         maps.calibration = NativeMaps(tuple(map(int, shape)), reduced, chunk=16)
         maps.calibration_factor = factor

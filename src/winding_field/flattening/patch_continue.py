@@ -21,7 +21,8 @@ def copy_verified_file(source, destination, *, guard, reserve_bytes):
 
 
 def map_array_bytes(path):
-    import math, zipfile
+    import math
+    import zipfile
     from numpy.lib import format
 
     size = 0
@@ -387,7 +388,9 @@ def continue_export(source, mesh, output, *, identity_sha256, overrides, stop=la
 
 
 def main():
-    import argparse, signal, threading
+    import argparse
+    import signal
+    import threading
 
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--source-export", type=Path, required=True)

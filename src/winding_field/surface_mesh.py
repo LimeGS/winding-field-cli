@@ -8,6 +8,7 @@ import marshal
 import math
 import os
 import sqlite3
+import time
 import uuid
 from importlib.metadata import version
 from pathlib import Path
@@ -19,6 +20,13 @@ import numpy as np
 import field_store
 from field_runtime import check_resources
 from field_store import atomic_json
+
+
+# Tile geometry and the tile cursor become durable together at most this often. One
+# transaction and one status write per tile cost more than the extraction itself on a
+# whole-scroll level (32,240 tiles: 36% SQLite commits, 13% status fsyncs); a crash
+# resumes from the last commit, so at most this much work is repeated.
+COMMIT_SECONDS = 2.0
 
 
 def sha(path):
@@ -609,10 +617,12 @@ def extract_mesh(
         first = store.get("next_tile")
         if type(first) is not int or not 0 <= first <= total:
             raise ValueError("invalid mesh cursor")
+        committed = time.monotonic()
         for index, key in enumerate(itertools.product(*(range(n) for n in grid))):
             if index < first:
                 continue
             if (output / "STOP").exists() or (stop is not None and stop()):
+                store.db.commit()  # tiles since the last grouped commit
                 result = dict(
                     status="CHECKPOINTED_STOP",
                     next_tile=index,
@@ -627,25 +637,27 @@ def extract_mesh(
             check_resources(output, reserve_bytes=reserve_bytes + int(np.prod(high - low)) * 128)
             values, valid = source.read(low, high + 1)
             prepared = _prepare_tile(values, valid)
-            with store.db:
-                for start in range(0, len(levels), level_batch):
-                    for j in range(start, min(start + level_batch, len(levels))):
-                        keys, vertices, faces = _tile_mesh(
-                            values,
-                            valid,
-                            low,
-                            levels[j],
-                            source.origin,
-                            source.spacing,
-                            prepared=prepared,
-                        )
-                        if len(faces):
-                            store.add(j, keys, vertices, faces)
-                store.checkpoint_tile(index)
-            atomic_json(
-                output / "STATUS.json",
-                dict(status="EXTRACTING", next_tile=index + 1, total_tiles=total),
-            )
+            for start in range(0, len(levels), level_batch):
+                for j in range(start, min(start + level_batch, len(levels))):
+                    keys, vertices, faces = _tile_mesh(
+                        values,
+                        valid,
+                        low,
+                        levels[j],
+                        source.origin,
+                        source.spacing,
+                        prepared=prepared,
+                    )
+                    if len(faces):
+                        store.add(j, keys, vertices, faces)
+            store.checkpoint_tile(index)
+            if index + 1 == total or time.monotonic() - committed >= COMMIT_SECONDS:
+                store.db.commit()
+                atomic_json(
+                    output / "STATUS.json",
+                    dict(status="EXTRACTING", next_tile=index + 1, total_tiles=total),
+                )
+                committed = time.monotonic()
         source.validate()
         details = store.finish()
     result = _manifest(metadata, identity, details, total, sha(output / "mesh.sqlite"))

@@ -8,7 +8,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 import numpy as np
 import pytest
-from test_io import served
+from test_io import served  # noqa: F401 (pytest fixtures)
 
 from winding_field.original_recipe import sample_points
 

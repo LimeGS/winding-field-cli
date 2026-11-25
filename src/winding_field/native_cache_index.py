@@ -6,12 +6,12 @@ Opening the native WAL through Python's bundled SQLite can invalidate live reade
 
 from contextlib import closing, contextmanager
 import ctypes as c
-from functools import lru_cache
+from functools import cache
 import sqlite3
 import sys
 
 
-@lru_cache(maxsize=None)
+@cache
 def _library(path):
     lib = c.CDLL(path)
     signatures = {

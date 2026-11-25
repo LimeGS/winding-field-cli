@@ -381,6 +381,23 @@ def main(argv=None):
             help="decoded field-checkpoint chunk cache for block solves (default: 64 MiB); not a total RSS cap",
         )
         p.add_argument(
+            "--field-pair-scope",
+            choices=("block", "global"),
+            default=argparse.SUPPRESS,
+            help="experimental, ordinary fields with several blocks: block (default) samples fibre "
+            "pairs inside each block crop; global samples them once over the whole grid and "
+            "restricts them per crop with exterior terms, so the blocks solve the global problem",
+        )
+        p.add_argument(
+            "--field-memory",
+            choices=("auto", "disk", "field", "all"),
+            default=argparse.SUPPRESS,
+            help="host RAM use of the field solve (default auto: measured at start). disk: read and "
+            "write every block on disk; field: keep the whole field in RAM and checkpoint once per "
+            "sweep in the background, spending what is left on observations; all: field and every "
+            "block's observations in RAM. Explicit --field-cache-bytes/--observation-cache-bytes win",
+        )
+        p.add_argument(
             "--field-cpu-workers",
             type=int,
             default=0,
@@ -461,6 +478,14 @@ def main(argv=None):
             default=argparse.SUPPRESS,
             help="field nodes each solver block shares with its neighbours (default: 2); "
             "a wider overlap reaches the global solution in fewer sweeps",
+        )
+        p.add_argument(
+            "--field-coarse-factor",
+            type=int,
+            default=argparse.SUPPRESS,
+            help="experimental, 0 (default) or >= 2: open every field sweep with a global coarse correction on "
+            "every F-th node (two-level Schwarz); large-scale structure then crosses all blocks "
+            "in each sweep instead of one overlap per sweep",
         )
         p.add_argument(
             "--field-prior-calibration",
@@ -848,7 +873,8 @@ def main(argv=None):
             finally:
                 volume.close()
         elif args.command == "doctor":
-            import platform, torch
+            import platform
+            import torch
 
             result = dict(
                 version=__version__,

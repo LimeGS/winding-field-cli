@@ -1,7 +1,6 @@
 """One physically calibrated CT renderer for all benchmark candidates."""
 
 from concurrent.futures import ThreadPoolExecutor
-from contextlib import closing
 import hashlib
 from itertools import product
 from pathlib import Path

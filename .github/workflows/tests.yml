@@ -16,7 +16,9 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - run: python -m pip install pytest PyYAML
+      - run: python -m pip install pytest PyYAML ruff==0.16.9
+      - run: ruff format --check .
+      - run: ruff check .
       - run: python -m pytest -q --durations=30 -o pythonpath= .github/tests/test_ci_workflows.py tests/test_container_layout.py tests/test_install_script.py
 
   installed-package:

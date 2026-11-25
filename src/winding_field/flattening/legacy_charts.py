@@ -153,7 +153,7 @@ def iter_overlap_pairs(uv, faces, check=None, *, max_candidates=None, max_tests=
     ):
         stats["narrow_tests"] += block["narrow_tests"]
         stats["pairs"] += len(block["pairs"])
-        for i, j in block["pairs"]:
+        for i, j in block["pairs"]:  # noqa: UP028 (re-yields array rows as tuples)
             yield i, j
     if check:
         check()

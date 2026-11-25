@@ -1,0 +1,116 @@
+import json
+from argparse import Namespace
+
+import numpy as np
+import pytest
+
+from winding_field import counted_density as cd
+
+PERIOD = 16
+
+
+def sheets(shape):
+    """Planar sheets normal to z: material on half of every PERIOD voxels."""
+    z = np.arange(shape[0])[:, None, None]
+    return np.broadcast_to(np.where((z % PERIOD) < PERIOD // 2, 255, 0), shape).astype(np.uint8)
+
+
+def test_planar_sheets_count_one_per_period_with_normals_along_z():
+    volume = sheets((96, 96, 96))
+    density, normals, supported = cd.density_normals(volume, halo=cd.HALO, device="cpu")
+    assert supported.all()
+    assert np.median(density) == pytest.approx(1 / PERIOD, rel=0.02)
+    assert np.abs(normals[..., 2]).min() > 0.99
+
+
+def test_encoding_is_what_the_lasagna_importer_decodes():
+    density = np.array([0.0625, 0.11, 0.0])
+    normals = np.array([[0.0, 0.6, -0.8], [1.0, 0.0, 0.0], [0.0, 0.0, 0.0]])
+    supported = np.array([True, True, False])
+    grad_mag, nx, ny = cd.encode(
+        density, normals, supported, scaledown=1, encode_scale=1000.0, grad_mag_factor=1.0
+    )
+    # importer: grad_mag * factor / encode_scale cycles per base voxel; cos voxels are 2.
+    np.testing.assert_allclose(grad_mag[:2] / 1000.0 * 2, density[:2], atol=1e-3)
+    assert grad_mag[2] == 0 and nx[2] == 0 and ny[2] == 0
+    # hemisphere encoding: z >= 0, so (0, .6, -.8) is stored as (0, -.6, .8)
+    assert (nx[0], ny[0]) == (128, round(-0.6 * 127 + 128))
+    assert (nx[1], ny[1]) == (255, 128)
+
+
+def write_manifest(tmp_path, shape):
+    cos = cd._Array(
+        tmp_path / "lasagna/cos.zarr/1",
+        dict(
+            shape=list(shape),
+            chunks=[64, 64, 64],
+            dtype="|u1",
+            fill_value=0,
+            order="C",
+            filters=None,
+            dimension_separator="/",
+            compressor=dict(id="blosc", cname="zstd", clevel=3, shuffle=1, blocksize=0),
+            zarr_format=2,
+        ),
+    )
+    cos.write([0, 0, 0], sheets(shape))
+    manifest = dict(
+        version=2,
+        base_shape_zyx=[2 * n for n in shape],
+        grad_mag_encode_scale=1000.0,
+        grad_mag_factor=1.0,
+        ct_source=dict(spacing_xyz=[8.64] * 3),
+        groups={
+            "cos": dict(channels=["cos"], scaledown=1, zarr="cos.zarr/1"),
+            "grad_mag": dict(channels=["grad_mag"], scaledown=2, zarr="grad_mag.zarr/2"),
+            "nx": dict(channels=["nx"], scaledown=2, zarr="nx.zarr/2"),
+            "ny": dict(channels=["ny"], scaledown=2, zarr="ny.zarr/2"),
+        },
+    )
+    path = tmp_path / "lasagna/input.lasagna.json"
+    path.write_text(json.dumps(manifest))
+    return path
+
+
+def args(manifest, output, **extra):
+    values = dict(
+        lasagna_input=manifest,
+        output=output,
+        bounds=None,
+        tile=64,
+        device="cpu",
+        part=(0, 1),
+        min_fill=0.01,
+    )
+    values.update(extra)
+    return Namespace(**values)
+
+
+def test_build_writes_counted_channels_and_a_manifest_and_resumes(tmp_path):
+    manifest = write_manifest(tmp_path, (64, 64, 128))
+    result = cd.build(args(manifest, tmp_path / "counted"))
+    assert result["status"] == "COUNTED_READY" and result["computed"] == 2
+    # One sheet every 16 cos voxels of 17.28 um (fewer counted at the array faces).
+    assert result["mean_sheet_spacing_um"] == pytest.approx(16 * 17.28, rel=0.2)
+    written = json.loads((tmp_path / "counted/counted.lasagna.json").read_text())
+    for name in ("grad_mag", "nx", "ny"):
+        group = written["groups"][name]
+        assert group["scaledown"] == 1
+        assert group["zarr"] == str(tmp_path / f"counted/{name}.zarr/1")
+    assert written["groups"]["cos"]["zarr"] == str(tmp_path / "lasagna/cos.zarr/1")
+    grad_mag = cd._Array(tmp_path / "counted/grad_mag.zarr/1").read([24, 24, 24], [40, 40, 104])
+    assert np.median(grad_mag) / 500.0 == pytest.approx(1 / PERIOD, rel=0.03)
+
+    again = cd.build(args(manifest, tmp_path / "counted"))
+    assert again["computed"] == 0 and again["reused"] == 2
+    with pytest.raises(ValueError, match="different inputs"):
+        cd.build(args(manifest, tmp_path / "counted", tile=128))
+
+
+def test_parts_split_tiles_and_the_manifest_waits_for_all_of_them(tmp_path):
+    manifest = write_manifest(tmp_path, (64, 64, 128))
+    first = cd.build(args(manifest, tmp_path / "counted", part=(0, 2)))
+    assert first["status"] == "INCOMPLETE" and first["remaining_tiles"] == 1
+    assert not (tmp_path / "counted/counted.lasagna.json").exists()
+    second = cd.build(args(manifest, tmp_path / "counted", part=(1, 2)))
+    assert second["status"] == "COUNTED_READY" and second["computed"] == 1

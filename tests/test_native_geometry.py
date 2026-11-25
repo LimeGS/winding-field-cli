@@ -455,7 +455,7 @@ def test_weld_fallback_does_not_accept_collapsed_or_infeasible_seams():
     import pytest
 
     pytest.importorskip("igl")
-    from winding_field.native_geometry import weld, _validate
+    from winding_field.native_geometry import weld
 
     vertices, faces, uv, fixed, target = failed_seam_chart()
     stretched = target.copy()

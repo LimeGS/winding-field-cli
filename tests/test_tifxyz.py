@@ -10,7 +10,7 @@ from winding_field.tifxyz_contract import Blocked, load_settings
 from winding_field.tifxyz_field import open_physical_field, selected_frame
 from winding_field.util import atomic_json, digest, file_sha
 from tifxyz_fixture import mutate_json
-from test_tifxyz_native import artifact
+from test_tifxyz_native import artifact  # noqa: F401 (pytest fixtures)
 
 
 def physical_source(root, shape=(3, 3, 3), origin=(0, 0, 0), spacing=(1, 1, 1), chunk=None):
@@ -499,7 +499,7 @@ def test_publication_resumes_after_interrupted_tiff_temp(tmp_path, engine, monke
     original = tifxyz_store.write_segment
 
     def interrupted(*args):
-        result = original(*args)
+        original(*args)
         (args[3] / ".x.tif-interrupted").write_bytes(b"partial encoder bytes")
         raise Paused()
 
@@ -715,7 +715,8 @@ def test_unresolved_or_invalid_effective_pitch_rejected_before_work(tmp_path, co
 )
 def test_public_export_and_separate_verifier_process(tmp_path):
     pytest.importorskip("igl")
-    import subprocess, sys
+    import subprocess
+    import sys
 
     source = physical_source(tmp_path / "source")
     out = tmp_path / "out"
@@ -846,7 +847,10 @@ def test_roi_export_resume_and_verify_never_sweep_unrelated_payloads(
             )
             assert reader.validations and not any(reader.validations)
             assert reader.reads and all(
-                all(a >= l and b <= h for a, b, l, h in zip(lo, hi, roi["lo_zyx"], roi["hi_zyx"]))
+                all(
+                    a >= low and b <= h
+                    for a, b, low, h in zip(lo, hi, roi["lo_zyx"], roi["hi_zyx"])
+                )
                 for lo, hi in reader.reads
             )
         assert payload_reads and set(payload_reads) == {paths["0-0-1"]}

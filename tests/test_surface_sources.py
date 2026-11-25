@@ -654,3 +654,45 @@ def test_legacy_decoder_keeps_the_strict_checks():
         surface_sources._decode_chunk(stream.getvalue(), (2, 2, 2))
     with pytest.raises(ValueError):
         surface_sources._decode_chunk(b"not a zip", (2, 2, 2))
+
+
+def test_manifest_is_hashed_at_open_and_by_validate_and_stat_checked_per_read(
+    tmp_path, monkeypatch
+):
+    surface_sources = api()
+    field, _ = native(tmp_path, all_chunks=True)
+    hashed = []
+    read = surface_sources._File.read
+
+    def counted(self):
+        hashed.append(self.path.name)
+        return read(self)
+
+    monkeypatch.setattr(surface_sources._File, "read", counted)
+    with surface_sources.FieldSource(field, geometry(), cache_bytes=1 << 20) as source:
+        opened = hashed.count("CHECKPOINT.json")
+        assert opened == 2  # the open, then validate() on entry
+        for _ in range(3):
+            source.read((0, 0, 0), (3, 3, 5))
+            source.validate_region((0, 0, 0), (3, 3, 5))
+        assert hashed.count("CHECKPOINT.json") == opened
+        source.validate()
+        assert hashed.count("CHECKPOINT.json") == opened + 1
+
+
+@pytest.mark.parametrize(
+    "shape, chunk, expected",
+    [
+        ((8, 8, 16), 4, 16 * (4**3 * 9 + 4096)),  # two X rows of two Z planes
+        ((2500, 1616, 1928), 64, 256 * 1024**2),  # capped: one reader runs per level
+        ((625, 404, 482), 4096, 625 * 404 * 482 * 9 + 4096),  # never less than one chunk
+    ],
+)
+def test_chunk_cache_floor_keeps_two_rows_of_two_planes_up_to_a_cap(
+    tmp_path, shape, chunk, expected
+):
+    path = tmp_path / "CHECKPOINT.json"
+    path.write_text(json.dumps(dict(chunk=chunk)))
+    floor = api().chunk_cache_floor
+    assert floor(dict(kind="chunks", path=str(path)), geometry(shape)) == expected
+    assert floor(dict(kind="npy", path=str(path)), geometry(shape)) == 0

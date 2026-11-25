@@ -19,7 +19,10 @@ KNOBS = dict(
     field_cpu_workers=2,
     field_cpu_buffer_bytes=16 << 20,
     threads=2,
+    # Whole field in RAM with one background checkpoint per sweep (off: "disk").
+    field_memory="field",
 )
+OFF = dict({k: 0 for k in KNOBS}, threads=1, field_memory="disk")
 
 
 def _solve(root, config):
@@ -43,7 +46,7 @@ def test_all_performance_knobs_together_preserve_field_bytes(tmp_path, monkeypat
     monkeypatch.setattr(field_cpu, "headroom_bytes", lambda: 8 << 30)
     monkeypatch.setattr(field_cpu, "cpu_limit", lambda: 8)
     base = dict(sweeps=3, field_chunk=8)
-    off = _solve(tmp_path / "off", dict(base, **{k: 0 for k in KNOBS}) | {"threads": 1})
+    off = _solve(tmp_path / "off", dict(base, **OFF))
     on = _solve(tmp_path / "on", dict(base, **KNOBS))
     assert on[0] == off[0]
     assert on[1] == off[1] and on[2] == off[2]
@@ -54,6 +57,8 @@ def test_all_performance_knobs_together_preserve_field_bytes(tmp_path, monkeypat
     assert receipt["field_cpu_stats"]["workers"] == 2
     assert receipt["observation_cache_stats"]["hits"] > 0
     assert receipt["solver"]["cache_stats"]["hits"] > 0
+    assert receipt["solver"]["checkpoint_policy"]["policy"] == "sweep"
+    assert off[4]["solver"]["checkpoint_policy"]["policy"] == "block"
 
 
 def test_every_validated_cache_budget_is_covered():

@@ -313,7 +313,8 @@ def test_native_ct_positive_weight_missing_and_hash_change(tmp_path):
 def test_native_ct_verified_cache_reuses_and_detects_change_after_eviction(tmp_path, monkeypatch):
     from collections import OrderedDict
     from types import SimpleNamespace
-    import sqlite3, threading
+    import sqlite3
+    import threading
 
     p = pipeline()
     ct = object.__new__(p.PatchCT)

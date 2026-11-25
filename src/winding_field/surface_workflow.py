@@ -25,7 +25,7 @@ from field_store import atomic_json
 from .field_workflow import _invalid, _object
 from .surface_mesh import MeshReader, _integer, _levels, extract_mesh, import_mesh, sha
 from .native_mesh import extract_mesh as extract_batched_mesh
-from .surface_sources import FieldSource
+from .surface_sources import FieldSource, chunk_cache_floor
 
 
 @contextmanager
@@ -388,9 +388,9 @@ def run_surfaces(
                     lease()
                 return stop is not None and bool(stop())
 
-            with FieldSource(
-                field, config["geometry"], cache_bytes=execution["cache_bytes"]
-            ) as source:
+            # Memory only: never less than one stored chunk, or large chunks decode per tile.
+            cache = max(execution["cache_bytes"], chunk_cache_floor(field, config["geometry"]))
+            with FieldSource(field, config["geometry"], cache_bytes=cache) as source:
                 result = extractor(
                     source,
                     output,
