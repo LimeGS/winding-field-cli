@@ -4,6 +4,7 @@ import io
 import itertools
 import json
 import math
+import sys
 import time
 from pathlib import Path
 import sqlite3
@@ -229,6 +230,42 @@ def _constraint_rows(
     db, meta, fibres, geometry, maps, lo, hi, weight, *, max_pairs=None, stop=None
 ):
     """Immutable ordinary-provider rows; no live field or exterior targets."""
+    pairs = _pair_points(db, meta, fibres, geometry, maps, lo, hi, max_pairs=max_pairs, stop=stop)
+    if pairs is None:
+        return None
+    block_origin = np.asarray(geometry["origin_xyz"]) + lo[::-1] * geometry["spacing_xyz"]
+    return pair_constraints(
+        *pairs, block_origin, geometry["spacing_xyz"], tuple(hi - lo), weight=weight
+    )
+
+
+def global_pair_constraints(db, meta, fibres, geometry, maps, shape, weight, cache_bytes=0):
+    """One box-independent pair set over the whole grid, for multi-block solves.
+
+    The ordinary provider samples and clips fibre pairs to each block crop, so the
+    union of block problems is not the global problem and cut pairs never reach the
+    coarse level: a two-level sweep then stalls. These rows are restricted per crop by
+    the core, which moves exterior terms into targets and reports them to the coarse
+    space. On a single block they equal the ordinary rows.
+    """
+    from constraint_templates import StencilConstraints
+
+    lo, hi = np.zeros(3, np.int64), np.asarray(shape, np.int64)
+    pairs = _pair_points(db, meta, fibres, geometry, maps, lo, hi)
+    if pairs is None:
+        return None
+    return StencilConstraints.pairs(
+        *pairs,
+        geometry["origin_xyz"],
+        geometry["spacing_xyz"],
+        tuple(int(n) for n in shape),
+        weight=weight,
+        cache_bytes=cache_bytes,
+    )
+
+
+def _pair_points(db, meta, fibres, geometry, maps, lo, hi, *, max_pairs=None, stop=None):
+    """Fibre pair endpoints (XYZ) sampled inside the box ``lo..hi``, or None."""
     block_origin = np.asarray(geometry["origin_xyz"]) + lo[::-1] * geometry["spacing_xyz"]
     block_shape = hi - lo
     block_upper = block_origin + (block_shape[::-1] - 1) * geometry["spacing_xyz"]
@@ -295,14 +332,52 @@ def _constraint_rows(
             b.append(right)
     if not a:
         return None
-    return pair_constraints(
-        np.concatenate(a),
-        np.concatenate(b),
-        block_origin,
-        geometry["spacing_xyz"],
-        tuple(block_shape),
-        weight=weight,
+    return np.concatenate(a), np.concatenate(b)
+
+
+def memory_plan(config, shape, chunk, halo, *, convergence=False, bounded=False, available=None):
+    """Host-memory tier for this solve (``field_memory``: auto, disk, field or all).
+
+    Configured cache budgets count as workspace and explicit cache sizes win. Sweep
+    checkpoints need the whole field cached, and are not used with field advice or
+    automatic convergence (they read the checkpoint at block boundaries) nor with a
+    bounded field (its disk cap admits one block at a time); the caches still apply.
+    """
+    from field_memory import plan_memory
+
+    tier = config.get("field_memory", "auto")
+    if tier not in MEMORY_TIERS:
+        raise ValueError("field_memory must be auto, disk, field or all")
+    workspace = sum(
+        config.get(name, 0) or 0
+        for name in ("prepared_cache_bytes", "constraint_cache_bytes", "field_cpu_buffer_bytes")
     )
+    plan = plan_memory(
+        shape,
+        chunk,
+        halo,
+        tier=tier,
+        workspace_bytes=workspace,
+        **({} if available is None else {"available": available}),
+    )
+    explicit = config.get("field_cache_bytes")
+    reason = (
+        "automatic convergence reads the checkpoint at every block boundary"
+        if convergence
+        else "field advice reads the checkpoint at every block boundary"
+        if config.get("field_advice")
+        else "the bounded disk cap admits one block at a time"
+        if bounded
+        else "field_cache_bytes is smaller than the field"
+        if explicit is not None and explicit < plan["field_bytes"]
+        else None
+    )
+    if plan["checkpoint"] == "sweep" and reason:
+        plan.update(checkpoint="block", note="block checkpoints: " + reason)
+    return plan
+
+
+MEMORY_TIERS = ("auto", "disk", "field", "all")
 
 
 def solve(run, config, stop=None, *, sweep_target=None, convergence=None):
@@ -432,9 +507,35 @@ def solve(run, config, stop=None, *, sweep_target=None, convergence=None):
     if preconditioner != "jacobi":
         # Only a non-default policy is passed: Jacobi run identities stay unchanged.
         options["preconditioner"] = preconditioner
+    coarse_factor = config.get("field_coarse_factor", 0)
+    if type(coarse_factor) is not int or coarse_factor < 0 or coarse_factor == 1:
+        raise ValueError("field_coarse_factor must be 0 (off) or at least 2")
+    if coarse_factor:
+        # Only when enabled: the core adds the coarse space to the problem identity.
+        options["coarse_factor"] = coarse_factor
     if status_policy != "all":
         # Execution choice, not checkpoint identity: STATUS fsyncs only at checkpoints.
         options["status_policy"] = status_policy
+    memory = memory_plan(
+        config,
+        shape,
+        chunk,
+        options["halo"],
+        convergence=convergence is not None,
+        bounded=bool(bounded),
+    )
+    if "field_cache_bytes" not in config:
+        field_cache_bytes = max(field_cache_bytes, memory["field_cache_bytes"])
+        options["cache_bytes"] = field_cache_bytes
+    if "observation_cache_bytes" not in config:
+        observation_budget = memory["observation_cache_bytes"]
+    memory.update(field_cache_bytes=field_cache_bytes, observation_cache_bytes=observation_budget)
+    if memory["checkpoint"] != "block":
+        # Execution choice, not checkpoint identity: may differ on another host or resume.
+        options["checkpoint"] = memory["checkpoint"]
+    options["memory_report"] = memory
+    if memory["warning"]:
+        print(f"[field] WARNING: {memory['warning']}", file=sys.stderr, flush=True)
     if bounded:
         options["max_bytes"] = config.get("bounded_bytes", 12 << 30) // 8
     prior = None
@@ -609,6 +710,17 @@ def solve(run, config, stop=None, *, sweep_target=None, convergence=None):
 
     constraints.prepared_key = lambda lo, hi: fibres["sha256"]
     options["constraints"] = pair_provider if pair_provider is not None else constraints
+    pair_scope = config.get("field_pair_scope", "block")
+    if pair_scope not in ("block", "global"):
+        raise ValueError("field_pair_scope must be block or global")
+    if pair_scope == "global" and pair_provider is None and len(options["order"]) > 1:
+        # Several blocks: one global pair set, restricted per crop with exterior terms.
+        rows = global_pair_constraints(
+            db, meta, fibres, geometry, maps, shape, identity["fibre_weight"], constraint_budget
+        )
+        options["constraints"] = rows
+        identity["pair_scope"] = "global-grid-v1"
+        row_count = 0 if rows is None else len(rows._weights)
     try:
         checkpoint = root / "CHECKPOINT.json"
         if not checkpoint.exists():

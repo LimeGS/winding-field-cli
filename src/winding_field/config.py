@@ -120,6 +120,12 @@ def validate_config(config):
     validate_field_cpu(config)
     if type(config.get("field_advice", False)) is not bool:
         raise ValueError("field_advice must be boolean")
+    if config.get("field_coarse_factor", 0) == 1:
+        raise ValueError("field_coarse_factor must be 0 (off) or at least 2")
+    if config.get("field_pair_scope", "block") not in ("block", "global"):
+        raise ValueError("field_pair_scope must be block or global")
+    if config.get("field_memory", "auto") not in ("auto", "disk", "field", "all"):
+        raise ValueError("field_memory must be auto, disk, field or all")
     if config.get("preconditioner", "jacobi") not in ("jacobi", "amg"):
         raise ValueError("block workflows require preconditioner='jacobi' or 'amg'")
     if config.get("field_status_policy", "all") not in ("all", "checkpoints"):
@@ -196,6 +202,7 @@ def validate_config(config):
         # block (a global solve); its memory, not this check, bounds the size.
         "field_chunk": (4, None),
         "field_halo": (1, None),
+        "field_coarse_factor": (0, None),
         "level": (0, None),
         "sweeps": (1, None),
         "maxiter": (1, None),
