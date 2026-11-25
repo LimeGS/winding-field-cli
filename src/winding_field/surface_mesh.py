@@ -20,10 +20,7 @@ import field_store
 from field_runtime import check_resources
 from field_store import atomic_json
 
-
-def sha(path):
-    with Path(path).open("rb") as stream:
-        return hashlib.file_digest(stream, "sha256").hexdigest()
+from .util import file_sha as sha
 
 
 def _integer(value, name, minimum=1):
