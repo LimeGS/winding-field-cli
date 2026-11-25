@@ -764,7 +764,8 @@ def pair_moments(task):
     try:
         lo, hi = np.maximum(a.lo, b.lo), np.minimum(a.hi, b.hi) + 1
         blocks = [
-            range(int(l) // FIELD_CHUNK * FIELD_CHUNK, int(h), FIELD_CHUNK) for l, h in zip(lo, hi)
+            range(int(lo_) // FIELD_CHUNK * FIELD_CHUNK, int(h), FIELD_CHUNK)
+            for lo_, h in zip(lo, hi)
         ]
         for corner in itertools.product(*blocks) if (hi > lo).all() else ():
             first_node = np.maximum(lo, corner)
@@ -783,7 +784,7 @@ def pair_moments(task):
                 continue
             nodes = np.stack(
                 np.meshgrid(
-                    *[np.arange(f, l, JOIN_STEP) for f, l in zip(first_node, last_node)],
+                    *[np.arange(f, end, JOIN_STEP) for f, end in zip(first_node, last_node)],
                     indexing="ij",
                 ),
                 -1,

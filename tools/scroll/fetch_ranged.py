@@ -41,7 +41,7 @@ def get(i):
                 target, headers={"Range": f"bytes={pos}-{hi}"}, stream=True, timeout=120
             ) as r:
                 if r.status_code != 206:
-                    raise IOError(f"status {r.status_code}")
+                    raise OSError(f"status {r.status_code}")
                 with open(tmp, "r+b") as f:
                     f.seek(pos)
                     for chunk in r.iter_content(8 << 20):
@@ -51,7 +51,7 @@ def get(i):
                             done_bytes[0] += len(chunk)
             if pos == hi + 1:
                 return
-        except (requests.RequestException, IOError) as e:
+        except (OSError, requests.RequestException) as e:
             print("retry part", i, e, flush=True)
             time.sleep(min(30, 2**attempt))
     raise RuntimeError(f"part {i} failed")

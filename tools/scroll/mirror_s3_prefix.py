@@ -80,7 +80,7 @@ def fetch(key, size):
             r.raise_for_status()
             data = r.content
             if len(data) != size:
-                raise IOError("size mismatch")
+                raise OSError("size mismatch")
             os.makedirs(os.path.dirname(path), exist_ok=True)
             tmp = path + ".part"
             with open(tmp, "wb") as f:
@@ -90,7 +90,7 @@ def fetch(key, size):
                 stats["fetched"] += 1
                 stats["bytes"] += size
             return
-        except (requests.RequestException, IOError):
+        except (OSError, requests.RequestException):
             time.sleep(min(30, 2**attempt))
     with lock:
         stats["failed"] += 1
