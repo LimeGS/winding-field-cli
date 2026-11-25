@@ -152,7 +152,11 @@ def main(argv=None):
         return prepared_main(argv[1:])
     if argv and argv[0] in TOOLS:
         module = importlib.import_module("." + TOOLS[argv[0]][0], __package__)
-        return module.main(argv[1:])
+        try:
+            return module.main(argv[1:])
+        except (ValueError, OSError, RuntimeError) as error:
+            print(f"winding-field {argv[0]}: {error}", file=sys.stderr)
+            return 1
     parser = argparse.ArgumentParser(prog="winding-field")
     parser.add_argument("--version", action="version", version=__version__)
     sub = parser.add_subparsers(dest="command", required=True)

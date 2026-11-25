@@ -584,6 +584,14 @@ Use `--lasagna-cos-downsample`, `--lasagna-grad-mag-downsample`,
 | Atlas-only charts and gallery | `flat/`, `index.html` |
 | Direct-field publication | `tifxyz/TIFXYZ.json` and `READY.json` or `PARTIAL.json` |
 
+| Exit code | Meaning |
+| --- | --- |
+| `0` | Completed, or paused on a requested stop or time budget; read the status in the printed JSON |
+| `1` | Error: invalid input, I/O failure or failed run; the message is on stderr |
+| `2` | Partial or blocked result (`PARTIAL`, non-resource `BLOCKED`); `prepared`, the surface, atlas, probe, CT-visual and `scroll` tools also use it for invalid input |
+| `3` | Not finished but resumable: `prepared verify` before global convergence, incomplete `scroll` |
+| `75` | Resource unavailable (memory, disk, time limit, accelerator); safe to retry with more resources or `resume` |
+
 For complete flags use command-specific help:
 
 ```bash
