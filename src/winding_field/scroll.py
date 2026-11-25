@@ -546,6 +546,29 @@ def _tile_done(run):
     return "field" in state.get("stages", {}) and (run / "FIELD.json").is_file()
 
 
+def _run_until(run_args):
+    """The stage a tile run stops after: the last --until wins, as in argparse."""
+    until = "field"
+    for k, arg in enumerate(run_args):
+        if arg == "--until" and k + 1 < len(run_args):
+            until = run_args[k + 1]
+        elif arg.startswith("--until="):
+            until = arg.split("=", 1)[1]
+    return until
+
+
+def _tile_prepared(run, until):
+    """True when a plan that stops before the field (e.g. --run-arg=--until=fibres) left
+    this tile at that stage: its inputs are ready for `scroll tiles` to solve later."""
+    if until == "field":
+        return False
+    try:
+        state = _json(run / "RUN.json")
+    except (OSError, ValueError):
+        return False
+    return until in state.get("stages", {})
+
+
 def run_tiles(args):
     root = Path(args.plan).resolve()
     document = _json(root / "TILES.json")
@@ -564,6 +587,7 @@ def run_tiles(args):
         gpus = [g.strip() for g in args.gpus.split(",") if g.strip()]
     else:
         gpus = [] if on_cpu else [g for g, _ in visible_gpus()]
+    until = _run_until(run_args)
     per_gpu = int((document.get("tile_memory") or {}).get("jobs_per_gpu", 1))
     jobs = args.jobs or (len(gpus) * per_gpu if gpus else 1)
     # Each tile process sees one GPU; tiles go to the least loaded one.
@@ -632,8 +656,13 @@ def run_tiles(args):
                 del running[tile_id]
                 if gpu is not None:
                     load[gpu] -= 1
-                done = _tile_done(root / "tiles" / tile_id)
-                state = "DONE" if done else ("STOPPED" if stopping else "FAILED")
+                run = root / "tiles" / tile_id
+                if _tile_done(run):
+                    state = "DONE"
+                elif code == 0 and _tile_prepared(run, until):
+                    state = "PREPARED"
+                else:
+                    state = "STOPPED" if stopping else "FAILED"
                 results[tile_id] = state
                 atomic_json(
                     root / "status" / f"{tile_id}.json",
@@ -642,9 +671,18 @@ def run_tiles(args):
     finally:
         for s, handler in previous.items():
             signal.signal(s, handler)
-    counts = {s: sum(v == s for v in results.values()) for s in ("DONE", "FAILED", "STOPPED")}
+    counts = {
+        s: sum(v == s for v in results.values()) for s in ("DONE", "PREPARED", "FAILED", "STOPPED")
+    }
+    if counts["DONE"] == len(queue):
+        status = "TILES_DONE"
+    elif counts["PREPARED"] and counts["DONE"] + counts["PREPARED"] == len(queue):
+        # Every tile stopped where the plan asked (--until): rerun to solve them.
+        status = "TILES_PREPARED"
+    else:
+        status = "INCOMPLETE"
     return dict(
-        status="TILES_DONE" if counts["DONE"] == len(queue) else "INCOMPLETE",
+        status=status,
         jobs=jobs,
         gpus=gpus,
         **counts,

@@ -9,6 +9,8 @@
 #
 # CT is read from LOCAL caches only during runs (--offline): prefetch level 2 (tiles,
 # TILE_CACHE) and level 0 (renders, $ROOT/ct-cache-l0) from S3 in parallel beforehand.
+# Prefetch level 0 with ~128 voxels of margin around the bounds: meshes and the render
+# slab read chunks just outside them.
 # Online mode re-verifies every cached chunk against S3 one at a time (tens of minutes).
 #
 # Two scrolls on one machine (e.g. 128 cores / 256 GB): give each its share and GPU:
@@ -160,6 +162,12 @@ tiles() {
   [[ -n "$TILE_CACHE" ]] && cache=(--cache "$TILE_CACHE")
   [[ -n "$TILE_JOBS" ]] && cache+=(--jobs "$TILE_JOBS")
   "${WF[@]}" scroll tiles "$ROOT/plan" "${cache[@]}" | tee -a "$LOG/tiles.log"
+  # A plan made with --run-arg=--until=fibres prepares tiles only (e.g. before moving them
+  # to a GPU host); rerunning the stage solves them without importing again.
+  if grep -q '"TILES_PREPARED"' <(tail -1 "$LOG/tiles.log"); then
+    say "tiles prepared (stopped at the plan's --until); rerun the tiles stage to solve them"
+    exit 0
+  fi
   grep -q '"TILES_DONE"' <(tail -1 "$LOG/tiles.log") || { say "tiles incomplete"; exit 1; }
   mark tiles
 }
@@ -213,6 +221,8 @@ export ROOT CT VOXEL_UM LOG CODE PYTHON PYTHONPATH RENDER_CACHE_GIB DECIMATE THI
 
 surfaces() {
   done_stage surfaces && return
+  # Failures of an earlier attempt are retried below; keep their log apart.
+  [[ -f "$LOG/render-failures.log" ]] && mv "$LOG/render-failures.log" "$LOG/render-failures.$(date +%s).log"
   mkdir -p "$ROOT/renders" "$ROOT/meshes"
   local total
   total=$("$PYTHON" -c "import json,sys; print(len(json.load(open(sys.argv[1]))['levels']))" \
@@ -240,6 +250,11 @@ PY2
     # Full-resolution meshes of rendered levels are no longer needed.
     rm -rf "$batch"
   done
+  # render_one records failures instead of stopping the batch; the stage is not done then.
+  if [[ -s "$LOG/render-failures.log" ]]; then
+    say "surfaces: $(wc -l <"$LOG/render-failures.log") renders failed; see $LOG/render-failures.log"
+    exit 1
+  fi
   mark surfaces
 }
 

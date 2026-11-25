@@ -793,3 +793,42 @@ def test_tiles_run_one_process_per_gpu_each_seeing_only_its_gpu(tmp_path, monkey
     for gpu in ("3", "5"):
         spans = sorted((a, b) for g, a, b in runs if g == gpu)
         assert all(spans[i][1] <= spans[i + 1][0] for i in range(len(spans) - 1))
+
+
+def test_tiles_stopped_by_the_plan_until_are_prepared_and_solve_on_the_next_run(tmp_path):
+    import sys
+
+    from winding_field.util import atomic_json
+
+    root = tmp_path / "plan"
+    root.mkdir()
+    tiles = [dict(id=f"000-000-00{k}", supported=True, roi=[0, 2, 0, 2, k, k + 2]) for k in (0, 1)]
+    atomic_json(
+        root / "TILES.json",
+        dict(
+            schema=scroll.PLAN_SCHEMA,
+            tiles=tiles,
+            # The plan's own --until field, then --run-arg=--until=fibres: the last one wins.
+            run_args=["--device", "cpu", "--until", "field", "--until=fibres"],
+        ),
+    )
+    fake = tmp_path / "fake.py"
+    fake.write_text(
+        "import json, sys, pathlib\n"
+        "if sys.argv[1] == 'field':\n"
+        "    out = pathlib.Path(sys.argv[2])\n"
+        "    (out / 'RUN.json').write_text(json.dumps({'stages': {'fibres': {}, 'field': {}}}))\n"
+        "    (out / 'FIELD.json').write_text('{}')\n"
+        "else:\n"
+        "    out = pathlib.Path(sys.argv[sys.argv.index('--output') + 1])\n"
+        "    out.mkdir(parents=True)\n"
+        "    (out / 'RUN.json').write_text(json.dumps({'stages': {'fibres': {}}}))\n"
+    )
+    args = scroll._parser().parse_args(
+        ["tiles", str(root), "--executable", sys.executable, str(fake)]
+    )
+    first = scroll.run_tiles(args)
+    assert first["status"] == "TILES_PREPARED" and first["PREPARED"] == 2 and first["FAILED"] == 0
+    assert json.loads((root / "status/000-000-000.json").read_text())["status"] == "PREPARED"
+    second = scroll.run_tiles(args)
+    assert second["status"] == "TILES_DONE" and second["DONE"] == 2
