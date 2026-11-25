@@ -1466,12 +1466,13 @@ def render_ct(args):
     if args.no_ct_texture:
         # Opt-in key: absent by default so existing render identities are unchanged.
         config["ct_texture"] = False
-    if args.thickness_um:
+    if args.keep_layers and (args.no_ct_texture or not args.thickness_um):
+        raise ValueError("--keep-layers needs CT texture and --thickness-um above 0")
+    if args.thickness_um and not args.no_ct_texture:
+        # Without CT texture there is nothing to sample, so the default slab does not apply.
         config.update(render_thickness_um=float(args.thickness_um), render_composite=args.composite)
         if args.keep_layers:
             config["render_keep_layers"] = True
-    elif args.keep_layers:
-        raise ValueError("--keep-layers needs --thickness-um above 0")
     if args.cache_gib is not None:
         config["cache_bytes"] = int(args.cache_gib * (1 << 30))
     output = Path(args.output)
