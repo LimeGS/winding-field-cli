@@ -238,7 +238,7 @@ class _Array:
             chunk = chunk.reshape(self.chunks)
             origin = [k * c for k, c in zip(key, self.chunks)]
             a = [max(f, o) for f, o in zip(first, origin)]
-            b = [min(l, o + c) for l, o, c in zip(last, origin, self.chunks)]
+            b = [min(hi, o + c) for hi, o, c in zip(last, origin, self.chunks)]
             out[tuple(slice(p - s, q - s) for p, q, s in zip(a, b, lo))] = chunk[
                 tuple(slice(p - o, q - o) for p, q, o in zip(a, b, origin))
             ]
@@ -255,7 +255,7 @@ class _Array:
                 full = np.full(self.chunks, self.fill, np.uint8)
                 full[tuple(slice(0, n) for n in part.shape)] = part
                 part = full
-            key = [(l + s) // c for l, s, c in zip(lo, start, self.chunks)]
+            key = [(lo_ + s) // c for lo_, s, c in zip(lo, start, self.chunks)]
             path = self._file(key)
             path.parent.mkdir(parents=True, exist_ok=True)
             raw = np.ascontiguousarray(part).tobytes()
@@ -364,7 +364,7 @@ def build(args):
     for number, corner in enumerate(corners):
         if number % parts != part:
             continue
-        a = [l + c * tile for l, c in zip(lo, corner)]
+        a = [lo_ + c * tile for lo_, c in zip(lo, corner)]
         b = [min(h, s + tile) for h, s in zip(hi, a)]
         marker = done_dir / "-".join(map(str, a))
         if marker.is_file():
@@ -401,7 +401,7 @@ def build(args):
     remaining = sum(
         1
         for corner in corners
-        if not (done_dir / "-".join(str(l + c * tile) for l, c in zip(lo, corner))).is_file()
+        if not (done_dir / "-".join(str(lo_ + c * tile) for lo_, c in zip(lo, corner))).is_file()
     )
     counted = dict(manifest)
     counted["groups"] = {
