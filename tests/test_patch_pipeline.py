@@ -10,8 +10,8 @@ from PIL import Image
 
 
 def pipeline():
-    assert importlib.util.find_spec("winding_field.patch_pipeline"), "patch adapter is missing"
-    from winding_field import patch_pipeline
+    assert importlib.util.find_spec("winding_field.flattening.patches"), "patch adapter is missing"
+    from winding_field.flattening import patches as patch_pipeline
 
     return patch_pipeline
 

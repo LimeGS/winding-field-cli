@@ -7,7 +7,7 @@ import time
 import numpy as np
 import pytest
 
-from winding_field import patch_pipeline as p
+from winding_field.flattening import patches as p
 from test_patch_pipeline import grid
 
 

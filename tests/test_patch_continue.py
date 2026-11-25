@@ -6,7 +6,7 @@ import numpy as np
 import pytest
 
 from winding_field.flattening import module_file
-from winding_field import patch_pipeline as p
+from winding_field.flattening import patches as p
 from winding_field.util import atomic_json, file_sha
 
 
@@ -32,7 +32,7 @@ def fixture(tmp_path):
 
 
 def reuse(root, level):
-    from winding_field.patch_continue import TileReuse
+    from winding_field.flattening.patch_continue import TileReuse
 
     return TileReuse(
         level,
@@ -130,7 +130,7 @@ def test_continue_export_reuses_map_and_inherits_ct_ledger(tmp_path, monkeypatch
     import sqlite3
     from test_patch_pipeline import grid, planar
     from winding_field.surface_mesh import import_mesh
-    from winding_field import patch_continue as c
+    from winding_field.flattening import patch_continue as c
 
     assert hasattr(c, "continue_export")
     v, f = grid()
@@ -297,7 +297,7 @@ def test_continue_export_reuses_map_and_inherits_ct_ledger(tmp_path, monkeypatch
 
 @pytest.mark.parametrize("backend", [None, "portable-zarr-v2", "vc_reader"])
 def test_old_continuation_rejected_before_any_output_write(tmp_path, backend):
-    from winding_field.patch_continue import continue_export
+    from winding_field.flattening.patch_continue import continue_export
 
     source = tmp_path / "old"
     source.mkdir()
@@ -313,7 +313,7 @@ def test_old_continuation_rejected_before_any_output_write(tmp_path, backend):
 
 
 def test_changed_sampler_rejected_before_any_output_write(tmp_path):
-    from winding_field.patch_continue import continue_export
+    from winding_field.flattening.patch_continue import continue_export
     from winding_field.ct_reader import runtime_identity
 
     source = tmp_path / "saved"
@@ -342,7 +342,7 @@ def test_changed_sampler_rejected_before_any_output_write(tmp_path):
 
 
 def test_copy_admission_preserves_disk_reserve(tmp_path, monkeypatch):
-    from winding_field import patch_continue as c
+    from winding_field.flattening import patch_continue as c
     from types import SimpleNamespace
 
     source = tmp_path / "data"
@@ -355,7 +355,7 @@ def test_copy_admission_preserves_disk_reserve(tmp_path, monkeypatch):
 
 
 def test_map_admission_checks_headers_before_loading(tmp_path):
-    from winding_field import patch_continue as c
+    from winding_field.flattening import patch_continue as c
 
     assert hasattr(c, "map_array_bytes")
     path = tmp_path / "map.npz"

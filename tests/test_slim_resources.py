@@ -99,7 +99,7 @@ def test_explicit_operator_budget_stays_effective(monkeypatch):
 
 def test_read_level_uses_packed_arrays_and_keeps_exact_source_ids():
     from test_patch_mapping import source
-    from winding_field.patch_pipeline import read_level
+    from winding_field.flattening.patches import read_level
 
     reader, ids = source()
     try:
@@ -114,7 +114,7 @@ def test_read_level_uses_packed_arrays_and_keeps_exact_source_ids():
 
 def test_read_level_can_use_separate_disk_arrays(tmp_path):
     from test_patch_mapping import source
-    from winding_field.patch_pipeline import read_level
+    from winding_field.flattening.patches import read_level
 
     reader, ids = source()
     try:
@@ -129,7 +129,8 @@ def test_read_level_can_use_separate_disk_arrays(tmp_path):
 
 @pytest.mark.parametrize("nv,nf", [(750001, 1), (3, 1250001)])
 def test_valid_input_has_no_functional_vertex_or_face_ceiling(tmp_path, monkeypatch, nv, nf):
-    from winding_field import native_global, native_patches
+    from winding_field import native_patches
+    from winding_field.flattening import native_sheet as native_global
 
     v = np.lib.format.open_memmap(tmp_path / "v.npy", mode="w+", dtype="f8", shape=(nv, 3))
     v[:] = 0.0
@@ -149,7 +150,8 @@ def test_valid_input_has_no_functional_vertex_or_face_ceiling(tmp_path, monkeypa
 
 
 def test_cut_phase_admits_measured_cumulative_peak(monkeypatch):
-    from winding_field import native_global, native_patches
+    from winding_field import native_patches
+    from winding_field.flattening import native_sheet as native_global
 
     calls = []
 
@@ -175,7 +177,7 @@ def test_cut_flags_do_not_overflow_vertex_pair_keys():
 
 def test_matrix_accepts_operator_budgets_above_legacy_ceilings(tmp_path):
     from test_flattening_matrix import request
-    from winding_field.flattening_matrix import settings
+    from winding_field.flattening.matrix import settings
 
     cfg = settings(dict(request(tmp_path), memory_gib=64.0, process_tree_gib=96.0), "lscm", "sheet")
     assert cfg["memory_gib"] == 64.0 and cfg["process_tree_gib"] == 96.0
@@ -183,7 +185,7 @@ def test_matrix_accepts_operator_budgets_above_legacy_ceilings(tmp_path):
 
 def test_matrix_without_operator_memory_caps_uses_automatic_admission(tmp_path):
     from test_flattening_matrix import request
-    from winding_field.flattening_matrix import settings
+    from winding_field.flattening.matrix import settings
 
     req = request(tmp_path)
     req.pop("memory_gib")

@@ -23,7 +23,7 @@ import torch
 from vc_reader import _reader  # noqa: F401
 from vc_reader.reader import ObjectStore, decode_chunk
 from winding_field.lasagna import runtime_identity
-from winding_field.patch_pipeline import check_flatboi
+from winding_field.flattening.patches import check_flatboi
 
 assert torch.__version__ == "2.10.0+" + args.variant, "unexpected CLI Torch build"
 assert torch.version.cuda == ("12.8" if args.variant == "cu128" else None)
@@ -52,7 +52,7 @@ assert core.returncode == 0, "numerical core differs from provenance: " + core.s
 import numpy as np
 from numcodecs import Delta, Shuffle, Zlib
 from winding_field.io import Volume
-from winding_field.original_pipeline import sample_ct
+from winding_field.flattening.original_pipeline import sample_ct
 from vc_reader.reader.disk_cache import disk_budget
 
 with tempfile.TemporaryDirectory() as directory:

@@ -6,7 +6,7 @@ import sys
 
 import pytest
 
-from winding_field import patch_pipeline as p
+from winding_field.flattening import patches as p
 from winding_field.util import atomic_json, file_sha
 
 
@@ -29,7 +29,7 @@ def test_explicit_official_recipe_requires_its_own_binary(tmp_path, monkeypatch)
 
 
 def test_matrix_selects_only_checkpoint_qualified_recipes(tmp_path):
-    from winding_field.flattening_matrix import settings
+    from winding_field.flattening.matrix import settings
     from test_flattening_matrix import request
 
     req = dict(request(tmp_path), app_run="/opt/vc3d/AppRun")
@@ -58,7 +58,7 @@ def test_official_constant_sheet_checkpoint_resume_import_and_validate(tmp_path)
             "requires MATRIX_NATIVE_APP, MATRIX_NATIVE_RECIPE=historical and bounded cgroup"
         )
     from winding_field.cli import main
-    from winding_field import flatboi_checkpoint as r
+    from winding_field.flattening import flatboi_checkpoint as r
     from test_constant_sheet import extracted
 
     mesh = extracted(tmp_path)

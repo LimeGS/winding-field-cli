@@ -291,7 +291,7 @@ def test_solver_name_does_not_hide_fallback(bench, tmp_path):
 
 
 def test_arap_seed_is_validated_before_slim(bench, tmp_path, monkeypatch):
-    from winding_field import native_global
+    from winding_field.flattening import native_sheet as native_global
 
     monkeypatch.setattr(native_global, "arap_map", lambda cut, uv, guard: (np.zeros((4, 2)), {}))
     with pytest.raises(ValueError, match="seed"):
@@ -589,7 +589,7 @@ def test_cell_scratch_budget_is_checked_before_solver(bench, tmp_path):
 
 
 def test_slim_seed_obj_preserves_exact_float64_xyz(bench, tmp_path, monkeypatch):
-    from winding_field import flatboi_checkpoint as native
+    from winding_field.flattening import flatboi_checkpoint as native
     import shutil
 
     cut = disk_cut()

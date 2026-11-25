@@ -343,7 +343,7 @@ def test_yaml_cli_recipe_runs_real_prepared_mesh_and_resume_without_yaml_file(
 )
 def test_prepared_mesh_to_whole_sheet_lscm_ct_xyz_without_user_json(tmp_path):
     from test_flattening_matrix import source_bundle, request
-    from winding_field.patch_mapping import PatchMapping
+    from winding_field.flattening.patch_mapping import PatchMapping
 
     _, ct = source_bundle(tmp_path)
     values = np.broadcast_to(np.arange(7.0), (7, 7, 7)).copy()

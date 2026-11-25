@@ -56,7 +56,7 @@ locally and is reported, not certified away. Frame coordinates obey
 For a single saved `level-0000` PNG export, continue in a fresh directory:
 
 ```sh
-python -m winding_field.patch_continue \
+python -m winding_field.flattening.patch_continue \
   --source-export old-export/patches --mesh-bundle original-joined-range \
   --source-identity-sha256 SHA256_OF_OLD_IDENTITY_JSON \
   --config resource-overrides.json --output new-export
@@ -139,7 +139,7 @@ Small maps also retain legacy `source_vertex_keys`/`source_face_keys` arrays;
 large maps omit these arrays explicitly and require the mapping reader:
 
 ```python
-from winding_field.patch_mapping import PatchMapping
+from winding_field.flattening.patch_mapping import PatchMapping
 
 with PatchMapping(level_directory) as mapping:
     xyz = mapping.arrays["field_xyz"]

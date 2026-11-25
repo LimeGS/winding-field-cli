@@ -481,7 +481,7 @@ def test_real_original_mesh_to_uvw(tmp_path, monkeypatch):
     from winding_field.surface_sources import FieldSource
     from winding_field.surface_mesh import extract_mesh
     from winding_field.io import Volume
-    from winding_field import original_pipeline
+    from winding_field.flattening import original_pipeline
     from winding_field.uvw_pipeline import export_existing
 
     args = inputs(tmp_path)

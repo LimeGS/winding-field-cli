@@ -6,7 +6,7 @@ import numpy as np
 from PIL import Image
 import pytest
 
-from winding_field.patch_pipeline import render_map
+from winding_field.flattening.patches import render_map
 from winding_field.util import atomic_json, file_sha
 
 
@@ -63,7 +63,7 @@ def sheet(root, w, anchor_v=22.0):
 
 
 def test_atlas_sorted_layout_pixels_and_xyz_roundtrip(tmp_path):
-    from winding_field.sheet_atlas import build_atlas, query_pixel
+    from winding_field.flattening.sheet_atlas import build_atlas, query_pixel
 
     a = sheet(tmp_path / "a", -59, 22.0)
     b = sheet(tmp_path / "b", -61, 24.0)
@@ -97,7 +97,7 @@ def test_atlas_sorted_layout_pixels_and_xyz_roundtrip(tmp_path):
 
 @pytest.mark.parametrize("change", ["w", "frame", "pitch", "ct", "hash", "path", "reference"])
 def test_atlas_rejects_incompatible_or_unbound_sources(tmp_path, change):
-    from winding_field.sheet_atlas import build_atlas
+    from winding_field.flattening.sheet_atlas import build_atlas
 
     a = sheet(tmp_path / "a", -59)
     b = sheet(tmp_path / "b", -60)
@@ -127,7 +127,7 @@ def test_atlas_rejects_incompatible_or_unbound_sources(tmp_path, change):
 
 
 def test_atlas_masks_tampering_and_tile_halo(tmp_path):
-    from winding_field.sheet_atlas import build_atlas, query_pixel
+    from winding_field.flattening.sheet_atlas import build_atlas, query_pixel
 
     a = sheet(tmp_path / "a", -60)
     out = tmp_path / "atlas"
@@ -145,7 +145,7 @@ def test_atlas_masks_tampering_and_tile_halo(tmp_path):
 
 
 def test_atlas_rejects_duplicate_w_and_no_sources(tmp_path):
-    from winding_field.sheet_atlas import build_atlas
+    from winding_field.flattening.sheet_atlas import build_atlas
 
     a = sheet(tmp_path / "a", -60)
     for sources in ([], [a, a]):
@@ -176,7 +176,7 @@ def change_tile(receipt, index, edit):
 
 
 def test_unmapped_missing_and_ambiguous_pixels_have_no_query_xyz(tmp_path):
-    from winding_field.sheet_atlas import build_atlas, query_pixel
+    from winding_field.flattening.sheet_atlas import build_atlas, query_pixel
 
     a = sheet(tmp_path / "a", -60)
 
@@ -205,7 +205,7 @@ def test_unmapped_missing_and_ambiguous_pixels_have_no_query_xyz(tmp_path):
 
 @pytest.mark.parametrize("broken", ["xyz", "mask", "owner", "missing_tile"])
 def test_rejects_conflicting_halos_or_missing_tiles(tmp_path, broken):
-    from winding_field.sheet_atlas import build_atlas
+    from winding_field.flattening.sheet_atlas import build_atlas
 
     a = sheet(tmp_path / "a", -60)
     if broken == "missing_tile":
@@ -233,7 +233,7 @@ def test_rejects_conflicting_halos_or_missing_tiles(tmp_path, broken):
 
 
 def test_rejects_nonblack_invalid_pixels(tmp_path):
-    from winding_field.sheet_atlas import build_atlas
+    from winding_field.flattening.sheet_atlas import build_atlas
 
     a = sheet(tmp_path / "a", -60)
 
@@ -260,7 +260,7 @@ def test_rejects_nonblack_invalid_pixels(tmp_path):
 
 
 def test_rejects_invalid_frame_origin(tmp_path):
-    from winding_field.sheet_atlas import build_atlas
+    from winding_field.flattening.sheet_atlas import build_atlas
 
     b = sheet(tmp_path / "b", -59)
     rec = json.loads(b.read_text())
@@ -271,7 +271,7 @@ def test_rejects_invalid_frame_origin(tmp_path):
 
 
 def test_query_rejects_changed_atlas_placement(tmp_path):
-    from winding_field.sheet_atlas import build_atlas, query_pixel
+    from winding_field.flattening.sheet_atlas import build_atlas, query_pixel
 
     a = sheet(tmp_path / "a", -60)
     root = tmp_path / "atlas"
@@ -307,7 +307,7 @@ def test_cli_dispatch_builds_and_queries_an_atlas(tmp_path, capsys):
 
 @pytest.mark.parametrize("change", ["ct", "origin"])
 def test_single_sheet_rejects_contradictory_bound_ct_identity(tmp_path, change):
-    from winding_field.sheet_atlas import build_atlas
+    from winding_field.flattening.sheet_atlas import build_atlas
 
     source = sheet(tmp_path / "source", -60)
     record = json.loads(source.read_text())

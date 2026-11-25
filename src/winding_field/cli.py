@@ -28,10 +28,13 @@ TOOLS = {
         "opt-in global field convergence; legacy routes remain unchanged",
     ),
     "constant-sheet": (
-        "constant_sheet",
+        "flattening.constant_sheet",
         "prepare, flatten, validate and render exact constant-W sheets",
     ),
-    "sheet-atlas": ("sheet_atlas", "package and query side-by-side constant-W CT sheets"),
+    "sheet-atlas": (
+        "flattening.sheet_atlas",
+        "package and query side-by-side constant-W CT sheets",
+    ),
     "surface-export": ("surface_export", "export a level set, flatten and sample CT"),
     "surface-atlas": ("surface_atlas", "build bounded surface charts and previews"),
     "surface-probe": ("surface_probe", "freeze a prior seed and inspect its surface"),
@@ -40,7 +43,7 @@ TOOLS = {
         "export TIFXYZ and invoke a pinned geometry gate",
     ),
     "ct-visuals": ("ct_visuals", "render frozen CT planes and field contours"),
-    "patch-visuals": ("patch_visuals", "evaluate and plot human-patch residuals"),
+    "patch-visuals": ("flattening.patch_visuals", "evaluate and plot human-patch residuals"),
     "run-watch": ("run_watch", "supervise a job with timeout and storage limits"),
     "scroll": ("scroll", "whole-scroll fields from overlapping tiles; full-resolution CT renders"),
 }

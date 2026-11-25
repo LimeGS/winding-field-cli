@@ -14,7 +14,7 @@ def curved_strip():
 
 
 def test_curved_developable_surface_flattens_with_correspondence():
-    from winding_field.flatten import parameterize
+    from winding_field.flattening.legacy_charts import parameterize
 
     vertices, faces = curved_strip()
     uv, quality = parameterize(vertices, faces)
@@ -28,7 +28,7 @@ def test_curved_developable_surface_flattens_with_correspondence():
 
 
 def test_degenerate_mesh_is_rejected():
-    from winding_field.flatten import parameterize
+    from winding_field.flattening.legacy_charts import parameterize
 
     with pytest.raises(ValueError, match="degenerate"):
         parameterize(np.zeros((3, 3)), np.array([[0, 1, 2]]))
@@ -38,7 +38,7 @@ def test_tiled_mesh_and_flatten_preserve_all_faces_and_roi(tmp_path):
     from test_field import prepared_run
     from winding_field.field import solve
     from winding_field.meshes import mesh
-    from winding_field.flatten import flatten
+    from winding_field.flattening.legacy_charts import flatten
 
     run = prepared_run(tmp_path / "run")
     solve(run, {"sweeps": 1, "field_chunk": 8})
@@ -65,7 +65,7 @@ def test_partial_atlas_resume_restores_missing_and_corrupt_companions(tmp_path):
     from winding_field.io import Volume
     from winding_field.field import solve
     from winding_field.meshes import mesh
-    from winding_field.flatten import flatten
+    from winding_field.flattening.legacy_charts import flatten
 
     run = prepared_run(tmp_path / "run")
     solve(run, {"sweeps": 1, "field_chunk": 8})

@@ -408,7 +408,7 @@ See [flattening setup and advanced reference](docs/FLATTENING.md) for details.
 | Align neighbouring W levels on one UV grid | `export-uvw` — [reference map and settings](docs/UVW.md) |
 | Prepare, flatten and resume a constant-W sheet | `constant-sheet` — [stages](docs/CONSTANT-SHEET.md) |
 | Browse sheets and query pixel XYZ | `sheet-atlas build`, `sheet-atlas query` — [visual atlas](docs/SHEET-ATLAS.md) |
-| Continue PNG tiles from a saved patch map | `python -m winding_field.patch_continue` — [required inputs](docs/PATCHES.md#continue-verified-png-tiles) |
+| Continue PNG tiles from a saved patch map | `python -m winding_field.flattening.patch_continue` — [required inputs](docs/PATCHES.md#continue-verified-png-tiles) |
 
 All four solver/scope combinations preserve source IDs and support resumable CT/XYZ
 export. SLIM needs pinned Flatboi; LSCM does not. Do not mix these flags with

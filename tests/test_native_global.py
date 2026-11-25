@@ -8,8 +8,8 @@ import numpy as np
 import pytest
 from scipy.sparse import eye
 
-from winding_field import native_global as global_uv
-from winding_field.flatten import overlap_pairs, iter_overlap_pairs
+from winding_field.flattening import native_sheet as global_uv
+from winding_field.flattening.legacy_charts import overlap_pairs, iter_overlap_pairs
 
 
 def disk():

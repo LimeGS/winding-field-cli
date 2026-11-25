@@ -247,7 +247,7 @@ exports/slim-sheet/
 ```
 
 The map contains exact source face/vertex IDs, face rows and domain IDs; use the
-existing `winding_field.patch_mapping.PatchMapping` reader for original source
+existing `winding_field.flattening.patch_mapping.PatchMapping` reader for original source
 keys. Each tile's `mapping.npz` stores XYZ and source face rows. `--export-tifxyz`
 adds the existing validated XYZ TIFF products to nonempty tiles.
 
@@ -490,7 +490,7 @@ macOS production runtime is unsupported. No whole-W throughput guarantee is made
 
 All parameterization code lives in `src/winding_field/flattening/`. The old top-level
 module names (`winding_field.patch_pipeline`, `python -m winding_field.patch_continue`, …)
-remain importable aliases of the same module objects.
+were removed in 2.0.0; import and run the modules below as `winding_field.flattening.<module>`.
 
 | Module | Was | Role |
 |---|---|---|

@@ -82,11 +82,11 @@ def arguments(tool, inputs, out, *extra):
 @pytest.fixture
 def numerical_backend(monkeypatch):
     if (
-        importlib.util.find_spec("winding_field.native_global") is not None
+        importlib.util.find_spec("winding_field.flattening.native_sheet") is not None
         and importlib.util.find_spec("igl") is not None
     ):
         return "real-native-global"
-    module = types.ModuleType("winding_field.native_global")
+    module = types.ModuleType("winding_field.flattening.native_sheet")
     module.cut_component = lambda v, f, check=None: (
         dict(
             vertices=v.copy(),
@@ -505,7 +505,7 @@ def test_lexical_dotdot_cannot_evade_source_containment(tool, inputs, tmp_path):
 def test_selected_qualification_exclusions_preserve_original_face_ids(
     tool, inputs, tmp_path, inline_workers, monkeypatch
 ):
-    api = importlib.import_module("winding_field.native_global")
+    api = importlib.import_module("winding_field.flattening.native_sheet")
     original = api.qualify_map
 
     def exclude(cut, uv, check=None):
@@ -607,7 +607,7 @@ def test_non_um_mesh_and_absent_component_reject_without_implicit_selection(tool
 
 
 def test_bad_cut_ancestry_cannot_be_committed(tool, inputs, tmp_path, inline_workers, monkeypatch):
-    api = importlib.import_module("winding_field.native_global")
+    api = importlib.import_module("winding_field.flattening.native_sheet")
     original = api.cut_component
 
     def bad_cut(v, f, check=None):
@@ -626,7 +626,7 @@ def test_bad_cut_ancestry_cannot_be_committed(tool, inputs, tmp_path, inline_wor
 def test_math_cannot_silently_modify_a_committed_input_in_place(
     tool, inputs, tmp_path, inline_workers, monkeypatch
 ):
-    api = importlib.import_module("winding_field.native_global")
+    api = importlib.import_module("winding_field.flattening.native_sheet")
     original = api.cut_component
 
     def mutated_input(v, f, check=None):

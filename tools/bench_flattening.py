@@ -145,7 +145,7 @@ def case_arrays(case):
 
 
 def load_case(source, output):
-    from winding_field.patch_pipeline import open_mesh, read_level
+    from winding_field.flattening.patches import open_mesh, read_level
 
     output = Path(output).absolute()
     mesh = Path(source["mesh"]).absolute()
@@ -212,7 +212,7 @@ def load_case(source, output):
 
 def prepare_domains(case, output, scope, guard, *, max_patch_faces=4096):
     import igl
-    from winding_field.native_global import cut_component
+    from winding_field.flattening.native_sheet import cut_component
     from winding_field.surface_atlas import face_components, local_chart, split_faces
 
     if scope not in ("sheet", "patches") or type(max_patch_faces) is not int or max_patch_faces < 1:
@@ -274,7 +274,7 @@ def prepare_domains(case, output, scope, guard, *, max_patch_faces=4096):
 
 
 def assemble_map(case, domains, solved, output):
-    from winding_field.flatten import cross2
+    from winding_field.flattening.legacy_charts import cross2
 
     source = case_arrays(case)
     v, f = source["world_um"], source["faces"]
@@ -411,8 +411,8 @@ def external_uv(cut, data):
 
 
 def solve_domain(method, cut, output, backend, guard):
-    from winding_field import native_global as n
-    from winding_field.flattening_matrix import solve
+    from winding_field.flattening import native_sheet as n
+    from winding_field.flattening.matrix import solve
     from winding_field.util import file_sha
 
     if method not in METHODS or method == "legacy-lscm":
@@ -477,7 +477,7 @@ def solve_domain(method, cut, output, backend, guard):
             uv, receipt["arap"] = n.arap_map(cut, uv, guard)
         if method in ("slim", "arap-slim"):
             from types import SimpleNamespace
-            from winding_field import flatboi_checkpoint as native
+            from winding_field.flattening import flatboi_checkpoint as native
 
             try:
                 n.validate_map(dict(world=cut["vertices"], faces=cut["faces"], uv=uv))
@@ -826,7 +826,7 @@ def run_cell(request, output):
                             domain_ids=np.zeros(len(rows), np.int64),
                         )
                 else:
-                    from winding_field.original_recipe import make_map
+                    from winding_field.flattening.original import make_map
 
                     mapped = make_map(a["world_um"], a["faces"])
                     mapped["domain_ids"] = np.zeros(len(mapped["faces"]), np.int64)

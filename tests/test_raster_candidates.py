@@ -1,6 +1,6 @@
 import numpy as np
 import pytest
-from winding_field import original_recipe as recipe
+from winding_field.flattening import original as recipe
 
 
 @pytest.mark.parametrize("offset", [0, 7])

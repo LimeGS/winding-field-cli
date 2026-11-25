@@ -1,6 +1,6 @@
 """Flattening: every UV parameterization path of the CLI.
 
-Modules (old top-level names remain importable as aliases of these):
+Modules:
 
 - ``flatboi`` / ``flatboi_checkpoint``: Flatboi SLIM runtime, batched solves and
   durable checkpointed batches (the only SLIM backend).
@@ -22,11 +22,22 @@ Modules (old top-level names remain importable as aliases of these):
 from pathlib import Path
 
 
+# Patch receipts key their kernel hashes by the module names in use before this package
+# existed; the keys stay stable and resolve to the module that now holds that code.
+KERNEL_MODULES = {
+    "patch_pipeline": "flattening.patches",
+    "patch_mapping": "flattening.patch_mapping",
+    "original_recipe": "flattening.original",
+    "original_pipeline": "flattening.original_pipeline",
+    "original_tifxyz": "flattening.original_tifxyz",
+}
+
+
 def module_file(name):
-    """Source file of ``winding_field.<name>``; old aliases resolve to the moved module."""
+    """Source file of ``winding_field.<name>``, or of the module a receipt key names."""
     from importlib import import_module
 
-    return Path(import_module(f"winding_field.{name}").__file__)
+    return Path(import_module(f"winding_field.{KERNEL_MODULES.get(name, name)}").__file__)
 
 
 def package_sources():
