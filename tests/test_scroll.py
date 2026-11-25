@@ -9,14 +9,36 @@ from winding_field import scroll
 
 def test_tile_cores_partition_the_axis_and_tiles_add_overlap():
     tiles = scroll.tile_ranges(300, 128, 64)
-    assert [t["core"] for t in tiles] == [(0, 127), (128, 255), (256, 299)]
-    assert [t["nodes"] for t in tiles] == [(0, 191), (64, 299), (192, 299)]
+    assert [t["core"] for t in tiles] == [(0, 63), (64, 191), (192, 299)]
+    assert [t["nodes"] for t in tiles] == [(0, 127), (0, 255), (128, 299)]
     with pytest.raises(ValueError, match="multiples of 64"):
         scroll.tile_ranges(300, 100, 64)
     with pytest.raises(ValueError, match="multiples of 16"):
         scroll.tile_ranges(300, 128, 20)
     narrow = scroll.tile_ranges(300, 128, 32)
-    assert [t["nodes"] for t in narrow] == [(0, 159), (96, 287), (224, 299)]
+    assert [t["nodes"] for t in narrow] == [(0, 95), (32, 223), (160, 299)]
+
+
+def test_tile_cores_share_the_axis_evenly_instead_of_leaving_a_narrow_remainder():
+    # The dry-run box: 192-node cores used to give tiles of 224 and 96 nodes.
+    tiles = scroll.tile_ranges(256, 192, 32)
+    assert [t["core"] for t in tiles] == [(0, 127), (128, 255)]
+    assert [t["nodes"] for t in tiles] == [(0, 159), (96, 255)]
+    # Whole multiples of the core are unchanged.
+    assert [t["core"] for t in scroll.tile_ranges(384, 128, 32)] == [
+        (0, 127),
+        (128, 255),
+        (256, 383),
+    ]
+    # No core exceeds the requested one, and cores stay on 64-node chunks.
+    for nodes in range(2, 1200, 37):
+        for core in (64, 128, 192, 320):
+            cores = [t["core"] for t in scroll.tile_ranges(nodes, core, 32)]
+            assert cores[0][0] == 0 and cores[-1][1] == nodes - 1
+            assert len(cores) == -(-nodes // core)
+            assert all(b - a + 1 <= core for a, b in cores)
+            assert all(a % 64 == 0 for a, _ in cores)
+            assert all(c[1] + 1 == d[0] for c, d in zip(cores, cores[1:]))
 
 
 def test_global_grid_counts_nodes_on_the_field_pitch():
@@ -95,7 +117,11 @@ def plan_two_biased_tiles(tmp_path, bias=(0.0, 0.004, 0.0), overlap=64):
     from winding_field.util import atomic_json
 
     tiles = []
-    for k, t in enumerate(scroll.tile_ranges(320, 128, overlap)):
+    # Fixed 128-node cores (the last one 64): these merge tests need tiles that only the
+    # first tile covers, which the balanced tile_ranges split no longer gives.
+    cores = [(0, 127), (128, 255), (256, 319)]
+    ranges = [dict(core=c, nodes=(max(0, c[0] - overlap), min(319, c[1] + overlap))) for c in cores]
+    for k, t in enumerate(ranges):
         tiles.append(
             dict(
                 id=f"000-000-{k:03d}",
