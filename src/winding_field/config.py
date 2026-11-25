@@ -269,6 +269,14 @@ def validate_config(config):
             raise ValueError("surface time limit must be positive finite seconds")
         if type(config.get("export_tifxyz", False)) is not bool:
             raise ValueError("export_tifxyz must be boolean")
+    if "ct_texture" in config:
+        if type(config["ct_texture"]) is not bool:
+            raise ValueError("ct_texture must be boolean")
+        if not config["ct_texture"]:
+            if config.get("surface_output", "atlas") != "native":
+                raise ValueError("--no-ct-texture requires --surface-output native")
+            if config.get("export_tifxyz") is not True:
+                raise ValueError("--no-ct-texture requires --export-tifxyz")
     if config.get("surface_output", "atlas") == "tifxyz":
         from .tifxyz_contract import validate_request
         from .util import digest

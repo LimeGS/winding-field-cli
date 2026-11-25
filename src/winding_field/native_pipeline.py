@@ -74,6 +74,14 @@ def _settings(config):
                 raise ValueError(f"{key} must be a boolean")
             if config[key] != (key == "render_keep_xyz"):
                 result[key] = config[key]
+    # Opt-in: recorded only when disabled, so textured identities are unchanged.
+    if "ct_texture" in config:
+        if type(config["ct_texture"]) is not bool:
+            raise ValueError("ct_texture must be a boolean")
+        if not config["ct_texture"]:
+            if not result["export_tifxyz"]:
+                raise ValueError("ct_texture false requires export_tifxyz (the mesh-only output)")
+            result["ct_texture"] = False
     if result["export_tifxyz"]:
         try:
             import tifffile
@@ -211,6 +219,7 @@ def _geometry_and_render(reader, store, volume, settings, pitch, until, *, offli
         settings["export_tifxyz"],
         keep_xyz=settings.get("render_keep_xyz", True),
         tiled=settings.get("render_tiled", False),
+        ct_texture=settings.get("ct_texture", True),
     )
     reader.validate()
     # observed_ct counts in-bounds samples, including fill; image contrast is not physical acceptance.
@@ -224,7 +233,8 @@ def _geometry_and_render(reader, store, volume, settings, pitch, until, *, offli
         c["tifxyz"]["status"] == "WRITTEN" and not c["tifxyz"].get("partial_geometry", False)
         for c in rendered["components"]
     )
-    complete = mapped["coverage_fraction"] >= 1.0 - 1e-12 and usable and all_tiff
+    textured = settings.get("ct_texture", True)
+    complete = mapped["coverage_fraction"] >= 1.0 - 1e-12 and (usable or not textured) and all_tiff
     if sheet:
         rendered = dict(rendered, sheet_flatten=store.get("sheet_flatten"))
     return dict(
@@ -234,7 +244,9 @@ def _geometry_and_render(reader, store, volume, settings, pitch, until, *, offli
         coverage_target=target,
         target_met=mapped["coverage_fraction"] + 1e-12 >= target,
         usable_render=usable,
-        usable_render_reason=None if usable else "ct-no-contrast",
+        usable_render_reason=None
+        if usable
+        else ("ct-no-contrast" if textured else "ct-texture-not-requested"),
         source_mesh_complete=True,
         requested_tifxyz_complete=all_tiff,
         timings_s=store.timings(),

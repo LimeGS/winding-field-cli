@@ -26,14 +26,14 @@ def flatboi_app():
         pytest.skip(f"Flatboi runtime not provisioned: {error}")
 
 
-def test_base_distribution_installs_pinned_lscm_without_tiff_extra():
+def test_base_distribution_installs_pinned_lscm_and_the_default_tiff_writer():
     from importlib.metadata import requires
 
     requirements = requires("winding-field-cli")
     assert "libigl==2.6.3" in requirements
     assert not any(r.startswith("libigl") and ";" in r for r in requirements)
-    assert any(r.startswith("tifffile") and 'extra == "tifxyz"' in r for r in requirements)
-    assert not any(r.startswith("tifffile") and ";" not in r for r in requirements)
+    # TIFXYZ is the default flattened output, so tifffile is a base dependency.
+    assert any(r.startswith("tifffile") and ";" not in r for r in requirements)
 
 
 def test_embedded_appimage_pin_matches_provenance():

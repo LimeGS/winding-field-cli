@@ -93,7 +93,7 @@ dependency versions, and the source hashes of the Qual tracer and network archit
 `--flattening-method original --flattening-config flattening.json` selects
 `prepare/fibres/field/mesh/original`, even with the default native selector.
 `mesh RUN` stops after extraction; `resume RUN` continues through original mapping.
-Add `--export-tifxyz` for mesh-derived TIFFs; `--surface-output tifxyz` selects a
+Mesh-derived TIFFs are written by default (`--no-export-tifxyz` opts out); `--surface-output tifxyz` selects a
 different direct-field algorithm and cannot be combined with this method.
 Original mapping uses `MESHES.json` then
 `original/ORIGINAL.json` (also published as run-root `ORIGINAL.json`). It is
@@ -394,6 +394,10 @@ only after channels and metadata validate. The immutable `CT-SNAPSHOT.sqlite`
 snapshot binds consumed logical CT chunks; authoritative Zarr fill can be valid
 data, so `observed_ct` is not evidence of papyrus/ink. `ct_value_range` reports
 the actual sampled intensity range, including all-zero patches.
+With `ct_texture=false` (`--no-ct-texture`, native only, requires TIFXYZ) no CT is
+sampled: mapped pixels are mask 1, `ct_value_range` is null, `usable_render` is false
+with reason `ct-texture-not-requested`, and completion depends on coverage and TIFXYZ
+only. The key is recorded in the level and render identities only when false.
 `usable_render` requires contrast within at least one observed component; an
 all-zero or constant canvas stays valid data but is reported `ct-no-contrast`.
 The snapshot has a distinct name from the mutable `ct-source.sqlite`, including
