@@ -126,8 +126,7 @@ surface_output: native # Opciones: native | atlas | tifxyz; tifxyz es directo de
 flattening_method: slim # Opciones: slim | default | original; slim solo native; default conserva mapping legacy; original = global LSCM.
 coverage_target: 1.0 # Opciones: número finito en (0,1], fracción de área mallada native; no cobertura CT observada.
 surface_time_limit_s: 1800.0 # Opciones: segundos finitos >0 activos acumulados por W native; flag --surface-time-limit.
-export_tifxyz: true # Opciones: true | false; TIFF XYZ derivados de malla en native/original (por defecto true), distinto de surface_output=tifxyz.
-# ct_texture: false # Opciones: true | false; false aplana y escribe TIFXYZ sin muestrear CT para la textura (solo native, implica export_tifxyz); flag --no-ct-texture.
+# ct_texture: false # Opciones: true | false; false aplana y escribe TIFXYZ sin muestrear CT para la textura (solo native; los TIFF XYZ se escriben siempre desde 2.0); flag --no-ct-texture.
 until: field # Opciones: prepare | fibres | field | mesh | flatten | assemble | render | tifxyz | original; omitir para etapa terminal de la rama seleccionada.
 
 # ── Mapping original (alternativa: flattening_method=original) ─────────────────

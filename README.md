@@ -374,7 +374,7 @@ or repeated CT path/scale are needed:
 
 ```bash
 wf export-sheets --run /outputs/175a-roi --levels -31 \
-  --export-tifxyz --output /outputs/exports/W-31
+  --output /outputs/exports/W-31
 ```
 
 Choose more levels with `--levels -31 -30`; these are raw field isovalues, as

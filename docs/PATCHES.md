@@ -16,7 +16,7 @@ values, which do not by themselves establish a calibrated winding value.
 winding-field export-sheets --mesh-bundle joined-range \
   --flattening-method patches --flattening-config patches.json \
   --source /data/scan.zarr/2 --voxel-um 9.6 \
-  --output new-patch-export --export-tifxyz
+  --output new-patch-export
 ```
 
 Example `patches.json` (paths must refer to existing installed dependencies):

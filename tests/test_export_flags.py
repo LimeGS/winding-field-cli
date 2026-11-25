@@ -601,7 +601,6 @@ def test_complete_cli_config_export_paths_are_relative_to_file(
         output_frame_id="typed-file",
         output_origin_xyz_um=[10.0, 20.0, 30.0],
         output_voxel_um=2.0,
-        export_tifxyz=False,
     )
     path = tmp_path / "options.json"
     path.write_text(json.dumps(options))
@@ -615,4 +614,4 @@ def test_complete_cli_config_export_paths_are_relative_to_file(
         "origin_xyz_um": [10.0, 20.0, 30.0],
         "voxel_um": 2.0,
     }
-    assert receipt["export_tifxyz"] is False
+    assert receipt["export_tifxyz"] is True

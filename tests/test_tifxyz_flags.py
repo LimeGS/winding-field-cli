@@ -290,7 +290,6 @@ def test_producer_false_values_override_file_true_values(tmp_path):
         reserve_gib=0,
         cache=str(tmp_path / "cache"),
         previews=True,
-        export_tifxyz=True,
         surface_output="tifxyz",
         levels=[1.0],
         tifxyz_reserve_disk_gib=0,
