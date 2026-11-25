@@ -397,7 +397,7 @@ winding-field resume runs/original
 
 Add `--roi` for a region or `--until mesh` to checkpoint before mapping.
 Choose the method when creating the run; do not edit saved configuration.
-TIFXYZ is written by default; `--no-export-tifxyz` keeps CT/mask/map products only.
+TIFXYZ is always written; 2.0 removed `--export-tifxyz` and `--no-export-tifxyz`.
 
 ## Resume and inspect results
 

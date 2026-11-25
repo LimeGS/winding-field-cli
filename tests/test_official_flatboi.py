@@ -192,7 +192,6 @@ def test_official_historical_patch_cli_retains_source_faces_and_rejects_resume(t
         str(config),
         "--output",
         str(output),
-        "--export-tifxyz",
     ]
     assert main(args) == 0
     level = output / "patches/level-0000"

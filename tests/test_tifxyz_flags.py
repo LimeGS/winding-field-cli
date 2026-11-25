@@ -299,9 +299,9 @@ def test_producer_false_values_override_file_true_values(tmp_path):
     )
     path = tmp_path / "options.json"
     path.write_text(json.dumps(options))
-    assert main(["run", "--cli-config", str(path), "--no-previews", "--no-export-tifxyz"]) == 0
+    assert main(["run", "--cli-config", str(path), "--no-previews"]) == 0
     config = json.loads((tmp_path / "run/RUN.json").read_bytes())["config"]
-    assert config["previews"] is False and config["export_tifxyz"] is False
+    assert config["previews"] is False and config["export_tifxyz"] is True
 
 
 def test_original_branch_does_not_silently_ignore_direct_frame_only_flags(tmp_path, monkeypatch):

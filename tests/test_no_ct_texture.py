@@ -101,9 +101,10 @@ def test_run_flag_implies_tifxyz_and_is_absent_by_default(tmp_path, monkeypatch,
     assert main(base) == 0, capsys.readouterr().err
     config = json.loads((tmp_path / "captured.json").read_bytes())
     assert "ct_texture" not in config and config["export_tifxyz"] is True
-    assert main([*base, "--no-export-tifxyz"]) == 0, capsys.readouterr().err
-    config = json.loads((tmp_path / "captured.json").read_bytes())
-    assert config["export_tifxyz"] is False
+    # 2.0 removed the opt-out: TIFXYZ is always written.
+    for removed in ("--no-export-tifxyz", "--export-tifxyz"):
+        with pytest.raises(SystemExit):
+            main([*base, removed])
     assert main([*base, "--no-ct-texture"]) == 0, capsys.readouterr().err
     config = json.loads((tmp_path / "captured.json").read_bytes())
     assert config["ct_texture"] is False and config["export_tifxyz"] is True

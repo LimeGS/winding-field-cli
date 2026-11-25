@@ -562,7 +562,7 @@ Use `--lasagna-cos-downsample`, `--lasagna-grad-mag-downsample`,
 | `--surface-output native\|atlas\|tifxyz` | Native default / legacy charts and gallery / experimental direct-field export |
 | `--flattening-method slim\|default` | Native local Flatboi SLIM (new-run default on Linux x86_64) / historical local mapping (default elsewhere) |
 | `--flattening-method original --flattening-config FILE` | Global LSCM with explicit output frame; independent of field resolution |
-| `--export-tifxyz` | Mesh-derived XYZ TIFFs with native or original renders; on by default, `--no-export-tifxyz` opts out |
+| (always) | Mesh-derived XYZ TIFFs with native or original renders; 2.0 removed `--export-tifxyz`/`--no-export-tifxyz` |
 | `--no-ct-texture` | Native only: flatten and write TIFXYZ without sampling CT for the texture |
 | `--tifxyz-config FILE` | Separate request for the Linux-only experimental direct route |
 | `--coverage-target 1 --surface-time-limit 1800` | Native mapped mesh-area target / cumulative active seconds per W |
