@@ -10,7 +10,7 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
-from test_io import make_volume, served
+from test_io import make_volume, served  # noqa: F401 (pytest fixtures)
 
 
 def test_http_gzip_decodes_and_limits_decoded_bytes(monkeypatch):

@@ -1,4 +1,5 @@
-import json, shutil
+import json
+import shutil
 import sys
 from pathlib import Path
 import numpy as np
@@ -42,7 +43,6 @@ def reuse(root, level):
 
 def test_verified_partial_continuation_preserves_tiles_and_avoids_resampling(tmp_path):
     root, level, mapped, sample, original = fixture(tmp_path)
-    saved = original["tiles"][:3]
     for tile in original["tiles"][3:]:
         shutil.rmtree(level / "render" / tile["directory"])
     inventory = reuse(root, level)

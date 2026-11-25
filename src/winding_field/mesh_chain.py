@@ -94,7 +94,7 @@ def chain_flatten(mesh_output, mesh_result, flatten_output, cli_config=None):
     command = flatten_command(mesh_output, flatten_output, cli_config)
     flatten.update(status="RUNNING", command=command, started_epoch=time.time())
     atomic_json(mesh_output / "CHAIN.json", record)
-    completed = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    completed = subprocess.run(command, capture_output=True, text=True)
     sys.stderr.write(completed.stderr)
     result = _last_json(completed.stdout)
     flatten.update(

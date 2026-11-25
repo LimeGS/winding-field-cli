@@ -5,7 +5,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from test_io import served, make_volume
+from test_io import served, make_volume  # noqa: F401 (pytest fixtures)
 from test_uvw import field_array
 from winding_field.io import Volume
 from winding_field.original_pipeline import sample_ct
@@ -473,7 +473,8 @@ def test_invalid_performance_settings_precede_output(tmp_path, option, value):
 
 
 def test_spawn_cancellation_restores_environment_and_reaps_children(tmp_path, monkeypatch):
-    import multiprocessing, os
+    import multiprocessing
+    import os
     from test_uvw_pipeline import inputs
     from winding_field.uvw_workers import GeometryWorkers
 

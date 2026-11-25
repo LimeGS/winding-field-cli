@@ -428,7 +428,6 @@ def solve_domain(method, cut, output, backend, guard):
                 receipt=dict(method=method, reason="external build not qualified"),
             )
         import subprocess
-        from winding_field.flatten import write_obj
 
         command = backend["argv"]
         if (

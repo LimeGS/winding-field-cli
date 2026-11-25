@@ -1,14 +1,12 @@
-from dataclasses import replace
 import json
-from pathlib import Path
 
 import numpy as np
 import pytest
 
-from test_tifxyz import engine, controlled, physical_source, settings, tree_state
+from test_tifxyz import engine, controlled, physical_source, settings, tree_state  # noqa: F401 (pytest fixtures)
 from winding_field.tifxyz_contract import Blocked, validate_request
 from winding_field.tifxyz_field import open_physical_field
-from winding_field.util import atomic_json, file_sha, digest
+from winding_field.util import atomic_json, file_sha
 
 
 def partial_plane(tmp_path, policy="allow_partial"):

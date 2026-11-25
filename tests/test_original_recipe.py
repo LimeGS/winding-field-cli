@@ -250,8 +250,7 @@ def test_original_cli_requires_frame_and_rejects_direct_branch(tmp_path, capsys)
 
 
 def test_external_world_units_and_missing_ct(monkeypatch):
-    from types import SimpleNamespace
-    from winding_field.original_pipeline import frame_coordinates, sample_ct
+    from winding_field.original_pipeline import frame_coordinates
 
     frame = dict(id="scan", origin_xyz_um=[8.64, 17.28, 25.92], voxel_um=8.64)
     assert np.allclose(

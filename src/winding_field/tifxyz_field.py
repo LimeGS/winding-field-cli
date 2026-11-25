@@ -331,7 +331,7 @@ def build_coarse(field, stride, out, stop=None, *, budget=None):
             first = [int(np.searchsorted(a, b)) for a, b in zip(axes, lo)]
             last = [int(np.searchsorted(a, b, side="right")) for a, b in zip(axes, hi)]
             if all(b > a for a, b in zip(first, last)):
-                samples = [axis[a:b] - l for axis, a, b, l in zip(axes, first, last, lo)]
+                samples = [axis[a:b] - low for axis, a, b, low in zip(axes, first, last, lo)]
                 values[tuple(slice(a, b) for a, b in zip(first, last))] = data[np.ix_(*samples)]
             bad = np.argwhere(~valid) + lo
             if len(bad):

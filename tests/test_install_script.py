@@ -170,7 +170,7 @@ def test_shared_auto_runtime_installs_specs_extras_and_wheel(installer):
     run, work, home, log = installer
     result = run(content='bash "$INSTALL_RUNTIME" auto "$PWD/cli" "$HOME/lasagna"\n')
     assert result.returncode == 0, result.stderr
-    calls = [json.loads(l) for l in log.read_text().splitlines()]
+    calls = [json.loads(line) for line in log.read_text().splitlines()]
     installs = [c for c in calls if c[:3] == ["uv", "pip", "install"]]
     assert len(installs) == 4
     assert_core_from_git(calls, work)
@@ -196,7 +196,7 @@ def test_shared_locked_runtime_preserves_hashes_and_dependency_layer(installer, 
         content=f'bash "$INSTALL_RUNTIME" {backend} "$PWD/cli" "$HOME/lasagna" dependencies\n'
     )
     assert result.returncode == 0, result.stderr
-    calls = [json.loads(l) for l in log.read_text().splitlines()]
+    calls = [json.loads(line) for line in log.read_text().splitlines()]
     sync = [c for c in calls if c[:3] == ["uv", "pip", "sync"]]
     assert len(sync) == 2 and not any(c[:2] == ["uv", "build"] for c in calls)
     for c, name in zip(sync, ("cli", "lasagna")):
@@ -209,7 +209,7 @@ def test_shared_locked_runtime_preserves_hashes_and_dependency_layer(installer, 
         content=f'bash "$INSTALL_RUNTIME" {backend} "$PWD/cli" "$HOME/lasagna" application "$PWD/wheels"\n'
     )
     assert result.returncode == 0, result.stderr
-    later = [json.loads(l) for l in log.read_text().splitlines()][before:]
+    later = [json.loads(line) for line in log.read_text().splitlines()][before:]
     assert not any(c[:3] == ["uv", "pip", "sync"] for c in later)
     assert not any(c[:2] == ["uv", "venv"] for c in later)
     assert list((work / "wheels").glob("*.whl")) and (work / "cli/bin/winding-field").exists()
@@ -281,7 +281,7 @@ def test_quick_install_uses_shared_runtime_specs_and_checks(installer):
     run, work, home, log = installer
     result = run()
     assert result.returncode == 0, result.stderr
-    calls = [json.loads(l) for l in log.read_text().splitlines()]
+    calls = [json.loads(line) for line in log.read_text().splitlines()]
     assert any(c[:2] == ["uv", "build"] for c in calls)
     cli = next(c for c in calls if "--extra" in c)
     assert cli[cli.index("--requirements") + 1] == str(work / "winding-field-cli/pyproject.toml")
@@ -304,7 +304,7 @@ def test_readme_manual_install_runs_shared_runtime(installer):
     assert result.returncode == 0, result.stderr
     assert (work / "winding-field-cli/.venv/bin/winding-field").exists()
     assert (home / ".cache/winding-field/lasagna-venv/bin/python").exists()
-    calls = [json.loads(l) for l in log.read_text().splitlines()]
+    calls = [json.loads(line) for line in log.read_text().splitlines()]
     assert any(c[:2] == ["uv", "build"] for c in calls)
     assert len([c for c in calls if c[:3] == ["uv", "pip", "check"]]) == 2
 

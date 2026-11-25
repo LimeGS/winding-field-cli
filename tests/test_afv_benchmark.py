@@ -46,7 +46,8 @@ def test_benchmark_refuses_existing_output(tmp_path):
 
 
 def test_real_reference_mode_never_modifies_input_or_prepared_maps(tmp_path):
-    import hashlib, json
+    import hashlib
+    import json
     from test_afv_batching import many
     from winding_field import afv
 

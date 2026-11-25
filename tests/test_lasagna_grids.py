@@ -126,7 +126,6 @@ def test_bounded_raw_reduction_matches_global_reflected_pyramid(factor):
 
 
 def test_bounded_defaults_calibrate_reduced_lattice(tmp_path, monkeypatch):
-    from winding_field import bounded_pipeline as pipeline
     from test_bounded_pipeline import test_bounded_prepare_retains_coarse_only_and_releases_model
 
     test_bounded_prepare_retains_coarse_only_and_releases_model(tmp_path, monkeypatch)

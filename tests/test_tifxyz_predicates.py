@@ -1,16 +1,13 @@
 import ctypes
 from fractions import Fraction as Q
 import json
-import math
-import os
-from pathlib import Path
 import subprocess
 import sys
 
 import numpy as np
 import pytest
 
-from test_tifxyz_native import artifact, coverage, orientation
+from test_tifxyz_native import artifact, coverage, orientation  # noqa: F401 (pytest fixtures)
 
 
 @pytest.mark.parametrize("kind", ["numpy", "cpu"])

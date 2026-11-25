@@ -1,7 +1,6 @@
 """The README's saved-run export needs no hand-maintained configuration."""
 
 import json
-from pathlib import Path
 
 import numpy as np
 import pytest

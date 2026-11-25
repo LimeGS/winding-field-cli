@@ -2,7 +2,6 @@
 
 import json
 
-import pytest
 
 from test_flattening_matrix import request, source_bundle
 from test_native_slim import flatboi_app  # noqa: F401  (fixture)

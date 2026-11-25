@@ -695,7 +695,6 @@ def assemble(store, coverage_target=1.0):
     _schema(store)
     store.phase = "assemble"
     source_area = store.get("source_area")
-    source_faces = store.get("source_faces")
     if source_area is None:
         raise ValueError("native source census missing")
     mapped = store.db.execute(

@@ -2,7 +2,6 @@ import json
 import sqlite3
 import subprocess
 import sys
-from pathlib import Path
 
 import pytest
 from test_surface_workflow import prepared

@@ -62,3 +62,22 @@ extend-exclude = [
   # Hash-pinned in provenance; must stay byte-identical.
   "src/winding_field/surface_render.py",
 ]
+
+[tool.ruff.lint]
+# Likely bugs and maintainability, not cosmetic churn (same base set as the core).
+select = ["E4", "E7", "E9", "F", "W", "UP"]
+ignore = [
+  # Receipt strings, argparse help and printed evidence lines are deliberately long.
+  "E501",
+  # Tools insert src/ into sys.path before importing it.
+  "E402",
+  # Short numeric helpers read better as one-line lambdas.
+  "E731",
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Test modules import shared pytest fixtures by name and take them as arguments.
+"tests/*.py" = ["F811"]
+# A closure reads a name that is deleted later in the same scope (ruff false positive).
+"src/winding_field/flattening/patches.py" = ["F821"]
+"src/winding_field/flattening/original_pipeline.py" = ["F821"]

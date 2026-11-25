@@ -519,7 +519,6 @@ def test_stop_keeps_latest_uv_and_ct_tiles(bench, tmp_path, monkeypatch):
 
 
 def test_inventory_resume_rejects_changed_snapshot(bench, tmp_path):
-    from test_flattening_ct import profile
 
     sources = []
     for field in ("175a", "paris4"):
