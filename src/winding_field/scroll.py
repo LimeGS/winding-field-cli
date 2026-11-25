@@ -406,7 +406,10 @@ def plan(args):
             support_policy="observed",
         ),
         coarse_meta["geometry"],
-        cache_bytes=256 << 20,
+        # Hold the decoded coarse in memory across tiles: a one-block coarse is a single
+        # chunk (PHerc0175A: 625 x 404 x 482 nodes, ~1.1 GB decoded); with a smaller budget
+        # every tile decoded it again (336 tiles: 48 min of planning instead of seconds).
+        cache_bytes=4 << 30,
     )
     tile_memory = None
     tile_nodes = args.tile_nodes
