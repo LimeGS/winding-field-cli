@@ -365,6 +365,24 @@ In the README export command replace `--field-config field.json --levels -31`
 with `--mesh-bundle /data/run/meshes`. The immutable bundle must contain
 `MESH.json`, `RUN.json` and `mesh.sqlite`; it already records its levels.
 
+**Chained after extraction.** `prepared mesh ... --then-flatten DIR` runs that export
+as a second, separate step once the extraction is `MESH_READY`, and never otherwise:
+
+```sh
+wf prepared mesh --config surface-run.json --output /outputs/meshes \
+  --then-flatten /outputs/flat --flatten-cli-config flatten.yaml
+```
+
+The second step is an ordinary `export-sheets --mesh-bundle /outputs/meshes --output
+DIR` process with its own receipts and exit code; `--flatten-cli-config` is its
+`--cli-config` (`source`, `voxel_um`, `flattening_solver`, `scope`, `stages`,
+...). Without `output_frame_id` or `flattening_config` there, the output frame is the
+mesh publication's (`MESH.json` → `metadata`). An existing DIR is resumed with
+`--resume`. `CHAIN.json` in the mesh output records both steps (status, command,
+return code); a failed flatten step keeps the mesh step's receipts and returns its own
+exit code. DIR must be outside the mesh output. It is mesh-only: not with
+`--parallel-levels`, `surfaces` or `render`.
+
 ## New CT run with original mapping
 
 After preparing `flattening.json` and installing the `tifxyz` extra:

@@ -581,13 +581,35 @@ def main(argv=None) -> int:
         action="store_true",
         help="independent per-level bundles; automatically bound CPU/RAM/disk concurrency",
     )
+    parser.add_argument(
+        "--then-flatten",
+        type=Path,
+        metavar="DIR",
+        help="mesh only: after MESH_READY, run export-sheets on the bundle into DIR as a "
+        "separate second step with its own receipts (CHAIN.json records both)",
+    )
+    parser.add_argument(
+        "--flatten-cli-config",
+        type=Path,
+        metavar="FILE",
+        help="export-sheets settings for --then-flatten (source, flattening_solver, scope, ...)",
+    )
     _surface_flags(parser)
     from .cli_settings import parse_options, merge_explicit
 
     sources = {}
     args = parse_options(parser, argv, sources=sources)
     config_path = None
+    chain = None
     try:
+        if args.flatten_cli_config is not None and args.then_flatten is None:
+            raise ValueError("--flatten-cli-config requires --then-flatten")
+        if args.then_flatten is not None and (args.action != "mesh" or args.parallel_levels):
+            raise ValueError("--then-flatten requires the mesh action without --parallel-levels")
+        if args.then_flatten is not None:
+            from .mesh_chain import check_chain
+
+            check_chain(args.output, args.then_flatten, args.flatten_cli_config)
         if args.parallel_levels:
             if args.action == "render":
                 raise ValueError("--parallel-levels requires mesh/surfaces")
@@ -628,6 +650,13 @@ def main(argv=None) -> int:
             result = run_surfaces(
                 config_path, args.output, resume=args.resume, render=args.action == "surfaces"
             )
+            if args.then_flatten is not None:
+                from .mesh_chain import chain_flatten
+
+                chain = chain_flatten(
+                    args.output, result, args.then_flatten, args.flatten_cli_config
+                )
+                result = dict(result, chain=chain)
     except ResourceUnavailable as error:
         print("resources unavailable: " + str(error), file=sys.stderr)
         return 75
@@ -649,6 +678,8 @@ def main(argv=None) -> int:
                     dict(config_path=str(config_path), config_sha256=sha(config_path)),
                 )
     print(json.dumps(result, allow_nan=False))
+    if chain is not None and chain["steps"][1].get("returncode"):
+        return chain["steps"][1]["returncode"]
     return 0
 
 
