@@ -318,12 +318,11 @@ the remaining repeated decodes (25.0 s against 33.8 s on the first 1,612 tiles).
   about 290M pixels). `--whole-png` restores `sheet.png`/`mask.png`. `sheet-atlas` reads
   `sheet.png` and needs `--whole-png`.
 - **TIFXYZ by default.** Per-pixel XYZ is kept and TIFXYZ is written
-  (`component-*/tifxyz/{x,y,z}.tif`, `meta.json`); `--export-tifxyz` is accepted as a
-  no-op. `--no-export-tifxyz` stores only CT and mask per tile (XYZ and normals stay
-  recomputable from the retained charts and UVs).
+  (`component-*/tifxyz/{x,y,z}.tif`, `meta.json`), always. 2.0 removed `--export-tifxyz`
+  and `--no-export-tifxyz`.
 - **`--no-ct-texture` (opt-in).** Flattens and writes the mesh-derived TIFXYZ without
-  sampling CT, for consumers that only need the geometry (e.g. ink-sdk). It implies
-  `--export-tifxyz` and skips the CT prefetch; the CT metadata is still opened for the
+  sampling CT, for consumers that only need the geometry (e.g. ink-sdk). It
+  skips the CT prefetch; the CT metadata is still opened for the
   output frame. The TIFXYZ is byte-identical to a textured render; every mapped pixel is
   `unsupported_ct` (mask 1), the PNGs carry no observed alpha, and `LEVEL.json` reports
   `usable_render=false` with reason `ct-texture-not-requested` while the level can still

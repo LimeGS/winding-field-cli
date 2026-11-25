@@ -1460,8 +1460,9 @@ def render_ct(args):
         flattening_scope=args.flattening_scope if args.flattening_scope != "charts" else None,
         surface_time_limit_s=args.surface_time_limit,
         coverage_target=args.coverage_target,
-        export_tifxyz=args.export_tifxyz or args.no_ct_texture,
-        render_keep_xyz=args.export_tifxyz or args.no_ct_texture,
+        # 2.0: TIFXYZ and per-pixel XYZ are always written.
+        export_tifxyz=True,
+        render_keep_xyz=True,
         render_tiled=not args.whole_png,
     )
     if args.no_ct_texture:
@@ -1836,17 +1837,9 @@ def _parser():
     p.add_argument("--surface-time-limit", type=float, default=1800.0)
     p.add_argument("--coverage-target", type=float, default=1.0)
     p.add_argument(
-        "--export-tifxyz",
-        action=argparse.BooleanOptionalAction,
-        default=True,
-        help="write TIFXYZ and keep per-pixel XYZ (default: on; --export-tifxyz is kept as a "
-        "no-op); --no-export-tifxyz stores only CT and mask",
-    )
-    p.add_argument(
         "--no-ct-texture",
         action="store_true",
-        help="flatten and write TIFXYZ without sampling CT for the texture (implies "
-        "--export-tifxyz; skips the CT prefetch)",
+        help="flatten and write TIFXYZ without sampling CT for the texture (skips the CT prefetch)",
     )
     p.add_argument(
         "--whole-png",
