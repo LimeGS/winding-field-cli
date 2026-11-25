@@ -2,8 +2,8 @@
   "origin": "https://github.com/LimeGS/winding-field",
   "distribution": "winding-field",
   "version": "1.7.0",
-  "revision": "b81f47deb1cdac94d8b92824c4c43aa10ec7d535",
-  "install_url": "git+https://github.com/LimeGS/winding-field@b81f47deb1cdac94d8b92824c4c43aa10ec7d535",
+  "revision": "eb97fb71c5d3c457bbe0ec4f8b3ff689aa4092ac",
+  "install_url": "git+https://github.com/LimeGS/winding-field@eb97fb71c5d3c457bbe0ec4f8b3ff689aa4092ac",
   "verification": "git commit object id plus source_sha256, checked after install by tools/install-runtime.sh",
   "changes": "Core branch for LimeGS/winding-field#21 (version label still 1.7.0): adds solve_blocks(coarse_factor=F), an out-of-core trilinear Galerkin coarse correction before every sweep (field_block_coarse.py, recorded in the block identity only when set) and StencilConstraints template exterior terms (constraint_templates.py); solve_blocks(checkpoint='sweep', memory_report=...) with BlockStore(write_back=True) background per-sweep flushes, and the host-memory tier plan field_memory.py (execution choices, not identity); also everything of LimeGS/winding-field#20 (preconditioner='amg', field_schwarz.py). Identities and checkpoints without coarse_factor unchanged",
   "migrated_workflows": {

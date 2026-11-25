@@ -483,7 +483,7 @@ def main(argv=None):
             "--field-coarse-factor",
             type=int,
             default=argparse.SUPPRESS,
-            help="0 (default) or >= 2: open every field sweep with a global coarse correction on "
+            help="experimental, 0 (default) or >= 2: open every field sweep with a global coarse correction on "
             "every F-th node (two-level Schwarz); large-scale structure then crosses all blocks "
             "in each sweep instead of one overlap per sweep",
         )

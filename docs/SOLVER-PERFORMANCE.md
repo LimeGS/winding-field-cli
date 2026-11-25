@@ -34,6 +34,28 @@ The existing prepared `--prefetch` option remains compatible. It overlaps immuta
 observation loading in a CPU subprocess; GPU transfers and live boundary reads are
 not double-buffered.
 
+## Host memory tiers and multi-block solves
+
+`--field-memory auto|disk|field|all` (default `auto`) measures free RAM when the
+field step starts (MemAvailable, lowered by a cgroup limit) and keeps a reserve of
+`max(4 GiB, 15 %)`:
+
+- `disk`: the field does not fit. Every block reads and commits on disk, and the CLI
+  prints a WARNING.
+- `field`: the decoded field stays in RAM, commits are published once per sweep in
+  the background, and what is left caches observation crops.
+- `all`: the field and every block's observation crop stay in RAM.
+
+The chosen tier is written to `STATUS.json` (`memory`, `checkpoint_policy`). Explicit
+`--field-cache-bytes`/`--observation-cache-bytes` win; bounded fields, convergence runs
+and field advice keep per-block checkpoints. The field is bit-identical in every tier.
+
+**Experimental in 2.0.0:** `--field-coarse-factor F` (two-level Schwarz coarse
+correction) and `--field-pair-scope global` (fibre pairs sampled over the whole grid).
+They change the field and its identity. On real PHerc0175A data the two-level solve
+still stalls above the target misfit, so whole-scroll fields should use the tile
+workflow in [SCROLL.md](SCROLL.md), where every tile is one ordinary run.
+
 ## Reproducible measurements
 
 `tools/bench_solver.py` takes explicit core/CLI checkouts, writes hashes
