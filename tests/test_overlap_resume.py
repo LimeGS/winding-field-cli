@@ -3,7 +3,7 @@ import json
 import numpy as np
 import pytest
 
-from winding_field.flatten import iter_overlap_pairs
+from winding_field.flattening.legacy_charts import iter_overlap_pairs
 from winding_field.overlap_audit import audit_uv
 
 

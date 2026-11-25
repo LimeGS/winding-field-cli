@@ -3,8 +3,8 @@ from concurrent.futures import ThreadPoolExecutor
 from types import SimpleNamespace
 import numpy as np
 import pytest
-from winding_field.original_recipe import sample_points
-from winding_field.patch_pipeline import PatchCT
+from winding_field.flattening.original import sample_points
+from winding_field.flattening.patches import PatchCT
 
 
 def test_prefetch_preserves_scalar_order_and_missing_support():
@@ -55,7 +55,7 @@ def test_native_prefetch_four_concurrent_loads_and_publication(tmp_path):
 
 
 def test_prefetch_reserve_failure_before_network(tmp_path, monkeypatch):
-    from winding_field import patch_pipeline as p
+    from winding_field.flattening import patches as p
 
     ct = object.__new__(PatchCT)
     ct._lock = threading.RLock()

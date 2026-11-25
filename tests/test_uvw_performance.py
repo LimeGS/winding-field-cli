@@ -8,7 +8,7 @@ import pytest
 from test_io import served, make_volume  # noqa: F401 (pytest fixtures)
 from test_uvw import field_array
 from winding_field.io import Volume
-from winding_field.original_pipeline import sample_ct
+from winding_field.flattening.original_pipeline import sample_ct
 from winding_field.tifxyz_field import PhysicalField
 from winding_field.surface_sources import FieldSource
 

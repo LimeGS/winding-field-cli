@@ -7,7 +7,8 @@ import pytest
 def test_cli_uses_the_installed_numerical_library():
     import block_solver
     import field_observations
-    from winding_field import field, flatten, meshes, predict, surface_mesh
+    from winding_field import field, meshes, predict, surface_mesh
+    from winding_field.flattening import legacy_charts as flatten
 
     assert field.solve_blocks is block_solver.solve_blocks
     assert predict.density_normals is field_observations.density_normals

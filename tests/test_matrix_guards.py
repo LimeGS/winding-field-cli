@@ -20,8 +20,8 @@ def test_remote_resume_detects_change_despite_retained_native_cache(
 
     # This tiny fixture tests source mutation, not the host's free disk space.
     monkeypatch.setattr("shutil.disk_usage", lambda path: SimpleNamespace(free=16 << 30))
-    from winding_field.patch_pipeline import PatchCT
-    from winding_field.flattening_matrix import settings
+    from winding_field.flattening.patches import PatchCT
+    from winding_field.flattening.matrix import settings
 
     _, source = source_bundle(tmp_path)
     chunk = source / "0.0.0"
@@ -117,8 +117,8 @@ def test_field_extraction_honors_export_stop_and_reserve(tmp_path, monkeypatch):
 
 @pytest.mark.skipif(sys.platform != "linux", reason="Linux process-tree resource guard")
 def test_matrix_guard_interrupts_native_before_next_checkpoint(tmp_path, monkeypatch):
-    from winding_field import flatboi_checkpoint as native
-    from winding_field.flattening_matrix import build_map, settings
+    from winding_field.flattening import flatboi_checkpoint as native
+    from winding_field.flattening.matrix import build_map, settings
     from test_flatboi_checkpoint import fake_native
 
     app = fake_native(tmp_path, monkeypatch, native)
@@ -134,7 +134,7 @@ def test_matrix_guard_interrupts_native_before_next_checkpoint(tmp_path, monkeyp
 
     with pytest.raises(InterruptedError, match="outer export stop"):
         build_map(v, f, out, cfg, guard=guard)
-    from winding_field.sheet_atlas import _json
+    from winding_field.flattening.sheet_atlas import _json
 
     assert _json(root / "LATEST.json")["iterations"] == 10
     assert len(list(root.glob("batch-*"))) == 1

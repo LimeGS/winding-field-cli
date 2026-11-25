@@ -38,13 +38,13 @@ def resolved(tokens, tmp_path, *, solver=None, scope=None, method=None):
     args.flattening_method = method
     request = flattening_request(args)
     if solver:
-        from winding_field.flattening_matrix import settings
+        from winding_field.flattening.matrix import settings
 
         return settings(request, solver, scope)
     if method == "patches":
-        from winding_field.patch_pipeline import settings
+        from winding_field.flattening.patches import settings
     else:
-        from winding_field.original_pipeline import settings
+        from winding_field.flattening.original_pipeline import settings
     return settings(request)
 
 

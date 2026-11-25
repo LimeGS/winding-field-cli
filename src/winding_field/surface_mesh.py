@@ -21,17 +21,13 @@ import field_store
 from field_runtime import check_resources
 from field_store import atomic_json
 
+from .util import file_sha as sha
 
 # Tile geometry and the tile cursor become durable together at most this often. One
 # transaction and one status write per tile cost more than the extraction itself on a
 # whole-scroll level (32,240 tiles: 36% SQLite commits, 13% status fsyncs); a crash
 # resumes from the last commit, so at most this much work is repeated.
 COMMIT_SECONDS = 2.0
-
-
-def sha(path):
-    with Path(path).open("rb") as stream:
-        return hashlib.file_digest(stream, "sha256").hexdigest()
 
 
 def _integer(value, name, minimum=1):

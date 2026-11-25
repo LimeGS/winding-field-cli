@@ -408,7 +408,7 @@ See [flattening setup and advanced reference](docs/FLATTENING.md) for details.
 | Align neighbouring W levels on one UV grid | `export-uvw` — [reference map and settings](docs/UVW.md) |
 | Prepare, flatten and resume a constant-W sheet | `constant-sheet` — [stages](docs/CONSTANT-SHEET.md) |
 | Browse sheets and query pixel XYZ | `sheet-atlas build`, `sheet-atlas query` — [visual atlas](docs/SHEET-ATLAS.md) |
-| Continue PNG tiles from a saved patch map | `python -m winding_field.patch_continue` — [required inputs](docs/PATCHES.md#continue-verified-png-tiles) |
+| Continue PNG tiles from a saved patch map | `python -m winding_field.flattening.patch_continue` — [required inputs](docs/PATCHES.md#continue-verified-png-tiles) |
 
 All four solver/scope combinations preserve source IDs and support resumable CT/XYZ
 export. SLIM needs pinned Flatboi; LSCM does not. Do not mix these flags with
@@ -470,6 +470,10 @@ field-level calibration see [prepared inputs](docs/PREPARED.md#extract-or-import
 **Results:** `level-*.obj` and `renders/*.png` under the output directory. These
 are geometry views; original CT/TIFXYZ needs the matching CT and the
 [export-sheets recipe](docs/FLATTENING.md).
+To flatten right after extraction, add `--then-flatten DIR --flatten-cli-config
+flatten.yaml` to `prepared mesh`: once the meshes are ready it runs `export-sheets` on
+them as a separate step with its own receipts
+([chained flattening](docs/FLATTENING.md)).
 
 For several field levels, add `--parallel-levels` to `prepared mesh` or
 `prepared surfaces`. CPU, available RAM and disk headroom bound the number of
@@ -566,6 +570,9 @@ Use `--lasagna-cos-downsample`, `--lasagna-grad-mag-downsample`,
 | `--no-ct-texture` | Native only: flatten and write TIFXYZ without sampling CT for the texture |
 | `--tifxyz-config FILE` | Separate request for the Linux-only experimental direct route |
 | `--coverage-target 1 --surface-time-limit 1800` | Native mapped mesh-area target / cumulative active seconds per W |
+| `--preconditioner jacobi\|amg` | Field PCG preconditioner: Jacobi (default) or algebraic multigrid, far fewer iterations on large blocks; Jacobi runs keep their identity |
+| `--field-memory auto\|disk\|field\|all` | Host RAM use of the field solve: measured at start (default), every block on disk, whole field in RAM with one checkpoint per sweep, or field plus all observations in RAM; same field in every tier ([memory tiers](docs/SOLVER-PERFORMANCE.md#host-memory-tiers-and-multi-block-solves)) |
+| `--field-coarse-factor F`, `--field-pair-scope global` | Experimental: two-level Schwarz coarse correction / fibre pairs over the whole grid; both change the field; whole scrolls use the [tile workflow](docs/SCROLL.md) |
 | `--level-workers 1` | Native W levels computed in parallel processes; each needs its own memory; outputs equal a serial run |
 | `--import-workers 1` | Local import workers (`0` = resource-admitted automatic); results written in input order |
 | `--cache-gib 2 --reserve-gib 1` | CT payload cache cap / free disk reserve, not RAM |
@@ -583,6 +590,14 @@ Use `--lasagna-cos-downsample`, `--lasagna-grad-mag-downsample`,
 | Original global CT/masks/maps | `original/level-NNNN/`, `original/ORIGINAL.json` |
 | Atlas-only charts and gallery | `flat/`, `index.html` |
 | Direct-field publication | `tifxyz/TIFXYZ.json` and `READY.json` or `PARTIAL.json` |
+
+| Exit code | Meaning |
+| --- | --- |
+| `0` | Completed, or paused on a requested stop or time budget; read the status in the printed JSON |
+| `1` | Error: invalid input, I/O failure or failed run; the message is on stderr |
+| `2` | Partial or blocked result (`PARTIAL`, non-resource `BLOCKED`); `prepared`, the surface, atlas, probe, CT-visual and `scroll` tools also use it for invalid input |
+| `3` | Not finished but resumable: `prepared verify` before global convergence, incomplete `scroll` |
+| `75` | Resource unavailable (memory, disk, time limit, accelerator); safe to retry with more resources or `resume` |
 
 For complete flags use command-specific help:
 

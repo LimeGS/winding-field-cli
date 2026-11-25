@@ -42,7 +42,6 @@ identity, writing face and ink remain UNMEASURED even when this export succeeds.
 """
 
 import argparse
-import hashlib
 import json
 import os
 import signal
@@ -60,6 +59,7 @@ from skimage.measure import marching_cubes
 
 from .flattening.obj import write_obj
 from .flattening.topology import duplicate_faces, edge_groups
+from .util import file_sha as _sha
 
 MAX_FIELD_VOXELS = 64_000_000
 MAX_PIXELS = 4_000_000
@@ -985,11 +985,6 @@ def sample_ct_stack(ct, metadata, points_xyz, normals_xyz, depth_offsets, *, fra
         ink="NOT_MEASURED",
     )
     return stack, mask, receipt
-
-
-def _sha(path):
-    with open(path, "rb") as f:
-        return hashlib.file_digest(f, "sha256").hexdigest()
 
 
 def _preview(path, values, valid, window=None):

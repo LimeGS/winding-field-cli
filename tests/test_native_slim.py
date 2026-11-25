@@ -17,7 +17,7 @@ def flatboi_app():
         pytest.skip("Flatboi SLIM is available only on Linux x86_64")
     try:
         app = flatboi.resolve_app_run(offline=not required)
-        from winding_field.patch_pipeline import check_flatboi
+        from winding_field.flattening.patches import check_flatboi
 
         return check_flatboi(str(app), "historical")["app_run"]
     except ValueError as error:
@@ -40,7 +40,7 @@ def test_embedded_appimage_pin_matches_provenance():
     from pathlib import Path
 
     from winding_field.flattening import flatboi
-    from winding_field.patch_pipeline import LAUNCHER_SHA, NATIVE_RECIPES
+    from winding_field.flattening.patches import LAUNCHER_SHA, NATIVE_RECIPES
 
     provenance = json.loads(
         (Path(__file__).resolve().parents[1] / "provenance/flatboi.json").read_text()
@@ -53,7 +53,7 @@ def test_embedded_appimage_pin_matches_provenance():
 
 def test_flatboi_reduces_real_symmetric_dirichlet_energy_without_changing_source(flatboi_app):
     from winding_field.flattening.flatboi import solve_batch
-    from winding_field.native_geometry import _validate
+    from winding_field.flattening.native_charts import _validate
 
     vertices = np.array([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [1.0, 1.0, 0.0]])
     faces = np.array([[0, 1, 2], [1, 3, 2]])
@@ -81,7 +81,7 @@ def test_batched_charts_match_individual_solves(flatboi_app):
 
     from test_meshes import curved_strip
 
-    from winding_field.native_geometry import _lscm
+    from winding_field.flattening.native_charts import _lscm
 
     vertices, faces = curved_strip()
     seed, _ = _lscm(vertices, faces)  # production seeds are validated LSCM/projections
@@ -98,7 +98,7 @@ def test_large_batches_are_bitwise_reproducible(flatboi_app):
 
     from test_meshes import curved_strip
 
-    from winding_field.native_geometry import _lscm
+    from winding_field.flattening.native_charts import _lscm
 
     vertices, faces = curved_strip()
     seed, _ = _lscm(vertices, faces)
@@ -141,7 +141,7 @@ def test_slim_native_pipeline_records_flatboi_and_reuses_completed_charts(tmp_pa
 
 @pytest.mark.parametrize("method", [None, "default"])
 def test_default_native_configs_keep_identity_and_never_invoke_slim(tmp_path, monkeypatch, method):
-    import winding_field.native_geometry as geometry
+    import winding_field.flattening.native_charts as geometry
     from test_native_runtime import field_case
     from winding_field.native_pipeline import work, _settings
 
@@ -167,7 +167,7 @@ def test_default_native_configs_keep_identity_and_never_invoke_slim(tmp_path, mo
 
 
 def test_invalid_seeds_never_reach_flatboi(monkeypatch):
-    import winding_field.native_geometry as geometry
+    import winding_field.flattening.native_charts as geometry
 
     seen = []
     monkeypatch.setattr(geometry, "_slim_batch", lambda items, *a, **kw: seen.extend(items) or [])
@@ -209,7 +209,7 @@ def test_slim_stop_kills_the_native_process(flatboi_app):
 
 @pytest.mark.parametrize("shape", ["curved-strip", "closed-octahedron"])
 def test_slim_keeps_source_ids_after_lscm_or_recursive_chart_splitting(shape, flatboi_app):
-    from winding_field.native_geometry import _pieces, _slim_batch, _validate
+    from winding_field.flattening.native_charts import _pieces, _slim_batch, _validate
 
     if shape == "curved-strip":
         from test_meshes import curved_strip
@@ -248,7 +248,7 @@ def test_slim_keeps_source_ids_after_lscm_or_recursive_chart_splitting(shape, fl
 
 def test_slim_rejects_collapsed_optimizer_output_instead_of_reusing_seed(monkeypatch):
     import winding_field.flattening.flatboi as flatboi
-    from winding_field.native_geometry import _slim_batch
+    from winding_field.flattening.native_charts import _slim_batch
 
     monkeypatch.setattr(
         flatboi,
