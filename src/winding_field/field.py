@@ -330,8 +330,9 @@ def solve(run, config, stop=None, *, sweep_target=None, convergence=None):
     field_cache_bytes = config.get("field_cache_bytes", 64 << 20)
     if type(field_cache_bytes) is not int or field_cache_bytes < 0:
         raise ValueError("field_cache_bytes must be a nonnegative integer")
-    if config.get("preconditioner", "jacobi") != "jacobi":
-        raise ValueError("block workflows require preconditioner='jacobi'")
+    preconditioner = config.get("preconditioner", "jacobi")
+    if preconditioner not in ("jacobi", "amg"):
+        raise ValueError("block workflows require preconditioner='jacobi' or 'amg'")
     run = Path(run)
     meta = json.loads((run / "PREPARED.json").read_bytes())
     fibres = json.loads((run / "FIBRES.json").read_bytes())
@@ -430,6 +431,9 @@ def solve(run, config, stop=None, *, sweep_target=None, convergence=None):
         reserve_bytes=config.get("reserve_bytes", 0),
         prepared_cache_bytes=config.get("prepared_cache_bytes", 0),
     )
+    if preconditioner != "jacobi":
+        # Only a non-default policy is passed: Jacobi run identities stay unchanged.
+        options["preconditioner"] = preconditioner
     if bounded:
         options["max_bytes"] = config.get("bounded_bytes", 12 << 30) // 8
     prior = None

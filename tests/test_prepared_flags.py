@@ -678,3 +678,16 @@ def test_explicit_config_does_not_recreate_a_missing_retained_snapshot(tmp_path,
     before = pins(tmp_path)
     assert owner.main([action, "--config", str(path), "--output", str(root), *extra]) == 2
     assert before == pins(tmp_path)
+
+
+@pytest.mark.parametrize("policy", ["jacobi", "amg"])
+def test_solver_preconditioner_reaches_options_only_when_not_jacobi(tmp_path, policy):
+    path, config = prepared(tmp_path)
+    config["solver"]["preconditioner"] = policy
+    path.write_text(json.dumps(config))
+    loaded = field_workflow.load_run_config(path)
+    assert loaded["solver"].get("preconditioner") == (None if policy == "jacobi" else "amg")
+    config["solver"]["preconditioner"] = "spectral"
+    path.write_text(json.dumps(config))
+    with pytest.raises(ValueError):
+        field_workflow.load_run_config(path)

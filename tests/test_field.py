@@ -718,3 +718,10 @@ def test_field_halo_is_part_of_the_problem_and_wider_overlap_converges_faster(tm
     assert np.abs(wide - exact).max() < np.abs(narrow - exact).max()
     with pytest.raises(ValueError, match="identity|differ"):
         solve(narrow_run, dict(sweeps=2, field_chunk=8, field_halo=8, rtol=1e-10, maxiter=10000))
+
+
+def test_general_solver_accepts_amg_preconditioner():
+    from winding_field.config import validate_config
+
+    validate_config({"preconditioner": "amg"})
+    validate_config({"preconditioner": "jacobi"})

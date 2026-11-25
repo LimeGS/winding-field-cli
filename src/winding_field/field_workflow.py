@@ -164,8 +164,11 @@ def validate_run_config(mapping: dict, *, base: Path) -> dict[str, Any]:
             {"device", "dtype", "rtol", "maxiter", "preconditioner", "nonconvergence_policy"},
             "solver",
         )
-        if solver.pop("preconditioner", "jacobi") != "jacobi":
-            raise ValueError("prepared block workflows require preconditioner='jacobi'")
+        preconditioner = solver.pop("preconditioner", "jacobi")
+        if preconditioner not in ("jacobi", "amg"):
+            raise ValueError("prepared block workflows require preconditioner='jacobi' or 'amg'")
+        if preconditioner == "amg":
+            solver["preconditioner"] = "amg"
         if solver.get("nonconvergence_policy", "fail") not in ("fail", "continue"):
             raise ValueError("invalid nonconvergence_policy")
         if solver["dtype"] not in ("float32", "float64") or solver["device"] not in (
