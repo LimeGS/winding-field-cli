@@ -251,7 +251,6 @@ def test_original_export_mesh_bundle_needs_no_user_recipe(saved_run, tmp_path, s
                 ".5",
                 "--output",
                 str(native),
-                "--export-tifxyz",
             ]
         )
         == 0
@@ -278,7 +277,6 @@ def test_original_export_mesh_bundle_needs_no_user_recipe(saved_run, tmp_path, s
                 "1",
                 "--output",
                 str(flags),
-                "--export-tifxyz",
             ]
         )
         == 0
@@ -311,7 +309,6 @@ def test_original_export_mesh_bundle_needs_no_user_recipe(saved_run, tmp_path, s
                 "1",
                 "--output",
                 str(flags),
-                "--export-tifxyz",
                 "--resume",
             ]
         )
@@ -543,7 +540,6 @@ def test_original_direct_field_flags_match_file_recipe(saved_run, tmp_path, smal
                 str(saved_run),
                 "--levels",
                 ".5",
-                "--export-tifxyz",
                 "--output",
                 str(baseline),
             ]
@@ -572,7 +568,6 @@ def test_original_direct_field_flags_match_file_recipe(saved_run, tmp_path, smal
                 "0",
                 "--output-voxel-um",
                 "1",
-                "--export-tifxyz",
                 "--output",
                 str(actual),
             ]
@@ -606,7 +601,6 @@ def test_complete_cli_config_export_paths_are_relative_to_file(
         output_frame_id="typed-file",
         output_origin_xyz_um=[10.0, 20.0, 30.0],
         output_voxel_um=2.0,
-        export_tifxyz=False,
     )
     path = tmp_path / "options.json"
     path.write_text(json.dumps(options))
@@ -620,4 +614,4 @@ def test_complete_cli_config_export_paths_are_relative_to_file(
         "origin_xyz_um": [10.0, 20.0, 30.0],
         "voxel_um": 2.0,
     }
-    assert receipt["export_tifxyz"] is False
+    assert receipt["export_tifxyz"] is True

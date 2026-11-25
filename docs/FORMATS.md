@@ -93,7 +93,7 @@ dependency versions, and the source hashes of the Qual tracer and network archit
 `--flattening-method original --flattening-config flattening.json` selects
 `prepare/fibres/field/mesh/original`, even with the default native selector.
 `mesh RUN` stops after extraction; `resume RUN` continues through original mapping.
-Mesh-derived TIFFs are written by default (`--no-export-tifxyz` opts out); `--surface-output tifxyz` selects a
+Mesh-derived TIFFs are always written (2.0 removed `--no-export-tifxyz`); `--surface-output tifxyz` selects a
 different direct-field algorithm and cannot be combined with this method.
 Original mapping uses `MESHES.json` then
 `original/ORIGINAL.json` (also published as run-root `ORIGINAL.json`). It is

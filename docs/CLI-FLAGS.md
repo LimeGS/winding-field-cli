@@ -253,8 +253,8 @@ Their direct-export-only settings use `--tifxyz-` prefixes, for example
 The producer's existing `--levels` must still agree with a file's direct-export
 levels. Use `--tifxyz-levels` to explicitly replace that nested list (and, when
 also supplied, give the same producer `--levels`). File-free requests may use
-producer `--levels` directly. `--no-export-tifxyz` and `--no-previews` preserve
-explicit false overrides rather than falling back to true file defaults.
+producer `--levels` directly. `--no-previews` preserves an explicit false override
+rather than falling back to a true file default. (`--no-export-tifxyz` was removed in 2.0.)
 
 `run`/`plan --flattening-method original` accept the output-frame flags,
 `--pitch NUMBER|auto` in WORLD units, and `--original-memory-gib`. They merge

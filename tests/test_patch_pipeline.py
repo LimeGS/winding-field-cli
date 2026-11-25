@@ -245,7 +245,6 @@ def test_export_mesh_real_core_and_source_ids(tmp_path, monkeypatch, capsys):
                 str(config),
                 "--output",
                 str(tmp_path / "cli"),
-                "--export-tifxyz",
             ]
         )
         == 0

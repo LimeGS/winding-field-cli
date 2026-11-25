@@ -71,7 +71,6 @@ def command(root, out, *extra):
         str(root),
         "--levels",
         ".5",
-        "--export-tifxyz",
         "--output",
         str(out),
         *extra,
@@ -208,7 +207,6 @@ def test_run_export_matches_equivalent_explicit_configuration(saved_run, tmp_pat
                 str(out / "flattening.json"),
                 "--flattening-method",
                 "original",
-                "--export-tifxyz",
                 "--output",
                 str(explicit),
             ]

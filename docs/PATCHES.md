@@ -16,7 +16,7 @@ values, which do not by themselves establish a calibrated winding value.
 winding-field export-sheets --mesh-bundle joined-range \
   --flattening-method patches --flattening-config patches.json \
   --source /data/scan.zarr/2 --voxel-um 9.6 \
-  --output new-patch-export --export-tifxyz
+  --output new-patch-export
 ```
 
 Example `patches.json` (paths must refer to existing installed dependencies):
@@ -157,9 +157,9 @@ arrays and releases chart buffers after their last use. Whole-mesh admission is
 still conservative: these reductions alone do **not** establish full-height
 three-turn admission, and the memory guard has not been relaxed.
 
-For image-first delivery, pass `--no-export-tifxyz` (TIFXYZ is on by default): PNG, masks and
-mapping/provenance still retain the requested isotropic pitch and domain. This
-does not deliver TIFXYZ; a requested TIFF export is never silently skipped.
+TIFXYZ is always written (2.0 removed `--no-export-tifxyz`). PNG, masks and
+mapping/provenance retain the requested isotropic pitch and domain; a TIFF export
+is never silently skipped.
 Budget PNG/mapping and optional TIFF disk usage separately before a full launch.
 
 ## Dependency and algorithm contract

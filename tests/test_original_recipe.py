@@ -214,7 +214,6 @@ def test_original_bundle_resume_and_tamper(tmp_path, monkeypatch):
             "original",
             "--flattening-config",
             str(config),
-            "--export-tifxyz",
         ]
         assert main(args) == 0
         assert main(args + ["--resume"]) == 0

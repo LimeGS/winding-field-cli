@@ -549,20 +549,16 @@ def main(argv=None):
             default=1800.0,
             help="cumulative active seconds per native W (default: 1800)",
         )
-        p.add_argument(
-            "--export-tifxyz",
-            action=argparse.BooleanOptionalAction,
-            default=True,
-            help="mesh-derived XYZ TIFFs with native/original CT renders (default: on; "
-            "--export-tifxyz is kept as a no-op); not direct-field export",
-        )
+        # 2.0: mesh-derived TIFXYZ is always written; --export-tifxyz/--no-export-tifxyz
+        # were removed. The config key stays so 1.x run identities and resumes are unchanged.
+        p.set_defaults(export_tifxyz=True)
         p.add_argument(
             "--no-ct-texture",
             dest="ct_texture",
             action="store_false",
             default=argparse.SUPPRESS,
             help="native only: flatten and write mesh-derived TIFXYZ without sampling CT for the "
-            "flattened texture (implies --export-tifxyz)",
+            "flattened texture",
         )
         p.add_argument(
             "--tifxyz-config",
@@ -740,13 +736,8 @@ def main(argv=None):
         choices=list(SCOPES),
         help="independent patches or whole connected sheets (default: sheet)",
     )
-    p.add_argument(
-        "--export-tifxyz",
-        action=argparse.BooleanOptionalAction,
-        default=True,
-        help="mesh-derived float32 XYZ TIFFs and validity mask alongside CT renders "
-        "(default: on; --export-tifxyz is kept as a no-op)",
-    )
+    # 2.0: mesh-derived float32 XYZ TIFFs and mask are always written alongside CT renders.
+    p.set_defaults(export_tifxyz=True)
     p.add_argument(
         "--stages",
         choices=("all", "uv", "ct"),

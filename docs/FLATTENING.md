@@ -5,7 +5,7 @@ output directory:
 
 | Goal | Use |
 | --- | --- |
-| Export selected levels from a saved CLI run | `export-sheets --run RUN --levels ... --export-tifxyz` below |
+| Export selected levels from a saved CLI run | `export-sheets --run RUN --levels ...` below |
 | Choose LSCM or SLIM on patches or whole sheets | `export-sheets --flattening-solver ... --scope ...` below |
 | Run the original global LSCM recipe | [Original mapping](#new-ct-run-with-original-mapping) |
 | Continue a normal CT run | [Native output](#native-output); use the saved run configuration |
@@ -41,7 +41,7 @@ After the README's `run --until field`, export without creating configuration fi
 
 ```sh
 winding-field export-sheets --run runs/175a-roi --levels -31 \
-  --export-tifxyz --output exports/W-31
+  --output exports/W-31
 ```
 
 `--run` selects the original global LSCM recipe. It loads the completed field
@@ -136,8 +136,8 @@ about 80 µs per face including process startup.
 `--flattening-method default` keeps projection/LSCM charts;
 `--flattening-method original --flattening-config FILE` retains global LSCM.
 Explicit `slim` is rejected for `--surface-output atlas|tifxyz`; omitting the
-method on those branches keeps their historical behavior. `--export-tifxyz`
-still adds mesh-derived TIFFs to native renders.
+method on those branches keeps their historical behavior. Mesh-derived TIFFs are
+always added to native renders.
 
 The CLI saves the resolved method in `RUN.json`; native identities bind the
 solver (`flatboi-slim`), recipe, launcher/binary hashes, iteration bound, tolerance
@@ -248,8 +248,8 @@ exports/slim-sheet/
 
 The map contains exact source face/vertex IDs, face rows and domain IDs; use the
 existing `winding_field.patch_mapping.PatchMapping` reader for original source
-keys. Each tile's `mapping.npz` stores XYZ and source face rows. `--export-tifxyz`
-adds the existing validated XYZ TIFF products to nonempty tiles.
+keys. Each tile's `mapping.npz` stores XYZ and source face rows. The existing
+validated XYZ TIFF products are always added to nonempty tiles.
 
 Repeat the identical command with `--resume`. Solver, scope, source geometry,
 configuration, runtime, code and CT identity are bound. Completed levels are
@@ -391,13 +391,13 @@ After preparing `flattening.json` and installing the `tifxyz` extra:
 winding-field run --source /data/scroll.zarr --voxel-um 8.64 \
   --field-spacing-um 17.28 --levels -31 \
   --flattening-method original --flattening-config flattening.json \
-  --export-tifxyz --output runs/original
+  --output runs/original
 winding-field resume runs/original
 ```
 
 Add `--roi` for a region or `--until mesh` to checkpoint before mapping.
 Choose the method when creating the run; do not edit saved configuration.
-TIFXYZ is written by default; `--no-export-tifxyz` keeps CT/mask/map products only.
+TIFXYZ is always written; 2.0 removed `--export-tifxyz` and `--no-export-tifxyz`.
 
 ## Resume and inspect results
 
