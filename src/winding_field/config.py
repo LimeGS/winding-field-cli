@@ -120,8 +120,10 @@ def validate_config(config):
     validate_field_cpu(config)
     if type(config.get("field_advice", False)) is not bool:
         raise ValueError("field_advice must be boolean")
-    if config.get("preconditioner", "jacobi") != "jacobi":
-        raise ValueError("block workflows require preconditioner='jacobi'")
+    if config.get("preconditioner", "jacobi") not in ("jacobi", "amg"):
+        raise ValueError("block workflows require preconditioner='jacobi' or 'amg'")
+    if config.get("field_status_policy", "all") not in ("all", "checkpoints"):
+        raise ValueError("field_status_policy must be all or checkpoints")
     prior = config.get("field_prior")
     if prior is not None and (not isinstance(prior, str) or not prior):
         raise ValueError("field_prior must be a completed field run directory")

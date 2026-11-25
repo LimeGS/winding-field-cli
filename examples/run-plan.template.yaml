@@ -109,7 +109,7 @@ constraint_cache_bytes: 0 # Opciones: entero >=0 en bytes de restricciones reten
 maxiter: 2000 # Opciones: entero >=1, iteraciones máximas por solve local.
 rtol: 0.000001 # Opciones: número finito >0 de tolerancia relativa; default 1e-6.
 nonconvergence_policy: "fail" # Opciones: fail | continue; continue completa el presupuesto de barridos con bloques no convergidos (contados y marcados); las rupturas numéricas siempre fallan.
-preconditioner: jacobi # Opciones: jacobi; spectral aparece en el parser pero ES RECHAZADO para workflows por bloques.
+preconditioner: jacobi # Opciones: jacobi | amg (multigrid algebraico: requiere el núcleo de LimeGS/winding-field#20; muchas menos iteraciones por bloque); spectral aparece en el parser pero ES RECHAZADO para workflows por bloques.
 seed_stride: 8 # Opciones: entero >=1; separación de semillas de fibras en muestras de observaciones.
 fibre_weight: 1.0 # Opciones: número finito >=0; peso de restricciones de fibras.
 

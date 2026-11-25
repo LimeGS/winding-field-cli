@@ -164,8 +164,11 @@ def validate_run_config(mapping: dict, *, base: Path) -> dict[str, Any]:
             {"device", "dtype", "rtol", "maxiter", "preconditioner", "nonconvergence_policy"},
             "solver",
         )
-        if solver.pop("preconditioner", "jacobi") != "jacobi":
-            raise ValueError("prepared block workflows require preconditioner='jacobi'")
+        preconditioner = solver.pop("preconditioner", "jacobi")
+        if preconditioner not in ("jacobi", "amg"):
+            raise ValueError("prepared block workflows require preconditioner='jacobi' or 'amg'")
+        if preconditioner == "amg":
+            solver["preconditioner"] = "amg"
         if solver.get("nonconvergence_policy", "fail") not in ("fail", "continue"):
             raise ValueError("invalid nonconvergence_policy")
         if solver["dtype"] not in ("float32", "float64") or solver["device"] not in (
@@ -189,6 +192,7 @@ def validate_run_config(mapping: dict, *, base: Path) -> dict[str, Any]:
                 "max_bytes",
                 "reserve_bytes",
                 "field_advice",
+                "status_policy",
             },
             "execution",
         )
@@ -206,6 +210,8 @@ def validate_run_config(mapping: dict, *, base: Path) -> dict[str, Any]:
             _integer(execution["max_bytes"], "max_bytes")
         if type(execution.get("field_advice", False)) is not bool:
             raise ValueError("field_advice must be boolean")
+        if execution.get("status_policy", "all") not in ("all", "checkpoints"):
+            raise ValueError("status_policy must be all or checkpoints")
         if not execution["halo"] and any(n > execution["chunk"] for n in shape):
             raise ValueError("multiple cores require positive halo")
         gpu = config.get("gpu")
@@ -361,6 +367,9 @@ def _prepare_run(config: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]
         max_bytes=execution.get("max_bytes"),
         reserve_bytes=execution["reserve_bytes"],
     )
+    if "status_policy" in execution:
+        # Execution choice, not checkpoint identity: STATUS fsyncs only at checkpoints.
+        options["status_policy"] = execution["status_policy"]
     return options, metadata, sources
 
 

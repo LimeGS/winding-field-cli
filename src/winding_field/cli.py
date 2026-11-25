@@ -406,9 +406,12 @@ def main(argv=None):
         )
         p.add_argument(
             "--preconditioner",
-            choices=["jacobi", "spectral"],
+            choices=["jacobi", "spectral", "amg"],
             default=argparse.SUPPRESS,
-            help="default: jacobi; spectral is rejected for block workflows",
+            help=(
+                "default: jacobi; amg (algebraic multigrid) needs far fewer iterations on large "
+                "blocks; spectral is rejected for block workflows"
+            ),
         )
         p.add_argument(
             "--nonconvergence-policy",
