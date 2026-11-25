@@ -59,7 +59,7 @@ def test_cancel_native_kills_owned_group(tmp_path):
 
     app = tmp_path / "AppRun"
     app.write_text(
-        '#!/bin/sh\n[ "$1" = --ready ] && exit 0\nsleep 60 &\necho $! > child.pid\nwait\n'
+        '#!/bin/sh\n[ "$1" = --ready ] && exit 0\nsleep 60 &\necho $! > child.tmp\nmv child.tmp child.pid\nwait\n'
     )
     app.chmod(0o700)
     # Complete macOS first-execution checks before measuring cancellation latency.
