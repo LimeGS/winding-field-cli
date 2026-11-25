@@ -381,6 +381,14 @@ def main(argv=None):
             help="decoded field-checkpoint chunk cache for block solves (default: 64 MiB); not a total RSS cap",
         )
         p.add_argument(
+            "--field-pair-scope",
+            choices=("block", "global"),
+            default=argparse.SUPPRESS,
+            help="experimental, ordinary fields with several blocks: block (default) samples fibre "
+            "pairs inside each block crop; global samples them once over the whole grid and "
+            "restricts them per crop with exterior terms, so the blocks solve the global problem",
+        )
+        p.add_argument(
             "--field-memory",
             choices=("auto", "disk", "field", "all"),
             default=argparse.SUPPRESS,

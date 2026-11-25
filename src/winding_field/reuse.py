@@ -38,6 +38,7 @@ VARIABLE = {
     "field_halo",
     "field_coarse_factor",
     "field_memory",
+    "field_pair_scope",
     "field_prior_calibration",
     "sweeps",
     "maxiter",

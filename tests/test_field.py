@@ -818,3 +818,29 @@ def test_field_memory_tiers_give_the_same_field_and_are_reported(tmp_path):
     status, _ = field_after("auto")
     assert status["memory"]["requested"] == "auto"
     assert status["memory"]["tier"] in ("disk", "field", "all")
+
+
+def test_global_pair_scope_solves_the_same_problem_as_one_block(tmp_path):
+    from winding_field.config import validate_config
+    from winding_field.field import open_field, solve
+
+    validate_config(dict(field_pair_scope="global"))
+    with pytest.raises(ValueError, match="field_pair_scope"):
+        validate_config(dict(field_pair_scope="crop"))
+
+    def field_after(name, **config):
+        run = prepared_run(tmp_path / name, shape=(6, 6, 32), chunk=8, variable=True)
+        result = solve(run, dict(config, rtol=1e-10, maxiter=10000, field_memory="disk"))
+        assert result["status"] == "FIELD_READY" and result["fibre_constraint_rows"] > 0
+        identity = json.loads((run / "field/CHECKPOINT.json").read_bytes())["identity"]
+        with open_field(run) as source:
+            values, _ = source.read([0, 0, 0], [6, 6, 32])
+        return identity, values - values.mean()
+
+    one, exact = field_after("global", sweeps=1, field_chunk=64, field_pair_scope="global")
+    assert "pair_scope" not in one["source_identity"]  # One block: the ordinary rows.
+    blocked, values = field_after(
+        "blocked", sweeps=8, field_chunk=8, field_coarse_factor=4, field_pair_scope="global"
+    )
+    assert blocked["source_identity"]["pair_scope"] == "global-grid-v1"
+    assert np.abs(values - exact).max() < 1e-5
