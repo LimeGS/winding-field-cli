@@ -940,6 +940,37 @@ def solve(run, config, stop=None, *, sweep_target=None, convergence=None):
         observation_state.update(retain=False, bytes=0)
         observation_stats.update(entries=0, retained_bytes=0)
 
+    observation_workers = dict(pool=None)
+
+    def observation_pool(lo, hi):
+        """Pooled observations of a solve box (ordinary fields), or None to compute inline."""
+        from .global_pairs import default_workers
+
+        if bounded or len(options["order"]) < 2:
+            return None
+        if observation_workers["pool"] is None:
+            workers = min(default_workers(), len(options["order"]))
+            if workers < 2:
+                return None
+            from .field_init import ObservationPool
+
+            boxes = []
+            for key in options["order"]:
+                low = np.array(key) * chunk
+                high = np.minimum(low + chunk, shape)
+                boxes.append(
+                    (
+                        np.maximum(low - options["halo"], 0),
+                        np.minimum(high + options["halo"], shape),
+                    )
+                )
+            observation_workers["pool"] = ObservationPool(observation_spec(), boxes, workers)
+        return observation_workers["pool"].get(
+            lo,
+            hi,
+            retained=lambda key: observation_state["retain"] and key in observations,
+        )
+
     def load(lo, hi):
         key = tuple(map(int, (*lo, *hi)))
         cached = observations.get(key)
@@ -953,7 +984,15 @@ def solve(run, config, stop=None, *, sweep_target=None, convergence=None):
         else:
             counted = orientation_prior is not None and key not in orientation_boxes
             orientation_boxes.add(key)
-            values = compute_observations(lo, hi, orientation_stats if counted else None)
+            pooled = observation_pool(lo, hi)
+            if pooled is None:
+                values = compute_observations(lo, hi, orientation_stats if counted else None)
+            else:
+                values, counts = pooled
+                values = (*values, source_receipt())
+                if counted:
+                    for name, count in counts.items():
+                        orientation_stats[name] = orientation_stats.get(name, 0) + count
         if observation_state["retain"] and cached is None and key in solve_boxes:
             arrays = tuple(values[:3])
             charge = 4096 + sum(a.nbytes for a in arrays)
@@ -1102,7 +1141,11 @@ def solve(run, config, stop=None, *, sweep_target=None, convergence=None):
             return
         from .field_init import initial_chunks
 
-        spec = dict(
+        yield from initial_chunks(observation_spec(), keys, chunk, shape, workers)
+
+    def observation_spec():
+        """What a worker process needs to sample observations as ``compute_observations``."""
+        return dict(
             run=str(run.resolve()),
             meta=meta,
             geometry=geometry,
@@ -1116,7 +1159,6 @@ def solve(run, config, stop=None, *, sweep_target=None, convergence=None):
                 field_json_sha256=prior.identity["field_json_sha256"],
             ),
         )
-        yield from initial_chunks(spec, keys, chunk, shape, workers)
 
     try:
         checkpoint = root / "CHECKPOINT.json"
@@ -1400,5 +1442,7 @@ def solve(run, config, stop=None, *, sweep_target=None, convergence=None):
             prior.close()
         if pair_provider is not None:
             pair_provider.__exit__()
+        if observation_workers["pool"] is not None:
+            observation_workers["pool"].close()
         if pair_catalog is not None:
             pair_catalog.close()
