@@ -68,6 +68,16 @@ while block pairs stopped at a coarse residual of 1.0. A sweep costs about 1.5 t
 block-scope sweep, and the whole solve several times one tile pass, so whole-scroll
 fields still use the tile workflow in [SCROLL.md](SCROLL.md).
 
+Global pairs of AFV and qual-v2 fibres are kept on disk, not in memory, in
+`<run>/field-pairs/`: shards of consecutive curves, sorted by the 32-node bucket of each
+pair's first endpoint (48 bytes per pair, built once per run in worker processes and
+resumable). A block reads the buckets near its crop and gets the same rows as the in-memory
+set, so the field is unchanged (the checkpoint names the rows by the fibres hash instead of
+a hash of every row). Worker processes build the next blocks' rows ahead of the solve, and
+the initial values of every chunk are computed in worker processes too. Both use three
+quarters of the CPUs. A run started with in-memory global pairs does not resume on this
+version.
+
 ## Reproducible measurements
 
 `tools/bench_solver.py` takes explicit core/CLI checkouts, writes hashes

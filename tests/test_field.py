@@ -596,6 +596,10 @@ def test_observation_cache_preserves_checkpoint_bytes_and_skips_reloads(
         return original(*args, **kwargs)
 
     monkeypatch.setattr(field, "sample_prior", counted)
+    # Count the initialization reads in this process (workers would read them elsewhere).
+    from winding_field import global_pairs
+
+    monkeypatch.setattr(global_pairs, "default_workers", lambda: 1)
     results = {}
     for name, observation_budget in (("reference", 0), ("candidate", budget)):
         calls.clear()
