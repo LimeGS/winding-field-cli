@@ -51,12 +51,16 @@ def test_observations_from_workers_equal_the_one_process_loop(tmp_path, monkeypa
         )
         result = solve(run, config)
         assert result["status"] == "FIELD_READY"
+        assert set(result["setup_seconds"]) <= {"pair_catalog", "initial_values"}
+        assert "initial_values" in result["setup_seconds"]
+        assert ("observation_pool_stats" in result) == (workers > 1)
         with open_field(run) as source:
             return source.read([0, 0, 0], [6, 6, 32])
 
     inline = field_after("inline", 1)
     assert not served
-    pooled = field_after("pooled", 3)
+    # Four workers: two build pair templates, two sample observations.
+    pooled = field_after("pooled", 4)
     assert served and all(served)
     for a, b in zip(inline, pooled):
         np.testing.assert_array_equal(a, b)
