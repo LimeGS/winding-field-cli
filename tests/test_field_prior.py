@@ -563,11 +563,15 @@ def test_prior_gradient_orientation_is_validated_and_recorded(tmp_path, coarse, 
 @pytest.mark.parametrize(
     "sheet", [{}, {"field_orientation_max_disagreement": 0.3}], ids=["rule", "sheet-check"]
 )
-def test_prior_gradient_orientation_reaches_cpu_workers(tmp_path, coarse, sheet):
+def test_prior_gradient_orientation_reaches_cpu_workers(tmp_path, coarse, sheet, monkeypatch):
     import torch
 
-    from winding_field import field
+    from winding_field import field, field_cpu
 
+    # Admission depends on the runner's free RAM (the macOS runner keeps < 2 GiB free after
+    # its 2 GiB reserve); pin it as test_field_cpu does so the pooled path always runs.
+    monkeypatch.setattr(field_cpu, "cpu_limit", lambda: 4)
+    monkeypatch.setattr(field_cpu, "headroom_bytes", lambda: 8 << 30)
     # One parent thread leaves the worker a CPU slot, as in test_field_cpu.
     previous = torch.get_num_threads()
     torch.set_num_threads(1)
