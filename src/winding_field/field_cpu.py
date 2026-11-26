@@ -103,7 +103,18 @@ def _initialize(spec):
         raise ValueError("CPU worker source identity changed")
     db = sqlite3.connect((run / "fibres/fibres.sqlite").as_uri() + "?mode=ro", uri=True)
     db.setlimit(sqlite3.SQLITE_LIMIT_LENGTH, spec["curve_bytes"])
-    _STATE = (spec, maps, db)
+    prior = None
+    if "orientation_prior" in spec:
+        from .field_prior import FieldPrior
+
+        wanted = spec["orientation_prior"]
+        prior = FieldPrior(wanted["run"], spec["geometry"], spec["meta"].get("source"))
+        if prior.identity["field_json_sha256"] != wanted["field_json_sha256"]:
+            prior.close()
+            db.close()
+            maps.close()
+            raise ValueError("CPU worker field prior changed")
+    _STATE = (spec, maps, db, prior)
 
 
 def prepare_static_block(spec, lo, hi, build_rows=True):
@@ -111,10 +122,22 @@ def prepare_static_block(spec, lo, hi, build_rows=True):
 
     if _STATE is None or _STATE[0] != spec:
         raise ValueError("CPU worker was not initialized for this source")
-    _, maps, db = _STATE
+    _, maps, db, prior = _STATE
     low = np.asarray(lo)
     high = np.asarray(hi)
-    values = sample_prior(maps, spec["meta"], spec["geometry"], spec["calibration"], low, high)
+    orientation = {} if prior is not None else None
+    sheet = spec["orientation_prior"]["sheet"] if prior is not None else None
+    values = sample_prior(
+        maps,
+        spec["meta"],
+        spec["geometry"],
+        spec["calibration"],
+        low,
+        high,
+        prior,
+        orientation,
+        sheet,
+    )
     observations = (*values, {"maps": spec["meta"]["tiles_sha256"]})
     try:
         rows = (
@@ -150,6 +173,8 @@ def prepare_static_block(spec, lo, hi, build_rows=True):
         * (1 if sys.platform == "darwin" else 1024),
         built_constraints=build_rows,
     )
+    if orientation is not None:
+        info["orientation"] = orientation
     return PreparedBlock(tuple(lo), tuple(hi), digest(spec), observations, rows, size, info)
 
 
@@ -238,6 +263,7 @@ class CPUFieldInputs:
         self.pool = None
         self.closed = False
         self.boxes = [(tuple(map(int, lo)), tuple(map(int, hi))) for lo, hi in spec["boxes"]]
+        self.orientation_boxes = set()
         self.next_index = 0
         run = Path(spec["run"])
         # Bound source decompression separately from retained/IPC payloads.
@@ -337,6 +363,13 @@ class CPUFieldInputs:
         self.active = validate_block(block, self.spec, low, high, build_rows=build)
         self.pending.popleft()
         self.stats["completed"] += 1
+        # prior-gradient orientation counts, each box once (as the in-process path).
+        orientation = block.worker_info.pop("orientation", None)
+        if orientation is not None and bounds not in self.orientation_boxes:
+            self.orientation_boxes.add(bounds)
+            total = self.stats.setdefault("orientation", {})
+            for name, count in orientation.items():
+                total[name] = total.get(name, 0) + int(count)
         self.stats["worker_info"][str(block.worker_info["pid"])] = block.worker_info
         return block.observations
 

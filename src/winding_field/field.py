@@ -64,19 +64,204 @@ def coordinates(lo, hi, meta):
     return np.stack((x, y, z), axis=-1) * meta["spacing_xyz"] + meta["origin_xyz"]
 
 
-def oriented(data, xyz, cal):
+# Normals closer than this (|cos|) to perpendicular to the orientation direction get no sign.
+ORIENTATION_MIN_DOT = 0.15
+# --field-orientation prior-gradient: a prior gradient weaker than this fraction of the local
+# sheet density (the bottom of a valley, a flat prior) gives no sign.
+PRIOR_GRADIENT_MIN_DENSITY = 0.3
+FIELD_ORIENTATIONS = ("radial", "prior-gradient")
+# The prior-gradient sheet check (see sheet_inconsistent): probe radii in nodes of the maps'
+# lattice, directions per radius in the node's tangent plane, and the check's defaults. The
+# check is off unless a share below 1 is given: on the 175A corner tiles it moved the seam
+# gate from 20.06% to 19.67%, so it is kept as an experiment, not as part of the rule.
+SHEET_CHECK_RADII = (3, 6)
+SHEET_CHECK_DIRECTIONS = 8
+SHEET_CHECK_MAX_DISAGREEMENT = 1.0
+SHEET_CHECK_MIN_PROBES = 0
+
+
+def _sheet_margin(spacing_xyz):
+    """Probe radii in µm and the ZYX lattice margin that holds every rounded probe."""
+    spacing = np.asarray(spacing_xyz, float)
+    radii = np.asarray(SHEET_CHECK_RADII, float) * spacing.mean()
+    # rint(r * d / s) <= ceil(r_max / s) for |d| <= 1, so no probe leaves the margin.
+    return radii, np.ceil(radii.max() / spacing - 1e-9).astype(int)[::-1]
+
+
+def sheet_inconsistent(normals, density, along, candidates, gradient, defined, spacing_xyz, sheet):
+    """Prior-signed nodes whose sign the prior contradicts along their own sheet.
+
+    The prior's floor can cross a sheet where the scroll was crushed: the gradient sign then
+    flips along the sheet and signs part of it inward. For each ``candidates`` node the prior
+    gradient is read at SHEET_CHECK_DIRECTIONS directions in the node's tangent plane (normal
+    ``normals``) at each of SHEET_CHECK_RADII, rounded to lattice nodes. ``gradient`` and
+    ``defined`` cover the node lattice grown by _sheet_margin. A probe counts where the gradient
+    is defined, at least PRIOR_GRADIENT_MIN_DENSITY x the node's density and farther than
+    ORIENTATION_MIN_DOT from perpendicular to the normal. A node with at least
+    ``sheet["min_probes"]`` counted probes is flagged when more than
+    ``sheet["max_disagreement"]`` of them give the sign opposite to its own (``along``).
+
+    The probes depend only on the node's normal and density and on the global prior, so tiles
+    that share a node flag it alike, wherever their faces cut its neighbourhood.
+    """
+    shape = candidates.shape
+    radii, margin = _sheet_margin(spacing_xyz)
+    spacing = np.asarray(spacing_xyz, float)
+    angles = np.arange(SHEET_CHECK_DIRECTIONS) * (2 * np.pi / SHEET_CHECK_DIRECTIONS)
+    grown = defined.shape
+    gradient = gradient.reshape(-1, 3)
+    defined = defined.reshape(-1)
+    normals = normals.reshape(-1, 3)
+    nodes = np.flatnonzero(candidates)
+    flagged = np.zeros(candidates.size, bool)
+    batch = 1 << 20  # bounds the per-probe temporaries
+    for start in range(0, len(nodes), batch):
+        part = nodes[start : start + batch]
+        at_node = np.stack(np.unravel_index(part, shape), axis=1) + margin
+        normal = normals[part].astype(float)
+        unit = normal / np.maximum(np.linalg.norm(normal, axis=1, keepdims=True), 1e-12)
+        u = np.cross(unit, np.eye(3)[np.argmin(abs(unit), axis=1)])
+        u /= np.linalg.norm(u, axis=1, keepdims=True)
+        v = np.cross(unit, u)
+        positive = along.reshape(-1)[part] > 0
+        floor = PRIOR_GRADIENT_MIN_DENSITY * density.reshape(-1)[part]
+        counted = np.zeros(len(part), np.int64)
+        against = np.zeros(len(part), np.int64)
+        for radius in radii:
+            for angle in angles:
+                step = np.rint(radius * (np.cos(angle) * u + np.sin(angle) * v) / spacing)
+                probe = np.ravel_multi_index((at_node + step[:, ::-1].astype(int)).T, grown)
+                g = gradient[probe]
+                magnitude = np.linalg.norm(g, axis=1)
+                sign = np.sum(normal * g, axis=1) / np.maximum(magnitude, 1e-300)
+                usable = defined[probe] & (magnitude >= floor) & (abs(sign) > ORIENTATION_MIN_DOT)
+                counted += usable
+                against += usable & ((sign > 0) != positive)
+        flagged[part] = (counted >= sheet["min_probes"]) & (
+            against > sheet["max_disagreement"] * counted
+        )
+    return flagged.reshape(shape)
+
+
+def oriented(data, xyz, cal, prior=None, stats=None, sheet=None, lattice=None):
+    """Sheet-normal targets signed outward, with weights and the nodes that keep them.
+
+    By default (radial) a normal is signed against the direction from the calibration
+    centre (or the planar axis). In a flattened scroll that fails near the plane the
+    sheets were pressed into: normals there are nearly perpendicular to the radial
+    direction, so a wedge of nodes is dropped and a tilted sheet takes its tilt's sign.
+
+    With ``prior`` (a FieldPrior; --field-orientation prior-gradient) a normal is signed
+    against the prior's own gradient (FieldPrior.gradient: stored values, observed or
+    not) wherever it is defined, and dropped where that gradient is nearly perpendicular
+    to the normal or weaker than PRIOR_GRADIENT_MIN_DENSITY x the sheet density. With
+    ``sheet`` (max_disagreement, min_probes) a node so signed is also dropped where
+    sheet_inconsistent flags it; ``lattice`` (lo_zyx, meta) then places ``xyz`` on the map
+    lattice. The radial rule remains where the gradient is undefined. ``stats``, a dict,
+    accumulates the supported nodes and their split into prior_signed, prior_dropped,
+    prior_inconsistent, radial_signed and radial_dropped.
+    """
     direction = np.asarray(cal["axis_xyz"]) if cal["mode"] == "planar" else xyz - cal["centre_xyz"]
     if cal["mode"] != "planar":
         direction[..., 2] = 0
         direction /= np.maximum(np.linalg.norm(direction, axis=-1, keepdims=True), 1e-12)
     dot = np.sum(data["normals"] * direction, axis=-1)
-    valid = data["support"] & (abs(dot) > 0.15)
+    valid = data["support"] & (abs(dot) > ORIENTATION_MIN_DOT)
+    if prior is not None:
+        if sheet is None:
+            gradient, defined = prior.gradient(xyz)
+        else:
+            # One gradient over the lattice grown by the probe margin: the nodes' own values
+            # are its interior, the same as prior.gradient(xyz) node by node.
+            lo, meta = lattice
+            shape = data["support"].shape
+            margin = _sheet_margin(meta["spacing_xyz"])[1]
+            low = np.asarray(lo) - margin
+            grown = prior.gradient(coordinates(low, low + shape + 2 * margin, meta))
+            inner = tuple(slice(m, m + n) for m, n in zip(margin, shape))
+            gradient, defined = grown[0][inner], grown[1][inner]
+        magnitude = np.linalg.norm(gradient, axis=-1)
+        along = np.sum(data["normals"] * gradient, axis=-1) / np.maximum(magnitude, 1e-300)
+        kept = (
+            data["support"]
+            & (abs(along) > ORIENTATION_MIN_DOT)
+            & (magnitude >= PRIOR_GRADIENT_MIN_DENSITY * data["density"])
+        )
+        inconsistent = np.zeros_like(kept)
+        if sheet is not None:
+            inconsistent = sheet_inconsistent(
+                data["normals"],
+                data["density"],
+                along,
+                kept & defined,
+                *grown,
+                meta["spacing_xyz"],
+                sheet,
+            )
+        dot = np.where(defined, along, dot)
+        valid = np.where(defined, kept & ~inconsistent, valid)
+        if stats is not None:
+            support = data["support"]
+            for name, count in (
+                ("supported", support),
+                ("prior_signed", support & defined & valid),
+                ("prior_dropped", support & defined & ~kept),
+                ("prior_inconsistent", defined & inconsistent),
+                ("radial_signed", support & ~defined & valid),
+                ("radial_dropped", support & ~defined & ~valid),
+            ):
+                stats[name] = stats.get(name, 0) + int(np.count_nonzero(count))
     target = (
         data["normals"] * np.where(dot >= 0, 1.0, -1.0)[..., None] * data["density"][..., None]
     ).astype(np.float32)
     target[~valid] = 0
     weights = np.where(valid, 1.0, 1e-3).astype(np.float32)
     return target, weights, valid
+
+
+# A prior-gradient run whose radial fallback exceeds this share is reported as a warning.
+RADIAL_FALLBACK_WARNING = 0.05
+ORIENTATION_CLASSES = (
+    "prior_signed",
+    "prior_dropped",
+    "prior_inconsistent",
+    "radial_signed",
+    "radial_dropped",
+)
+
+
+def _orientation_receipt(rule, *counters):
+    """The orientation rule with its node counts and shares, also logged on stderr.
+
+    The ORIENTATION_CLASSES partition the supported nodes (prior_inconsistent: dropped by
+    the sheet check); radial_fallback is the sum of the two radial ones.
+    """
+    total = dict.fromkeys(("supported", *ORIENTATION_CLASSES), 0)
+    for counter in counters:
+        for name, count in counter.items():
+            total[name] += int(count)
+    total["radial_fallback"] = total["radial_signed"] + total["radial_dropped"]
+    supported = total["supported"]
+    shares = {
+        name + "_share": total[name] / supported if supported else None
+        for name in (*ORIENTATION_CLASSES, "radial_fallback")
+    }
+    receipt = dict(
+        rule, counted="each solved observation box once, halos included", **total, **shares
+    )
+    if supported:
+        share = {name: f"{value:.1%}" for name, value in shares.items()}
+        warning = "WARNING: " if shares["radial_fallback_share"] > RADIAL_FALLBACK_WARNING else ""
+        print(
+            f"[field] {warning}orientation prior-gradient over {supported} supported nodes: "
+            f"prior gradient signed {share['prior_signed_share']}, dropped "
+            f"{share['prior_dropped_share']}, dropped by the sheet check "
+            f"{share['prior_inconsistent_share']}; radial fallback {share['radial_fallback_share']} "
+            f"(signed {share['radial_signed_share']}, dropped {share['radial_dropped_share']})",
+            file=sys.stderr,
+            flush=True,
+        )
+    return receipt
 
 
 def initial_field(xyz, meta, cal):
@@ -106,12 +291,14 @@ def map_axes(meta, geometry, lo, hi):
     ]
 
 
-def _owned_chunks(run, order, chunk, shape, identity, maps, meta, cal):
+def _owned_chunks(run, order, chunk, shape, identity, maps, meta, cal, prior=None, sheet=None):
     """Chunks with supported observations, cached in the run for resumes."""
     from .field_prior import owned_chunks
 
     geometry = identity["geometry"]
     key = dict(maps=identity["maps"], geometry=geometry, chunk=chunk)
+    if "orientation" in identity:
+        key["orientation"] = identity["orientation"]
     path = run / "FIELD_SCOPE.json"
     if path.exists():
         saved = json.loads(path.read_bytes())
@@ -119,7 +306,7 @@ def _owned_chunks(run, order, chunk, shape, identity, maps, meta, cal):
             return [tuple(k) for k in saved["owned"]]
 
     def supported(lo, hi):
-        return bool(sample_prior(maps, meta, geometry, cal, lo, hi)[2].any())
+        return bool(sample_prior(maps, meta, geometry, cal, lo, hi, prior, sheet=sheet)[2].any())
 
     owned = owned_chunks(order, chunk, shape, supported)
     if not owned:
@@ -128,14 +315,19 @@ def _owned_chunks(run, order, chunk, shape, identity, maps, meta, cal):
     return owned
 
 
-def sample_prior(maps, meta, geometry, cal, lo, hi):
+def sample_prior(maps, meta, geometry, cal, lo, hi, prior=None, stats=None, sheet=None):
+    """Oriented observations on field nodes ``lo..hi``; ``prior``, ``stats`` and ``sheet``
+    as in ``oriented`` (stats count map nodes when the maps and field grids differ)."""
     names = ("normals", "density", "support")
     if all(geometry[k] == meta[k] for k in ("origin_xyz", "spacing_xyz", "shape_zyx")):
-        return oriented(maps.read_many(names, lo, hi), coordinates(lo, hi, meta), cal)
+        data = maps.read_many(names, lo, hi)
+        xyz = coordinates(lo, hi, meta)
+        return oriented(data, xyz, cal, prior, stats, sheet, (lo, meta))
 
     def transform(data, start):
+        hi = start + data["support"].shape
         target, weights, valid = oriented(
-            data, coordinates(start, start + data["support"].shape, meta), cal
+            data, coordinates(start, hi, meta), cal, prior, stats, sheet, (start, meta)
         )
         return dict(target=target, weights=weights, support=valid)
 
@@ -146,14 +338,16 @@ def sample_prior(maps, meta, geometry, cal, lo, hi):
     return data["target"], data["weights"], valid
 
 
-def open_field(run):
+def open_field(run, support_policy="observed"):
+    """A completed field run's checkpoint; ``support_policy`` "observed" (default) admits
+    observed nodes, "stored" every stored node."""
     run = Path(run)
     meta = json.loads((run / "FIELD.json").read_bytes())
     descriptor = dict(
         kind="chunks",
         path=str((run / "field/CHECKPOINT.json").resolve()),
         sha256=meta["checkpoint_sha256"],
-        support_policy="observed",
+        support_policy=support_policy,
     )
     # Retain at least one decoded chunk so a field stored as a few large blocks is not
     # decoded again for every read; affects memory only.
@@ -261,7 +455,31 @@ def global_pair_constraints(db, meta, fibres, geometry, maps, shape, weight, cac
         tuple(int(n) for n in shape),
         weight=weight,
         cache_bytes=cache_bytes,
+        spatial_index_bytes=pair_index_bytes(len(pairs[0])),
     )
+
+
+def pair_index_bytes(count, available=None):
+    """Spatial index budget for ``count`` global pairs, or 0 when it would not fit.
+
+    Without the index every block restriction scans all pair rows of the grid, twice per
+    sweep, which dominated two-level sweeps. The core admits the index when the budget
+    covers its construction workspace (64 bytes per stencil slot, 16 slots per pair) and
+    retains 16 bytes per nonzero slot; it does not change the rows or the field.
+    """
+    from field_memory import available_memory
+
+    need = 4096 + int(count) * 16 * 64
+    if available is None:
+        available = available_memory()[0]
+    if available is not None and need > available // 4:
+        print(
+            f"[field] WARNING: the pair index needs {need >> 20} MiB; blocks scan all pairs",
+            file=sys.stderr,
+            flush=True,
+        )
+        return 0
+    return need
 
 
 def _pair_points(db, meta, fibres, geometry, maps, lo, hi, *, max_pairs=None, stop=None):
@@ -448,6 +666,61 @@ def solve(run, config, stop=None, *, sweep_target=None, convergence=None):
     )
     if inherited is not None:
         identity["calibration_source"] = dict(kind="field_prior", sha256=inherited)
+    orientation = config.get("field_orientation", "radial")
+    orientation_sheet = None
+    if orientation not in FIELD_ORIENTATIONS:
+        raise ValueError("field_orientation must be " + " or ".join(FIELD_ORIENTATIONS))
+    if orientation == "prior-gradient":
+        if bounded or not config.get("field_prior"):
+            raise ValueError(
+                "field_orientation prior-gradient requires field_prior and ordinary preparation"
+            )
+        # Only recorded when not radial, so radial runs keep their identity and resume.
+        # v2: the gradient reads the prior's stored values (v1 required observed corners).
+        identity["orientation"] = dict(
+            rule="prior-gradient-central-v2",
+            prior_values="stored-finite",
+            min_dot=ORIENTATION_MIN_DOT,
+            min_gradient_per_density=PRIOR_GRADIENT_MIN_DENSITY,
+            fallback="radial",
+        )
+        share = config.get("field_orientation_max_disagreement")
+        least = config.get("field_orientation_min_probes")
+        orientation_sheet = dict(
+            max_disagreement=float(SHEET_CHECK_MAX_DISAGREEMENT if share is None else share),
+            min_probes=SHEET_CHECK_MIN_PROBES if least is None else least,
+        )
+        probes = len(SHEET_CHECK_RADII) * SHEET_CHECK_DIRECTIONS
+        if not 0 <= orientation_sheet["max_disagreement"] <= 1:
+            raise ValueError("field_orientation_max_disagreement must be from 0 to 1")
+        if type(orientation_sheet["min_probes"]) is not int or not (
+            0 <= orientation_sheet["min_probes"] <= probes
+        ):
+            raise ValueError(f"field_orientation_min_probes must be an integer from 0 to {probes}")
+        if least is not None and orientation_sheet["max_disagreement"] >= 1:
+            raise ValueError(
+                "field_orientation_min_probes requires field_orientation_max_disagreement below 1"
+            )
+        if orientation_sheet["max_disagreement"] < 1:
+            # v3: also drop prior-signed nodes the prior contradicts along their own sheet.
+            # A share of 1, the default, flags nothing and keeps the v2 identity, so v2 runs
+            # resume; a v3 run resumes only with its share given again.
+            identity["orientation"].update(
+                rule="prior-gradient-central-v3",
+                sheet_check=dict(
+                    rule="tangent-probes-v1",
+                    radii_nodes=list(SHEET_CHECK_RADII),
+                    directions=SHEET_CHECK_DIRECTIONS,
+                    **orientation_sheet,
+                ),
+            )
+        else:
+            orientation_sheet = None
+    elif any(
+        config.get(k) is not None
+        for k in ("field_orientation_max_disagreement", "field_orientation_min_probes")
+    ):
+        raise ValueError("the orientation sheet check requires field_orientation prior-gradient")
     pair_provider = None
     if bounded or convergence is not None:
         from .bounded_constraints import build, PairCatalog
@@ -545,6 +818,7 @@ def solve(run, config, stop=None, *, sweep_target=None, convergence=None):
     if bounded:
         options["max_bytes"] = config.get("bounded_bytes", 12 << 30) // 8
     prior = None
+    orientation_prior = None
     scope = config.get("field_scope", "all")
     if scope not in ("all", "supported"):
         raise ValueError("field_scope must be all or supported")
@@ -558,9 +832,22 @@ def solve(run, config, stop=None, *, sweep_target=None, convergence=None):
         prior = FieldPrior(config["field_prior"], geometry, meta.get("source"))
         # The prior seeds and gauges the solve, so it is part of the numerical problem.
         identity["field_prior"] = prior.identity
+        if orientation == "prior-gradient":
+            orientation_prior = prior
         if scope == "supported":
             total = len(options["order"])
-            owned = _owned_chunks(run, options["order"], chunk, shape, identity, maps, meta, cal)
+            owned = _owned_chunks(
+                run,
+                options["order"],
+                chunk,
+                shape,
+                identity,
+                maps,
+                meta,
+                cal,
+                orientation_prior,
+                orientation_sheet,
+            )
             options.update(order=owned, partial_order=True)
             identity["field_scope"] = dict(
                 mode="supported-chunks-v1", owned_chunks=len(owned), total_chunks=total
@@ -628,12 +915,19 @@ def solve(run, config, stop=None, *, sweep_target=None, convergence=None):
     def source_receipt():
         return {"maps": meta["tiles_sha256"]}
 
-    def compute_observations(lo, hi):
+    # prior-gradient orientation: node counts, each solved observation box once (halos
+    # included); the CPU pool keeps its own (CPUFieldInputs.stats["orientation"]).
+    orientation_stats = {}
+    orientation_boxes = set()
+
+    def compute_observations(lo, hi, stats=None):
         if bounded:
             values = maps.read_many(("target", "weights", "support"), lo, hi)
             target, weights, valid = (values[k] for k in ("target", "weights", "support"))
         else:
-            target, weights, valid = sample_prior(maps, meta, geometry, cal, lo, hi)
+            target, weights, valid = sample_prior(
+                maps, meta, geometry, cal, lo, hi, orientation_prior, stats, orientation_sheet
+            )
         return target, weights, valid, source_receipt()
 
     def release_observations():
@@ -649,7 +943,12 @@ def solve(run, config, stop=None, *, sweep_target=None, convergence=None):
             observation_stats["hits"] += 1
             return (*cached, source_receipt())
         observation_stats["misses"] += 1
-        values = cpu_inputs.load(lo, hi) if cpu_inputs is not None else compute_observations(lo, hi)
+        if cpu_inputs is not None:
+            values = cpu_inputs.load(lo, hi)
+        else:
+            counted = orientation_prior is not None and key not in orientation_boxes
+            orientation_boxes.add(key)
+            values = compute_observations(lo, hi, orientation_stats if counted else None)
         if observation_state["retain"] and cached is None and key in solve_boxes:
             arrays = tuple(values[:3])
             charge = 4096 + sum(a.nbytes for a in arrays)
@@ -794,6 +1093,18 @@ def solve(run, config, stop=None, *, sweep_target=None, convergence=None):
                 calibration=cal,
                 weight=identity["fibre_weight"],
                 boxes=boxes,
+                # Workers open the prior themselves; absent for radial orientation.
+                **(
+                    dict(
+                        orientation_prior=dict(
+                            run=str(prior.run),
+                            field_json_sha256=prior.identity["field_json_sha256"],
+                            sheet=orientation_sheet,
+                        )
+                    )
+                    if orientation_prior is not None
+                    else {}
+                ),
                 cache_bytes=constraint_budget + budget + observation_budget,
             )
             cpu_inputs = CPUFieldInputs(
@@ -978,6 +1289,11 @@ def solve(run, config, stop=None, *, sweep_target=None, convergence=None):
             receipt["field_prior"] = identity["field_prior"]
         if "field_scope" in identity:
             receipt["field_scope"] = identity["field_scope"]
+        if orientation_prior is not None:
+            pooled = cpu_inputs.stats.get("orientation", {}) if cpu_inputs is not None else {}
+            receipt["orientation"] = _orientation_receipt(
+                identity["orientation"], orientation_stats, pooled
+            )
         atomic_json(run / "FIELD.json", receipt)
         return receipt
     except InterruptedError:

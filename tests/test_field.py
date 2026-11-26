@@ -864,9 +864,23 @@ def test_global_pair_scope_solves_the_same_problem_as_one_block(tmp_path):
 
     one, exact = field_after("global", sweeps=1, field_chunk=64, field_pair_scope="global")
     assert "pair_scope" not in one["source_identity"]  # One block: the ordinary rows.
-    blocked, values = field_after(
-        "blocked", sweeps=8, field_chunk=8, field_coarse_factor=4, field_pair_scope="global"
-    )
+    import constraint_templates
+
+    built = []
+    original = constraint_templates.StencilConstraints.__init__
+
+    def record(self, *args, **kwargs):
+        original(self, *args, **kwargs)
+        built.append(self.spatial_index_nbytes)
+
+    constraint_templates.StencilConstraints.__init__ = record
+    try:
+        blocked, values = field_after(
+            "blocked", sweeps=8, field_chunk=8, field_coarse_factor=4, field_pair_scope="global"
+        )
+    finally:
+        constraint_templates.StencilConstraints.__init__ = original
+    assert built and all(n > 0 for n in built)
     assert blocked["source_identity"]["pair_scope"] == "global-grid-v1"
     assert np.abs(values - exact).max() < 1e-5
 
@@ -890,3 +904,12 @@ def test_coarse_factor_defaults_to_global_pairs(tmp_path, capsys):
     assert "pair-scope block stalls" in capsys.readouterr().err
     one_level = identity_of("one-level")
     assert "pair_scope" not in one_level["source_identity"]
+
+
+def test_global_pairs_get_a_spatial_index_when_it_fits(capsys):
+    from winding_field.field import pair_index_bytes
+
+    need = 4096 + 1000 * 16 * 64
+    assert pair_index_bytes(1000, available=4 * need) == need
+    assert pair_index_bytes(1000, available=4 * need - 4) == 0
+    assert "pair index needs" in capsys.readouterr().err

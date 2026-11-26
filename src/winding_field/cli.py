@@ -518,6 +518,33 @@ def main(argv=None):
             "normals from the scroll centre like its coarse",
         )
         p.add_argument(
+            "--field-orientation",
+            choices=["radial", "prior-gradient"],
+            default=argparse.SUPPRESS,
+            help="how sheet normals are signed outward: radial (default) from the calibration "
+            "centre; prior-gradient from --field-prior's gradient where the prior is supported "
+            "(radial elsewhere), for flattened scrolls whose sheets near the pressed core are "
+            "nearly perpendicular to the radial direction",
+        )
+        p.add_argument(
+            "--field-orientation-max-disagreement",
+            type=float,
+            default=argparse.SUPPRESS,
+            metavar="SHARE",
+            help="(experimental) with --field-orientation prior-gradient: also drop a node whose "
+            "sign the prior gradient contradicts at more than this share of its usable probes "
+            "along its own sheet (8 directions in its tangent plane at 3 and 6 nodes); "
+            "default 1, which leaves the check off",
+        )
+        p.add_argument(
+            "--field-orientation-min-probes",
+            type=int,
+            default=argparse.SUPPRESS,
+            metavar="N",
+            help="with --field-orientation-max-disagreement below 1: drop a node by that check "
+            "only when at least N of its 16 probes are usable (default: 0)",
+        )
+        p.add_argument(
             "--field-scope",
             choices=["all", "supported"],
             default=argparse.SUPPRESS,

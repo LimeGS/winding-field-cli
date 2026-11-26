@@ -151,6 +151,25 @@ def validate_config(config):
         raise ValueError("field_prior_calibration must be own or inherit")
     if config.get("field_prior_calibration") == "inherit" and not prior:
         raise ValueError("field_prior_calibration inherit requires field_prior")
+    if config.get("field_orientation", "radial") not in ("radial", "prior-gradient"):
+        raise ValueError("field_orientation must be radial or prior-gradient")
+    if config.get("field_orientation") == "prior-gradient" and not prior:
+        raise ValueError("field_orientation prior-gradient requires field_prior")
+    share = config.get("field_orientation_max_disagreement")
+    least = config.get("field_orientation_min_probes")
+    if share is not None and (type(share) not in (int, float) or not 0 <= share <= 1):
+        raise ValueError("field_orientation_max_disagreement must be from 0 to 1")
+    # 16 probes per node: field.SHEET_CHECK_RADII x SHEET_CHECK_DIRECTIONS.
+    if least is not None and (type(least) is not int or not 0 <= least <= 16):
+        raise ValueError("field_orientation_min_probes must be an integer from 0 to 16")
+    if (share is not None or least is not None) and config.get("field_orientation") != (
+        "prior-gradient"
+    ):
+        raise ValueError("the orientation sheet check requires field_orientation prior-gradient")
+    if least is not None and (share is None or share >= 1):
+        raise ValueError(
+            "field_orientation_min_probes requires field_orientation_max_disagreement below 1"
+        )
     if config.get("field_scope", "all") not in ("all", "supported"):
         raise ValueError("field_scope must be all or supported")
     if config.get("field_scope") == "supported" and not prior:
