@@ -169,6 +169,10 @@ round-off-level differences; the final residual is still measured with the eager
 The kernel joins the block identity (a tile resumes only with the same kernel), and each
 tile's receipt counts the solves per kernel actually used (`solver.solver_kernels`); off
 CUDA the core falls back to eager and says so there.
+Measured on a real 224³ PHerc0175A tile (GTX 1660, Jacobi, fibre weight 1000, rtol 1e-7):
+CG solve 177.5 s eager, 82 s fused (2.16x; 5,018 vs 5,014 iterations), field stage 321 s →
+~220 s, fused reruns byte-identical, max difference 3.8e-6 windings. The fibre rows stay on
+the eager sparse matvec (~18 % of an eager iteration on the 1660, ~27 % on an A100).
 
 **Larger is not cheaper per node.** Measured alone on a GTX 1660, the solve took 24 s for
 128³ nodes, 142 s for 192³ and 538 s for 256³: 11, 20 and 32 µs per node, about the tile
