@@ -844,3 +844,22 @@ def test_global_pair_scope_solves_the_same_problem_as_one_block(tmp_path):
     )
     assert blocked["source_identity"]["pair_scope"] == "global-grid-v1"
     assert np.abs(values - exact).max() < 1e-5
+
+
+def test_coarse_factor_defaults_to_global_pairs(tmp_path, capsys):
+    from winding_field.field import solve
+
+    def identity_of(name, **config):
+        run = prepared_run(tmp_path / name, shape=(6, 6, 32), chunk=8, variable=True)
+        base = dict(rtol=1e-10, maxiter=10000, field_memory="disk", sweeps=2, field_chunk=8)
+        assert solve(run, dict(base, **config))["status"] == "FIELD_READY"
+        return json.loads((run / "field/CHECKPOINT.json").read_bytes())["identity"]
+
+    auto = identity_of("auto", field_coarse_factor=4)
+    assert auto["source_identity"]["pair_scope"] == "global-grid-v1"
+    assert "WARNING" not in capsys.readouterr().err
+    block = identity_of("block", field_coarse_factor=4, field_pair_scope="block")
+    assert "pair_scope" not in block["source_identity"]
+    assert "pair-scope block stalls" in capsys.readouterr().err
+    one_level = identity_of("one-level")
+    assert "pair_scope" not in one_level["source_identity"]

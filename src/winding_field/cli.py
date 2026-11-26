@@ -391,9 +391,10 @@ def main(argv=None):
             "--field-pair-scope",
             choices=("block", "global"),
             default=argparse.SUPPRESS,
-            help="experimental, ordinary fields with several blocks: block (default) samples fibre "
-            "pairs inside each block crop; global samples them once over the whole grid and "
-            "restricts them per crop with exterior terms, so the blocks solve the global problem",
+            help="experimental, ordinary fields with several blocks: block samples fibre pairs "
+            "inside each block crop; global samples them once over the whole grid and restricts "
+            "them per crop with exterior terms, so the blocks solve the global problem "
+            "(default: global with --field-coarse-factor, else block)",
         )
         p.add_argument(
             "--field-memory",
