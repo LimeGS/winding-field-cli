@@ -7,7 +7,7 @@ authors:
   - name: LimeGS
 repository-code: https://github.com/LimeGS/winding-field-cli
 license: MIT
-version: "1.6.7"
+version: "2.0.0"
 keywords:
   - cli
   - herculaneum-scrolls

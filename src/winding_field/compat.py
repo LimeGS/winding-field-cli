@@ -29,8 +29,18 @@ STAGE_EPOCHS = {
 }
 
 
+# Core major versions whose numerical outputs are interchangeable. Core 2.0.0 removed
+# unused helpers (a public API break) but kept every solver output, identity and
+# checkpoint of 1.x, so a run started on core 1 continues on core 2.
+CORE_NUMERICS = {1: 1, 2: 1}
+
+
 def core_major():
     return int(version("winding-field").split(".")[0])
+
+
+def _core_numerics(major):
+    return CORE_NUMERICS.get(major, ("major", major))
 
 
 def record():
@@ -43,7 +53,7 @@ def incompatibilities(saved, pending):
     if not isinstance(saved, dict) or saved.get("schema") != SCHEMA:
         return ["unknown run compatibility record"]
     reasons = []
-    if saved.get("core_major") != core_major():
+    if _core_numerics(saved.get("core_major")) != _core_numerics(core_major()):
         reasons.append(f"numerical core major version {saved.get('core_major')} -> {core_major()}")
     stages = saved.get("stages", {})
     for stage in pending:

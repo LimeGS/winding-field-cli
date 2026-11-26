@@ -52,6 +52,15 @@ def test_a_new_core_major_version_refuses(prepared, monkeypatch):
         workflow.run(prepared["config"], resume=True, until="field")
 
 
+def test_core_1_runs_continue_on_core_2(monkeypatch):
+    from winding_field import compat
+
+    monkeypatch.setattr(compat, "core_major", lambda: 2)
+    saved = dict(compat.record(), core_major=1)
+    assert compat.incompatibilities(saved, ["field"]) == []
+    assert compat.incompatibilities(dict(saved, core_major=3), ["field"])
+
+
 def test_runs_without_a_record_keep_the_exact_implementation_rule(prepared):
     from winding_field import workflow
 
