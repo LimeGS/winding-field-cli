@@ -75,7 +75,7 @@ def test_internal_faces_take_the_other_fields_values_and_gauge_the_solve(tmp_pat
     identity = json.loads((tile / "field/CHECKPOINT.json").read_bytes())["identity"]
     assert identity["boundary"] == "caller-fixed"
     recorded = identity["source_identity"]["field_boundary"]
-    assert recorded["rule"] == "fixed-observed-layers-v1" and recorded["layers"] == 2
+    assert recorded["rule"] == "fixed-observed-layers-v2" and recorded["layers"] == 2
     assert recorded["offset_zyx"] == [0, 0, 10]
     # z and y end where the other field ends: only the two x faces are internal.
     assert recorded["fixed_nodes"] == {"x-": 72, "x+": 72}
@@ -214,6 +214,91 @@ def test_boundary_must_share_the_grid_and_leave_free_nodes(tmp_path, changes, la
         FieldBoundary(other, _geometry(**changes), layers)
     with pytest.raises(ValueError, match="no FIELD.json"):
         FieldBoundary(tmp_path / "missing", _geometry(), 2)
+
+
+# The tile of _geometry() holds x nodes 10..25 of the other field.
+SELF = [[0, 0, 10], [5, 5, 25]]
+RIGHT = [[0, 0, 20], [5, 5, 31]]
+
+
+def test_a_merge_holds_a_face_only_where_another_tile_continues_beyond_it(tmp_path):
+    """A merge lists the boxes of its tiles. Layer nodes that only this tile's own earlier
+    solution reached stay free: a tile that ends on the same face, or within the held
+    layers of it, does not make them another tile's value."""
+    from winding_field.field_boundary import FieldBoundary
+
+    shape = (6, 6, 32)
+    boxes = {
+        "self": SELF,
+        "right": RIGHT,
+        "same-face": [[0, 0, 10], [5, 5, 31]],
+        "left-part": [[0, 0, 0], [5, 2, 15]],
+        "too-close": [[0, 0, 9], [5, 5, 20]],
+    }
+    merged = write_field(tmp_path / "merged", shape, planes(shape), tile_boxes=boxes)
+    boundary = FieldBoundary(merged, _geometry(), 2)
+    fixed = np.isfinite(boundary.provider()([0, 0, 0], [6, 6, 16]))
+    boundary.close()
+    assert boundary.identity["fixed_nodes"] == {"x-": 36, "x+": 72}
+    assert boundary.identity["source_tiles"] == {"x-": ["left-part"], "x+": ["right", "same-face"]}
+    expected = np.zeros((6, 6, 16), bool)
+    expected[:, :3, :2] = expected[:, :, 14:] = True
+    assert (fixed == expected).all()
+
+    partial = write_field(
+        tmp_path / "partial", shape, planes(shape), tile_boxes=dict(self=SELF, right=RIGHT)
+    )
+    boundary = FieldBoundary(partial, _geometry(), 2)
+    boundary.close()
+    assert boundary.identity["fixed_nodes"] == {"x-": 0, "x+": 72}
+    assert boundary.identity["source_tiles"] == {"x-": [], "x+": ["right"]}
+
+    alone = write_field(tmp_path / "alone", shape, planes(shape), tile_boxes=dict(self=SELF))
+    with pytest.raises(ValueError, match="fixes no node: it has no observed value, from another"):
+        FieldBoundary(alone, _geometry(), 2)
+    old = write_field(tmp_path / "old", shape, planes(shape), schema="winding-scroll-merge-v1")
+    with pytest.raises(ValueError, match="does not list its tiles' boxes"):
+        FieldBoundary(old, _geometry(), 2)
+
+
+def test_an_edge_between_a_free_and_a_held_face_is_held(tmp_path):
+    """The tile is inside the merge along z and x; only x+ has a tile beyond it. The x+
+    layers are held over the whole face, the z layers that belong to it included."""
+    from winding_field.field_boundary import FieldBoundary
+
+    shape = (12, 6, 32)
+    boxes = {"self": [[3, 0, 10], [8, 5, 25]], "right": [[3, 0, 20], [8, 5, 31]]}
+    merged = write_field(tmp_path / "merged", shape, planes(shape), tile_boxes=boxes)
+    origin = [ORIGIN[0] + 20.0, ORIGIN[1], ORIGIN[2] + 3 * SPACING[2]]
+    boundary = FieldBoundary(merged, _geometry(origin_xyz=origin), 2)
+    fixed = np.isfinite(boundary.provider()([0, 0, 0], [6, 6, 16]))
+    boundary.close()
+    assert boundary.identity["offset_zyx"] == [3, 0, 10]
+    # Each node counts once, under the first of z, y, x whose layers hold it.
+    assert boundary.identity["fixed_nodes"] == {"z-": 24, "z+": 24, "x-": 0, "x+": 24}
+    assert boundary.identity["source_tiles"] == {"z-": [], "z+": [], "x-": [], "x+": ["right"]}
+    expected = np.zeros((6, 6, 16), bool)
+    expected[:, :, 14:] = True
+    assert (fixed == expected).all()
+
+
+def test_a_face_toward_a_missing_tile_is_solved_not_frozen(tmp_path):
+    """The merge carries this tile's own error on the x- layers and no tile beyond them:
+    the solve corrects them from the tile's data, held only at x+."""
+    from winding_field import field
+
+    shape = (6, 6, 32)
+    values = planes(shape, level=3.0)
+    values[:, :, 10:12] += 0.25
+    merged = write_field(
+        tmp_path / "merged", shape, values, tile_boxes=dict(self=SELF, right=RIGHT)
+    )
+    tile = _tile(tmp_path / "tile", (6, 6, 16), shift_x=20.0)
+    receipt = field.solve(tile, dict(CONFIG, sweeps=8, field_boundary=str(merged)))
+    assert receipt["status"] == "FIELD_READY"
+    assert receipt["field_boundary"]["fixed_nodes"] == {"x-": 0, "x+": 72}
+    solved, _ = read(tile)
+    np.testing.assert_allclose(solved, planes((6, 6, 16), first=10, level=3.0), atol=1e-3)
 
 
 def test_boundary_accepts_a_frame_the_merged_field_accepted(tmp_path):

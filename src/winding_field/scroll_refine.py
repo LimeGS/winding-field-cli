@@ -35,10 +35,11 @@ from types import SimpleNamespace
 
 import numpy as np
 
+from .field_boundary import FACES, RULE as BOUNDARY_RULE
 from .scroll import PLAN_SCHEMA, _json, _Tile, _tile_done, merge, visible_gpus
 from .util import atomic_json, file_sha
 
-REFINE_SCHEMA = "winding-scroll-refine-v1"
+REFINE_SCHEMA = "winding-scroll-refine-v2"
 # |dW| between merges in windings: 1/1000 up to 4, then one open bin.
 CHANGE_BINS = np.concatenate([np.linspace(0.0, 4.0, 4001), [np.inf]])
 # The mid-plane reference of the kink ratio is never taken below a bend of this share of
@@ -188,18 +189,19 @@ def tile_kink(plan_root, tile, grid, layers):
 
     The second difference of W across three consecutive planes, over the local sheet
     slope (density x spacing, windings per node), on observed nodes: centred on the inner
-    held layer of every internal face, and on the mid-plane of each axis. A face that was
-    pulled away from what the tile's data ask for shows as a ratio well over 1.
+    held layer of every face the solve held (``tile["field_run"]``'s receipt), and on the
+    mid-plane of each axis. A face that was pulled away from what the tile's data ask for
+    shows as a ratio well over 1.
     """
     from .field import map_axes
 
     if layers < 2:
         return None
+    held = _held_faces(_json(Path(tile["field_run"]) / "FIELD.json"))
     opened = _Tile(plan_root, tile, grid)
     try:
         shape = np.asarray(opened.geometry["shape_zyx"])
         spacing = float(grid["spacing_um"])
-        last = np.asarray(grid["shape_zyx"]) - 1
 
         def bends(axis, first):
             lo, hi = np.zeros(3, np.int64), shape.copy()
@@ -221,9 +223,9 @@ def tile_kink(plan_root, tile, grid, layers):
 
         faces = []
         for axis in range(3):
-            if opened.solved_lo[axis] > 0:
+            if FACES[2 * axis] in held:
                 faces.append(bends(axis, layers - 2))
-            if opened.solved_hi[axis] < last[axis]:
+            if FACES[2 * axis + 1] in held:
                 faces.append(bends(axis, shape[axis] - layers - 1))
         middles = [bends(axis, shape[axis] // 2 - 1) for axis in range(3)]
     finally:
@@ -234,6 +236,27 @@ def tile_kink(plan_root, tile, grid, layers):
         return None
     face_p95, middle_p95 = (float(np.percentile(v, 95)) for v in (face, middle))
     return dict(face_p95=face_p95, mid_p95=middle_p95, ratio=face_p95 / max(middle_p95, KINK_FLOOR))
+
+
+def _held_faces(receipt):
+    """Faces of a pass tile that held nodes of another tile: its ``field_boundary``."""
+    boundary = receipt["field_boundary"]
+    return sorted(face for face, tiles in boundary["source_tiles"].items() if tiles)
+
+
+def held_summary(fields, selection):
+    """What the tiles of a pass held: nodes in all, and the internal faces left free
+    because no merged tile continues beyond them ("id face")."""
+    nodes, faces, open_faces = 0, 0, []
+    for tid in selection:
+        boundary = _json(fields[tid] / "FIELD.json")["field_boundary"]
+        nodes += sum(boundary["fixed_nodes"].values())
+        for face, tiles in boundary["source_tiles"].items():
+            if tiles:
+                faces += 1
+            else:
+                open_faces.append(f"{tid} {face}")
+    return dict(nodes=nodes, faces=faces, open_faces=len(open_faces), e_g=open_faces[:12])
 
 
 def kink_summary(kinks):
@@ -306,10 +329,14 @@ def _pass_tile_done(out, boundary_sha, layers):
         return False
     receipt = _json(path)
     held = receipt.get("field_boundary") or {}
-    if held.get("checkpoint_sha256") != boundary_sha or held.get("layers") != layers:
+    if (
+        held.get("checkpoint_sha256") != boundary_sha
+        or held.get("layers") != layers
+        or held.get("rule") != BOUNDARY_RULE
+    ):
         raise ValueError(
-            f"{out} was solved against another merge or with other layers; move it away "
-            "to solve this pass again"
+            f"{out} was solved against another merge, with other layers or by another "
+            "boundary rule; move it away to solve this pass again"
         )
     return receipt.get("status") == "FIELD_READY"
 
@@ -481,7 +508,10 @@ def refine(args):
     if state_path.is_file():
         saved = _json(state_path)
         if saved.get("schema") != REFINE_SCHEMA or saved.get("plan_sha256") != plan_sha:
-            raise ValueError("PLAN/passes belongs to another plan; move it away to refine again")
+            raise ValueError(
+                "PLAN/passes belongs to another plan or another version of scroll refine; "
+                "move it away to refine again"
+            )
         changed = sorted(k for k in SETTINGS if saved["settings"].get(k) != settings[k])
         if changed:
             raise ValueError(
@@ -572,12 +602,14 @@ def refine(args):
                     _json(merged / "SEAMS.json"), settings["trigger_share"], settings["trigger_p95"]
                 ),
                 join=field_meta.get("join"),
+                held=None,
                 change=None,
                 rate=None,
                 bound=None,
                 kink=None,
             )
             if number:
+                record["held"] = held_summary(fields, selection)
                 boxes = [(by_id[tid]["nodes_lo"], by_id[tid]["nodes_hi"]) for tid in selection]
                 record["change"] = merge_change(merged, passes / str(number - 1) / "merge", boxes)
                 record["rate"], record["bound"] = rate_bound(

@@ -547,7 +547,8 @@ def main(argv=None):
             help="completed field on the same grid (usually the merge of the tiles' previous "
             "solutions): the outer layers of every face of this grid that RUN continues "
             "beyond are held at RUN's observed values, no gauge node is pinned, and the solve "
-            "starts from RUN; same CT, sheet step and node positions required",
+            "starts from RUN; a merge of tiles holds a face only where another of its tiles "
+            "continues beyond it; same CT, sheet step and node positions required",
         )
         p.add_argument(
             "--field-boundary-layers",

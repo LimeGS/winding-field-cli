@@ -6,6 +6,11 @@ and the overlap between them does not close. ``run --field-boundary RUN`` solves
 tile with the outer layers of its internal faces held at RUN's values, where RUN (usually
 the merge of the tiles' previous solutions) has observed nodes. The solve needs no gauge
 node then, and starts from RUN instead of the coarse prior.
+
+When RUN is a merge of tiles, a layer node is held only where a merged tile that continues
+beyond that face covers it. A face toward a tile the merge does not have (a partial plan,
+``scroll merge --allow-missing``) holds nothing but this tile's own earlier solution:
+fixing it would freeze that solution, so it stays free like a face of the scroll.
 """
 
 import json
@@ -15,7 +20,7 @@ import numpy as np
 
 from .util import file_sha
 
-RULE = "fixed-observed-layers-v1"
+RULE = "fixed-observed-layers-v2"
 FACES = ("z-", "z+", "y-", "y+", "x-", "x+")
 
 
@@ -58,20 +63,28 @@ class FieldBoundary:
             if self.shape[axis] <= layers * sum(sides):
                 raise ValueError("field_boundary_layers leaves no free node across this grid")
         self.layers = layers
+        boxes = meta.get("tile_boxes")
+        if boxes is None and str(meta.get("schema", "")).startswith("winding-scroll-merge"):
+            raise ValueError(
+                "field boundary is a tile merge that does not list its tiles' boxes "
+                "(FIELD.json tile_boxes); merge the plan again with this version"
+            )
         self.observed = open_field(self.run)
         self._stored = None
         self._slabs = []
-        counts = {}
+        counts, sources = {}, {name: set() for name, _, _ in self._layer_boxes()}
         for name, lo, hi in self._layer_boxes():
             values, seen = self._read(self.observed, lo, hi)
+            if boxes is not None:
+                seen &= self._covered(boxes, lo, hi, seen, sources)
             values[~seen] = np.nan
             self._slabs.append((lo, hi, values))
             counts[name] = int(seen.sum())
         if not sum(counts.values()):
             self.close()
             raise ValueError(
-                "field boundary fixes no node: it has no observed value on the internal "
-                "faces of this grid"
+                "field boundary fixes no node: it has no observed value, from another tile "
+                "if it is a merge, on the internal faces of this grid"
             )
         self.identity = dict(
             rule=RULE,
@@ -81,6 +94,8 @@ class FieldBoundary:
             offset_zyx=self.offset.tolist(),
             fixed_nodes=counts,
         )
+        if boxes is not None:
+            self.identity["source_tiles"] = {name: sorted(ids) for name, ids in sources.items()}
         if frame_match:
             self.identity["frame_match"] = frame_match
         self.receipt = dict(self.identity, run=str(self.run))
@@ -125,6 +140,41 @@ class FieldBoundary:
                 yield FACES[2 * axis + side], a, b
             lo[axis] += self.layers * sides[0]
             hi[axis] -= self.layers * sides[1]
+
+    def _covered(self, boxes, lo, hi, seen, sources):
+        """Layer nodes ``lo..hi`` that a merged tile covers which continues beyond the face
+        they lie on, by the held layers at least. ``boxes`` are RUN's ``{id: [first, last]}``
+        node boxes; ``sources[face]`` collects the tiles that cover an observed node. A node
+        in the layers of two faces (an edge) is held when either face has such a tile.
+        """
+        first, last = self.offset, self.offset + self.shape - 1
+        covered = np.zeros(seen.shape, bool)
+        for axis, sides in enumerate(self.internal):
+            for side, internal in enumerate(sides):
+                if not internal:
+                    continue
+                # The part of this box inside the layers of the face.
+                face_lo, face_hi = lo.copy(), hi.copy()
+                if side:
+                    face_lo[axis] = max(lo[axis], self.shape[axis] - self.layers)
+                else:
+                    face_hi[axis] = min(hi[axis], self.layers)
+                if (face_hi <= face_lo).any():
+                    continue
+                for tile, (tile_lo, tile_hi) in boxes.items():
+                    if side and tile_hi[axis] - self.layers < last[axis]:
+                        continue
+                    if not side and tile_lo[axis] + self.layers > first[axis]:
+                        continue
+                    a = np.maximum(np.asarray(tile_lo) - self.offset, face_lo)
+                    b = np.minimum(np.asarray(tile_hi) + 1 - self.offset, face_hi)
+                    if (b <= a).any():
+                        continue
+                    part = tuple(slice(x - o, y - o) for x, y, o in zip(a, b, lo))
+                    covered[part] = True
+                    if seen[part].any():
+                        sources[FACES[2 * axis + side]].add(tile)
+        return covered
 
     def _read(self, source, lo, hi):
         """RUN on this grid's nodes ``lo..hi``: values and support, False outside RUN."""

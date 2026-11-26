@@ -292,7 +292,14 @@ wf scroll refine /outputs/plan --output /outputs/refined
 `--trigger-p95`, their 95th percentile of |dW| over 0.5), and every tile that shares a
 face with one, is solved again with `run --field-boundary <the current merge>`: the two
 outer node layers (`--layers`) of each internal face are held at the merge's observed
-values, no gauge node is pinned, and the solve starts from the merge. The plan is then
+values, no gauge node is pinned, and the solve starts from the merge. A layer node is
+held only where another merged tile covers it that continues beyond that face: toward a
+tile the plan lacks (a partial plan, `--allow-missing`) the merge holds nothing but the
+tile's own earlier solution, and holding it would freeze that solution while the seams
+close around it, so such a face stays free like a face of the scroll. Each pass tile's
+`FIELD.json` → `field_boundary` lists the nodes held (`fixed_nodes`) and the tiles they
+came from per face (`source_tiles`); the pass receipt counts them and the faces left
+free (`held`). The plan is then
 merged again with each tile's newest field. Scratch runs of this recipe took that 384 box
 from 9.64 % to 0.82 % and 0.065 % in two passes, which solved 27 and then 18 of its 27
 tiles again.

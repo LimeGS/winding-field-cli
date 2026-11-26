@@ -1409,6 +1409,11 @@ def merge(args, fields=None):
         else "blend of independently solved field-prior tiles; seams in SEAMS.json",
         seconds=time.time() - started,
     )
+    # The plan box each merged tile was read on: --field-boundary holds a face of a solve
+    # only where another of these tiles continues beyond it.
+    field_meta["tile_boxes"] = {
+        t["id"]: [list(t["nodes_lo"]), list(t["nodes_hi"])] for t in tiles if t["id"] in geometries
+    }
     if frame_match:
         field_meta["frame_match"] = frame_match
     if grown:

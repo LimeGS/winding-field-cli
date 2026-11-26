@@ -22,16 +22,18 @@ def truth(x):
     return x / 8
 
 
-def write_plan(root, errors):
+def write_plan(root, errors, lead=0):
     """A plan whose tiles are prepared and hold a first field: the truth plus
-    ``errors[id](x_local, z)`` (windings), as an earlier ``scroll tiles`` would leave."""
+    ``errors[id](x_local, z)`` (windings), as an earlier ``scroll tiles`` would leave.
+    ``lead``: x nodes of the grid before the first tile, which no tile of the plan covers."""
     from field_store import BlockStore
     from winding_field.config import field_geometry
     from winding_field.util import atomic_json, file_sha
 
     tiles = []
     (root / "tiles").mkdir(parents=True)
-    for k, (tid, (lo, hi, core_lo, core_hi)) in enumerate(BOXES.items()):
+    for k, (tid, box) in enumerate(BOXES.items()):
+        lo, hi, core_lo, core_hi = (edge + lead for edge in box)
         shape = (SHAPE[0], SHAPE[1], hi - lo + 1)
         run = prepared_run(
             root / "tiles" / tid,
@@ -58,7 +60,7 @@ def write_plan(root, errors):
         tiles.append(
             dict(
                 id=tid,
-                key=[0, 0, k],
+                key=[0, 0, k + bool(lead)],
                 nodes_lo=[0, 0, lo],
                 nodes_hi=[SHAPE[0] - 1, SHAPE[1] - 1, hi],
                 core_lo=[0, 0, core_lo],
@@ -73,7 +75,7 @@ def write_plan(root, errors):
             grid=dict(
                 voxel_lo_zyx=[0, 0, 0],
                 ratio=1,
-                shape_zyx=list(SHAPE),
+                shape_zyx=[SHAPE[0], SHAPE[1], SHAPE[2] + lead],
                 origin_zyx_um=[0.0, 0.0, 0.0],
                 spacing_um=SPACING,
             ),
@@ -105,20 +107,21 @@ def arguments(root, output, **changes):
     return SimpleNamespace(**dict(values, **changes))
 
 
-def merged(run):
+def merged(run, lead=0):
     from winding_field import field
 
     with field.open_field(run) as source:
-        values, seen = source.read([0, 0, 0], list(SHAPE))
+        values, seen = source.read([0, 0, lead], [SHAPE[0], SHAPE[1], SHAPE[2] + lead])
+        assert not lead or not source.read([0, 0, 0], [SHAPE[0], SHAPE[1], lead])[1].any()
     assert seen.all()
     return values
 
 
-def off_truth(values):
+def off_truth(values, lead=0):
     """Largest distance to the truth once the merge's free constant and tilts are taken out."""
     z, y, x = np.meshgrid(*[np.arange(n) for n in SHAPE], indexing="ij")
     design = np.column_stack([np.ones(values.size), z.ravel(), y.ravel(), x.ravel()])
-    error = (values - truth(x)).ravel()
+    error = (values - truth(x + lead)).ravel()
     return float(np.abs(error - design @ np.linalg.lstsq(design, error, rcond=None)[0]).max())
 
 
@@ -153,6 +156,9 @@ def test_refine_solves_the_disagreeing_tiles_until_the_merge_stops_moving(tmp_pa
     # the other's error, so they bend at those faces and the seam stays open.
     assert second["tiles"] == first["selected"] and second["change"]["p95"] > 0.5
     assert second["boundary_checkpoint_sha256"] == first["merge_checkpoint_sha256"]
+    # Each tile is held at the face the other one continues beyond; the grid ends the rest.
+    assert first["held"] is None
+    assert second["held"] == dict(nodes=144, faces=2, open_faces=0, e_g=[])
     assert second["rate"] is None and second["bound"] is None and second["kink"]["max_ratio"] > 2
     assert second["seams"]["pairs_over_trigger"] == first["seams"]["pairs_over_trigger"]
     # Pass 2 closes the seam and the change collapses; a bend at the held faces remains.
@@ -217,9 +223,13 @@ def test_refine_continues_after_an_interrupted_pass(tmp_path):
     # A pass tile solved against another merge is refused, not reused.
     sha = json.loads((boundary / "FIELD.json").read_bytes())["checkpoint_sha256"]
     assert scroll_refine._pass_tile_done(out, sha, 2)
-    with pytest.raises(ValueError, match="solved against another merge or with other layers"):
+    with pytest.raises(
+        ValueError, match="solved against another merge, with other layers or by another"
+    ):
         scroll_refine._pass_tile_done(out, "0" * 64, 2)
-    with pytest.raises(ValueError, match="solved against another merge or with other layers"):
+    with pytest.raises(
+        ValueError, match="solved against another merge, with other layers or by another"
+    ):
         scroll_refine._pass_tile_done(out, sha, 3)
     assert not scroll_refine._pass_tile_done(root / "passes/9/tiles/none", sha, 2)
 
@@ -239,6 +249,30 @@ def test_pruned_passes_can_still_be_continued(tmp_path):
     (root / "passes/3/merge/FIELD.json").unlink()
     with pytest.raises(ValueError, match="missing or changed since it was measured"):
         scroll_refine.refine(arguments(root, tmp_path / "again", prune=True))
+
+
+def test_a_face_toward_a_tile_the_plan_lacks_stays_free(tmp_path):
+    """The plan covers part of its grid: the first tile's low face is inside the grid, with
+    no tile beyond it. The merge holds only that tile's own solution there, three windings
+    off the sheets. Held at it, the passes would close the seam around a frozen error."""
+    lead = 40
+    root = write_plan(tmp_path / "plan", {"000-000-000": lambda x, z: bent(63 - x, z)}, lead)
+    result = scroll_refine.refine(arguments(root, tmp_path / "refined"))
+    assert result["status"] == "REFINED" and result["pairs_over_trigger"] == []
+    assert off_truth(merged(root / "passes/0/merge", lead), lead) > 2
+    assert off_truth(merged(tmp_path / "refined", lead), lead) < 0.01
+    first = json.loads((root / "passes/1/tiles/000-000-000/FIELD.json").read_bytes())
+    assert first["field_boundary"]["fixed_nodes"] == {"x-": 0, "x+": 72}
+    assert first["field_boundary"]["source_tiles"] == {"x-": [], "x+": ["000-000-001"]}
+    second = json.loads((root / "passes/1/tiles/000-000-001/FIELD.json").read_bytes())
+    assert second["field_boundary"]["source_tiles"] == {"x-": ["000-000-000"]}
+    held = json.loads((tmp_path / "refined/FIELD.json").read_bytes())["refine"]["passes"][1]["held"]
+    assert held == dict(nodes=144, faces=2, open_faces=1, e_g=["000-000-000 x-"])
+    boxes = json.loads((root / "passes/0/merge/FIELD.json").read_bytes())["tile_boxes"]
+    assert boxes == {
+        "000-000-000": [[0, 0, 40], [5, 5, 103]],
+        "000-000-001": [[0, 0, 72], [5, 5, 135]],
+    }
 
 
 def test_tiles_that_agree_need_no_pass(tmp_path):
