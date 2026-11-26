@@ -42,6 +42,8 @@ VARIABLE = {
     "field_pair_scope",
     "field_prior_calibration",
     "field_orientation",
+    "field_orientation_max_disagreement",
+    "field_orientation_min_probes",
     "sweeps",
     "maxiter",
     "rtol",

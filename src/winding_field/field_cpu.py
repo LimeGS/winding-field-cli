@@ -126,8 +126,17 @@ def prepare_static_block(spec, lo, hi, build_rows=True):
     low = np.asarray(lo)
     high = np.asarray(hi)
     orientation = {} if prior is not None else None
+    sheet = spec["orientation_prior"]["sheet"] if prior is not None else None
     values = sample_prior(
-        maps, spec["meta"], spec["geometry"], spec["calibration"], low, high, prior, orientation
+        maps,
+        spec["meta"],
+        spec["geometry"],
+        spec["calibration"],
+        low,
+        high,
+        prior,
+        orientation,
+        sheet,
     )
     observations = (*values, {"maps": spec["meta"]["tiles_sha256"]})
     try:
