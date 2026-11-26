@@ -166,6 +166,10 @@ def validate_config(config):
         "prior-gradient"
     ):
         raise ValueError("the orientation sheet check requires field_orientation prior-gradient")
+    if least is not None and (share is None or share >= 1):
+        raise ValueError(
+            "field_orientation_min_probes requires field_orientation_max_disagreement below 1"
+        )
     if config.get("field_scope", "all") not in ("all", "supported"):
         raise ValueError("field_scope must be all or supported")
     if config.get("field_scope") == "supported" and not prior:
