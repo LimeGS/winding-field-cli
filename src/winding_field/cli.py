@@ -541,6 +541,22 @@ def main(argv=None):
             "only when at least N of its 16 probes are usable (default: 0)",
         )
         p.add_argument(
+            "--field-boundary",
+            default=argparse.SUPPRESS,
+            metavar="RUN",
+            help="completed field on the same grid (usually the merge of the tiles' previous "
+            "solutions): the outer layers of every face of this grid that RUN continues "
+            "beyond are held at RUN's observed values, no gauge node is pinned, and the solve "
+            "starts from RUN; same CT, sheet step and node positions required",
+        )
+        p.add_argument(
+            "--field-boundary-layers",
+            type=int,
+            default=argparse.SUPPRESS,
+            metavar="N",
+            help="with --field-boundary: layers of nodes held on each internal face (default: 2)",
+        )
+        p.add_argument(
             "--field-scope",
             choices=["all", "supported"],
             default=argparse.SUPPRESS,
@@ -1035,6 +1051,7 @@ def main(argv=None):
                 "fibres_geometry",
                 "lasagna_model_path",
                 "lasagna_geometry",
+                "field_boundary",
             ):
                 if config.get(key) and not isinstance(config[key], dict):
                     config[key] = str(Path(config[key]).expanduser().resolve())

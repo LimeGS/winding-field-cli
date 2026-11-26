@@ -574,7 +574,14 @@ def memory_plan(config, shape, chunk, halo, *, convergence=False, bounded=False,
 MEMORY_TIERS = ("auto", "disk", "field", "all")
 
 
-def solve(run, config, stop=None, *, sweep_target=None, convergence=None):
+def solve(run, config, stop=None, *, sweep_target=None, convergence=None, output=None):
+    """Solve the field of a prepared run.
+
+    ``output`` (a directory) receives everything the solve writes (field/, FIELD.json,
+    CALIBRATION.json, FIELD_SCOPE.json), leaving ``run`` as a read-only source of the
+    prepared maps and fibres: ``scroll refine`` solves a tile again without a second copy
+    of its inputs. By default the field is written into ``run``.
+    """
     validate_field_cpu(config, convergence=convergence is not None)
     from .field_advice import observer_options, require_observer, record_verification, finish
 
@@ -604,12 +611,19 @@ def solve(run, config, stop=None, *, sweep_target=None, convergence=None):
     if status_policy not in ("all", "checkpoints"):
         raise ValueError("field_status_policy must be all or checkpoints")
     run = Path(run)
+    out = run if output is None else Path(output)
+    out.mkdir(parents=True, exist_ok=True)
     meta = json.loads((run / "PREPARED.json").read_bytes())
     fibres = json.loads((run / "FIBRES.json").read_bytes())
     bounded = meta.get("bounded_preparation", False)
     if config.get("field_cpu_workers", 0) and bounded:
         raise ValueError("CPU preparation pool supports only ordinary static providers")
-    maps = Tiles(run / ("coarse/maps" if bounded else "maps"), readonly=convergence is not None)
+    if output is not None and (bounded or convergence is not None):
+        raise ValueError("a separate field output supports ordinary fixed-sweep solves only")
+    maps = Tiles(
+        run / ("coarse/maps" if bounded else "maps"),
+        readonly=convergence is not None or output is not None,
+    )
     if (
         maps.identity() != meta["tiles_sha256"]
         or file_sha(run / "fibres/fibres.sqlite") != fibres["sha256"]
@@ -625,7 +639,7 @@ def solve(run, config, stop=None, *, sweep_target=None, convergence=None):
             raise ValueError("field prior has no CALIBRATION.json to inherit")
         cal = json.loads(source.read_bytes())
         inherited = file_sha(source)
-    atomic_json(run / "CALIBRATION.json", cal)
+    atomic_json(out / "CALIBRATION.json", cal)
     geometry = field_geometry(meta, None if bounded else config.get("field_spacing_um"))
     geometry.update(voxel_um=1.0, sheet_step=1.0)
     shape = tuple(geometry["shape_zyx"])
@@ -728,7 +742,7 @@ def solve(run, config, stop=None, *, sweep_target=None, convergence=None):
                 else "global-arclength-pairs-full-prior-v1",
                 mode="automatic-convergence-v1",
             )
-    root = run / "field"
+    root = out / "field"
 
     def preparation_stopped():
         return (root / "STOP").exists() or bool(stop and stop())
@@ -794,7 +808,24 @@ def solve(run, config, stop=None, *, sweep_target=None, convergence=None):
     if bounded:
         options["max_bytes"] = config.get("bounded_bytes", 12 << 30) // 8
     prior = None
+    boundary = None
     orientation_prior = None
+    if config.get("field_boundary"):
+        from .field_boundary import FieldBoundary
+
+        if bounded or convergence is not None:
+            raise ValueError("field_boundary supports ordinary fixed-sweep solves only")
+        boundary = FieldBoundary(
+            config["field_boundary"],
+            geometry,
+            config.get("field_boundary_layers", 2),
+            meta.get("source"),
+        )
+        # The fixed faces are part of the numerical problem: another boundary field, or
+        # other layers, is another solve.
+        identity["field_boundary"] = boundary.identity
+    elif config.get("field_boundary_layers") is not None:
+        raise ValueError("field_boundary_layers requires field_boundary")
     scope = config.get("field_scope", "all")
     if scope not in ("all", "supported"):
         raise ValueError("field_scope must be all or supported")
@@ -813,7 +844,7 @@ def solve(run, config, stop=None, *, sweep_target=None, convergence=None):
         if scope == "supported":
             total = len(options["order"])
             owned = _owned_chunks(
-                run,
+                out,
                 options["order"],
                 chunk,
                 shape,
@@ -828,10 +859,15 @@ def solve(run, config, stop=None, *, sweep_target=None, convergence=None):
             identity["field_scope"] = dict(
                 mode="supported-chunks-v1", owned_chunks=len(owned), total_chunks=total
             )
-        anchor_index, anchor_value = prior.anchor(
-            options["order"], chunk, shape, lambda lo, hi: coordinates(lo, hi, geometry)
-        )
-        identity["field_prior"]["anchor"] = dict(index_zyx=list(anchor_index), value=anchor_value)
+        # The boundary's fixed faces gauge the solve: no node is pinned to the prior then.
+        anchor_index = anchor_value = None
+        if boundary is None:
+            anchor_index, anchor_value = prior.anchor(
+                options["order"], chunk, shape, lambda lo, hi: coordinates(lo, hi, geometry)
+            )
+            identity["field_prior"]["anchor"] = dict(
+                index_zyx=list(anchor_index), value=anchor_value
+            )
         if scope == "supported":
 
             def start(lo, hi):
@@ -843,6 +879,8 @@ def solve(run, config, stop=None, *, sweep_target=None, convergence=None):
             )
         else:
             options["fixed"] = fixed_provider(anchor_index, anchor_value)
+    if boundary is not None:
+        options["fixed"] = boundary.provider(options.get("fixed"))
     db = sqlite3.connect((run / "fibres/fibres.sqlite").resolve().as_uri() + "?mode=ro", uri=True)
     row_count = 0
     static_rows = {}
@@ -1041,10 +1079,16 @@ def solve(run, config, stop=None, *, sweep_target=None, convergence=None):
                     lo = np.array(key) * chunk
                     hi = np.minimum(lo + chunk, shape)
                     _, _, valid, _ = compute_observations(lo, hi)
-                    xyz = coordinates(lo, hi, geometry)
-                    start = initial_field(xyz, geometry, cal)
-                    if prior is not None:
-                        start = prior.initial(xyz, start)
+
+                    def from_prior(lo=lo, hi=hi):
+                        xyz = coordinates(lo, hi, geometry)
+                        start = initial_field(xyz, geometry, cal)
+                        return start if prior is None else prior.initial(xyz, start)
+
+                    # With a boundary field the solve starts from it, where it stores values.
+                    start = (
+                        from_prior() if boundary is None else boundary.initial(lo, hi, from_prior)
+                    )
                     store.commit(key, start, progress, valid)
                 progress["initialization_done"] = True
                 store.save_progress(progress)
@@ -1239,7 +1283,7 @@ def solve(run, config, stop=None, *, sweep_target=None, convergence=None):
                 sweep=len(result["completed_sweeps"]),
                 regions=regions,
             )
-            atomic_json(run / "GLOBAL_RESIDUAL.json", verification)
+            atomic_json(out / "GLOBAL_RESIDUAL.json", verification)
             if verification["status"] == "PAUSED" or (
                 not verification["global_converged"] and options["nonconvergence_policy"] == "fail"
             ):
@@ -1263,6 +1307,8 @@ def solve(run, config, stop=None, *, sweep_target=None, convergence=None):
             )
         if prior is not None:
             receipt["field_prior"] = identity["field_prior"]
+        if boundary is not None:
+            receipt["field_boundary"] = boundary.receipt
         if "field_scope" in identity:
             receipt["field_scope"] = identity["field_scope"]
         if orientation_prior is not None:
@@ -1270,7 +1316,7 @@ def solve(run, config, stop=None, *, sweep_target=None, convergence=None):
             receipt["orientation"] = _orientation_receipt(
                 identity["orientation"], orientation_stats, pooled
             )
-        atomic_json(run / "FIELD.json", receipt)
+        atomic_json(out / "FIELD.json", receipt)
         return receipt
     except InterruptedError:
         if cpu_inputs is None or not preparation_stopped():
@@ -1296,5 +1342,7 @@ def solve(run, config, stop=None, *, sweep_target=None, convergence=None):
         db.close()
         if prior is not None:
             prior.close()
+        if boundary is not None:
+            boundary.close()
         if pair_provider is not None:
             pair_provider.__exit__()

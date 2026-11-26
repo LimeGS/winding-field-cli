@@ -151,6 +151,16 @@ def validate_config(config):
         raise ValueError(
             "field_orientation_min_probes requires field_orientation_max_disagreement below 1"
         )
+    boundary = config.get("field_boundary")
+    layers = config.get("field_boundary_layers")
+    if boundary is not None and (not isinstance(boundary, str) or not boundary):
+        raise ValueError("field_boundary must be a completed field directory")
+    if layers is not None and (type(layers) is not int or layers < 1):
+        raise ValueError("field_boundary_layers must be a positive integer")
+    if layers is not None and not boundary:
+        raise ValueError("field_boundary_layers requires field_boundary")
+    if boundary and config.get("bounded_preparation"):
+        raise ValueError("field_boundary supports ordinary (unbounded) preparation only")
     if config.get("field_scope", "all") not in ("all", "supported"):
         raise ValueError("field_scope must be all or supported")
     if config.get("field_scope") == "supported" and not prior:

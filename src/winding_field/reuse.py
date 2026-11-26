@@ -37,6 +37,8 @@ VARIABLE = {
     "field_chunk",
     "field_halo",
     "field_coarse_factor",
+    "field_boundary",
+    "field_boundary_layers",
     "field_kernel",
     "field_memory",
     "field_pair_scope",

@@ -190,13 +190,16 @@ class FieldPrior:
 
 
 def fixed_provider(anchor_index, anchor_value):
-    """Exact fixed values for solve_blocks: only the gauge node, NaN (free) elsewhere."""
-    anchor = np.asarray(anchor_index)
+    """Exact fixed values for solve_blocks: only the gauge node, NaN (free) elsewhere.
+
+    ``anchor_index`` None fixes nothing here: ``--field-boundary`` gauges the solve.
+    """
+    anchor = None if anchor_index is None else np.asarray(anchor_index)
 
     def fixed(lo, hi):
         lo, hi = np.asarray(lo), np.asarray(hi)
         values = np.full(tuple(hi - lo), np.nan)
-        if np.all(anchor >= lo) and np.all(anchor < hi):
+        if anchor is not None and np.all(anchor >= lo) and np.all(anchor < hi):
             values[tuple(anchor - lo)] = anchor_value
         return values
 
@@ -222,7 +225,7 @@ def scoped_fixed(anchor_index, anchor_value, owned, chunk, shape, start, cache_c
     gauge node is fixed as in ``fixed_provider``.
     """
     owned = set(owned)
-    anchor = np.asarray(anchor_index)
+    anchor = None if anchor_index is None else np.asarray(anchor_index)
     shape = np.asarray(shape)
     cache = OrderedDict()
 
@@ -249,7 +252,7 @@ def scoped_fixed(anchor_index, anchor_value, owned, chunk, shape, start, cache_c
             target = tuple(slice(x - low, y - low) for x, y, low in zip(a, b, lo))
             source = tuple(slice(x - o, y - o) for x, y, o in zip(a, b, origin))
             values[target] = chunk_values(key)[source]
-        if np.all(anchor >= lo) and np.all(anchor < hi):
+        if anchor is not None and np.all(anchor >= lo) and np.all(anchor < hi):
             values[tuple(anchor - lo)] = anchor_value
         return values
 
