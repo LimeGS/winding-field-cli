@@ -716,9 +716,19 @@ def solve(run, config, stop=None, *, sweep_target=None, convergence=None):
 
     constraints.prepared_key = lambda lo, hi: fibres["sha256"]
     options["constraints"] = pair_provider if pair_provider is not None else constraints
-    pair_scope = config.get("field_pair_scope", "block")
+    # Two-level Schwarz needs the global pair set: with block-sampled pairs the union of
+    # block problems is not the global one and the sweeps plateau (175A plan-192, fibre
+    # weight 1000: coarse residual ~1.0 with block pairs, x0.41 per sweep with global).
+    pair_scope = config.get("field_pair_scope", "global" if coarse_factor else "block")
     if pair_scope not in ("block", "global"):
         raise ValueError("field_pair_scope must be block or global")
+    if pair_scope == "block" and coarse_factor and len(options["order"]) > 1:
+        print(
+            "[field] WARNING: --field-coarse-factor with --field-pair-scope block stalls; "
+            "use global pairs",
+            file=sys.stderr,
+            flush=True,
+        )
     if pair_scope == "global" and pair_provider is None and len(options["order"]) > 1:
         # Several blocks: one global pair set, restricted per crop with exterior terms.
         rows = global_pair_constraints(

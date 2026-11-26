@@ -258,4 +258,7 @@ def test_ledger_shared_by_processes_accepts_a_concurrent_identical_pin(tmp_path,
         else:
             assert second.read([0] * 3, [4] * 3).shape == (4, 4, 4)
         assert second._ledger.missed
+        # No transaction may stay open after the lost race: the render's snapshot backup
+        # of this connection would otherwise retry SQLITE_LOCKED forever.
+        assert not second._ledger.in_transaction
         assert second._ledger.execute("SELECT count(*) FROM chunks").fetchone()[0] == 1
