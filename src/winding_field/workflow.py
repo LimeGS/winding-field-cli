@@ -76,6 +76,9 @@ def snapshot_exports(root, stage):
             "lasagna-source/IDENTITY.json",
             "lasagna-source/WORK.json",
             "lasagna-source/input.sqlite",
+            # Streamed manifests import into lasagna-import; reuse requires its provenance.
+            "lasagna-import/IDENTITY.json",
+            "lasagna-import/document-*.json",
             "coarse/IDENTITY.json",
             "coarse/COARSE.json",
             "coarse/CALIBRATION.json",
