@@ -734,6 +734,13 @@ def _encode(values, observed):
 
 
 class _Tile:
+    """A solved tile, read on its plan box (``nodes_lo``..``nodes_hi``).
+
+    A tile may be solved on a larger box than its plan gives it, to move a free face away
+    from the nodes it contributes: every reader here indexes the plan box, and the nodes
+    outside it take no part in the join, the blend or the seam statistics.
+    """
+
     def __init__(self, plan_root, tile, grid):
         from .artifacts import Tiles
         from .surface_sources import FieldSource
@@ -743,15 +750,21 @@ class _Tile:
         meta = _json(self.run / "FIELD.json")
         self.geometry = meta["geometry"]
         self.prepared = _json(self.run / "PREPARED.json")
-        expected = [tile["nodes_hi"][i] - tile["nodes_lo"][i] + 1 for i in range(3)]
-        if list(self.geometry["shape_zyx"]) != expected:
-            raise ValueError(f"tile {tile['id']} field shape differs from its plan")
+        self.lo = np.asarray(tile["nodes_lo"])
+        self.hi = np.asarray(tile["nodes_hi"])
         offset_um = np.asarray(self.geometry["origin_xyz"], float)[::-1] - grid["origin_zyx_um"]
         offset = offset_um / grid["spacing_um"]
-        if not np.allclose(offset, tile["nodes_lo"], atol=1e-6) or not np.allclose(
+        self.solved_lo = np.rint(offset).astype(np.int64)
+        self.solved_hi = self.solved_lo + np.asarray(self.geometry["shape_zyx"]) - 1
+        if not np.allclose(offset, self.solved_lo, atol=1e-6) or not np.allclose(
             self.geometry["spacing_xyz"], grid["spacing_um"], rtol=1e-12, atol=0
         ):
             raise ValueError(f"tile {tile['id']} is not on the plan grid")
+        if (self.solved_lo > self.lo).any() or (self.solved_hi < self.hi).any():
+            raise ValueError(f"tile {tile['id']} field does not cover its plan box")
+        # Plan-box node -> node of the stored field.
+        self.shift = self.lo - self.solved_lo
+        self.grown = bool(self.shift.any() or (self.solved_hi > self.hi).any())
         descriptor = dict(
             kind="chunks",
             path=str(self.run / "field/CHECKPOINT.json"),
@@ -764,13 +777,15 @@ class _Tile:
             dict(descriptor, support_policy="observed"), self.geometry, cache_bytes=64 << 20
         )
         self.maps = Tiles(self.run / "maps", readonly=True)
-        self.lo = np.asarray(tile["nodes_lo"])
-        self.hi = np.asarray(tile["nodes_hi"])
         self.core_lo = np.asarray(tile["core_lo"])
         self.core_hi = np.asarray(tile["core_hi"])
         manifest = _json(self.run / "field/CHECKPOINT.json")
         self.chunk = int(manifest["chunk"])
         self.chunks = [tuple(map(int, k.split("-"))) for k in manifest["chunks"]]
+
+    def read(self, source, lo, hi):
+        """``source`` (stored or observed) on plan-box nodes ``lo``..``hi``."""
+        return source.read((lo + self.shift).tolist(), (hi + self.shift).tolist())
 
     def close(self):
         self.stored.close()
@@ -869,11 +884,11 @@ def pair_moments(task):
             if (last_node <= first_node).any():
                 continue
             pick = (slice(None, None, JOIN_STEP),) * 3
-            va, seen = a.observed.read((first_node - a.lo).tolist(), (last_node - a.lo).tolist())
+            va, seen = a.read(a.observed, first_node - a.lo, last_node - a.lo)
             va, seen = va[pick], seen[pick]
             if not seen.any():
                 continue
-            vb, other = b.observed.read((first_node - b.lo).tolist(), (last_node - b.lo).tolist())
+            vb, other = b.read(b.observed, first_node - b.lo, last_node - b.lo)
             seen = seen & other[pick]
             if not seen.any():
                 continue
@@ -1033,7 +1048,11 @@ def _correction(tile_id, local_lo, local_hi):
     from scipy.ndimage import map_coordinates
 
     low, step = _WORKER["low"][tile_id]
-    axes = [(np.arange(a, b) - (step - 1) / 2) / step for a, b in zip(local_lo, local_hi)]
+    # The low-pass lives on the tile's stored field, which may start before its plan box.
+    shift = _worker_tile(tile_id).shift
+    axes = [
+        (np.arange(a, b) + s - (step - 1) / 2) / step for a, b, s in zip(local_lo, local_hi, shift)
+    ]
     coords = np.stack(np.meshgrid(*axes, indexing="ij"), 0)
     return map_coordinates(low, coords, order=1, mode="nearest")
 
@@ -1060,8 +1079,8 @@ def _merge_chunk(task):
         if (last <= first).any():
             continue
         local_lo, local_hi = first - tile.lo, last - tile.lo
-        values, stored = tile.stored.read(local_lo.tolist(), local_hi.tolist())
-        _, seen = tile.observed.read(local_lo.tolist(), local_hi.tolist())
+        values, stored = tile.read(tile.stored, local_lo, local_hi)
+        _, seen = tile.read(tile.observed, local_lo, local_hi)
         if not stored.any():
             continue
         values = values - _correction(tile_id, local_lo, local_hi)
@@ -1088,7 +1107,8 @@ def _merge_chunk(task):
             meta = tile.prepared
             channel = "surface_phase" if meta.get("surface_method") == "lasagna" else "presence"
             presence = tile.maps.sample(
-                (channel,), map_axes(meta, tile.geometry, own_lo - tile.lo, own_hi - tile.lo)
+                (channel,),
+                map_axes(meta, tile.geometry, own_lo - tile.solved_lo, own_hi - tile.solved_lo),
             )[channel]
             own = tuple(slice(a - b, c - b) for a, b, c in zip(own_lo, lo, own_hi))
             own_tile = tuple(slice(a - b, c - b) for a, b, c in zip(own_lo, first, own_hi))
@@ -1184,15 +1204,23 @@ def merge(args):
     tiles = [t for t in tiles if t["id"] not in missing]
     geometries = {}
     sources = {}
+    grown = {}
     tasks = {}
     for tile in tiles:
         probe = _Tile(root, tile, grid)
         try:
             geometries[tile["id"]] = probe.geometry
             sources[tile["id"]] = probe.prepared.get("source")
+            if probe.grown:
+                grown[tile["id"]] = dict(
+                    nodes_lo=probe.solved_lo.tolist(), nodes_hi=probe.solved_hi.tolist()
+                )
             for key in probe.chunks:
-                node_lo = probe.lo + np.asarray(key) * probe.chunk
+                node_lo = probe.solved_lo + np.asarray(key) * probe.chunk
                 node_hi = np.minimum(node_lo + probe.chunk, probe.hi + 1) - 1
+                node_lo = np.maximum(node_lo, probe.lo)
+                if (node_hi < node_lo).any():
+                    continue
                 for merged in itertools.product(
                     *(
                         range(a // FIELD_CHUNK, b // FIELD_CHUNK + 1)
@@ -1368,6 +1396,9 @@ def merge(args):
     )
     if frame_match:
         field_meta["frame_match"] = frame_match
+    if grown:
+        # Solved on a larger box than planned; only the plan box was joined and blended.
+        field_meta["grown_tiles"] = grown
     atomic_json(output / "FIELD.json", field_meta)
     surface = dict(
         schema="winding-surfaces-v1",

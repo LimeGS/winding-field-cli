@@ -64,14 +64,21 @@ def truth(x):
     return x / 160
 
 
-def write_tile(root, tile, bias, source=None):
+def write_tile(root, tile, bias, source=None, grow=0, outside=0.0, drift=0.0):
+    """A solved tile: the truth plus ``bias`` and ``drift`` (windings across its plan box).
+
+    ``grow`` solves it on a box that many nodes wider in x on both sides (inside the grid),
+    holding ``outside`` more than the truth on the nodes beyond its plan box.
+    """
     from field_store import BlockStore
     from winding_field.artifacts import Tiles
     from winding_field.util import atomic_json, digest, file_sha
 
     run = root / "tiles" / tile["id"]
     run.mkdir(parents=True)
+    plan_lo, plan_hi = tile["nodes_lo"][2], tile["nodes_hi"][2]
     lo, hi = np.asarray(tile["nodes_lo"]), np.asarray(tile["nodes_hi"])
+    lo[2], hi[2] = max(0, plan_lo - grow), min(GRID["shape_zyx"][2] - 1, plan_hi + grow)
     shape = (hi - lo + 1).tolist()
     geometry = dict(
         frame="test-frame" if source is None else digest(source),
@@ -87,7 +94,9 @@ def write_tile(root, tile, bias, source=None):
             first = np.asarray(key) * 64
             last = np.minimum(first + 64, shape)
             x = np.arange(first[2], last[2]) + lo[2]
-            values = np.broadcast_to(truth(x) + bias, tuple(last - first)).copy()
+            row = truth(x) + bias + drift * (x - plan_lo) / (plan_hi - plan_lo)
+            row = row + outside * ((x < plan_lo) | (x > plan_hi))
+            values = np.broadcast_to(row, tuple(last - first)).copy()
             store.commit(key, values, {}, observed=np.ones(values.shape, bool))
     atomic_json(
         run / "FIELD.json",
@@ -114,7 +123,9 @@ def write_tile(root, tile, bias, source=None):
     atomic_json(run / "RUN.json", dict(stages=dict(field={})))
 
 
-def plan_two_biased_tiles(tmp_path, bias=(0.0, 0.004, 0.0), overlap=64, sources=None):
+def plan_two_biased_tiles(
+    tmp_path, bias=(0.0, 0.004, 0.0), overlap=64, sources=None, **middle_tile
+):
     from winding_field.util import atomic_json
 
     tiles = []
@@ -150,7 +161,13 @@ def plan_two_biased_tiles(tmp_path, bias=(0.0, 0.004, 0.0), overlap=64, sources=
         ),
     )
     for k, (tile, b) in enumerate(zip(tiles, bias)):
-        write_tile(root, tile, b, None if sources is None else sources[k])
+        write_tile(
+            root,
+            tile,
+            b,
+            None if sources is None else sources[k],
+            **(middle_tile if k == 1 else {}),
+        )
     return root, tiles
 
 
@@ -258,6 +275,64 @@ def test_overlap_join_with_tiles_off_the_chunk_grid(tmp_path):
     error = values - truth(np.arange(320))
     assert np.ptp(error) <= 1e-5
     assert result["worst_seam_p95_abs_dW"] <= 0.002
+
+
+def _merged(tmp_path, name, join, **plan):
+    """(result, values, FIELD.json, SEAMS.json, LEVELS.json) of a merge of a three-tile plan."""
+    from winding_field.field import open_field
+
+    (tmp_path / name).mkdir()
+    root, _ = plan_two_biased_tiles(
+        tmp_path / name, bias=(-0.2003, 0.2702, 0.1), overlap=32, **plan
+    )
+    out = tmp_path / name / "merged"
+    result = scroll.merge(Namespace(plan=root, output=out, workers=1, allow_missing=False, **join))
+    with open_field(out) as source:
+        values, valid = source.read([0, 0, 0], GRID["shape_zyx"])
+    assert valid.all()
+    return (
+        result,
+        values,
+        *(json.loads((out / f"{n}.json").read_text()) for n in ("FIELD", "SEAMS", "LEVELS")),
+    )
+
+
+@pytest.mark.parametrize("join", [dict(), dict(join="none", coarse_sigma_mm=0)])
+def test_merge_reads_a_tile_solved_on_a_larger_box_only_on_its_plan_box(tmp_path, join):
+    """A tile re-solved with its free faces moved out contributes its plan box, no more."""
+    _, plain, plain_meta, plain_seams, plain_levels = _merged(tmp_path, "plain", join)
+    # 32 nodes further on both x faces, 7 windings wrong out there.
+    result, values, meta, seams, levels = _merged(tmp_path, "grown", join, grow=32, outside=7.0)
+    # Equal up to the float32 payload of the tile's differently cut chunks.
+    np.testing.assert_allclose(values, plain, rtol=0, atol=1e-6)
+    assert seams == plain_seams
+    assert levels["levels"] == pytest.approx(plain_levels["levels"], abs=1e-6)
+    if plain_meta["join"]:
+        assert meta["join"]["pairs"] == plain_meta["join"]["pairs"] == 2
+        assert meta["join"]["rms_before"] == pytest.approx(plain_meta["join"]["rms_before"])
+        assert meta["join"]["rms_after"]["worst"] <= 1e-6
+    assert meta["grown_tiles"] == {"000-000-001": dict(nodes_lo=[0, 0, 64], nodes_hi=[1, 2, 319])}
+    assert "grown_tiles" not in plain_meta
+
+
+def test_coarse_correction_follows_a_tile_solved_on_a_larger_box(tmp_path):
+    # The middle tile drifts half a winding across its box; a narrow low-pass removes it.
+    join = dict(join="coarse", coarse_sigma_mm=0.002)
+    for name, plan in (("plain", {}), ("grown", dict(grow=32))):
+        result, values, *_ = _merged(tmp_path, name, join, drift=0.5, **plan)
+        np.testing.assert_allclose(
+            values, np.broadcast_to(truth(np.arange(320)), values.shape), atol=5e-3
+        )
+
+
+def test_merge_refuses_a_tile_that_does_not_cover_its_plan_box(tmp_path):
+    root, tiles = plan_two_biased_tiles(tmp_path, overlap=32)
+    tiles[1]["nodes_lo"][2] -= 8
+    document = json.loads((root / "TILES.json").read_text())
+    document["tiles"] = tiles
+    (root / "TILES.json").write_text(json.dumps(document))
+    with pytest.raises(ValueError, match="tile 000-000-001 field does not cover its plan box"):
+        scroll.merge(Namespace(plan=root, output=tmp_path / "m", workers=1, allow_missing=False))
 
 
 def test_unknown_join_is_refused(tmp_path):

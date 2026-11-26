@@ -253,6 +253,12 @@ their CT identities agree once the reader (`backend`, `native_runtime`) is left 
 rule `--field-prior` uses, and refuses any other difference. The merged field takes the
 frame most tiles carry; `FIELD.json` → `frame_match` lists every frame with its tiles.
 
+A tile may be solved on a larger box than its plan box (a re-solve that moves a free face
+away from a seam), as long as it stays on the plan grid and covers the plan box. The merge
+reads it on its plan box only: the nodes outside take no part in the join, the blend, the
+seams or the levels, and `FIELD.json` → `grown_tiles` lists the boxes such tiles were
+solved on.
+
 ## 5. Meshes and full-resolution CT
 
 Mesh the merged field per level with the existing command, then flatten and render each
