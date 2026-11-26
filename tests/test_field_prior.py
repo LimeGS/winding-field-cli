@@ -158,7 +158,14 @@ def test_supported_scope_solves_and_stores_only_chunks_with_observations(tmp_pat
     ]
 
 
-@pytest.mark.parametrize("config", [{"field_scope": "some"}, {"field_scope": "supported"}])
+@pytest.mark.parametrize(
+    "config",
+    [
+        {"field_scope": "some"},
+        {"field_scope": "supported"},
+        {"field_scope": "supported", "field_prior": "coarse", "field_coarse_factor": 8},
+    ],
+)
 def test_field_scope_is_validated(config):
     from winding_field.config import validate_config
 
@@ -189,3 +196,48 @@ def test_inherited_calibration_uses_the_priors_centre_and_is_recorded(tmp_path, 
     assert identity["source_identity"]["calibration_source"]["kind"] == "field_prior"
     own_identity = json.loads((own / "field/CHECKPOINT.json").read_bytes())["identity"]
     assert "calibration_source" not in own_identity["source_identity"]
+
+
+class _GridSource:
+    def __init__(self, values, support):
+        self.values, self.support = values, support
+
+    def read(self, lo, hi):
+        box = tuple(slice(int(a), int(b)) for a, b in zip(lo, hi))
+        return self.values[box], self.support[box]
+
+
+@pytest.mark.parametrize("shape", [(9, 11, 8), (1, 6, 5)])
+def test_lattice_points_take_the_same_values_as_scattered_points(shape):
+    """A box of grid nodes is interpolated per axis; the result is bitwise the point path's,
+    including nodes outside the prior and on unsupported corners."""
+    from winding_field.field import coordinates
+    from winding_field.field_prior import FieldPrior
+
+    rng = np.random.default_rng(3)
+    prior = object.__new__(FieldPrior)
+    prior.origin = np.array([5.0, -3.0, 2.0])
+    prior.spacing = np.array([4.0, 4.0, 4.0])
+    prior.shape = np.asarray(shape, int)
+    prior.source = _GridSource(rng.standard_normal(shape), rng.random(shape) > 0.2)
+    meta = dict(spacing_xyz=np.array([1.5, 1.5, 1.5]), origin_xyz=np.array([1.0, -6.0, 0.5]))
+    lattice = coordinates((0, 0, 0), (26, 34, 24), meta)
+    values, valid = prior.sample(lattice)
+    flat_values, flat_valid = prior.sample(lattice.reshape(-1, 3))
+    assert np.array_equal(values.ravel(), flat_values, equal_nan=True)
+    assert np.array_equal(valid.ravel(), flat_valid)
+    assert valid.any() and not valid.all()
+
+
+def test_coarse_factor_sets_the_production_field_defaults_for_unset_flags():
+    from winding_field.config import field_defaults
+
+    assert field_defaults({}) == dict(field_chunk=64)
+    assert field_defaults(dict(field_coarse_factor=0, field_halo=3)) == dict(
+        field_coarse_factor=0, field_halo=3, field_chunk=64
+    )
+    assert field_defaults(dict(field_coarse_factor=8)) == dict(
+        field_coarse_factor=8, field_chunk=128, field_halo=8, field_kernel="fused"
+    )
+    explicit = dict(field_coarse_factor=8, field_chunk=64, field_halo=4, field_kernel="eager")
+    assert field_defaults(dict(explicit)) == explicit

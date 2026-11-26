@@ -109,6 +109,25 @@ def validate_field_cpu(config, *, convergence=False):
         raise ValueError("CPU preparation pool supports only ordinary static providers")
 
 
+# Two-level Schwarz as measured on the 175A 384 box (RTX 5090, 2026-11-26): blocks of 128
+# with halo 8 reach the one-block solution in about 5 sweeps, and Jacobi local solves with
+# the fused kernels make a steady sweep 2.7x faster than AMG with the eager loop.
+SCHWARZ_FIELD_DEFAULTS = dict(field_chunk=128, field_halo=8, field_kernel="fused")
+
+
+def field_defaults(config):
+    """Fill the field solver settings a new run's command line left unset.
+
+    Resolved once, when the run is created, so the saved configuration names them and a
+    resume never depends on the defaults of the version that resumes it.
+    """
+    if config.get("field_coarse_factor", 0):
+        for key, value in SCHWARZ_FIELD_DEFAULTS.items():
+            config.setdefault(key, value)
+    config.setdefault("field_chunk", 64)
+    return config
+
+
 def validate_config(config):
     validate_field_cpu(config)
     if type(config.get("field_advice", False)) is not bool:
@@ -136,6 +155,9 @@ def validate_config(config):
         raise ValueError("field_scope must be all or supported")
     if config.get("field_scope") == "supported" and not prior:
         raise ValueError("field_scope supported requires field_prior")
+    if config.get("field_scope") == "supported" and config.get("field_coarse_factor", 0):
+        # The coarse correction needs every chunk; refuse before any stage runs.
+        raise ValueError("field_scope supported cannot be combined with field_coarse_factor")
     if config.get("afv_clip_backend", "auto") not in ("auto", "native", "numpy", "reference"):
         raise ValueError("afv_clip_backend must be auto, native, numpy or reference")
     if config.get("nonconvergence_policy", "fail") not in ("fail", "continue"):
