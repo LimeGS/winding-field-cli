@@ -9,14 +9,36 @@ from winding_field import scroll
 
 def test_tile_cores_partition_the_axis_and_tiles_add_overlap():
     tiles = scroll.tile_ranges(300, 128, 64)
-    assert [t["core"] for t in tiles] == [(0, 127), (128, 255), (256, 299)]
-    assert [t["nodes"] for t in tiles] == [(0, 191), (64, 299), (192, 299)]
+    assert [t["core"] for t in tiles] == [(0, 63), (64, 191), (192, 299)]
+    assert [t["nodes"] for t in tiles] == [(0, 127), (0, 255), (128, 299)]
     with pytest.raises(ValueError, match="multiples of 64"):
         scroll.tile_ranges(300, 100, 64)
     with pytest.raises(ValueError, match="multiples of 16"):
         scroll.tile_ranges(300, 128, 20)
     narrow = scroll.tile_ranges(300, 128, 32)
-    assert [t["nodes"] for t in narrow] == [(0, 159), (96, 287), (224, 299)]
+    assert [t["nodes"] for t in narrow] == [(0, 95), (32, 223), (160, 299)]
+
+
+def test_tile_cores_share_the_axis_evenly_instead_of_leaving_a_narrow_remainder():
+    # The dry-run box: 192-node cores used to give tiles of 224 and 96 nodes.
+    tiles = scroll.tile_ranges(256, 192, 32)
+    assert [t["core"] for t in tiles] == [(0, 127), (128, 255)]
+    assert [t["nodes"] for t in tiles] == [(0, 159), (96, 255)]
+    # Whole multiples of the core are unchanged.
+    assert [t["core"] for t in scroll.tile_ranges(384, 128, 32)] == [
+        (0, 127),
+        (128, 255),
+        (256, 383),
+    ]
+    # No core exceeds the requested one, and cores stay on 64-node chunks.
+    for nodes in range(2, 1200, 37):
+        for core in (64, 128, 192, 320):
+            cores = [t["core"] for t in scroll.tile_ranges(nodes, core, 32)]
+            assert cores[0][0] == 0 and cores[-1][1] == nodes - 1
+            assert len(cores) == -(-nodes // core)
+            assert all(b - a + 1 <= core for a, b in cores)
+            assert all(a % 64 == 0 for a, _ in cores)
+            assert all(c[1] + 1 == d[0] for c, d in zip(cores, cores[1:]))
 
 
 def test_global_grid_counts_nodes_on_the_field_pitch():
@@ -95,7 +117,11 @@ def plan_two_biased_tiles(tmp_path, bias=(0.0, 0.004, 0.0), overlap=64):
     from winding_field.util import atomic_json
 
     tiles = []
-    for k, t in enumerate(scroll.tile_ranges(320, 128, overlap)):
+    # Fixed 128-node cores (the last one 64): these merge tests need tiles that only the
+    # first tile covers, which the balanced tile_ranges split no longer gives.
+    cores = [(0, 127), (128, 255), (256, 319)]
+    ranges = [dict(core=c, nodes=(max(0, c[0] - overlap), min(319, c[1] + overlap))) for c in cores]
+    for k, t in enumerate(ranges):
         tiles.append(
             dict(
                 id=f"000-000-{k:03d}",
@@ -632,6 +658,31 @@ def test_auto_tile_size_grows_with_gpu_memory_and_fits_the_measured_tile():
         scroll.auto_tile_nodes(2**30, 34.56, 64)
 
 
+def test_auto_tile_size_prefers_amg_down_to_its_floor_then_jacobi():
+    # A 6 GB GTX 1660 holds a 192^3 AMG tile (the real PHerc0175A tile peaked at 4.37 GB).
+    core, sizing = scroll.auto_tile_size(6 * 2**30, 34.56, 32)
+    assert sizing["preconditioner"] == "amg" and core == 128
+    assert sizing["tile_nodes_per_axis"] == scroll.AMG_MIN_TILE_NODES
+    assert 4.37e9 <= sizing["estimated_peak_bytes"] <= scroll.GPU_USABLE * 6 * 2**30
+    # Below the floor AMG is not worth its setup: Jacobi with its own, larger tile.
+    core, sizing = scroll.auto_tile_size(4 * 2**30, 34.56, 32)
+    assert sizing["preconditioner"] == "jacobi"
+    assert (core, sizing) == scroll.auto_tile_nodes(4 * 2**30, 34.56, 32)
+    # AMG tiles are smaller than Jacobi's on the same GPU (its hierarchy needs memory).
+    amg, sizing = scroll.auto_tile_size(80 * 2**30, 34.56, 32)
+    assert sizing["preconditioner"] == "amg"
+    assert amg < scroll.auto_tile_nodes(80 * 2**30, 34.56, 32)[0]
+    assert sizing["estimated_peak_bytes"] <= scroll.GPU_USABLE * 80 * 2**30
+    # Forcing one preconditioner sizes with its model only.
+    assert scroll.auto_tile_size(80 * 2**30, 34.56, 32, "jacobi") == scroll.auto_tile_nodes(
+        80 * 2**30, 34.56, 32
+    )
+    with pytest.raises(ValueError, match="cannot hold"):
+        scroll.auto_tile_size(2**30, 34.56, 32, "amg")
+    with pytest.raises(ValueError, match="preconditioner"):
+        scroll.auto_tile_size(6 * 2**30, 34.56, 32, "spectral")
+
+
 class _FakeVolume:
     spacing_xyz = (1.0, 1.0, 1.0)
     shape = (4, 6, 640)
@@ -666,8 +717,52 @@ def test_auto_plan_sizes_tiles_for_the_gpu_and_solves_each_as_one_block(tmp_path
     assert run_args[run_args.index("--field-chunk") + 1] == "192"
     assert run_args[run_args.index("--sweeps") + 1] == "1"
     assert run_args[run_args.index("--maxiter") + 1] == "50000"
+    # 2 GiB is below the AMG floor: Jacobi, the solver's default, so no flag.
+    assert memory["preconditioner"] == "jacobi" and "--preconditioner" not in run_args
     # Extra run flags come last, so they override the defaults above.
     assert run_args[-1] == "--fibre-weight=1000"
+
+
+def _plan_args(tmp_path, coarse, *extra):
+    return scroll._parser().parse_args(
+        [
+            "plan", "--source", "ct.zarr", "--voxel-um", "1", "--field-spacing-um", "2",
+            "--coarse", coarse["path"], "--fibres", "f.afv", "--lasagna-input", "l.json",
+            "--no-split-fibres", *extra, "--output", str(tmp_path / "plan"),
+        ]
+    )  # fmt: skip
+
+
+def test_auto_preconditioner_solves_tiles_above_the_floor_with_amg(tmp_path, monkeypatch):
+    from winding_field import workflow
+
+    monkeypatch.setattr(workflow, "open_volume", lambda config: _FakeVolume())
+    coarse = write_coarse(tmp_path / "coarse")
+    scroll.plan(
+        _plan_args(tmp_path, coarse, "--gpu-memory-gib", "8", "--tile-preconditioner", "auto")
+    )
+    document = json.loads((tmp_path / "plan/TILES.json").read_text())
+    assert document["tile_memory"]["preconditioner"] == "amg"
+    run_args = document["run_args"]
+    assert run_args[run_args.index("--preconditioner") + 1] == "amg"
+    assert run_args[run_args.index("--field-chunk") + 1] == "192"
+
+
+def test_fixed_tiles_use_jacobi_unless_amg_is_forced(tmp_path, monkeypatch):
+    from winding_field import workflow
+
+    monkeypatch.setattr(workflow, "open_volume", lambda config: _FakeVolume())
+    coarse = write_coarse(tmp_path / "coarse")
+    scroll.plan(
+        _plan_args(tmp_path, coarse, "--tile-nodes", "128", "--tile-preconditioner", "auto")
+    )
+    document = json.loads((tmp_path / "plan/TILES.json").read_text())
+    assert document["tile_memory"] is None and "--preconditioner" not in document["run_args"]
+    forced = tmp_path / "forced"
+    forced.mkdir()
+    scroll.plan(_plan_args(forced, coarse, "--tile-nodes", "128", "--tile-preconditioner", "amg"))
+    run_args = json.loads((forced / "plan/TILES.json").read_text())["run_args"]
+    assert run_args[run_args.index("--preconditioner") + 1] == "amg"
 
 
 def test_auto_plan_without_gpu_or_memory_is_refused(tmp_path, monkeypatch):
@@ -728,3 +823,42 @@ def test_tiles_run_one_process_per_gpu_each_seeing_only_its_gpu(tmp_path, monkey
     for gpu in ("3", "5"):
         spans = sorted((a, b) for g, a, b in runs if g == gpu)
         assert all(spans[i][1] <= spans[i + 1][0] for i in range(len(spans) - 1))
+
+
+def test_tiles_stopped_by_the_plan_until_are_prepared_and_solve_on_the_next_run(tmp_path):
+    import sys
+
+    from winding_field.util import atomic_json
+
+    root = tmp_path / "plan"
+    root.mkdir()
+    tiles = [dict(id=f"000-000-00{k}", supported=True, roi=[0, 2, 0, 2, k, k + 2]) for k in (0, 1)]
+    atomic_json(
+        root / "TILES.json",
+        dict(
+            schema=scroll.PLAN_SCHEMA,
+            tiles=tiles,
+            # The plan's own --until field, then --run-arg=--until=fibres: the last one wins.
+            run_args=["--device", "cpu", "--until", "field", "--until=fibres"],
+        ),
+    )
+    fake = tmp_path / "fake.py"
+    fake.write_text(
+        "import json, sys, pathlib\n"
+        "if sys.argv[1] == 'field':\n"
+        "    out = pathlib.Path(sys.argv[2])\n"
+        "    (out / 'RUN.json').write_text(json.dumps({'stages': {'fibres': {}, 'field': {}}}))\n"
+        "    (out / 'FIELD.json').write_text('{}')\n"
+        "else:\n"
+        "    out = pathlib.Path(sys.argv[sys.argv.index('--output') + 1])\n"
+        "    out.mkdir(parents=True)\n"
+        "    (out / 'RUN.json').write_text(json.dumps({'stages': {'fibres': {}}}))\n"
+    )
+    args = scroll._parser().parse_args(
+        ["tiles", str(root), "--executable", sys.executable, str(fake)]
+    )
+    first = scroll.run_tiles(args)
+    assert first["status"] == "TILES_PREPARED" and first["PREPARED"] == 2 and first["FAILED"] == 0
+    assert json.loads((root / "status/000-000-000.json").read_text())["status"] == "PREPARED"
+    second = scroll.run_tiles(args)
+    assert second["status"] == "TILES_DONE" and second["DONE"] == 2
