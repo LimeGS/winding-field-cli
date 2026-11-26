@@ -24,6 +24,27 @@ def _physical(source):
     return {k: v for k, v in source.items() if k not in _READER_KEYS}
 
 
+def ct_differences(mine, theirs):
+    """Keys in which two CT source identities differ, leaving out the reader that read them.
+
+    A frame digests the whole CT identity, including the reader backend and the native
+    reader binary, which each host builds for itself and which runs from earlier releases
+    did not record. Two runs on the same CT source, level, metadata, shape, spacing and
+    origin share their physical coordinates whatever reader produced them.
+    """
+    mine, theirs = _physical(mine), _physical(theirs)
+    return sorted(
+        k
+        for k in set(mine) | set(theirs)
+        if (k in mine) != (k in theirs) or mine.get(k) != theirs.get(k)
+    )
+
+
+def frame_match(**details):
+    """Receipt for frames accepted under the ``ct_differences`` rule."""
+    return dict(rule="ct-identity-without-reader-runtime", ignored=list(_READER_KEYS), **details)
+
+
 class FieldPrior:
     def __init__(self, path, geometry, source=None):
         from .field import open_field
@@ -56,23 +77,16 @@ class FieldPrior:
             self.identity["frame_match"] = frame_match
 
     def _same_ct(self, source, geometry, prior):
-        """Accept a frame digest that differs only in CT reader metadata.
-
-        The frame digests the whole CT identity, including the reader backend and the
-        native reader binary, which runs from earlier releases did not record. Two runs
-        on the same CT source, level, metadata, shape, spacing and origin share their
-        physical coordinates whatever reader produced them.
-        """
+        """Accept a frame digest that differs only in CT reader metadata (``ct_differences``)."""
         prepared = self.run / "PREPARED.json"
         theirs = json.loads(prepared.read_bytes()).get("source") if prepared.is_file() else None
         message = f"field prior frame {prior.get('frame')!r} differs from {geometry.get('frame')!r}"
         if not isinstance(source, dict) or not isinstance(theirs, dict):
             raise ValueError(message + " and a CT source identity is unavailable to compare")
-        mine, theirs = _physical(source), _physical(theirs)
-        if mine != theirs:
-            keys = sorted(k for k in set(mine) | set(theirs) if mine.get(k) != theirs.get(k))
+        keys = ct_differences(source, theirs)
+        if keys:
             raise ValueError(message + "; CT identity differs in " + ", ".join(keys))
-        return dict(rule="ct-identity-without-reader-runtime", ignored=list(_READER_KEYS))
+        return frame_match()
 
     def close(self):
         self.source.close()

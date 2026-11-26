@@ -247,6 +247,12 @@ inside a solved chunk keep their value; observed support is the union of the til
 observed support. Missing tiles are refused unless `--allow-missing`. The merge holds the
 checkpoint's `.writer.lock` exclusively while it writes, as the core writer does.
 
+Tiles solved on different hosts carry different frames for the same CT: the frame digests
+the CT reader too, and each host builds its own native reader. The merge accepts them when
+their CT identities agree once the reader (`backend`, `native_runtime`) is left out, the
+rule `--field-prior` uses, and refuses any other difference. The merged field takes the
+frame most tiles carry; `FIELD.json` → `frame_match` lists every frame with its tiles.
+
 ## 5. Meshes and full-resolution CT
 
 Mesh the merged field per level with the existing command, then flatten and render each

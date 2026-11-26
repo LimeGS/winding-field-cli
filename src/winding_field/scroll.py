@@ -1137,6 +1137,37 @@ def _percentile(hist, q):
     return float(edge if np.isfinite(edge) else SEAM_BINS[-2])
 
 
+def _merged_frame(geometries, sources):
+    """The merged field's frame, and a receipt when the tiles carry more than one.
+
+    A frame digests the CT identity including the reader that read it, and every host
+    builds its own native reader, so tiles solved on two hosts carry two frames for one CT.
+    They merge when their CT identities agree without the reader, the rule of
+    ``--field-prior``; the merged field takes the frame most tiles carry (on a tie, the one
+    met first in plan order).
+    """
+    from .field_prior import ct_differences, frame_match
+
+    tiles_by_frame = {}
+    for tile_id, geometry in geometries.items():
+        tiles_by_frame.setdefault(geometry["frame"], []).append(tile_id)
+    frame = max(tiles_by_frame, key=lambda f: len(tiles_by_frame[f]))
+    if len(tiles_by_frame) == 1:
+        return frame, None
+    for tile_id, source in sources.items():
+        if not isinstance(source, dict):
+            raise ValueError(f"tiles differ in frame and tile {tile_id} records no CT identity")
+    reference = tiles_by_frame[frame][0]
+    for tile_id, source in sources.items():
+        keys = ct_differences(sources[reference], source)
+        if keys:
+            raise ValueError(
+                f"tiles differ in frame: the CT identity of tile {tile_id} differs from tile "
+                f"{reference} in " + ", ".join(keys)
+            )
+    return frame, frame_match(frames=tiles_by_frame)
+
+
 def merge(args):
     root = Path(args.plan).resolve()
     document = _json(root / "TILES.json")
@@ -1152,11 +1183,13 @@ def merge(args):
         raise ValueError(f"{len(missing)} tiles have no completed field, e.g. {missing[:5]}")
     tiles = [t for t in tiles if t["id"] not in missing]
     geometries = {}
+    sources = {}
     tasks = {}
     for tile in tiles:
         probe = _Tile(root, tile, grid)
         try:
             geometries[tile["id"]] = probe.geometry
+            sources[tile["id"]] = probe.prepared.get("source")
             for key in probe.chunks:
                 node_lo = probe.lo + np.asarray(key) * probe.chunk
                 node_hi = np.minimum(node_lo + probe.chunk, probe.hi + 1) - 1
@@ -1169,11 +1202,11 @@ def merge(args):
                     tasks.setdefault(merged, set()).add(tile["id"])
         finally:
             probe.close()
-    frames = {g["frame"] for g in geometries.values()}
     steps = {g["sheet_step"] for g in geometries.values()}
     units = {g["voxel_um"] for g in geometries.values()}
-    if len(frames) != 1 or len(steps) != 1 or len(units) != 1:
-        raise ValueError("tiles differ in frame, sheet step or units")
+    if len(steps) != 1 or len(units) != 1:
+        raise ValueError("tiles differ in sheet step or units")
+    frame, frame_match = _merged_frame(geometries, sources)
     # Every stored tile chunk also contributes to neighbours' overlaps.
     for merged in list(tasks):
         lo = np.asarray(merged) * FIELD_CHUNK
@@ -1239,7 +1272,6 @@ def merge(args):
             phase += stats[0]
             phase_weight += stats[1]
             low, high = min(low, stats[2]), max(high, stats[3])
-    frame = frames.pop()
     sheet_step = steps.pop()
     geometry = dict(
         frame=frame,
@@ -1334,6 +1366,8 @@ def merge(args):
         else "blend of independently solved field-prior tiles; seams in SEAMS.json",
         seconds=time.time() - started,
     )
+    if frame_match:
+        field_meta["frame_match"] = frame_match
     atomic_json(output / "FIELD.json", field_meta)
     surface = dict(
         schema="winding-surfaces-v1",

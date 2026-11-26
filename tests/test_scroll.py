@@ -64,17 +64,17 @@ def truth(x):
     return x / 160
 
 
-def write_tile(root, tile, bias):
+def write_tile(root, tile, bias, source=None):
     from field_store import BlockStore
     from winding_field.artifacts import Tiles
-    from winding_field.util import atomic_json, file_sha
+    from winding_field.util import atomic_json, digest, file_sha
 
     run = root / "tiles" / tile["id"]
     run.mkdir(parents=True)
     lo, hi = np.asarray(tile["nodes_lo"]), np.asarray(tile["nodes_hi"])
     shape = (hi - lo + 1).tolist()
     geometry = dict(
-        frame="test-frame",
+        frame="test-frame" if source is None else digest(source),
         voxel_um=1.0,
         origin_xyz=(lo[::-1] * GRID["spacing_um"]).astype(float).tolist(),
         spacing_xyz=[GRID["spacing_um"]] * 3,
@@ -100,6 +100,7 @@ def write_tile(root, tile, bias):
             origin_xyz=geometry["origin_xyz"],
             spacing_xyz=geometry["spacing_xyz"],
             shape_zyx=shape,
+            **({} if source is None else dict(source=source)),
         ),
     )
     maps = Tiles(run / "maps", shape, 64, identity="test")
@@ -113,7 +114,7 @@ def write_tile(root, tile, bias):
     atomic_json(run / "RUN.json", dict(stages=dict(field={})))
 
 
-def plan_two_biased_tiles(tmp_path, bias=(0.0, 0.004, 0.0), overlap=64):
+def plan_two_biased_tiles(tmp_path, bias=(0.0, 0.004, 0.0), overlap=64, sources=None):
     from winding_field.util import atomic_json
 
     tiles = []
@@ -148,8 +149,8 @@ def plan_two_biased_tiles(tmp_path, bias=(0.0, 0.004, 0.0), overlap=64):
             coarse=coarse,
         ),
     )
-    for tile, b in zip(tiles, bias):
-        write_tile(root, tile, b)
+    for k, (tile, b) in enumerate(zip(tiles, bias)):
+        write_tile(root, tile, b, None if sources is None else sources[k])
     return root, tiles
 
 
@@ -320,6 +321,66 @@ def test_merge_refuses_tiles_off_the_plan_grid(tmp_path):
                 join="none",
             )
         )
+
+
+def _read_on(host):
+    """A CT identity as read on one host: same CT, that host's own native reader build."""
+    return dict(
+        source="/data/scroll.zarr",
+        level=0,
+        shape=[2, 3, 320],
+        spacing_xyz=[2.0, 2.0, 2.0],
+        origin_xyz=[0.0, 0.0, 0.0],
+        metadata_sha256="ab" * 32,
+        backend="vc_reader-zarr-v2-checked-v1",
+        native_runtime=dict(
+            extension_sha256=host * 64, libraries_sha256={"libvc_reader_native.so": host * 64}
+        ),
+    )
+
+
+def test_merge_joins_tiles_of_one_ct_read_by_two_hosts_readers(tmp_path):
+    from winding_field.field import open_field
+    from winding_field.util import digest
+
+    gpu, other = _read_on("1"), _read_on("2")
+    root, tiles = plan_two_biased_tiles(tmp_path, sources=[gpu, other, other])
+    out = tmp_path / "merged"
+    result = scroll.merge(Namespace(plan=root, output=out, workers=1, allow_missing=False))
+    assert result["status"] == "MERGED" and result["tiles"] == 3
+
+    meta = json.loads((out / "FIELD.json").read_text())
+    assert meta["geometry"]["frame"] == digest(other)
+    assert meta["frame_match"] == dict(
+        rule="ct-identity-without-reader-runtime",
+        ignored=["backend", "native_runtime"],
+        frames={digest(gpu): ["000-000-000"], digest(other): ["000-000-001", "000-000-002"]},
+    )
+    with open_field(out) as source:
+        values, valid = source.read([0, 0, 0], GRID["shape_zyx"])
+    assert valid.all() and np.abs(values - truth(np.arange(320))).max() < 0.004 + 1e-6
+
+    one = tmp_path / "one-host"
+    one.mkdir()
+    root, _ = plan_two_biased_tiles(one, sources=[gpu, gpu, gpu])
+    scroll.merge(Namespace(plan=root, output=one / "merged", workers=1, allow_missing=False))
+    assert "frame_match" not in json.loads((one / "merged/FIELD.json").read_text())
+
+
+def test_merge_refuses_tiles_whose_ct_differs_beyond_the_reader(tmp_path):
+    def merge(name, sources):
+        (tmp_path / name).mkdir()
+        root, _ = plan_two_biased_tiles(tmp_path / name, sources=sources)
+        args = Namespace(plan=root, output=tmp_path / name / "m", workers=1, allow_missing=False)
+        scroll.merge(args)
+
+    gpu, other = _read_on("1"), _read_on("2")
+    with pytest.raises(
+        ValueError, match="tile 000-000-002 differs from tile 000-000-000 in level$"
+    ):
+        merge("level", [gpu, gpu, dict(other, level=1)])
+    with pytest.raises(ValueError, match="tile 000-000-001 records no CT identity"):
+        merge("unrecorded", [gpu, None, gpu])
 
 
 def test_merge_requires_every_supported_tile_unless_allowed(tmp_path):
