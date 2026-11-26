@@ -58,6 +58,8 @@ class FieldPrior:
         self.spacing = np.asarray(prior["spacing_xyz"], float)
         self.shape = np.asarray(prior["shape_zyx"], int)
         self.source = open_field(self.run)
+        # Every stored node, observed or not: read only by gradient(), on first use.
+        self._stored = None
         self.identity = dict(
             run=str(self.run),
             field_json_sha256=file_sha(meta_path),
@@ -88,9 +90,23 @@ class FieldPrior:
 
     def close(self):
         self.source.close()
+        if self._stored is not None:
+            self._stored.close()
+
+    def _stored_source(self):
+        if self._stored is None:
+            from .field import open_field
+
+            self._stored = open_field(self.run, support_policy="stored")
+        return self._stored
 
     def sample(self, xyz):
-        """Trilinear W at world points ``xyz`` (..., 3); valid only if all 8 corners are supported."""
+        """Trilinear W at world points ``xyz`` (..., 3); valid only if all 8 corners are observed."""
+        return self._interpolate(xyz, self.source, finite=False)
+
+    def _interpolate(self, xyz, source, finite):
+        """Trilinear W from ``source``: valid where all 8 corners are in its support (and,
+        with ``finite``, hold finite values)."""
         points = np.asarray(xyz, float)
         axes = _lattice_axes(points)
         if axes is not None:
@@ -105,7 +121,7 @@ class FieldPrior:
             base = np.minimum(np.floor(zyx[inside]).astype(int), np.maximum(self.shape - 2, 0))
             lo = base.min(0)
             hi = np.minimum(base.max(0) + 2, self.shape)
-            crop, support = self.source.read(lo, hi)
+            crop, support = source.read(lo, hi)
             local = base - lo
             frac = zyx[inside] - base
             acc = np.zeros(len(local))
@@ -117,6 +133,8 @@ class FieldPrior:
                 at = tuple(idx.T)
                 acc += weight * crop[at]
                 ok &= support[at]
+                if finite:
+                    ok &= np.isfinite(crop[at])
             values[inside] = np.where(ok, acc, np.nan)
             valid[inside] = ok
         return values.reshape(points.shape[:-1]), valid.reshape(points.shape[:-1])
@@ -165,10 +183,14 @@ class FieldPrior:
 
         Axis i takes (W(x + h_i e_i) - W(x - h_i e_i)) / (2 h_i), with h_i the prior's own
         spacing. The result is continuous in ``xyz``, so a node that two tiles share gets
-        the same gradient in both, whichever coarse cell face it lies on. Valid only where
-        all six samples are supported; XYZ components in W per µm, zero where invalid.
-        Points are taken ``max_points`` at a time to bound the temporary arrays.
+        the same gradient in both, whichever coarse cell face it lies on. The samples read
+        the prior's STORED values, observed or not: a coarse solved over the whole scroll
+        holds its best estimate between observations too, and only the sign is used. Valid
+        where all six samples have 8 stored, finite corners; XYZ components in W per µm,
+        zero where invalid. Points are taken ``max_points`` at a time to bound the
+        temporary arrays.
         """
+        source = self._stored_source()
         points = np.asarray(xyz, float)
         flat = points.reshape(-1, 3)
         result = np.zeros(flat.shape)
@@ -179,8 +201,8 @@ class FieldPrior:
             for axis in range(3):
                 step = np.zeros(3)
                 step[axis] = self.spacing[axis]
-                ahead, ahead_ok = self.sample(part + step)
-                behind, behind_ok = self.sample(part - step)
+                ahead, ahead_ok = self._interpolate(part + step, source, finite=True)
+                behind, behind_ok = self._interpolate(part - step, source, finite=True)
                 result[start : start + len(part), axis] = (ahead - behind) / (2 * step[axis])
                 ok &= ahead_ok & behind_ok
             valid[start : start + len(part)] = ok

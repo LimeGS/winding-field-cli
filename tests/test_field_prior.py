@@ -245,7 +245,9 @@ def test_coarse_factor_sets_the_production_field_defaults_for_unset_flags():
     assert field_defaults(dict(explicit)) == explicit
 
 
-def _grid_prior(function, origin_xyz, spacing_xyz, shape_zyx, support=None):
+def _grid_prior(function, origin_xyz, spacing_xyz, shape_zyx, observed=None, stored=None):
+    """A FieldPrior over an in-memory grid: sample() reads the ``observed`` nodes and
+    gradient() the ``stored`` ones (both default to every node)."""
     from winding_field.field_prior import FieldPrior
 
     prior = object.__new__(FieldPrior)
@@ -255,7 +257,9 @@ def _grid_prior(function, origin_xyz, spacing_xyz, shape_zyx, support=None):
     z, y, x = np.meshgrid(*(np.arange(n) for n in shape_zyx), indexing="ij")
     xyz = np.stack((x, y, z), -1) * prior.spacing + prior.origin
     values = function(xyz)
-    prior.source = _GridSource(values, np.ones(values.shape, bool) if support is None else support)
+    everywhere = np.ones(values.shape, bool)
+    prior.source = _GridSource(values, everywhere if observed is None else observed)
+    prior._stored = _GridSource(values, everywhere if stored is None else stored)
     return prior
 
 
@@ -280,6 +284,37 @@ def test_prior_gradient_is_a_continuous_central_difference():
     whole, _ = curved.gradient(points)
     batched, _ = curved.gradient(points, max_points=7)
     assert np.array_equal(whole, batched)
+
+
+def test_prior_gradient_reads_stored_values_observed_or_not():
+    """A coarse solved over the whole scroll observes only part of it but stores its best
+    estimate everywhere it solved: the gradient reads every stored, finite value, while
+    sample() (initial field, gauge) keeps to the observed ones."""
+    slope = np.array([0.5, -0.25, 2.0])
+    shape = (6, 7, 8)  # x nodes at 10, 12, ..., 24
+    observed = np.zeros(shape, bool)
+    observed[..., :3] = True  # x <= 14 observed
+    stored = np.ones(shape, bool)
+    stored[..., 7] = False  # no payload at x = 24
+    prior = _grid_prior(
+        lambda p: p @ slope, (10.0, 20.0, 30.0), (2.0, 3.0, 4.0), shape, observed, stored
+    )
+    # x = 19 reads x = 16..22 (stored, unobserved); x = 21 reaches x = 24 (not stored).
+    points = np.array([[19.0, 30.0, 40.0], [21.0, 30.0, 40.0]])
+    _, sampled = prior.sample(points)
+    assert not sampled.any()
+    gradient, valid = prior.gradient(points)
+    assert valid.tolist() == [True, False]
+    assert np.allclose(gradient[0], slope) and (gradient[1] == 0).all()
+    # A stored but non-finite corner leaves the gradient undefined.
+    holed = _grid_prior(
+        lambda p: np.where(p[..., 0] == 20.0, np.nan, p @ slope),
+        (10.0, 20.0, 30.0),
+        (2.0, 3.0, 4.0),
+        shape,
+    )
+    gradient, valid = holed.gradient(points[:1])
+    assert not valid[0] and (gradient[0] == 0).all()
 
 
 def test_prior_gradient_orients_the_pressed_core_of_a_flattened_scroll():
@@ -316,8 +351,12 @@ def test_prior_gradient_orients_the_pressed_core_of_a_flattened_scroll():
     target, weights, valid = oriented(dict(data), xyz, cal)
     assert valid.tolist() == [True, True, True, True]
     assert target[1, 1] > 0  # radial: points inward below the core plane
-    target, weights, valid = oriented(dict(data), xyz, cal, prior)
+    stats = {}
+    target, weights, valid = oriented(dict(data), xyz, cal, prior, stats)
     assert valid.tolist() == [True, True, False, True]
+    assert stats == dict(
+        supported=4, prior_signed=2, prior_dropped=1, radial_signed=1, radial_dropped=0
+    )
     assert target[0, 1] > 0 and target[1, 1] < 0
     assert (target[2] == 0).all() and weights[2] == np.float32(1e-3)
     radial, _, _ = oriented(dict(data), xyz[3:], cal)
@@ -330,7 +369,7 @@ def test_prior_gradient_orients_the_pressed_core_of_a_flattened_scroll():
     assert valid.tolist() == [False, False, False, True]
 
 
-def test_prior_gradient_orientation_is_validated_and_recorded(tmp_path, coarse):
+def test_prior_gradient_orientation_is_validated_and_recorded(tmp_path, coarse, capsys):
     from winding_field import field
     from winding_field.config import validate_config
 
@@ -351,7 +390,17 @@ def test_prior_gradient_orientation_is_validated_and_recorded(tmp_path, coarse):
     receipt = field.solve(tile, dict(config, field_orientation="prior-gradient"))
     assert receipt["status"] == "FIELD_READY"
     identity = json.loads((tile / "field/CHECKPOINT.json").read_bytes())["identity"]
-    assert identity["source_identity"]["orientation"]["rule"] == "prior-gradient-central-v1"
+    rule = identity["source_identity"]["orientation"]
+    assert rule["rule"] == "prior-gradient-central-v2"
+    assert rule["prior_values"] == "stored-finite"
+    # The receipt splits the supported nodes by where their sign came from, and logs it.
+    counts = json.loads((tile / "FIELD.json").read_bytes())["orientation"]
+    assert counts["rule"] == rule["rule"] and counts["supported"] > 0
+    classes = ("prior_signed", "prior_dropped", "radial_signed", "radial_dropped")
+    assert sum(counts[name] for name in classes) == counts["supported"]
+    assert counts["radial_fallback"] == counts["radial_signed"] + counts["radial_dropped"]
+    assert counts["radial_fallback_share"] == counts["radial_fallback"] / counts["supported"]
+    assert "orientation prior-gradient over" in capsys.readouterr().err
     radial_identity = json.loads((radial / "field/CHECKPOINT.json").read_bytes())["identity"]
     assert "orientation" not in radial_identity["source_identity"]
     # These sheets are planar and the prior agrees with the radial sign: the same field.
@@ -395,3 +444,8 @@ def _solve_inline_and_pooled(tmp_path, coarse, field):
         values, _ = a.read([0, 0, 0], geometry["shape_zyx"])
         expected, _ = b.read([0, 0, 0], geometry["shape_zyx"])
     assert np.array_equal(values, expected)
+    # Workers count each box once, as the in-process path does.
+    counts = [
+        json.loads((run / "FIELD.json").read_bytes())["orientation"] for run in (inline, pooled)
+    ]
+    assert counts[0]["supported"] > 0 and counts[0] == counts[1]
