@@ -72,10 +72,35 @@ def test_physical_planar_field_and_fibre_constraints(tmp_path):
     assert receipt["physical_acceptance"] is False
 
 
+def test_fused_field_kernel_matches_eager_and_is_recorded(tmp_path):
+    import torch
+
+    from winding_field.field import solve, open_field
+
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    fields, receipts = {}, {}
+    for kernel in ("eager", "fused"):
+        run = prepared_run(tmp_path / kernel)
+        config = {"sweeps": 2, "field_chunk": 8, "device": device}
+        if kernel == "fused":
+            config["field_kernel"] = "fused"
+        receipts[kernel] = solve(run, config)
+        with open_field(run) as source:
+            fields[kernel] = source.read([0, 0, 0], [6, 6, 24])[0]
+        identity = json.loads((run / "field/CHECKPOINT.json").read_text())["identity"]
+        assert identity.get("kernel") == (None if kernel == "eager" else "fused")
+    np.testing.assert_allclose(fields["fused"], fields["eager"], atol=1e-6)
+    assert "solver_kernels" not in receipts["eager"]["solver"]
+    used = receipts["fused"]["solver"]["solver_kernels"]
+    # Off CUDA (and outside Triton's interpreter) the core falls back to eager and says so.
+    assert set(used) == {"fused-v1" if device == "cuda" else "eager"}
+
+
 @pytest.mark.parametrize(
     "config",
     [
         {"preconditioner": "spectral"},
+        {"field_kernel": "triton"},
         {"prepared_cache_bytes": True},
         {"prepared_cache_bytes": -1},
         {"prepared_cache_bytes": 1.5},
@@ -839,8 +864,52 @@ def test_global_pair_scope_solves_the_same_problem_as_one_block(tmp_path):
 
     one, exact = field_after("global", sweeps=1, field_chunk=64, field_pair_scope="global")
     assert "pair_scope" not in one["source_identity"]  # One block: the ordinary rows.
-    blocked, values = field_after(
-        "blocked", sweeps=8, field_chunk=8, field_coarse_factor=4, field_pair_scope="global"
-    )
+    import constraint_templates
+
+    built = []
+    original = constraint_templates.StencilConstraints.__init__
+
+    def record(self, *args, **kwargs):
+        original(self, *args, **kwargs)
+        built.append(self.spatial_index_nbytes)
+
+    constraint_templates.StencilConstraints.__init__ = record
+    try:
+        blocked, values = field_after(
+            "blocked", sweeps=8, field_chunk=8, field_coarse_factor=4, field_pair_scope="global"
+        )
+    finally:
+        constraint_templates.StencilConstraints.__init__ = original
+    assert built and all(n > 0 for n in built)
     assert blocked["source_identity"]["pair_scope"] == "global-grid-v1"
     assert np.abs(values - exact).max() < 1e-5
+
+
+def test_coarse_factor_defaults_to_global_pairs(tmp_path, capsys):
+    from winding_field.field import solve
+
+    def identity_of(name, **config):
+        run = prepared_run(tmp_path / name, shape=(6, 6, 32), chunk=8, variable=True)
+        base = dict(rtol=1e-10, maxiter=10000, field_memory="disk", sweeps=2, field_chunk=8)
+        assert solve(run, dict(base, **config))["status"] == "FIELD_READY"
+        return json.loads((run / "field/CHECKPOINT.json").read_bytes())["identity"]
+
+    auto = identity_of("auto", field_coarse_factor=4)
+    assert auto["source_identity"]["pair_scope"] == "global-grid-v1"
+    # Only the block-scope stall warning matters here; macOS also warns that host
+    # memory cannot be measured (no /proc), which is unrelated to pair scope.
+    assert "--field-pair-scope block stalls" not in capsys.readouterr().err
+    block = identity_of("block", field_coarse_factor=4, field_pair_scope="block")
+    assert "pair_scope" not in block["source_identity"]
+    assert "pair-scope block stalls" in capsys.readouterr().err
+    one_level = identity_of("one-level")
+    assert "pair_scope" not in one_level["source_identity"]
+
+
+def test_global_pairs_get_a_spatial_index_when_it_fits(capsys):
+    from winding_field.field import pair_index_bytes
+
+    need = 4096 + 1000 * 16 * 64
+    assert pair_index_bytes(1000, available=4 * need) == need
+    assert pair_index_bytes(1000, available=4 * need - 4) == 0
+    assert "pair index needs" in capsys.readouterr().err

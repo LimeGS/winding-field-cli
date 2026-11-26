@@ -257,8 +257,9 @@ Both clear `STOP`, validate saved work and reuse completed stages. A run stopped
 at `--until field` reports `PAUSED`; inspect `FIELD.json` for the field result.
 Keep the original inputs, runtime, settings and run location. Changed inputs require
 a new output directory. A newer CLI continues a run when every stage still to compute
-has the same compatibility epoch (`winding_field/compat.py`) and the numerical core the
-same major version; completed stages are verified by their output hashes. A change of
+has the same compatibility epoch (`winding_field/compat.py`) and the numerical core
+computes the same numbers (core 1.x and 2.x do: 2.0 only removed unused helpers);
+completed stages are verified by their output hashes. A change of
 epoch is released as a new major version. Runs created before these records, and a
 half-finished native-surfaces or Qual stage, still need the original package.
 
@@ -571,8 +572,9 @@ Use `--lasagna-cos-downsample`, `--lasagna-grad-mag-downsample`,
 | `--tifxyz-config FILE` | Separate request for the Linux-only experimental direct route |
 | `--coverage-target 1 --surface-time-limit 1800` | Native mapped mesh-area target / cumulative active seconds per W |
 | `--preconditioner jacobi\|amg` | Field PCG preconditioner: Jacobi (default) or algebraic multigrid, far fewer iterations on large blocks; Jacobi runs keep their identity |
+| `--field-kernel eager\|fused` | Field PCG kernels: eager PyTorch (default) or fused Triton GPU kernels (CUDA only, ~2x faster Jacobi solves on a GTX 1660, same stopping rules); eager runs keep their identity |
 | `--field-memory auto\|disk\|field\|all` | Host RAM use of the field solve: measured at start (default), every block on disk, whole field in RAM with one checkpoint per sweep, or field plus all observations in RAM; same field in every tier ([memory tiers](docs/SOLVER-PERFORMANCE.md#host-memory-tiers-and-multi-block-solves)) |
-| `--field-coarse-factor F`, `--field-pair-scope global` | Experimental: two-level Schwarz coarse correction / fibre pairs over the whole grid; both change the field; whole scrolls use the [tile workflow](docs/SCROLL.md) |
+| `--field-coarse-factor F`, `--field-pair-scope global` | Experimental: two-level Schwarz coarse correction / fibre pairs over the whole grid (the default scope with a coarse factor); both change the field; whole scrolls use the [tile workflow](docs/SCROLL.md) |
 | `--level-workers 1` | Native W levels computed in parallel processes; each needs its own memory; outputs equal a serial run |
 | `--import-workers 1` | Local import workers (`0` = resource-admitted automatic); results written in input order |
 | `--cache-gib 2 --reserve-gib 1` | CT payload cache cap / free disk reserve, not RAM |

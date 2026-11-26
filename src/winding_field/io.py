@@ -459,6 +459,11 @@ class Volume:
                 (theirs,) = self._ledger.execute(
                     "SELECT sha FROM chunks WHERE key=?", (key,)
                 ).fetchone()
+                if not self._pending_chunks:
+                    # The ignored INSERT still opened a write transaction. Left open, it
+                    # blocks the other workers' writes and makes this connection's own
+                    # CT-SNAPSHOT backup retry SQLITE_LOCKED forever.
+                    self._ledger.commit()
                 if theirs != sha:
                     raise ValueError("source chunk changed: " + key)
             elif old is None:

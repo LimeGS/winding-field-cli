@@ -294,3 +294,64 @@ def test_cli_forwards_reuse_identity_and_field_goal(tmp_path, monkeypatch):
 def test_reuse_requires_path_and_digest_pair(tmp_path, supplied):
     with pytest.raises(ValueError, match="reuse"):
         workflow.plan(dict(source="missing", output=str(tmp_path / "new"), **supplied))
+
+
+def test_field_retry_reuses_streamed_lasagna_import(tmp_path, monkeypatch):
+    # A manifest without a physical frame streams into lasagna-import (scroll tiles do this);
+    # its provenance must be in the prepare exports or every --reuse-from is refused.
+    from test_lasagna_stream import fixture
+    from winding_field import predict, fibres, exports
+
+    ct, _, config = fixture(tmp_path)
+    afv = tmp_path / "external.afv"
+    upstream_curves(afv, (9, 10, 11), [(1, np.array([[1.0, 2.0, 3.0], [5.0, 2.0, 3.0]]))])
+    descriptor = tmp_path / "geometry.json"
+    atomic_json(
+        descriptor,
+        dict(source=str(ct), origin_xyz_um=[100.0, 200.0, 300.0], spacing_xyz_um=[5.0, 10.0, 20.0]),
+    )
+    root = tmp_path / "donor"
+    config.update(
+        source=str(ct),
+        output=str(root),
+        fibres=str(afv),
+        fibres_geometry=str(descriptor),
+        maxiter=2,
+        sweeps=1,
+        field_chunk=16,
+        previews=False,
+    )
+    monkeypatch.setattr(workflow, "implementation_sha", lambda: "old-producer")
+    state = workflow.run(config, until="fibres")
+    assert (root / "lasagna-import/IDENTITY.json").is_file()
+    with sqlite3.connect(root / "products.sqlite") as db:
+        recorded = {path for (path,) in db.execute("SELECT path FROM exports")}
+    assert "lasagna-import/IDENTITY.json" in recorded
+    documents = {
+        str(p.relative_to(root)) for p in (root / "lasagna-import").glob("document-*.json")
+    }
+    assert documents and documents <= recorded
+    state.update(status="FAILED", error="old field failure")
+    atomic_json(root / "RUN.json", state)
+    monkeypatch.setattr(workflow, "implementation_sha", lambda: "new-consumer")
+    before = snapshot(root)
+    monkeypatch.setattr(predict, "prepare", forbidden)
+    monkeypatch.setattr(fibres, "trace", forbidden)
+    monkeypatch.setattr(exports, "export_lasagna", forbidden)
+    monkeypatch.setattr(exports, "export_afv", forbidden)
+    retry = dict(
+        config,
+        output=str(tmp_path / "retry"),
+        reuse_from=str(root),
+        reuse_from_sha256=file_sha(root / "RUN.json"),
+        maxiter=2000,
+        nonconvergence_policy="continue",
+    )
+    result = workflow.run(retry, until="field")
+    out = Path(retry["output"])
+    for name in ("prepare", "fibres"):
+        assert result["stages"][name]["mode"] == "reused"
+    assert file_sha(out / "lasagna-import/IDENTITY.json") == before["lasagna-import/IDENTITY.json"]
+    assert (out / "FIELD.json").exists()
+    assert snapshot(root) == before
+    assert workflow.run(result["config"], resume=True, until="field")["stages"] == result["stages"]

@@ -347,9 +347,10 @@ def main(argv=None):
         p.add_argument(
             "--field-chunk",
             type=int,
-            default=64,
-            help="field solver block edge in field-grid samples (default: 64); at least the "
-            "largest grid dimension solves the whole field as one block",
+            default=argparse.SUPPRESS,
+            help="field solver block edge in field-grid samples (default: 64, or 128 with "
+            "--field-coarse-factor); at least the largest grid dimension solves the whole "
+            "field as one block",
         )
         p.add_argument(
             "--sweeps",
@@ -391,9 +392,10 @@ def main(argv=None):
             "--field-pair-scope",
             choices=("block", "global"),
             default=argparse.SUPPRESS,
-            help="experimental, ordinary fields with several blocks: block (default) samples fibre "
-            "pairs inside each block crop; global samples them once over the whole grid and "
-            "restricts them per crop with exterior terms, so the blocks solve the global problem",
+            help="experimental, ordinary fields with several blocks: block samples fibre pairs "
+            "inside each block crop; global samples them once over the whole grid and restricts "
+            "them per crop with exterior terms, so the blocks solve the global problem "
+            "(default: global with --field-coarse-factor, else block)",
         )
         p.add_argument(
             "--field-memory",
@@ -435,6 +437,16 @@ def main(argv=None):
             help=(
                 "default: jacobi; amg (algebraic multigrid) needs far fewer iterations on large "
                 "blocks; spectral is rejected for block workflows"
+            ),
+        )
+        p.add_argument(
+            "--field-kernel",
+            choices=["eager", "fused"],
+            default=argparse.SUPPRESS,
+            help=(
+                "default: eager (fused with --field-coarse-factor); fused runs the Jacobi/AMG field iterations with Triton GPU "
+                "kernels (CUDA only, ~2x faster Jacobi solves on a GTX 1660, same system and stopping "
+                "rules; falls back to eager elsewhere and records the kernel in the receipt)"
             ),
         )
         p.add_argument(
@@ -483,8 +495,9 @@ def main(argv=None):
             "--field-halo",
             type=int,
             default=argparse.SUPPRESS,
-            help="field nodes each solver block shares with its neighbours (default: 2); "
-            "a wider overlap reaches the global solution in fewer sweeps",
+            help="field nodes each solver block shares with its neighbours (default: 2, or 8 "
+            "with --field-coarse-factor); a wider overlap reaches the global solution in "
+            "fewer sweeps",
         )
         p.add_argument(
             "--field-coarse-factor",
@@ -492,7 +505,9 @@ def main(argv=None):
             default=argparse.SUPPRESS,
             help="experimental, 0 (default) or >= 2: open every field sweep with a global coarse correction on "
             "every F-th node (two-level Schwarz); large-scale structure then crosses all blocks "
-            "in each sweep instead of one overlap per sweep",
+            "in each sweep instead of one overlap per sweep. Sets the measured production "
+            "defaults for what is not given: --field-chunk 128, --field-halo 8, --field-kernel "
+            "fused (Jacobi stays the preconditioner)",
         )
         p.add_argument(
             "--field-prior-calibration",
@@ -501,6 +516,33 @@ def main(argv=None):
             help="sheet orientation and spacing calibration with --field-prior: own (default) "
             "estimates it from this run's ROI; inherit uses the prior's, so a tile orients "
             "normals from the scroll centre like its coarse",
+        )
+        p.add_argument(
+            "--field-orientation",
+            choices=["radial", "prior-gradient"],
+            default=argparse.SUPPRESS,
+            help="how sheet normals are signed outward: radial (default) from the calibration "
+            "centre; prior-gradient from --field-prior's gradient where the prior is supported "
+            "(radial elsewhere), for flattened scrolls whose sheets near the pressed core are "
+            "nearly perpendicular to the radial direction",
+        )
+        p.add_argument(
+            "--field-orientation-max-disagreement",
+            type=float,
+            default=argparse.SUPPRESS,
+            metavar="SHARE",
+            help="(experimental) with --field-orientation prior-gradient: also drop a node whose "
+            "sign the prior gradient contradicts at more than this share of its usable probes "
+            "along its own sheet (8 directions in its tangent plane at 3 and 6 nodes); "
+            "default 1, which leaves the check off",
+        )
+        p.add_argument(
+            "--field-orientation-min-probes",
+            type=int,
+            default=argparse.SUPPRESS,
+            metavar="N",
+            help="with --field-orientation-max-disagreement below 1: drop a node by that check "
+            "only when at least N of its 16 probes are usable (default: 0)",
         )
         p.add_argument(
             "--field-scope",
@@ -903,12 +945,12 @@ def main(argv=None):
             )
         elif args.command in ("run", "plan"):
             from .workflow import run, plan, stage_path
-            from .config import validate_config
+            from .config import field_defaults, validate_config
             from .export_settings import tifxyz_request, pop_tifxyz_options, output_frame_overrides
             from .cli_settings import merge_explicit, read_settings
             from .util import digest
 
-            config = vars(args).copy()
+            config = field_defaults(vars(args).copy())
             command = config.pop("command")
             until = config.pop("until")
             from .input_settings import import_requests, IMPORT_OPTIONS

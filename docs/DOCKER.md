@@ -39,9 +39,9 @@ The default image has GPU support (CUDA); the CPU variant carries a `-cpu` suffi
 is meant for CI, quick checks and troubleshooting:
 
 ```sh
-docker pull ghcr.io/limegs/winding-field-cli:1.6.7        # stable, GPU: one release
+docker pull ghcr.io/limegs/winding-field-cli:2.0.0        # stable, GPU: one release
 docker pull ghcr.io/limegs/winding-field-cli:latest       # stable, GPU: the latest release
-docker pull ghcr.io/limegs/winding-field-cli:1.6.7-cpu    # stable, CPU variant
+docker pull ghcr.io/limegs/winding-field-cli:2.0.0-cpu    # stable, CPU variant
 docker pull ghcr.io/limegs/winding-field-cli:edge-cpu     # rolling: latest main (CPU only)
 ```
 
@@ -71,14 +71,14 @@ stay inside the container (`--rm` discards them):
 
 ```sh
 wf() { docker run --rm --init --gpus all --user "$(id -u):$(id -g)" -v "$PWD:/outputs" \
-  ghcr.io/limegs/winding-field-cli:1.6.7 "$@"; }
+  ghcr.io/limegs/winding-field-cli:2.0.0 "$@"; }
 wf doctor
 ```
 
 Without an NVIDIA GPU, use the `-cpu` tag and drop `--gpus all`. To keep caches and
 models between runs, or to set memory limits, use the `wf` function in
 [Persistent paths and resource limits](#persistent-paths-and-resource-limits) with
-`IMAGE=ghcr.io/limegs/winding-field-cli:1.6.7` (see [CUDA](#cuda) for its options).
+`IMAGE=ghcr.io/limegs/winding-field-cli:2.0.0` (see [CUDA](#cuda) for its options).
 
 ## Shared installation recipe
 
