@@ -86,8 +86,11 @@ pair's first endpoint (48 bytes per pair, built once per run in worker processes
 resumable). A block reads the buckets near its crop and gets the same rows as the in-memory
 set, so the field is unchanged (the checkpoint names the rows by the fibres hash instead of
 a hash of every row). Worker processes build the next blocks' rows ahead of the solve, and
-the initial values of every chunk are computed in worker processes too. Both use three
-quarters of the CPUs. A run started with in-memory global pairs does not resume on this
+the initial values of every chunk are computed in worker processes too. So are the
+observations of a multi-block solve that are not in the observation cache: the pool keeps
+the next blocks' boxes in flight, in visiting order, and each sweep's two passes read them
+from it (a scroll's observations do not fit in RAM, so every sweep recomputes them). All
+three use three quarters of the CPUs. A run started with in-memory global pairs does not resume on this
 version.
 
 ## Reproducible measurements

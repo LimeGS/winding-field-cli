@@ -15,6 +15,10 @@ from pathlib import Path
 import numpy as np
 
 _STATE = None
+# A field smaller than this samples its observations in process: spawning workers (each
+# imports torch and opens the maps and the prior) costs more than they save, and many small
+# solves at once (a test suite) would oversubscribe the CPUs.
+POOL_MIN_NODES = 1 << 24
 
 
 def _open(spec):
@@ -96,3 +100,74 @@ def initial_chunks(spec, keys, chunk, shape, workers):
         for _, future in pending:
             future.cancel()
         pool.shutdown(wait=True, cancel_futures=True)
+
+
+def _observe(lo, hi):
+    """Observations of ``lo..hi`` and the orientation counts of that box alone."""
+    from .field import sample_prior
+
+    spec, maps, prior = _STATE
+    orientation = prior if spec["orientation"] == "prior-gradient" else None
+    stats = {} if orientation is not None else None
+    values = sample_prior(
+        maps,
+        spec["meta"],
+        spec["geometry"],
+        spec["calibration"],
+        np.asarray(lo),
+        np.asarray(hi),
+        orientation,
+        stats,
+        spec["sheet"],
+    )
+    return values, stats
+
+
+class ObservationPool:
+    """Observations of the solve's boxes, computed ``workers`` processes ahead.
+
+    A sweep visits every block twice (coarse residual pass, then local solves), each time
+    in ``boxes`` order, so the pool keeps the next ``2 * workers`` boxes in flight, wrapping
+    around. ``retained(key)`` skips boxes the caller already holds. One caller thread.
+    """
+
+    def __init__(self, spec, boxes, workers):
+        from .import_parallel import _spawn_environment
+
+        self.boxes = [tuple(map(int, (*lo, *hi))) for lo, hi in boxes]
+        self.index = {key: i for i, key in enumerate(self.boxes)}
+        self.workers = workers
+        self.futures = {}
+        self.stats = dict(prefetched=0, inline=0)
+        self._spawn = _spawn_environment
+        with _spawn_environment():
+            self.pool = ProcessPoolExecutor(
+                workers,
+                mp_context=multiprocessing.get_context("spawn"),
+                initializer=_open,
+                initargs=(spec,),
+            )
+
+    def get(self, lo, hi, retained=lambda key: False):
+        """``(values, stats)`` of ``lo..hi``, or None for a box outside the solve order."""
+        key = tuple(map(int, (*lo, *hi)))
+        if key not in self.index:
+            self.stats["inline"] += 1
+            return None
+        start = self.index[key]
+        for step in range(2 * self.workers):
+            ahead = self.boxes[(start + step) % len(self.boxes)]
+            if ahead in self.futures or (step and retained(ahead)):
+                continue
+            with self._spawn():
+                self.futures[ahead] = self.pool.submit(_observe, ahead[:3], ahead[3:])
+        self.stats["prefetched"] += 1
+        return self.futures.pop(key).result()
+
+    def close(self):
+        if self.pool is not None:
+            for future in self.futures.values():
+                future.cancel()
+            self.futures.clear()
+            self.pool.shutdown(wait=True, cancel_futures=True)
+            self.pool = None

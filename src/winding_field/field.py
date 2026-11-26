@@ -952,6 +952,37 @@ def solve(run, config, stop=None, *, sweep_target=None, convergence=None):
         observation_state.update(retain=False, bytes=0)
         observation_stats.update(entries=0, retained_bytes=0)
 
+    observation_workers = dict(pool=None)
+
+    def observation_pool(lo, hi):
+        """Pooled observations of a solve box (ordinary fields), or None to compute inline."""
+        from . import field_init
+
+        if bounded or len(options["order"]) < 2 or math.prod(shape) < field_init.POOL_MIN_NODES:
+            return None
+        if observation_workers["pool"] is None:
+            workers = min(pool_workers()[1], len(options["order"]))
+            if workers < 2:
+                return None
+            boxes = []
+            for key in options["order"]:
+                low = np.array(key) * chunk
+                high = np.minimum(low + chunk, shape)
+                boxes.append(
+                    (
+                        np.maximum(low - options["halo"], 0),
+                        np.minimum(high + options["halo"], shape),
+                    )
+                )
+            observation_workers["pool"] = field_init.ObservationPool(
+                observation_spec(), boxes, workers
+            )
+        return observation_workers["pool"].get(
+            lo,
+            hi,
+            retained=lambda key: observation_state["retain"] and key in observations,
+        )
+
     def load(lo, hi):
         key = tuple(map(int, (*lo, *hi)))
         cached = observations.get(key)
@@ -965,7 +996,15 @@ def solve(run, config, stop=None, *, sweep_target=None, convergence=None):
         else:
             counted = orientation_prior is not None and key not in orientation_boxes
             orientation_boxes.add(key)
-            values = compute_observations(lo, hi, orientation_stats if counted else None)
+            pooled = observation_pool(lo, hi)
+            if pooled is None:
+                values = compute_observations(lo, hi, orientation_stats if counted else None)
+            else:
+                values, counts = pooled
+                values = (*values, source_receipt())
+                if counted:
+                    for name, count in counts.items():
+                        orientation_stats[name] = orientation_stats.get(name, 0) + count
         if observation_state["retain"] and cached is None and key in solve_boxes:
             arrays = tuple(values[:3])
             charge = 4096 + sum(a.nbytes for a in arrays)
@@ -1046,12 +1085,26 @@ def solve(run, config, stop=None, *, sweep_target=None, convergence=None):
             flush=True,
         )
     pair_catalog = None
+    setup_seconds = {}
+
+    def pool_workers():
+        """(pair template, observation) worker counts: the CPU share of ``default_workers``
+        is split when both pools run, so they do not oversubscribe the cores."""
+        from .global_pairs import default_workers
+
+        share = default_workers()
+        observed = not bounded and not config.get("field_cpu_workers", 0)
+        if observed and pair_scope == "global" and len(options["order"]) > 1:
+            return max(1, share - share // 2), max(1, share // 2)
+        return share, share
+
     if pair_scope == "global" and pair_provider is None and len(options["order"]) > 1:
         # Several blocks: one global pair set, restricted per crop with exterior terms.
         if _global_pair_catalog(meta, fibres):
             # The same rows from a catalog on disk: the in-memory set does not fit a scroll.
             from . import global_pairs
 
+            started = time.perf_counter()
             status = global_pairs.build(
                 run / "field-pairs",
                 run / "fibres/fibres.sqlite",
@@ -1061,6 +1114,7 @@ def solve(run, config, stop=None, *, sweep_target=None, convergence=None):
                 workers=global_pairs.default_workers(),
                 stop=stop,
             )
+            setup_seconds["pair_catalog"] = time.perf_counter() - started
             if status == "PAUSED":
                 maps.close()
                 return dict(status="PAUSED")
@@ -1082,7 +1136,7 @@ def solve(run, config, stop=None, *, sweep_target=None, convergence=None):
                             np.minimum(high + options["halo"], shape),
                         )
                     )
-                rows.prefetch(boxes, global_pairs.default_workers())
+                rows.prefetch(boxes, pool_workers()[0])
                 pair_catalog = rows
             else:
                 rows = None
@@ -1114,7 +1168,11 @@ def solve(run, config, stop=None, *, sweep_target=None, convergence=None):
             return
         from .field_init import initial_chunks
 
-        spec = dict(
+        yield from initial_chunks(observation_spec(), keys, chunk, shape, workers)
+
+    def observation_spec():
+        """What a worker process needs to sample observations as ``compute_observations``."""
+        return dict(
             run=str(run.resolve()),
             meta=meta,
             geometry=geometry,
@@ -1128,7 +1186,6 @@ def solve(run, config, stop=None, *, sweep_target=None, convergence=None):
                 field_json_sha256=prior.identity["field_json_sha256"],
             ),
         )
-        yield from initial_chunks(spec, keys, chunk, shape, workers)
 
     try:
         checkpoint = root / "CHECKPOINT.json"
@@ -1156,10 +1213,12 @@ def solve(run, config, stop=None, *, sweep_target=None, convergence=None):
                     for key in options["order"]
                     if "-".join(map(str, key)) not in store.manifest["chunks"]
                 ]
+                started = time.perf_counter()
                 for key, start, valid in initial_values(todo):
                     if stop and stop():
                         return dict(status="PAUSED")
                     store.commit(key, start, progress, valid)
+                setup_seconds["initial_values"] = time.perf_counter() - started
                 progress["initialization_done"] = True
                 store.save_progress(progress)
         if config.get("field_cpu_workers", 0):
@@ -1288,6 +1347,15 @@ def solve(run, config, stop=None, *, sweep_target=None, convergence=None):
         )
         if cpu_inputs is not None:
             receipt["field_cpu_stats"] = cpu_inputs.stats
+        # Execution receipts: the catalog's own template cache (not constraint_cache_stats)
+        # and setup wall seconds.
+        if pair_catalog is not None:
+            receipt["global_pair_stats"] = dict(pair_catalog.stats, budget=pair_catalog.cache_bytes)
+        if observation_workers["pool"] is not None:
+            receipt["observation_pool_stats"] = dict(
+                observation_workers["pool"].stats, workers=observation_workers["pool"].workers
+            )
+        receipt["setup_seconds"] = setup_seconds
         if bounded:
             from .global_residual import verify
 
@@ -1412,5 +1480,7 @@ def solve(run, config, stop=None, *, sweep_target=None, convergence=None):
             prior.close()
         if pair_provider is not None:
             pair_provider.__exit__()
+        if observation_workers["pool"] is not None:
+            observation_workers["pool"].close()
         if pair_catalog is not None:
             pair_catalog.close()
