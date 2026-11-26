@@ -160,6 +160,33 @@ class FieldPrior:
             valid[inside] = ok
         return values, valid
 
+    def gradient(self, xyz, max_points=1 << 22):
+        """Central-difference gradient of the trilinear prior at world points ``xyz`` (..., 3).
+
+        Axis i takes (W(x + h_i e_i) - W(x - h_i e_i)) / (2 h_i), with h_i the prior's own
+        spacing. The result is continuous in ``xyz``, so a node that two tiles share gets
+        the same gradient in both, whichever coarse cell face it lies on. Valid only where
+        all six samples are supported; XYZ components in W per µm, zero where invalid.
+        Points are taken ``max_points`` at a time to bound the temporary arrays.
+        """
+        points = np.asarray(xyz, float)
+        flat = points.reshape(-1, 3)
+        result = np.zeros(flat.shape)
+        valid = np.zeros(len(flat), bool)
+        for start in range(0, len(flat), max_points):
+            part = flat[start : start + max_points]
+            ok = np.ones(len(part), bool)
+            for axis in range(3):
+                step = np.zeros(3)
+                step[axis] = self.spacing[axis]
+                ahead, ahead_ok = self.sample(part + step)
+                behind, behind_ok = self.sample(part - step)
+                result[start : start + len(part), axis] = (ahead - behind) / (2 * step[axis])
+                ok &= ahead_ok & behind_ok
+            valid[start : start + len(part)] = ok
+        result[~valid] = 0.0
+        return result.reshape(points.shape), valid.reshape(points.shape[:-1])
+
     def initial(self, xyz, fallback):
         """Prior W where supported; elsewhere ``fallback`` shifted onto the prior's gauge."""
         values, valid = self.sample(xyz)

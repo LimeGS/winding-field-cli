@@ -518,6 +518,15 @@ def main(argv=None):
             "normals from the scroll centre like its coarse",
         )
         p.add_argument(
+            "--field-orientation",
+            choices=["radial", "prior-gradient"],
+            default=argparse.SUPPRESS,
+            help="how sheet normals are signed outward: radial (default) from the calibration "
+            "centre; prior-gradient from --field-prior's gradient where the prior is supported "
+            "(radial elsewhere), for flattened scrolls whose sheets near the pressed core are "
+            "nearly perpendicular to the radial direction",
+        )
+        p.add_argument(
             "--field-scope",
             choices=["all", "supported"],
             default=argparse.SUPPRESS,
