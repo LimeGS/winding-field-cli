@@ -312,7 +312,12 @@ def test_prior_gradient_orients_the_pressed_core_of_a_flattened_scroll():
     target, weights, valid = oriented(dict(data), xyz, cal, prior, stats)
     assert valid.tolist() == [True, True, False, True]
     assert stats == dict(
-        supported=4, prior_signed=2, prior_dropped=1, radial_signed=1, radial_dropped=0
+        supported=4,
+        prior_signed=2,
+        prior_dropped=1,
+        prior_inconsistent=0,
+        radial_signed=1,
+        radial_dropped=0,
     )
     assert target[0, 1] > 0 and target[1, 1] < 0
     assert (target[2] == 0).all() and weights[2] == np.float32(1e-3)
@@ -326,6 +331,108 @@ def test_prior_gradient_orients_the_pressed_core_of_a_flattened_scroll():
     assert valid.tolist() == [False, False, False, True]
 
 
+_UNIT_LATTICE = dict(origin_xyz=[0.0, 0.0, 0.0], spacing_xyz=[1.0, 1.0, 1.0])
+_PLANAR = dict(mode="planar", axis_xyz=[0.0, 1.0, 0.0], centre_xyz=[0.0, 0.0, 0.0])
+
+
+def _sheet_box(lo, hi, normal):
+    """Map data on lattice nodes lo..hi (ZYX): every node supported, unit density, and
+    ``normal(xyz)`` with an arbitrary sign per node, as unsigned normals come."""
+    from winding_field.field import coordinates
+
+    xyz = coordinates(lo, hi, _UNIT_LATTICE)
+    shape = xyz.shape[:-1]
+    flips = np.where((xyz @ [7.0, 3.0, 1.0]) % 2 < 1, -1.0, 1.0)
+    data = dict(
+        normals=(normal(xyz) * flips[..., None]).astype(np.float32),
+        density=np.ones(shape, np.float32),
+        support=np.ones(shape, bool),
+    )
+    return data, xyz
+
+
+def _sheet_oriented(prior, lo, hi, normal, share=0.3, least=0, stats=None):
+    from winding_field.field import oriented
+
+    data, xyz = _sheet_box(np.asarray(lo), np.asarray(hi), normal)
+    sheet = dict(max_disagreement=share, min_probes=least)
+    return oriented(data, xyz, _PLANAR, prior, stats, sheet, (np.asarray(lo), _UNIT_LATTICE))
+
+
+def _horizontal(xyz):
+    return np.broadcast_to(np.array([0.0, 1.0, 0.0]), xyz.shape)
+
+
+def test_sheet_check_drops_the_nodes_where_the_prior_floor_crosses_a_sheet():
+    """Horizontal sheets; the prior's valley floor (W = |h|) runs at 45 degrees to them, so
+    its sign flips along every sheet where the floor crosses it. Only the nodes next to the
+    crossing, on both sides, see more than 30% of their sheet against them."""
+    from winding_field.field import ORIENTATION_CLASSES, oriented
+
+    def height(p):  # above (+) or below (-) the floor, in nodes along y
+        return p[..., 1] - 16.0 - (p[..., 0] - 16.0)
+
+    prior = _grid_prior(lambda p: abs(height(p)), (-10.0,) * 3, (1.0,) * 3, (26, 50, 56))
+    lo, hi = (0, 4, 0), (6, 29, 33)
+    stats = {}
+    target, weights, valid = _sheet_oriented(prior, lo, hi, _horizontal, stats=stats)
+    data, xyz = _sheet_box(np.asarray(lo), np.asarray(hi), _horizontal)
+    plain = oriented(dict(data), xyz, _PLANAR, prior)
+    flagged = plain[2] & ~valid
+    assert sorted(set(height(xyz[flagged]).tolist())) == [-1.0, 1.0]
+    assert stats["prior_inconsistent"] == np.count_nonzero(flagged)
+    assert sum(stats[k] for k in ORIENTATION_CLASSES) == stats["supported"]
+    assert (target[flagged] == 0).all() and (weights[flagged] == np.float32(1e-3)).all()
+    kept = ~flagged
+    assert np.array_equal(target[kept], plain[0][kept])
+    # The share is the threshold: 40% flags nothing here, and 1 is the v2 rule bit for bit.
+    assert np.array_equal(_sheet_oriented(prior, lo, hi, _horizontal, share=0.4)[2], plain[2])
+    for got, expected in zip(_sheet_oriented(prior, lo, hi, _horizontal, share=1.0), plain):
+        assert np.array_equal(got, expected)
+    # Pointwise on the global prior: two boxes whose faces cut the probes' reach (overlap
+    # x 12..20 around the crossing at x 16) agree with one box node for node.
+    for cut in (12, 16, 20):
+        left = _sheet_oriented(prior, lo, (6, 29, cut + 4), _horizontal)
+        right = _sheet_oriented(prior, (0, 4, cut - 4), hi, _horizontal)
+        for whole, a, b in zip((target, weights, valid), left, right):
+            assert np.array_equal(a, whole[:, :, : cut + 4])
+            assert np.array_equal(b, whole[:, :, cut - 4 :])
+    # min_probes: where probes leave the stored prior (x > 22), fewer usable ones remain
+    # and requiring all 16 keeps those nodes.
+    stored = np.ones((26, 50, 56), bool)
+    stored[..., 33:] = False
+    partial = _grid_prior(
+        lambda p: abs(height(p)), (-10.0,) * 3, (1.0,) * 3, stored.shape, None, stored
+    )
+    some = ~_sheet_oriented(partial, lo, hi, _horizontal)[2]
+    all16 = ~_sheet_oriented(partial, lo, hi, _horizontal, least=16)[2]
+    assert (all16 <= some).all() and np.count_nonzero(all16) < np.count_nonzero(some)
+
+
+def test_sheet_check_keeps_a_fold_the_prior_resolves():
+    """A hairpin: sheets wrap a spine (x 12..28 at y 20) as stadiums. Probes in a node's
+    tangent plane stay outside its stadium, where the prior still points away from the
+    spine, so no node is flagged and every kept target points outward."""
+
+    def offset(p):
+        return np.stack(
+            (p[..., 0] - np.clip(p[..., 0], 12, 28), p[..., 1] - 20, np.zeros(p.shape[:-1])), -1
+        )
+
+    def outward(p):
+        d = offset(p)
+        return d / np.maximum(np.linalg.norm(d, axis=-1, keepdims=True), 1e-12)
+
+    prior = _grid_prior(
+        lambda p: np.linalg.norm(offset(p), axis=-1), (-12.0,) * 3, (1.0,) * 3, (30, 60, 66)
+    )
+    stats = {}
+    target, _, valid = _sheet_oriented(prior, (0, 4, 0), (6, 37, 41), outward, stats=stats)
+    assert stats["prior_inconsistent"] == 0 and stats["prior_signed"] > 0.9 * stats["supported"]
+    _, xyz = _sheet_box(np.array((0, 4, 0)), np.array((6, 37, 41)), outward)
+    assert (np.sum(target[valid] * outward(xyz)[valid], axis=-1) > 0).all()
+
+
 def test_prior_gradient_orientation_is_validated_and_recorded(tmp_path, coarse, capsys):
     from winding_field import field
     from winding_field.config import validate_config
@@ -334,6 +441,20 @@ def test_prior_gradient_orientation_is_validated_and_recorded(tmp_path, coarse, 
         validate_config({"field_orientation": "prior-gradient"})
     with pytest.raises(ValueError, match="radial or prior-gradient"):
         validate_config({"field_prior": str(coarse), "field_orientation": "normal"})
+    gradient = {"field_prior": str(coarse), "field_orientation": "prior-gradient"}
+    for key, value, message in (
+        ("field_orientation_max_disagreement", 1.5, "from 0 to 1"),
+        ("field_orientation_max_disagreement", True, "from 0 to 1"),
+        ("field_orientation_min_probes", 17, "from 0 to 16"),
+        ("field_orientation_min_probes", 2.0, "from 0 to 16"),
+    ):
+        with pytest.raises(ValueError, match=message):
+            validate_config({**gradient, key: value})
+    with pytest.raises(ValueError, match="sheet check requires field_orientation prior-gradient"):
+        validate_config({"field_prior": str(coarse), "field_orientation_min_probes": 4})
+    validate_config(
+        {**gradient, "field_orientation_max_disagreement": 0, "field_orientation_min_probes": 16}
+    )
     config = dict(
         sweeps=3,
         field_chunk=8,
@@ -348,16 +469,36 @@ def test_prior_gradient_orientation_is_validated_and_recorded(tmp_path, coarse, 
     assert receipt["status"] == "FIELD_READY"
     identity = json.loads((tile / "field/CHECKPOINT.json").read_bytes())["identity"]
     rule = identity["source_identity"]["orientation"]
-    assert rule["rule"] == "prior-gradient-central-v2"
+    assert rule["rule"] == "prior-gradient-central-v3"
     assert rule["prior_values"] == "stored-finite"
+    assert rule["sheet_check"] == dict(
+        rule="tangent-probes-v1",
+        radii_nodes=[3, 6],
+        directions=8,
+        max_disagreement=0.3,
+        min_probes=0,
+    )
     # The receipt splits the supported nodes by where their sign came from, and logs it.
     counts = json.loads((tile / "FIELD.json").read_bytes())["orientation"]
     assert counts["rule"] == rule["rule"] and counts["supported"] > 0
-    classes = ("prior_signed", "prior_dropped", "radial_signed", "radial_dropped")
-    assert sum(counts[name] for name in classes) == counts["supported"]
+    assert sum(counts[name] for name in field.ORIENTATION_CLASSES) == counts["supported"]
+    assert "prior_inconsistent" in field.ORIENTATION_CLASSES
     assert counts["radial_fallback"] == counts["radial_signed"] + counts["radial_dropped"]
     assert counts["radial_fallback_share"] == counts["radial_fallback"] / counts["supported"]
-    assert "orientation prior-gradient over" in capsys.readouterr().err
+    log = capsys.readouterr().err
+    assert "orientation prior-gradient over" in log and "dropped by the sheet check" in log
+    # A share of 1 flags nothing and keeps the v2 identity, so v2 runs resume.
+    v2 = _tile(tmp_path / "v2", (6, 6, 16), shift_x=20.0)
+    off = dict(config, field_orientation="prior-gradient", field_orientation_max_disagreement=1)
+    assert field.solve(v2, off)["status"] == "FIELD_READY"
+    v2_rule = json.loads((v2 / "field/CHECKPOINT.json").read_bytes())["identity"]
+    assert v2_rule["source_identity"]["orientation"] == dict(
+        rule="prior-gradient-central-v2",
+        prior_values="stored-finite",
+        min_dot=0.15,
+        min_gradient_per_density=0.3,
+        fallback="radial",
+    )
     radial_identity = json.loads((radial / "field/CHECKPOINT.json").read_bytes())["identity"]
     assert "orientation" not in radial_identity["source_identity"]
     # These sheets are planar and the prior agrees with the radial sign: the same field.
@@ -380,6 +521,42 @@ def test_prior_gradient_orientation_reaches_cpu_workers(tmp_path, coarse):
         _solve_inline_and_pooled(tmp_path, coarse, field)
     finally:
         torch.set_num_threads(previous)
+
+
+def test_cpu_workers_apply_the_sheet_check(tmp_path, monkeypatch):
+    """A CPU worker signs its block with the parent's sheet check (spec orientation_prior
+    sheet). The synthetic scroll agrees with its coarse everywhere, so this stub prior's
+    floor crosses its sheets (planes x = const) instead."""
+    from contextlib import closing
+
+    from test_field_cpu import pool_spec
+    from winding_field import field, field_cpu
+
+    run = prepared_run(tmp_path / "run", shape=(6, 6, 24))
+    spec = pool_spec(run)
+    sheet = dict(max_disagreement=0.3, min_probes=0)
+    spec.update(
+        orientation_prior=dict(run="stub", field_json_sha256="stub", sheet=sheet),
+        payload_bytes=1 << 30,
+    )
+    prior = _grid_prior(
+        lambda p: abs(p[..., 0] - 33.0 - 2.0 * (p[..., 1] - 27.5)),
+        (-10.0, -10.0, -10.0),
+        (1.0,) * 3,
+        (90, 70, 80),
+    )
+    lo, hi = np.zeros(3, int), np.array([6, 6, 24])
+    with closing(field_cpu.Tiles(run / "maps", readonly=True)) as maps:
+        monkeypatch.setattr(field_cpu, "_STATE", (spec, maps, None, prior))
+        block = field_cpu.prepare_static_block(spec, lo, hi, build_rows=False)
+        args = (maps, spec["meta"], spec["geometry"], spec["calibration"], lo, hi, prior)
+        checked = field.sample_prior(*args, None, sheet)
+        plain = field.sample_prior(*args)
+    flagged = plain[2] & ~checked[2]
+    assert flagged.any()
+    for got, expected in zip(block.observations[:3], checked):
+        assert np.array_equal(got, expected)
+    assert block.worker_info["orientation"]["prior_inconsistent"] == np.count_nonzero(flagged)
 
 
 def _solve_inline_and_pooled(tmp_path, coarse, field):

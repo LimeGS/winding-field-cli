@@ -123,6 +123,9 @@ chart_faces: 1024 # Opciones: entero 1..8192, caras por chart local native/atlas
 level_workers: 1 # Opciones: entero 1..64, niveles W native calculados en paralelo (procesos); cada uno usa su propia memoria; mismo resultado que en serie.
 field_prior: null # Opciones: ruta a un run con field completo (p. ej. el grueso); su W siembra y fija el cero de este field (tiles finos con --roi); mismo frame.
 field_prior_calibration: own # Opciones: own | inherit (requiere field_prior; usa la orientación y el espaciado de láminas del prior, centrados en el scroll, en vez de estimarlos en la ROI del tile).
+# field_orientation: radial # Opciones: (experimental) radial | prior-gradient | null/omitir para radial; cómo se firman las normales: radial desde el centro de la calibración; prior-gradient con el gradiente de field_prior (radial donde no está definido), para scrolls aplastados.
+# field_orientation_max_disagreement: 0.3 # Opciones: (experimental) número de 0 a 1 | null/omitir para 0.3; con prior-gradient descarta un nodo cuyo signo contradice el gradiente del prior en más de esta fracción de sus sondas usables sobre su propia lámina (8 direcciones en su plano tangente, a 3 y 6 nodos); 1 lo apaga.
+# field_orientation_min_probes: 0 # Opciones: (experimental) entero de 0 a 16 | null/omitir para 0; con prior-gradient, esa regla descarta un nodo solo si tiene al menos N de sus 16 sondas usables.
 field_scope: all # Opciones: all | supported (requiere field_prior; resuelve y guarda solo los chunks con observaciones, el resto queda en el prior).
 previews: true # Opciones: true | false; previews de atlas legacy; false no elimina renders CT finales.
 surface_output: native # Opciones: native | atlas | tifxyz; tifxyz es directo del campo, no muestrea CT.
