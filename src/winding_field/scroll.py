@@ -2009,8 +2009,8 @@ def _parser():
     p.add_argument(
         "--max-passes",
         type=int,
-        default=4,
-        help="most passes of tile solves after the first merge (default: 4)",
+        default=3,
+        help="most passes of tile solves after the first merge (default: 3)",
     )
     p.add_argument(
         "--layers",
@@ -2035,12 +2035,13 @@ def _parser():
     p.add_argument(
         "--worst-first",
         type=float,
-        default=0.5,
+        default=0.0,
         metavar="SHARE",
-        help="the first pass solves only the tiles the open seams are attributed to: those "
-        "whose share of them is at least this part of the worst tile's, held at neighbours "
-        "that have not moved; 0 solves every tile of a pair over the trigger and the tiles "
-        "next to them from the first pass (default: 0.5)",
+        help="(experimental) above 0, the first pass solves only the tiles the open seams "
+        "are attributed to: those whose share of them is at least this part of the worst "
+        "tile's, held at neighbours that have not moved. The attribution does not identify "
+        "tiles that drifted the same way (default: 0, every tile of a pair over the trigger "
+        "and the tiles next to them)",
     )
     p.add_argument(
         "--bound",

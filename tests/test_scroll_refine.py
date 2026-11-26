@@ -106,7 +106,7 @@ def arguments(root, output, **changes):
         trigger_p95=0.5,
         bound=0.25,
         max_kink_ratio=2.0,
-        worst_first=0.5,
+        worst_first=0.0,
         jobs=2,
         gpus="",
         workers=1,
@@ -290,14 +290,14 @@ def bowed(x, z):
 
 
 def test_the_first_pass_solves_the_drifted_tile_alone(tmp_path):
-    """Both seams of the middle tile are open and the outer tiles are right: the first pass
-    solves the middle tile alone, held at neighbours that have not moved. Later passes
+    """--worst-first: both seams of the middle tile are open and the outer tiles are right,
+    so the first pass solves the middle tile alone, held at neighbours that have not moved. Later passes
     follow the trigger, and a rate is taken only between passes that solved the same tiles.
     (These synthetic sheets determine W everywhere, so solving all three at once ends at
     the same field; it is where they do not that the order decides what is kept.)"""
     nx = 128
     root = write_plan(tmp_path / "plan", {"000-000-001": bowed}, boxes=CHAIN)
-    result = scroll_refine.refine(arguments(root, tmp_path / "refined"))
+    result = scroll_refine.refine(arguments(root, tmp_path / "refined", worst_first=0.5))
     assert result["status"] == "REFINED" and result["tiles_solved"] == [0, 1, 3, 3]
     first, second, third, last = json.loads((root / "passes/REFINE.json").read_bytes())["passes"]
     assert len(first["seams"]["pairs_over_trigger"]) == 2
@@ -309,13 +309,13 @@ def test_the_first_pass_solves_the_drifted_tile_alone(tmp_path):
     assert second["worst_first"] is None and len(second["selected"]) == 3
     # Pass 2 solved other tiles than pass 1: their changes have no ratio.
     assert third["rate"] is None and third["bound"] is None
-    assert "solve the same tiles" in third["reasons"][0] and third["selected"] == third["tiles"]
+    assert "solve these tiles" in third["reasons"][0] and third["selected"] == third["tiles"]
     assert last["rate"] < 0.5 and last["bound"] < 0.01
     alone = off_truth(merged(root / "passes/1/merge", nx=nx))
     assert off_truth(merged(tmp_path / "refined", nx=nx)) < 0.01
 
     every = write_plan(tmp_path / "every", {"000-000-001": bowed}, boxes=CHAIN)
-    result = scroll_refine.refine(arguments(every, tmp_path / "every-refined", worst_first=0.0))
+    result = scroll_refine.refine(arguments(every, tmp_path / "every-refined"))
     assert result["status"] == "REFINED" and result["tiles_solved"] == [0, 3, 3, 3]
     first, second, third, _ = json.loads((every / "passes/REFINE.json").read_bytes())["passes"]
     assert first["worst_first"] is None and len(first["selected"]) == 3
@@ -436,6 +436,28 @@ def test_rate_bound_needs_a_shrinking_change_above_the_resolution():
     assert scroll_refine.rate_bound(change(0.6), change(0.5)) == (pytest.approx(1.2), None)
     assert scroll_refine.rate_bound(change(0.001), change(0.001)) == (None, 0.001)
     assert scroll_refine.rate_bound(change(0.001), None) == (None, 0.001)
+
+
+def test_the_rate_compares_two_changes_on_the_same_tiles(tmp_path, monkeypatch):
+    """Pass 2 solved fewer tiles than pass 1: the change of pass 1 is taken again on those
+    tiles. A pass that solved other tiles, or whose earlier merge is gone, gives no rate."""
+    earlier = scroll_refine._earlier_change
+    records = [dict(tiles=[], change=None), dict(tiles=["a", "b", "c"], change=dict(p95=0.5))]
+    calls = []
+    monkeypatch.setattr(
+        scroll_refine,
+        "merge_change",
+        lambda current, previous, boxes: calls.append((current, previous, boxes)) or "again",
+    )
+    assert earlier(tmp_path, records, 2, ["a", "b", "c"], "boxes") == dict(p95=0.5)
+    assert earlier(tmp_path, records, 2, ["a", "b"], "boxes") is None and not calls
+    for name in ("FIELD.json", "SEAMS.json"):
+        (tmp_path / "0/merge").mkdir(parents=True, exist_ok=True)
+        (tmp_path / "0/merge" / name).write_text("{}")
+    assert earlier(tmp_path, records, 2, ["a", "b"], "boxes") == "again"
+    assert calls == [(tmp_path / "1/merge", tmp_path / "0/merge", "boxes")]
+    assert earlier(tmp_path, records, 2, ["a", "d"], "boxes") is None
+    assert earlier(tmp_path, records, 1, ["a"], "boxes") is None
 
 
 def _record(number, over=(), rate=None, bound=None, kink=None):

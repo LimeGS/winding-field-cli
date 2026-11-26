@@ -302,34 +302,32 @@ came from per face (`source_tiles`); the pass receipt counts them and the faces 
 free (`held`). The plan is then
 merged again with each tile's newest field.
 
-The first pass is narrower (`--worst-first`, 0.5): it solves only the tiles the open
-seams are attributed to. Every pair's share of nodes over half a winding is split between
-its two tiles by a least-squares fit over all pairs, so a tile at odds with all its
-neighbours takes the blame and a tile whose only open seams are with it takes little;
-the tiles with at least that part of the largest blame are solved, held at neighbours
-that have not moved. The reason is one comparison, not yet repeated with this option: on
-a 2x2x2 corner of that box with two drifted tiles, solving all eight in the first pass
+`--worst-first SHARE` (experimental, off by default) narrows the first pass to the tiles
+the open seams are attributed to: every pair's share of nodes over half a winding is
+split between its two tiles by a least-squares fit over all pairs, and the tiles with at
+least SHARE of the largest blame are solved, held at neighbours that have not moved.
+Pass 0's receipt lists them (`worst_first`). It exists to test whether the order of the
+solves matters: on a 2x2x2 corner of that box, solving all eight tiles in the first pass
 left the merge 0.95 winding (95th percentile, poorly determined region) from a
-single-block solve of the corner, with seams at 0.03 %, while scratch runs that solved
-the two drifted tiles first and then all eight ended at 0.50. A tile solved in the same
-pass as a drifted neighbour is held at a merge that carries the drift, and where the data
-determine W poorly later passes do not take it out. `--worst-first 0` solves every
-triggered tile and its neighbours from the first pass. Pass 0's receipt lists the tiles
-chosen (`worst_first`). Scratch runs of this recipe took that 384 box
-from 9.64 % to 0.82 % and 0.065 % in two passes, which solved 27 and then 18 of its 27
-tiles again.
+single-block solve of the corner with seams at 0.03 %, while scratch runs that solved its
+two drifted tiles first and then all eight ended at 0.50. The attribution does not find
+those two tiles, though: they drifted the same way and agree with each other, so with 0.5
+it picks them and two of their neighbours, and on the 384 box it leaves one of them out.
+On that box solving all 27 tiles in the first pass brought the merge closer to the
+single-block solve in every pass.
 
 Two neighbours held at the same merge agree on their overlap partly by construction, so
 closed seams alone do not show that the iteration has settled. `refine` accepts a merge
-when all of these hold, and otherwise goes on up to `--max-passes` (4):
+when all of these hold, and otherwise goes on up to `--max-passes` (3):
 
 - no pair is over the trigger;
 - the bound of the remaining error is at most `--bound` (0.25 winding): the change
   between the last two merges on the tiles just solved (95th percentile, after removing
   the constant and tilt the join leaves free), times r / (1 − r), with r the ratio of the
-  last two changes. It needs two passes that solved the same tiles (changes taken on
-  different tiles have no ratio), so tiles whose seams close in one are solved once
-  more; a change within 0.001 winding counts as settled;
+  last two changes, both taken on the tiles of the last pass (changes on different tiles
+  have no ratio, so a pass that solved more tiles is measured again on these). It needs
+  two passes, so tiles whose seams close in one are solved once more; a change within
+  0.001 winding counts as settled;
 - no solved tile bends more at its held faces than `--max-kink-ratio` (2) times its own
   mid-planes (95th percentile of the second difference of W over the local sheet slope).
 

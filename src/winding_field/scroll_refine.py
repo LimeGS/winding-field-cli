@@ -6,8 +6,7 @@ and ``scroll merge`` cannot level it with one constant and one tilt. ``scroll re
 repeats, after that first merge (pass 0):
 
     measure   seams, the change against the previous merge, slope kinks at held faces
-    select    the tiles of every pair over the seam trigger, and the tiles next to them;
-              in the first pass only the tiles the open seams are attributed to
+    select    the tiles of every pair over the seam trigger, and the tiles next to them
     solve     the selected tiles with ``run --field-boundary`` on the current merge
     merge     the plan again, each tile with its newest field
 
@@ -20,10 +19,13 @@ every pass (FIELD.json ``refine``). Rerunning the command continues where it sto
 With the faces of two neighbours held at one merge their overlap agrees partly by
 construction, so the seams alone would flatter the result: the change between
 consecutive merges and its rate are what say the iteration has settled. Settled is not
-the same as right. Where the data determine W poorly the iteration keeps what the first
-passes put there, so a tile solved in the same pass as a neighbour that drifted takes
-that drift on its held faces and keeps part of it. That is why the first pass solves the
-drifted tiles alone, against neighbours that have not moved (``--worst-first``).
+the same as right: a merge can stop moving away from the single-block solution of the
+same box, and only a comparison with one has shown it.
+
+``--worst-first`` (off by default, experimental) narrows the first pass to the tiles the
+open seams are attributed to. The pairs alone do not identify the tiles that drifted: two
+tiles that drifted the same way agree with each other and the blame falls on their
+neighbours.
 """
 
 from __future__ import annotations
@@ -233,7 +235,7 @@ def merge_change(current, previous, boxes):
 def rate_bound(change, previous):
     """(r, bound): the ratio of two consecutive changes and the bound it puts on what is
     left, change x r / (1 - r) for a geometric decay. No bound unless the change shrinks.
-    ``previous`` is the change of a pass that solved the same tiles, or None: changes
+    ``previous`` is the change of the pass before on the same tiles, or None: changes
     taken on different tiles have no ratio.
 
     A change within the resolution of its histogram has no measurable rate: the merge has
@@ -349,7 +351,7 @@ def decide(record, settings, max_passes, tiles, previous_selection):
     if number >= 1:
         if record["bound"] is None and record["rate"] is None:
             reasons.append(
-                "the rate of change between merges needs two passes that solve the same "
+                "the rate of change between merges needs two passes that solve these "
                 "tiles and move the merge"
             )
         elif record["bound"] is None:
@@ -378,6 +380,19 @@ def decide(record, settings, max_passes, tiles, previous_selection):
     if number >= max_passes or not selection:
         return "REFINE_NOT_CONVERGED", reasons, selection
     return None, reasons, selection
+
+
+def _earlier_change(passes, records, number, selection, boxes):
+    """The change of pass ``number - 1`` on the tiles of this pass, for the rate; None when
+    that pass did not solve them all. A pass that solved more tiles is measured again on
+    these ones, from its merge and the one before it."""
+    before = records[number - 1]
+    if before["tiles"] == selection:
+        return before["change"]
+    older = passes / str(number - 2) / "merge"
+    if number >= 2 and set(selection) < set(before["tiles"]) and _merge_ready(older):
+        return merge_change(passes / str(number - 1) / "merge", older, boxes)
+    return None
 
 
 def tile_orientation(root, tiles):
@@ -695,9 +710,9 @@ def refine(args):
                 record["held"] = held_summary(fields, selection)
                 boxes = [(by_id[tid]["nodes_lo"], by_id[tid]["nodes_hi"]) for tid in selection]
                 record["change"] = merge_change(merged, passes / str(number - 1) / "merge", boxes)
-                before = state["passes"][number - 1]
                 record["rate"], record["bound"] = rate_bound(
-                    record["change"], before["change"] if before["tiles"] == selection else None
+                    record["change"],
+                    _earlier_change(passes, state["passes"], number, selection, boxes),
                 )
                 record["kink"] = kink_summary(
                     {
