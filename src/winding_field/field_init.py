@@ -15,6 +15,10 @@ from pathlib import Path
 import numpy as np
 
 _STATE = None
+# A field smaller than this samples its observations in process: spawning workers (each
+# imports torch and opens the maps and the prior) costs more than they save, and many small
+# solves at once (a test suite) would oversubscribe the CPUs.
+POOL_MIN_NODES = 1 << 24
 
 
 def _open(spec):

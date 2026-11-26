@@ -613,6 +613,43 @@ def test_cpu_workers_apply_the_sheet_check(tmp_path, monkeypatch):
     assert block.worker_info["orientation"]["prior_inconsistent"] == np.count_nonzero(flagged)
 
 
+@pytest.mark.parametrize(
+    "sheet", [{}, {"field_orientation_max_disagreement": 0.3}], ids=["rule", "sheet-check"]
+)
+def test_prior_gradient_orientation_counts_from_the_observation_pool(
+    tmp_path, coarse, sheet, monkeypatch
+):
+    """Pooled observations sign the blocks as the in-process loads and count each box once."""
+    from winding_field import field, field_init, global_pairs
+
+    config = dict(
+        sweeps=2,
+        field_chunk=8,
+        field_spacing_um=1.0,
+        field_prior=str(coarse),
+        field_prior_calibration="inherit",
+        field_orientation="prior-gradient",
+        observation_cache_bytes=0,
+        **sheet,
+    )
+    runs = []
+    for name, workers, floor in (("inline", 1, 1 << 40), ("pooled", 4, 0)):
+        monkeypatch.setattr(global_pairs, "default_workers", lambda: workers)
+        monkeypatch.setattr(field_init, "POOL_MIN_NODES", floor)
+        run = _tile(tmp_path / name, (6, 6, 16), shift_x=20.0)
+        receipt = field.solve(run, config)
+        assert receipt["status"] == "FIELD_READY"
+        assert ("observation_pool_stats" in receipt) == (workers > 1)
+        runs.append(run)
+    geometry = json.loads((runs[0] / "FIELD.json").read_bytes())["geometry"]
+    with field.open_field(runs[0]) as a, field.open_field(runs[1]) as b:
+        values, _ = a.read([0, 0, 0], geometry["shape_zyx"])
+        expected, _ = b.read([0, 0, 0], geometry["shape_zyx"])
+    assert np.array_equal(values, expected)
+    counts = [json.loads((run / "FIELD.json").read_bytes())["orientation"] for run in runs]
+    assert counts[0]["supported"] > 0 and counts[0] == counts[1]
+
+
 def _solve_inline_and_pooled(tmp_path, coarse, field, sheet):
     config = dict(
         sweeps=2,

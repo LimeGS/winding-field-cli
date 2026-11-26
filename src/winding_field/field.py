@@ -944,14 +944,14 @@ def solve(run, config, stop=None, *, sweep_target=None, convergence=None):
 
     def observation_pool(lo, hi):
         """Pooled observations of a solve box (ordinary fields), or None to compute inline."""
-        if bounded or len(options["order"]) < 2:
+        from . import field_init
+
+        if bounded or len(options["order"]) < 2 or math.prod(shape) < field_init.POOL_MIN_NODES:
             return None
         if observation_workers["pool"] is None:
             workers = min(pool_workers()[1], len(options["order"]))
             if workers < 2:
                 return None
-            from .field_init import ObservationPool
-
             boxes = []
             for key in options["order"]:
                 low = np.array(key) * chunk
@@ -962,7 +962,9 @@ def solve(run, config, stop=None, *, sweep_target=None, convergence=None):
                         np.minimum(high + options["halo"], shape),
                     )
                 )
-            observation_workers["pool"] = ObservationPool(observation_spec(), boxes, workers)
+            observation_workers["pool"] = field_init.ObservationPool(
+                observation_spec(), boxes, workers
+            )
         return observation_workers["pool"].get(
             lo,
             hi,

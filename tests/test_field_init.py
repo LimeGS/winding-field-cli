@@ -36,6 +36,7 @@ def test_observations_from_workers_equal_the_one_process_loop(tmp_path, monkeypa
         return result
 
     monkeypatch.setattr(field_init.ObservationPool, "get", counted)
+    monkeypatch.setattr(field_init, "POOL_MIN_NODES", 0)
 
     def field_after(name, workers):
         monkeypatch.setattr(global_pairs, "default_workers", lambda: workers)
@@ -64,3 +65,15 @@ def test_observations_from_workers_equal_the_one_process_loop(tmp_path, monkeypa
     assert served and all(served)
     for a, b in zip(inline, pooled):
         np.testing.assert_array_equal(a, b)
+
+
+def test_small_fields_sample_observations_in_process(tmp_path, monkeypatch):
+    from test_field import prepared_run
+    from winding_field import global_pairs
+    from winding_field.field import solve
+
+    monkeypatch.setattr(global_pairs, "default_workers", lambda: 4)
+    run = prepared_run(tmp_path / "small", shape=(6, 6, 32), chunk=8, variable=True)
+    config = dict(sweeps=1, field_chunk=8, field_memory="disk", observation_cache_bytes=0)
+    result = solve(run, config)
+    assert result["status"] == "FIELD_READY" and "observation_pool_stats" not in result
