@@ -158,7 +158,14 @@ def test_supported_scope_solves_and_stores_only_chunks_with_observations(tmp_pat
     ]
 
 
-@pytest.mark.parametrize("config", [{"field_scope": "some"}, {"field_scope": "supported"}])
+@pytest.mark.parametrize(
+    "config",
+    [
+        {"field_scope": "some"},
+        {"field_scope": "supported"},
+        {"field_scope": "supported", "field_prior": "coarse", "field_coarse_factor": 8},
+    ],
+)
 def test_field_scope_is_validated(config):
     from winding_field.config import validate_config
 

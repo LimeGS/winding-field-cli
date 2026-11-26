@@ -136,6 +136,9 @@ def validate_config(config):
         raise ValueError("field_scope must be all or supported")
     if config.get("field_scope") == "supported" and not prior:
         raise ValueError("field_scope supported requires field_prior")
+    if config.get("field_scope") == "supported" and config.get("field_coarse_factor", 0):
+        # The coarse correction needs every chunk; refuse before any stage runs.
+        raise ValueError("field_scope supported cannot be combined with field_coarse_factor")
     if config.get("afv_clip_backend", "auto") not in ("auto", "native", "numpy", "reference"):
         raise ValueError("afv_clip_backend must be auto, native, numpy or reference")
     if config.get("nonconvergence_policy", "fail") not in ("fail", "continue"):
