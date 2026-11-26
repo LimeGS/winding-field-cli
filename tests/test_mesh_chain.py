@@ -111,9 +111,15 @@ def test_prepared_mesh_then_flatten_runs_a_real_uv_export_as_its_own_step(tmp_pa
     settings.write_text("flattening_solver: lscm\nscope: sheet\nstages: uv\n")
     mesh, flat = tmp_path / "mesh", tmp_path / "flat"
     argv = ["prepared", "mesh", "--config", str(path), "--output", str(mesh)]
-    assert main([*argv, "--then-flatten", str(flat), "--flatten-cli-config", str(settings)]) == 0
+    code = main([*argv, "--then-flatten", str(flat), "--flatten-cli-config", str(settings)])
     chain = json.loads((mesh / "CHAIN.json").read_text())
     assert chain["steps"][0]["status"] == "MESH_READY"
+    if sys.platform != "linux":
+        # Matrix export needs the Linux /proc RSS guard; the mesh step still publishes.
+        assert code == 1 and chain["steps"][1]["status"] == "FAILED"
+        assert "requires Linux /proc" in chain["steps"][1]["stderr_tail"]
+        return
+    assert code == 0
     assert chain["steps"][1]["returncode"] == 0
     # Each step keeps its own receipts; the frame comes from the mesh publication.
     assert json.loads((mesh / "MESH.json").read_text())["status"] == "MESH_READY"

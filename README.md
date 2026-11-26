@@ -573,7 +573,7 @@ Use `--lasagna-cos-downsample`, `--lasagna-grad-mag-downsample`,
 | `--coverage-target 1 --surface-time-limit 1800` | Native mapped mesh-area target / cumulative active seconds per W |
 | `--preconditioner jacobi\|amg` | Field PCG preconditioner: Jacobi (default) or algebraic multigrid, far fewer iterations on large blocks; Jacobi runs keep their identity |
 | `--field-memory auto\|disk\|field\|all` | Host RAM use of the field solve: measured at start (default), every block on disk, whole field in RAM with one checkpoint per sweep, or field plus all observations in RAM; same field in every tier ([memory tiers](docs/SOLVER-PERFORMANCE.md#host-memory-tiers-and-multi-block-solves)) |
-| `--field-coarse-factor F`, `--field-pair-scope global` | Experimental: two-level Schwarz coarse correction / fibre pairs over the whole grid; both change the field; whole scrolls use the [tile workflow](docs/SCROLL.md) |
+| `--field-coarse-factor F`, `--field-pair-scope global` | Experimental: two-level Schwarz coarse correction / fibre pairs over the whole grid (the default scope with a coarse factor); both change the field; whole scrolls use the [tile workflow](docs/SCROLL.md) |
 | `--level-workers 1` | Native W levels computed in parallel processes; each needs its own memory; outputs equal a serial run |
 | `--import-workers 1` | Local import workers (`0` = resource-admitted automatic); results written in input order |
 | `--cache-gib 2 --reserve-gib 1` | CT payload cache cap / free disk reserve, not RAM |
