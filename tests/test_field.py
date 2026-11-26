@@ -857,7 +857,9 @@ def test_coarse_factor_defaults_to_global_pairs(tmp_path, capsys):
 
     auto = identity_of("auto", field_coarse_factor=4)
     assert auto["source_identity"]["pair_scope"] == "global-grid-v1"
-    assert "WARNING" not in capsys.readouterr().err
+    # Only the block-scope stall warning matters here; macOS also warns that host
+    # memory cannot be measured (no /proc), which is unrelated to pair scope.
+    assert "--field-pair-scope block stalls" not in capsys.readouterr().err
     block = identity_of("block", field_coarse_factor=4, field_pair_scope="block")
     assert "pair_scope" not in block["source_identity"]
     assert "pair-scope block stalls" in capsys.readouterr().err
