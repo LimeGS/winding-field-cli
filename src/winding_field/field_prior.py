@@ -192,6 +192,21 @@ class FieldPrior:
         """
         source = self._stored_source()
         points = np.asarray(xyz, float)
+        axes = _lattice_axes(points)
+        if axes is not None:
+            result = np.zeros(points.shape)
+            ok = np.ones(points.shape[:-1], bool)
+            for axis in range(3):
+                step = self.spacing[axis]
+                moved = list(axes)
+                moved[axis] = axes[axis] + step
+                ahead, ahead_ok = self._interpolate_lattice(moved, ok.shape, source, True)
+                moved[axis] = axes[axis] - step
+                behind, behind_ok = self._interpolate_lattice(moved, ok.shape, source, True)
+                result[..., axis] = (ahead - behind) / (2 * step)
+                ok &= ahead_ok & behind_ok
+            result[~ok] = 0.0
+            return result, ok
         flat = points.reshape(-1, 3)
         result = np.zeros(flat.shape)
         valid = np.zeros(len(flat), bool)
