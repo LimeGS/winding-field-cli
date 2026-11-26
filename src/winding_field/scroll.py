@@ -2033,15 +2033,14 @@ def _parser():
         help="or whose 95th percentile of |dW| on shared nodes is over this (default: 0.5)",
     )
     p.add_argument(
-        "--worst-first",
+        "--set-aside",
         type=float,
         default=0.0,
         metavar="SHARE",
-        help="(experimental) above 0, the first pass solves only the tiles the open seams "
-        "are attributed to: those whose share of them is at least this part of the worst "
-        "tile's, held at neighbours that have not moved. The attribution does not identify "
-        "tiles that drifted the same way (default: 0, every tile of a pair over the trigger "
-        "and the tiles next to them)",
+        help="(experimental) above 0, a solved tile keeps its earlier field when under this "
+        "share of its nodes moved more than half a winding while a tile overlapping it moved "
+        "at least that share: it was held at values its neighbour then left. It is solved "
+        "again in the next pass (default: 0, every solved tile is merged)",
     )
     p.add_argument(
         "--bound",

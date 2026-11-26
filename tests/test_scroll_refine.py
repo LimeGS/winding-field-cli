@@ -106,7 +106,7 @@ def arguments(root, output, **changes):
         trigger_p95=0.5,
         bound=0.25,
         max_kink_ratio=2.0,
-        worst_first=0.0,
+        set_aside=0.0,
         jobs=2,
         gpus="",
         workers=1,
@@ -166,7 +166,14 @@ def test_refine_solves_the_disagreeing_tiles_until_the_merge_stops_moving(tmp_pa
     assert second["tiles"] == first["selected"] and second["change"]["p95"] > 0.5
     assert second["boundary_checkpoint_sha256"] == first["merge_checkpoint_sha256"]
     # Each tile is held at the face the other one continues beyond; the grid ends the rest.
-    assert first["held"] is None
+    assert first["held"] is None and first["own_change"] == {} and first["solved"] == []
+    # Every solved tile's own change is on record; the bent tile is the one that moved.
+    own = second["own_change"]
+    assert sorted(own) == second["solved"] == second["tiles"] and second["set_aside"] == []
+    assert own["000-000-001"]["share"] > 0.25 > own["000-000-000"]["share"]
+    assert own["000-000-001"]["p95"] > 0.5 and own["000-000-001"]["nodes"] == 6 * 6 * 64
+    beside = json.loads((root / "passes/1/tiles/000-000-001/OWN_CHANGE.json").read_bytes())
+    assert beside["change"] == own["000-000-001"] and "half a winding" in beside["rule"]
     assert second["held"] == dict(nodes=144, faces=2, open_faces=0, e_g=[])
     assert second["rate"] is None and second["bound"] is None and second["kink"]["max_ratio"] > 2
     assert second["seams"]["pairs_over_trigger"] == first["seams"]["pairs_over_trigger"]
@@ -289,39 +296,62 @@ def bowed(x, z):
     return 3.0 * ((x - 31.5) / 31.5) ** 2 * np.where(z >= 3, 1.0, -1.0)
 
 
-def test_the_first_pass_solves_the_drifted_tile_alone(tmp_path):
-    """--worst-first: both seams of the middle tile are open and the outer tiles are right,
-    so the first pass solves the middle tile alone, held at neighbours that have not moved. Later passes
-    follow the trigger, and a rate is taken only between passes that solved the same tiles.
-    (These synthetic sheets determine W everywhere, so solving all three at once ends at
-    the same field; it is where they do not that the order decides what is kept.)"""
+def test_a_tile_held_at_a_neighbour_that_moved_is_set_aside(tmp_path):
+    """--set-aside: the middle tile bows away from the sheets and moves back when its faces
+    are held; the outer tiles were right and were held at its bowed values. Their pass-1
+    fields are not merged, and they are solved again against the merge the middle tile
+    moved. (These synthetic sheets determine W everywhere, so merging all three ends at
+    the same field; it is where they do not that the first merge decides what is kept.)"""
     nx = 128
     root = write_plan(tmp_path / "plan", {"000-000-001": bowed}, boxes=CHAIN)
-    result = scroll_refine.refine(arguments(root, tmp_path / "refined", worst_first=0.5))
-    assert result["status"] == "REFINED" and result["tiles_solved"] == [0, 1, 3, 3]
+    result = scroll_refine.refine(arguments(root, tmp_path / "refined", set_aside=0.25))
+    assert result["status"] == "REFINED" and result["tiles_solved"] == [0, 3, 3, 3]
+    assert result["tiles_set_aside"] == [0, 2, 0, 0]
     first, second, third, last = json.loads((root / "passes/REFINE.json").read_bytes())["passes"]
-    assert len(first["seams"]["pairs_over_trigger"]) == 2
-    assert first["worst_first"]["tiles"] == first["selected"] == ["000-000-001"]
-    assert first["worst_first"]["share"] == 0.5 and first["worst_first"]["blame"] > 0.5
-    assert second["tiles"] == ["000-000-001"] and second["held"]["faces"] == 2
-    assert second["seams"]["over_half_share"] < 0.1 * first["seams"]["over_half_share"]
-    # What is left goes by the trigger: the pair still open and the tiles next to it.
-    assert second["worst_first"] is None and len(second["selected"]) == 3
-    # Pass 2 solved other tiles than pass 1: their changes have no ratio.
-    assert third["rate"] is None and third["bound"] is None
-    assert "solve these tiles" in third["reasons"][0] and third["selected"] == third["tiles"]
-    assert last["rate"] < 0.5 and last["bound"] < 0.01
+    outer = ["000-000-000", "000-000-002"]
+    assert len(second["solved"]) == 3 and second["set_aside"] == outer
+    assert second["tiles"] == ["000-000-001"]
+    own = second["own_change"]
+    assert own["000-000-001"]["share"] > 0.25 > max(own[tid]["share"] for tid in outer)
+    assert "2 solved tiles were set aside" in " ".join(second["reasons"])
+    assert set(outer) <= set(second["selected"])
+    # The merge holds the outer tiles' plan fields; their pass-1 fields stay on disk.
+    fields = json.loads((root / "passes/1/merge/FIELD.json").read_bytes())["tile_fields"]
+    assert list(fields) == ["000-000-001"] and (root / "passes/1/tiles" / outer[0]).is_dir()
+    # Pass 2 merged other tiles than pass 1: their changes have no ratio.
+    assert third["set_aside"] == [] and len(third["tiles"]) == 3 and third["rate"] is None
+    assert "solve these tiles" in " ".join(third["reasons"]) and last["bound"] < 0.01
+    # The outer tiles' second solve replaces their plan field, not the one set aside.
+    spec = json.loads((root / "passes/2/tiles" / outer[0] / "REFINE_TILE.json").read_bytes())
+    assert spec["previous"] is None
+    spec = json.loads((root / "passes/2/tiles/000-000-001/REFINE_TILE.json").read_bytes())
+    assert spec["previous"] == str(root / "passes/1/tiles/000-000-001")
     alone = off_truth(merged(root / "passes/1/merge", nx=nx))
     assert off_truth(merged(tmp_path / "refined", nx=nx)) < 0.01
 
     every = write_plan(tmp_path / "every", {"000-000-001": bowed}, boxes=CHAIN)
     result = scroll_refine.refine(arguments(every, tmp_path / "every-refined"))
-    assert result["status"] == "REFINED" and result["tiles_solved"] == [0, 3, 3, 3]
-    first, second, third, _ = json.loads((every / "passes/REFINE.json").read_bytes())["passes"]
-    assert first["worst_first"] is None and len(first["selected"]) == 3
-    # The same three tiles twice: a rate after two passes.
-    assert third["rate"] is not None
+    assert result["status"] == "REFINED" and result["tiles_set_aside"] == [0, 0, 0, 0]
     assert alone < off_truth(merged(every / "passes/1/merge", nx=nx))
+
+
+def test_set_aside_takes_the_still_tiles_next_to_a_mover():
+    box = lambda lo, hi: dict(nodes_lo=[0, 0, lo], nodes_hi=[5, 5, hi])  # noqa: E731
+    tiles = [
+        dict(id="a", **box(0, 63)),
+        dict(id="b", **box(32, 95)),
+        dict(id="c", **box(64, 127)),
+        dict(id="d", **box(96, 159)),
+    ]
+    own = dict(a=dict(share=0.4), b=dict(share=0.1), c=dict(share=0.02), d=None)
+    # b overlaps the mover a; c and d do not.
+    assert scroll_refine.set_aside(tiles, own, 0.25) == ["b"]
+    assert scroll_refine.set_aside(tiles, own, 0.0) == []
+    assert scroll_refine.set_aside(tiles, own, 0.5) == []
+    # Two movers side by side are both merged; a tile with nothing to compare is not one.
+    own = dict(a=dict(share=0.4), b=dict(share=0.3), c=dict(share=0.1), d=None)
+    assert scroll_refine.set_aside(tiles, own, 0.25) == ["c"]
+    assert scroll_refine.set_aside(tiles[2:], dict(c=dict(share=0.9), d=None), 0.25) == ["d"]
 
 
 def test_tiles_that_agree_need_no_pass(tmp_path):
@@ -372,42 +402,6 @@ def test_selection_takes_the_pair_and_the_tiles_sharing_a_face_with_it():
     # (0,1,2) and (0,0,3) touch the pair only across an edge or not at all.
     assert chosen == ["000-000-000", "000-000-001", "000-000-002", "000-001-001"]
     assert scroll_refine.select(tiles, []) == []
-
-
-def _pairs(shares, nodes=1000):
-    return {
-        name: dict(nodes=nodes, over_half_winding=round(share * nodes))
-        for name, share in shares.items()
-    }
-
-
-def test_open_seams_are_attributed_to_the_tiles_that_explain_them():
-    worst = scroll_refine.worst_tiles
-    # b is at odds with both neighbours; a and c only with b.
-    pairs = _pairs({"a|b": 0.5, "b|c": 0.5})
-    assert scroll_refine.tile_blame(pairs) == pytest.approx(dict(a=0, b=0.5, c=0), abs=1e-3)
-    assert worst(pairs, list(pairs), 0.5)[0] == ["b"]
-    # a's only open seam is with b, which agrees with c: a is the one that drifted.
-    pairs = _pairs({"a|b": 0.5, "b|c": 0.03})
-    assert worst(pairs, ["a|b", "b|c"], 0.5) == (["a"], pytest.approx(0.47, abs=1e-3))
-    # One pair says nothing about which of its two tiles it is: both.
-    pairs = _pairs({"a|b": 0.5})
-    assert worst(pairs, ["a|b"], 0.5)[0] == ["a", "b"]
-    # Eight tiles that all overlap, two of them off: every pair with one of them is wide
-    # open, the pairs among the other six are over the trigger too, by little.
-    ids = [f"{z}{y}{x}" for z in "01" for y in "01" for x in "01"]
-    off = {"010", "110"}
-    shares = {
-        f"{a}|{b}": 0.45 + 0.01 * k if off & {a, b} else 0.03 + 0.001 * k
-        for k, (a, b) in enumerate((a, b) for i, a in enumerate(ids) for b in ids[i + 1 :])
-    }
-    pairs = _pairs(shares, nodes=100000)
-    assert worst(pairs, list(pairs), 0.5)[0] == ["010", "110"]
-    assert len(worst(pairs, list(pairs), 0.05)[0]) > 2
-    # Only tiles of a pair over the trigger are candidates; nothing open, nothing chosen.
-    assert set(worst(pairs, ["000|001"], 0.5)[0]) <= {"000", "001"}
-    assert worst(_pairs({"a|b": 0.0}), [], 0.5) == ([], 0.0)
-    assert scroll_refine.tile_blame({}) == {}
 
 
 def test_seam_gate_counts_every_pair_and_triggers_on_share_or_p95():
@@ -481,12 +475,13 @@ def test_decision_accepts_only_closed_seams_a_small_bound_and_no_kink():
     # At the cap the selection is what one more pass would solve.
     status, _, chosen = decide(_record(0, pair), settings, 0, tiles, [])
     assert status == "REFINE_NOT_CONVERGED" and len(chosen) == 3
-    # The first pass takes the tiles the seams are attributed to, later ones the trigger.
-    first = dict(_record(0, pair), worst_first=dict(tiles=["000-000-001"]))
-    assert decide(first, settings, 3, tiles, [])[2] == ["000-000-001"]
-    assert decide(dict(first, worst_first=dict(tiles=[])), settings, 3, tiles, [])[2] == chosen
-    later = dict(_record(1, pair, rate=0.2, bound=0.01), worst_first=dict(tiles=["000-000-001"]))
-    assert decide(later, settings, 3, tiles, [])[2] == chosen
+    # No merge is accepted in a pass that set tiles aside; they are solved again.
+    aside = dict(_record(2, rate=0.2, bound=0.01), set_aside=["000-000-002"])
+    status, reasons, again = decide(aside, settings, 3, tiles, ["000-000-001", "000-000-002"])
+    assert status is None and "1 solved tiles were set aside" in reasons[0]
+    assert again == ["000-000-001", "000-000-002"]
+    aside = dict(_record(2, ["000-000-000|000-000-001"], rate=0.2, bound=0.01), set_aside=["x"])
+    assert decide(aside, settings, 3, tiles, [])[2] == sorted([*chosen, "x"])
     # Closed seams after one pass: the same tiles again, to measure the rate.
     status, reasons, chosen = decide(_record(1), settings, 3, tiles, ["000-000-001"])
     assert status is None and chosen == ["000-000-001"] and "two passes" in reasons[0]

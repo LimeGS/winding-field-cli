@@ -22,10 +22,9 @@ consecutive merges and its rate are what say the iteration has settled. Settled 
 the same as right: a merge can stop moving away from the single-block solution of the
 same box, and only a comparison with one has shown it.
 
-``--worst-first`` (off by default, experimental) narrows the first pass to the tiles the
-open seams are attributed to. The pairs alone do not identify the tiles that drifted: two
-tiles that drifted the same way agree with each other and the blame falls on their
-neighbours.
+``--set-aside`` (off by default, experimental) keeps a solved tile's earlier field when
+the tile hardly moved while a tile overlapping it moved a lot: it was held at values its
+neighbour has since left.
 """
 
 from __future__ import annotations
@@ -53,7 +52,13 @@ CHANGE_BINS = np.concatenate([np.linspace(0.0, 4.0, 4001), [np.inf]])
 # the local sheet slope per node: a field flatter than that (a synthetic one) would turn
 # any bend at a face into a large ratio.
 KINK_FLOOR = 0.05
-SETTINGS = ("layers", "trigger_share", "trigger_p95", "bound", "max_kink_ratio", "worst_first")
+SETTINGS = ("layers", "trigger_share", "trigger_p95", "bound", "max_kink_ratio", "set_aside")
+# What a tile's own change measures (REFINE.json own_change, OWN_CHANGE.json).
+OWN_CHANGE_RULE = (
+    "nodes of the tile's plan box, observed in its new field and in the one it would "
+    "replace, more than half a winding apart after removing the constant and tilt that "
+    "fit their difference best; share of those nodes and 95th percentile of |dW|"
+)
 
 
 def seam_summary(seams, trigger_share, trigger_p95):
@@ -101,62 +106,34 @@ def select(tiles, pairs):
     return sorted(chosen)
 
 
-def tile_blame(pairs):
-    """{tile: b}: the share of seam nodes over half a winding that each tile accounts for.
-
-    A pair's share is modelled as the sum of its two tiles' b >= 0 and fitted by least
-    squares over all pairs, each weighted by its shared nodes. A tile at odds with every
-    neighbour gets a large b; a tile whose only open seams are with such a tile gets
-    little, because its other pairs are closed. Two tiles with nothing but their common
-    pair to tell them apart get the same b.
-    """
-    from scipy.optimize import lsq_linear
-    from scipy.sparse import coo_matrix
-
-    names = sorted(name for name, p in pairs.items() if p["nodes"])
-    ids = sorted({tid for name in names for tid in name.split("|")})
-    if not ids:
-        return {}
-    column = {tid: k for k, tid in enumerate(ids)}
-    rows, columns, entries, target = [], [], [], []
-    for row, name in enumerate(names):
-        pair = pairs[name]
-        weight = float(np.sqrt(pair["nodes"]))
-        for tid in name.split("|"):
-            rows.append(row)
-            columns.append(column[tid])
-            entries.append(weight)
-        target.append(weight * pair["over_half_winding"] / pair["nodes"])
-    # What the pairs leave open is settled by two faint pulls. On the sum of b: of the
-    # fits that explain a row of tiles equally well, the one that blames fewest (the tile
-    # in the middle, not its two neighbours). On each b, fainter: two tiles with one
-    # common pair share it evenly.
-    heaviest = max(entries)
-    for k in range(len(ids)):
-        rows.append(len(names))
-        columns.append(k)
-        entries.append(1e-3 * heaviest)
-    target.append(0.0)
-    for k in range(len(ids)):
-        rows.append(len(names) + 1 + k)
-        columns.append(k)
-        entries.append(1e-6 * heaviest)
-        target.append(0.0)
-    matrix = coo_matrix((entries, (rows, columns)), shape=(len(target), len(ids))).tocsr()
-    fit = lsq_linear(matrix, np.asarray(target), bounds=(0.0, np.inf), tol=1e-12)
-    return dict(zip(ids, (float(b) for b in fit.x)))
-
-
-def worst_tiles(pairs, over, share):
-    """The tiles of the pairs ``over`` the trigger whose blame is at least ``share`` of
-    the largest one, and that largest blame; ([], 0.0) when nothing stands out."""
-    blame = tile_blame(pairs)
-    candidates = {tid for name in over for tid in name.split("|") if tid in blame}
-    top = max((blame[tid] for tid in candidates), default=0.0)
-    if top <= 0:
-        return [], 0.0
-    # Ties are kept together: 1e-6 of the top is far under what tells tiles apart.
-    return sorted(tid for tid in candidates if blame[tid] >= share * top - 1e-6 * top), top
+def _change_statistics(common, measured):
+    """|dW| of ``measured()`` once the constant and tilt that fit ``common()`` best are
+    removed. Both yield (dW, design) parts, design = [1, z, y, x] scaled to the box."""
+    gram, vector, fitted = np.zeros((4, 4)), np.zeros(4), 0
+    for delta, design in common():
+        gram += design.T @ design
+        vector += design.T @ delta
+        fitted += len(delta)
+    if not fitted:
+        return None
+    # lstsq: a grid one node thick has no tilt along that axis.
+    fit = np.linalg.lstsq(gram, vector, rcond=None)[0]
+    hist, count, over = np.zeros(len(CHANGE_BINS) - 1, np.int64), 0, 0
+    for delta, design in measured():
+        left = np.abs(delta - design @ fit)
+        hist += np.histogram(left, CHANGE_BINS)[0]
+        count += len(left)
+        over += int((left > 0.5).sum())
+    if not count:
+        return None
+    index = int(np.searchsorted(np.cumsum(hist), 0.95 * count))
+    return dict(
+        nodes=count,
+        common_nodes=fitted,
+        p95=float(CHANGE_BINS[min(index + 1, len(CHANGE_BINS) - 2)]),
+        over_half_share=over / count,
+        removed=dict(constant=float(fit[0]), tilt=fit[1:].tolist()),
+    )
 
 
 def merge_change(current, previous, boxes):
@@ -204,31 +181,71 @@ def merge_change(current, previous, boxes):
                     design = np.column_stack([np.ones(len(nodes)), (nodes - centre) / scale])
                     yield (values[both] - before[both]) / step, design
 
-        gram, vector, common = np.zeros((4, 4)), np.zeros(4), 0
-        for delta, design in differences(None):
-            gram += design.T @ design
-            vector += design.T @ delta
-            common += len(delta)
-        if not common:
-            return None
-        # lstsq: a grid one node thick has no tilt along that axis.
-        fit = np.linalg.lstsq(gram, vector, rcond=None)[0]
         boxes = [(np.asarray(a), np.asarray(b)) for a, b in boxes]
-        hist, count, over = np.zeros(len(CHANGE_BINS) - 1, np.int64), 0, 0
-        for delta, design in differences(boxes):
-            left = np.abs(delta - design @ fit)
-            hist += np.histogram(left, CHANGE_BINS)[0]
-            count += len(left)
-            over += int((left > 0.5).sum())
-    if not count:
+        return _change_statistics(lambda: differences(None), lambda: differences(boxes))
+
+
+def tile_own_change(plan_root, tile, grid, new, old=None):
+    """How far a tile's new field is from the one it would replace (OWN_CHANGE_RULE):
+    ``old`` is the directory of that field, or None for the plan's tile. A tile that the
+    data determine well hardly moves when its faces are held; one that moves a lot was
+    following its free faces."""
+    earlier = {k: v for k, v in tile.items() if k != "field_run"}
+    if old is not None:
+        earlier["field_run"] = str(old)
+    fresh, before = _Tile(plan_root, dict(tile, field_run=str(new)), grid), None
+    try:
+        before = _Tile(plan_root, earlier, grid)
+        shape = fresh.hi - fresh.lo + 1
+        step = float(fresh.geometry.get("sheet_step", 1.0))
+        centre = (shape - 1) / 2
+        scale = np.maximum(centre, 1.0)
+        planes = max(1, int(2_000_000 // (shape[1] * shape[2])))
+
+        def differences():
+            for z in range(0, int(shape[0]), planes):
+                lo = np.array([z, 0, 0])
+                hi = np.array([min(z + planes, shape[0]), shape[1], shape[2]])
+                values, seen = fresh.read(fresh.observed, lo, hi)
+                earlier_values, also = before.read(before.observed, lo, hi)
+                both = seen & also
+                if both.any():
+                    nodes = np.argwhere(both) + lo
+                    design = np.column_stack([np.ones(len(nodes)), (nodes - centre) / scale])
+                    yield (values[both] - earlier_values[both]) / step, design
+
+        found = _change_statistics(differences, differences)
+    finally:
+        fresh.close()
+        if before is not None:
+            before.close()
+    if found is None:
         return None
-    index = int(np.searchsorted(np.cumsum(hist), 0.95 * count))
-    return dict(
-        nodes=count,
-        common_nodes=common,
-        p95=float(CHANGE_BINS[min(index + 1, len(CHANGE_BINS) - 2)]),
-        over_half_share=over / count,
-        removed=dict(constant=float(fit[0]), tilt=fit[1:].tolist()),
+    return dict(share=found["over_half_share"], p95=found["p95"], nodes=found["nodes"])
+
+
+def set_aside(tiles, own, share):
+    """Ids of the solved ``tiles`` whose new field is not merged: a tile that moved less
+    than ``share`` (own change) while a tile overlapping it moved at least that much was
+    held at values its neighbour has since left. Tiles with no such neighbour are merged,
+    whatever they moved; ``share`` 0 sets nothing aside."""
+    if share <= 0:
+        return []
+
+    def moved(tile):
+        change = own.get(tile["id"])
+        return change is not None and change["share"] >= share
+
+    movers = [tile for tile in tiles if moved(tile)]
+    return sorted(
+        tile["id"]
+        for tile in tiles
+        if not moved(tile)
+        and any(
+            (np.asarray(tile["nodes_lo"]) <= mover["nodes_hi"]).all()
+            and (np.asarray(mover["nodes_lo"]) <= tile["nodes_hi"]).all()
+            for mover in movers
+        )
     )
 
 
@@ -368,15 +385,17 @@ def decide(record, settings, max_passes, tiles, previous_selection):
                 f"tile {kink['worst_tile']} bends {kink['max_ratio']:.3g} times more at its "
                 "held faces than at its mid-planes"
             )
+    aside = record.get("set_aside") or []
+    if aside:
+        reasons.append(
+            f"{len(aside)} solved tiles were set aside (held at a neighbour that then moved), "
+            f"e.g. {aside[:3]}"
+        )
     if not reasons:
         return "REFINED", ["no tile pair over the seam trigger"] if not number else [], []
-    worst = (record.get("worst_first") or {}).get("tiles")
-    if not number and worst:
-        # The first pass: the drifted tiles alone, against neighbours that have not moved.
-        selection = list(worst)
-    else:
-        # Seams closed but the rate is not known or not small yet: the same tiles again.
-        selection = select(tiles, over) if over else list(previous_selection)
+    # Seams closed but the rate is not known or not small yet: the same tiles again. A
+    # tile set aside is solved again in any case, against the merge its neighbour moved.
+    selection = sorted({*select(tiles, over), *aside}) if over else list(previous_selection)
     if number >= max_passes or not selection:
         return "REFINE_NOT_CONVERGED", reasons, selection
     return None, reasons, selection
@@ -450,10 +469,34 @@ def solve_tile(spec):
         signal.signal(sig, lambda *_: interrupted.append(True))
     torch.set_num_threads(config.get("threads", min(4, os.cpu_count() or 1)))
     result = solve(run, config, lambda: bool(interrupted) or (out / "STOP").exists(), output=out)
+    if result["status"] == "FIELD_READY" and spec.get("plan"):
+        document = _json(Path(spec["plan"]) / "TILES.json")
+        tile = next(t for t in document["tiles"] if t["id"] == run.name)
+        _own_change(Path(spec["plan"]), document["grid"], tile, out, spec.get("previous"))
     return result["status"]
 
 
-def _solve_pass(root, number, selection, boundary, settings, args, document):
+def _own_change(root, grid, tile, out, previous):
+    """A pass tile's own change against the field it would replace (``previous``, None for
+    the plan's tile), kept beside it in OWN_CHANGE.json."""
+    path = out / "OWN_CHANGE.json"
+    old = Path(previous) if previous else root / "tiles" / tile["id"]
+    replaces = _json(old / "FIELD.json")["checkpoint_sha256"]
+    solved = _json(out / "FIELD.json")["checkpoint_sha256"]
+    if path.is_file():
+        saved = _json(path)
+        if (saved.get("replaces"), saved.get("field"), saved.get("rule")) == (
+            replaces,
+            solved,
+            OWN_CHANGE_RULE,
+        ):
+            return saved["change"]
+    change = tile_own_change(root, tile, grid, out, previous)
+    atomic_json(path, dict(rule=OWN_CHANGE_RULE, replaces=replaces, field=solved, change=change))
+    return change
+
+
+def _solve_pass(root, number, selection, boundary, settings, args, document, fields):
     """Solve ``selection`` against ``boundary`` (a merge) with bounded concurrency."""
     folder = root / "passes" / str(number)
     for name in ("tiles", "logs", "status"):
@@ -496,6 +539,8 @@ def _solve_pass(root, number, selection, boundary, settings, args, document):
                     output=str(out),
                     boundary=str(boundary),
                     layers=layers,
+                    plan=str(root),
+                    previous=str(fields[tile_id]) if tile_id in fields else None,
                 )
                 atomic_json(out / "REFINE_TILE.json", spec)
                 command = [
@@ -577,10 +622,10 @@ def refine(args):
         trigger_p95=args.trigger_p95,
         bound=args.bound,
         max_kink_ratio=args.max_kink_ratio,
-        worst_first=args.worst_first,
+        set_aside=args.set_aside,
     )
-    if not 0 <= args.worst_first <= 1:
-        raise ValueError("--worst-first must be from 0 to 1")
+    if not 0 <= args.set_aside < 1:
+        raise ValueError("--set-aside must be from 0 to under 1")
     if type(args.layers) is not int or args.layers < 1:
         raise ValueError("--layers must be a positive integer")
     if type(args.max_passes) is not int or args.max_passes < 0:
@@ -656,10 +701,11 @@ def refine(args):
                 fields[tid] = folder / "tiles" / tid
         else:
             solve_seconds = jobs = gpus = None
+            own, aside, accepted = {}, [], []
             if number:
                 boundary = passes / str(number - 1) / "merge"
                 unfinished, solve_seconds, jobs, gpus = _solve_pass(
-                    root, number, selection, boundary, settings, args, document
+                    root, number, selection, boundary, settings, args, document, fields
                 )
                 if unfinished:
                     atomic_json(state_path, state)
@@ -669,7 +715,15 @@ def refine(args):
                         + str(folder / "logs"),
                         tiles=unfinished,
                     )
-                for tid in selection:
+                own = {
+                    tid: _own_change(
+                        root, grid, by_id[tid], folder / "tiles" / tid, fields.get(tid)
+                    )
+                    for tid in selection
+                }
+                aside = set_aside([by_id[tid] for tid in selection], own, settings["set_aside"])
+                accepted = [tid for tid in selection if tid not in aside]
+                for tid in accepted:
                     fields[tid] = folder / "tiles" / tid
             if merged.exists():
                 # A merge that did not finish: its receipt is written last.
@@ -678,7 +732,11 @@ def refine(args):
             field_meta = _json(merged / "FIELD.json")
             record = dict(
                 **{"pass": number},
-                tiles=list(selection),
+                # tiles: those whose new field went into this merge; solved: all of them.
+                tiles=accepted,
+                solved=list(selection),
+                set_aside=aside,
+                own_change=own,
                 boundary_checkpoint_sha256=None
                 if not number
                 else _json(passes / str(number - 1) / "merge/FIELD.json")["checkpoint_sha256"],
@@ -692,27 +750,21 @@ def refine(args):
                     _json(merged / "SEAMS.json"), settings["trigger_share"], settings["trigger_p95"]
                 ),
                 join=field_meta.get("join"),
-                worst_first=None,
                 held=None,
                 change=None,
                 rate=None,
                 bound=None,
                 kink=None,
             )
-            if not number and settings["worst_first"] > 0:
-                worst, top = worst_tiles(
-                    _json(merged / "SEAMS.json")["pairs"],
-                    record["seams"]["pairs_over_trigger"],
-                    settings["worst_first"],
-                )
-                record["worst_first"] = dict(share=settings["worst_first"], blame=top, tiles=worst)
             if number:
-                record["held"] = held_summary(fields, selection)
-                boxes = [(by_id[tid]["nodes_lo"], by_id[tid]["nodes_hi"]) for tid in selection]
+                record["held"] = held_summary(
+                    {tid: folder / "tiles" / tid for tid in selection}, selection
+                )
+                boxes = [(by_id[tid]["nodes_lo"], by_id[tid]["nodes_hi"]) for tid in accepted]
                 record["change"] = merge_change(merged, passes / str(number - 1) / "merge", boxes)
                 record["rate"], record["bound"] = rate_bound(
                     record["change"],
-                    _earlier_change(passes, state["passes"], number, selection, boxes),
+                    _earlier_change(passes, state["passes"], number, accepted, boxes),
                 )
                 record["kink"] = kink_summary(
                     {
@@ -722,7 +774,7 @@ def refine(args):
                             grid,
                             settings["layers"],
                         )
-                        for tid in selection
+                        for tid in accepted
                     }
                 )
             status, reasons, chosen = decide(record, settings, args.max_passes, tiles, selection)
@@ -734,7 +786,7 @@ def refine(args):
             shutil.rmtree(passes / str(number - 2) / "merge", ignore_errors=True)
         # A saved pass is decided again: --max-passes may have been raised since.
         status, reasons, chosen = decide(
-            record, settings, args.max_passes, tiles, state["passes"][number]["tiles"]
+            record, settings, args.max_passes, tiles, record.get("solved", record["tiles"])
         )
         if status is not None:
             break
@@ -763,7 +815,8 @@ def refine(args):
         change_p95=None if final["change"] is None else final["change"]["p95"],
         rate=final["rate"],
         bound=final["bound"],
-        tiles_solved=[len(p["tiles"]) for p in state["passes"][: number + 1]],
+        tiles_solved=[len(p["solved"]) for p in state["passes"][: number + 1]],
+        tiles_set_aside=[len(p["set_aside"]) for p in state["passes"][: number + 1]],
         orientation=orientation,
     )
     state["published"] = dict(output=str(output), status=status, **{"pass": number}, result=result)

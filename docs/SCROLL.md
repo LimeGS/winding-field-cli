@@ -302,19 +302,16 @@ came from per face (`source_tiles`); the pass receipt counts them and the faces 
 free (`held`). The plan is then
 merged again with each tile's newest field.
 
-`--worst-first SHARE` (experimental, off by default) narrows the first pass to the tiles
-the open seams are attributed to: every pair's share of nodes over half a winding is
-split between its two tiles by a least-squares fit over all pairs, and the tiles with at
-least SHARE of the largest blame are solved, held at neighbours that have not moved.
-Pass 0's receipt lists them (`worst_first`). It exists to test whether the order of the
-solves matters: on a 2x2x2 corner of that box, solving all eight tiles in the first pass
-left the merge 0.95 winding (95th percentile, poorly determined region) from a
-single-block solve of the corner with seams at 0.03 %, while scratch runs that solved its
-two drifted tiles first and then all eight ended at 0.50. The attribution does not find
-those two tiles, though: they drifted the same way and agree with each other, so with 0.5
-it picks them and two of their neighbours, and on the 384 box it leaves one of them out.
-On that box solving all 27 tiles in the first pass brought the merge closer to the
-single-block solve in every pass.
+Each pass records how far every solved tile moved from the field it replaces
+(`own_change`: share of its nodes more than half a winding away, after removing a
+constant and a tilt, and the 95th percentile). A tile the data determine well hardly
+moves when its faces are held; one that moves a lot was following its free faces.
+
+`--set-aside SHARE` (experimental, off by default) uses that: a solved tile that moved
+less than SHARE while a tile overlapping it moved at least SHARE keeps its earlier field
+in this merge, because it was held at values its neighbour then left, and it is solved
+again in the next pass. No merge is accepted in a pass that set tiles aside. See the
+corner below for what it is worth.
 
 Two neighbours held at the same merge agree on their overlap partly by construction, so
 closed seams alone do not show that the iteration has settled. `refine` accepts a merge
@@ -341,12 +338,31 @@ is redone. Passes made with other thresholds or layers are refused, and so is a 
 solved against another merge. `--prune` deletes each merge once the next two passes no
 longer need it.
 
-What the bound does not say: that the merge is right. It says the passes have stopped
-moving it. On the corner above the bound was 0.05 and the seams 0.03 % with the merge
-0.95 winding from the single-block solve; only that comparison with a reference showed
-it. Inside the poorly determined region itself the tiles settle,
-at the same rate as elsewhere, on a solution that differs from a single-block solve of the
-same box (384 box: 95th percentile 0.80 winding inside it, 0.35 outside). Both follow the
+**Closed seams and a small bound do not certify the field.** They say the tiles agree
+and the passes have stopped moving the merge. Measured on a 2x2x2 corner of that box (8
+tiles of 192 nodes, two of them drifted by whole windings), against a single-block solve
+of the same corner, 95th percentile of |dW| and share of nodes over half a winding:
+
+| passes | seams | poorly determined region | elsewhere |
+|---|---|---|---|
+| first merge, no pass | 20.06 % | | |
+| every triggered tile in both passes (the default) | 0.028 % | 0.95 / 26.0 % | 0.58 / 7.3 % |
+| `--set-aside 0.25`, assembled by hand | 0.107 % | 0.79 / 16.9 % | 0.49 / 4.7 % |
+| the two drifted tiles alone, then all eight, by hand | 0.168 % | 0.51 / 5.1 % | 0.32 / 1.6 % |
+
+The default ended `REFINED` with a bound of 0.05 winding and the best seams of the
+three, and was the farthest from the single-block solve. Tiles solved in the same pass
+exchange their old face values across the overlap, and where the data determine W poorly
+that exchange dies slowly (a factor of about 0.7 per pass on this corner), in steps too small for
+the change between merges to show. Solving the drifted tiles first avoids it, but no
+measure taken from the tiles alone picked those two: not the seams of each pair, the
+distance to the merge or to the coarse field, nor how far a tile moves when held. So a
+run is checked against a single-block solve of a sample box, not by the seams. On the
+384 box, where the drifted tiles are few among 27, every pass of the default brought the
+merge closer to the single-block solve.
+
+On the 384 box after two passes the merge is 0.80 winding (95th percentile) from the
+single-block solve inside the poorly determined region and 0.35 outside. Both follow the
 observed sheet normals equally there (83.0 % and 83.1 % of nodes within 30 degrees), so
 neither is known to be the better one. The passes were measured with one block per tile,
 Jacobi and the eager kernels; fixed faces with AMG or the fused kernels are not measured.
