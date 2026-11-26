@@ -510,6 +510,32 @@ def main(argv=None):
             "fused (Jacobi stays the preconditioner)",
         )
         p.add_argument(
+            "--field-colours",
+            type=int,
+            choices=(0, 8),
+            default=argparse.SUPPRESS,
+            help="experimental, with --field-coarse-factor: 8 solves the blocks of a sweep in eight "
+            "colour batches (2 x 2 x 2 by chunk parity); the blocks of one batch read the field as "
+            "it was before the batch, so they can be solved at once (--field-local-workers). May "
+            "need more sweeps than the default sequential order (0). Needs the whole field in RAM "
+            "(sweep checkpoints)",
+        )
+        p.add_argument(
+            "--field-local-workers",
+            type=int,
+            default=argparse.SUPPRESS,
+            help="with --field-colours 8: local block solves running at once (default: 1), each on "
+            "its own CUDA stream; the field is the same for any count",
+        )
+        p.add_argument(
+            "--field-local-devices",
+            type=lambda text: [d.strip() for d in text.split(",") if d.strip()],
+            default=argparse.SUPPRESS,
+            metavar="DEV[,DEV...]",
+            help="with --field-colours 8: comma-separated devices the local solve workers use in "
+            "turn, e.g. cuda:0,cuda:1 (default: --device)",
+        )
+        p.add_argument(
             "--field-prior-calibration",
             choices=["own", "inherit"],
             default=argparse.SUPPRESS,

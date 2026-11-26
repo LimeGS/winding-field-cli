@@ -797,6 +797,13 @@ def solve(run, config, stop=None, *, sweep_target=None, convergence=None):
     if coarse_factor:
         # Only when enabled: the core adds the coarse space to the problem identity.
         options["coarse_factor"] = coarse_factor
+    if config.get("field_colours", 0):
+        # Only when enabled: the core adds the colouring to the problem identity.
+        options["colours"] = config["field_colours"]
+        # Execution choices, not checkpoint identity: the field is the same for any count.
+        options["local_workers"] = config.get("field_local_workers", 1)
+        if config.get("field_local_devices"):
+            options["local_devices"] = config["field_local_devices"]
     if status_policy != "all":
         # Execution choice, not checkpoint identity: STATUS fsyncs only at checkpoints.
         options["status_policy"] = status_policy
@@ -814,6 +821,11 @@ def solve(run, config, stop=None, *, sweep_target=None, convergence=None):
     if "observation_cache_bytes" not in config:
         observation_budget = memory["observation_cache_bytes"]
     memory.update(field_cache_bytes=field_cache_bytes, observation_cache_bytes=observation_budget)
+    if options.get("colours") and memory["checkpoint"] != "sweep":
+        raise ValueError(
+            "field_colours needs the whole field in RAM (sweep checkpoints); this run would use "
+            + (memory.get("note") or "block checkpoints")
+        )
     if memory["checkpoint"] != "block":
         # Execution choice, not checkpoint identity: may differ on another host or resume.
         options["checkpoint"] = memory["checkpoint"]
