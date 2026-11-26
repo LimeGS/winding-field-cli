@@ -693,6 +693,19 @@ def test_solver_preconditioner_reaches_options_only_when_not_jacobi(tmp_path, po
         field_workflow.load_run_config(path)
 
 
+@pytest.mark.parametrize("kernel", ["eager", "fused"])
+def test_solver_kernel_reaches_options_only_when_fused(tmp_path, kernel):
+    path, config = prepared(tmp_path)
+    config["solver"]["kernel"] = kernel
+    path.write_text(json.dumps(config))
+    loaded = field_workflow.load_run_config(path)
+    assert loaded["solver"].get("kernel") == (None if kernel == "eager" else "fused")
+    config["solver"]["kernel"] = "triton"
+    path.write_text(json.dumps(config))
+    with pytest.raises(ValueError):
+        field_workflow.load_run_config(path)
+
+
 def test_status_policy_checkpoints_matches_default_field(tmp_path):
     path, config = prepared(tmp_path)
     field_workflow.run_field(path, tmp_path / "all")

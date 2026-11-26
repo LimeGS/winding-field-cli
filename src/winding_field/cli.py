@@ -438,6 +438,16 @@ def main(argv=None):
             ),
         )
         p.add_argument(
+            "--field-kernel",
+            choices=["eager", "fused"],
+            default=argparse.SUPPRESS,
+            help=(
+                "default: eager; fused runs the Jacobi/AMG field iterations with Triton GPU "
+                "kernels (CUDA only, ~2.5-3.5x faster Jacobi solves, same system and stopping "
+                "rules; falls back to eager elsewhere and records the kernel in the receipt)"
+            ),
+        )
+        p.add_argument(
             "--nonconvergence-policy",
             choices=("fail", "continue"),
             default="fail",
