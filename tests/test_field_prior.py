@@ -595,3 +595,30 @@ def _solve_inline_and_pooled(tmp_path, coarse, field, sheet):
         json.loads((run / "FIELD.json").read_bytes())["orientation"] for run in (inline, pooled)
     ]
     assert counts[0]["supported"] > 0 and counts[0] == counts[1]
+
+
+def test_lattice_points_take_the_same_values_as_scattered_points():
+    """A box of grid nodes is interpolated per axis; the result is bitwise the point path's,
+    including nodes outside the prior, on unsupported corners and on non-finite values."""
+    from winding_field.field import coordinates
+
+    rng = np.random.default_rng(3)
+    shape = (9, 11, 8)
+    stored = rng.random(shape) > 0.1
+    prior = _grid_prior(
+        lambda xyz: np.sin(xyz[..., 0] / 7) + 0.1 * xyz[..., 1] - 0.02 * xyz[..., 2] ** 2,
+        (5.0, -3.0, 2.0),
+        (4.0, 4.0, 4.0),
+        shape,
+        observed=rng.random(shape) > 0.2,
+        stored=stored,
+    )
+    prior._stored.values = np.where(rng.random(shape) > 0.05, prior._stored.values, np.nan)
+    meta = dict(spacing_xyz=np.array([1.5, 1.5, 1.5]), origin_xyz=np.array([1.0, -6.0, 0.5]))
+    lattice = coordinates((0, 0, 0), (26, 34, 24), meta)
+    scattered = lattice.reshape(-1, 3)
+    for a, b in zip(prior.sample(lattice), prior.sample(scattered)):
+        assert np.array_equal(a.ravel(), b, equal_nan=True)
+    for a, b in zip(prior.gradient(lattice), prior.gradient(scattered)):
+        assert np.array_equal(a.reshape(b.shape), b)
+    assert prior.gradient(lattice)[1].any() and not prior.gradient(lattice)[1].all()

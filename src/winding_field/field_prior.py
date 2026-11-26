@@ -45,6 +45,20 @@ def frame_match(**details):
     return dict(rule="ct-identity-without-reader-runtime", ignored=list(_READER_KEYS), **details)
 
 
+def _lattice_axes(points):
+    """Per-axis XYZ coordinates if ``points`` (Z, Y, X, 3) is an axis-aligned lattice, else None."""
+    if points.ndim != 4 or points.shape[-1] != 3 or 0 in points.shape:
+        return None
+    x, y, z = points[0, 0, :, 0], points[0, :, 0, 1], points[:, 0, 0, 2]
+    if (
+        np.array_equal(points[..., 0], np.broadcast_to(x[None, None, :], points.shape[:-1]))
+        and np.array_equal(points[..., 1], np.broadcast_to(y[None, :, None], points.shape[:-1]))
+        and np.array_equal(points[..., 2], np.broadcast_to(z[:, None, None], points.shape[:-1]))
+    ):
+        return [x, y, z]
+    return None
+
+
 class FieldPrior:
     def __init__(self, path, geometry, source=None):
         from .field import open_field
@@ -108,6 +122,9 @@ class FieldPrior:
         """Trilinear W from ``source``: valid where all 8 corners are in its support (and,
         with ``finite``, hold finite values)."""
         points = np.asarray(xyz, float)
+        axes = _lattice_axes(points)
+        if axes is not None:
+            return self._interpolate_lattice(axes, points.shape[:-1], source, finite)
         flat = points.reshape(-1, 3)
         index = (flat - self.origin) / self.spacing  # XYZ grid coordinates
         zyx = index[:, ::-1]
@@ -136,6 +153,45 @@ class FieldPrior:
             valid[inside] = ok
         return values.reshape(points.shape[:-1]), valid.reshape(points.shape[:-1])
 
+    def _interpolate_lattice(self, axes, shape, source, finite):
+        """``_interpolate`` for an axis-aligned lattice given by its per-axis XYZ coordinates.
+
+        The trilinear weights are products of per-axis weights, so the eight corners are
+        eight outer-indexed crops instead of eight gathers of one index triple per point.
+        Same operations in the same order as the point path: identical results.
+        """
+        values = np.full(shape, np.nan)
+        valid = np.zeros(shape, bool)
+        keep, base, frac = [], [], []
+        for d in range(3):  # ZYX
+            index = (axes[2 - d] - self.origin[2 - d]) / self.spacing[2 - d]
+            inside = (index >= 0) & (index <= self.shape[d] - 1)
+            b = np.minimum(np.floor(index[inside]).astype(int), max(self.shape[d] - 2, 0))
+            keep.append(np.flatnonzero(inside))
+            base.append(b)
+            frac.append(index[inside] - b)
+        if all(len(k) for k in keep):
+            lo = np.array([b.min() for b in base])
+            hi = np.minimum(np.array([b.max() for b in base]) + 2, self.shape)
+            crop, support = source.read(lo, hi)
+            acc = np.zeros(tuple(len(k) for k in keep))
+            ok = np.ones(acc.shape, bool)
+            for corner in np.ndindex(2, 2, 2):
+                at = np.ix_(
+                    *(np.minimum(base[d] - lo[d] + corner[d], crop.shape[d] - 1) for d in range(3))
+                )
+                wz, wy, wx = (frac[d] if corner[d] else 1 - frac[d] for d in range(3))
+                weight = (wz[:, None, None] * wy[None, :, None]) * wx[None, None, :]
+                corner_values = crop[at]
+                acc += weight * corner_values
+                ok &= support[at]
+                if finite:
+                    ok &= np.isfinite(corner_values)
+            inside = np.ix_(*keep)
+            values[inside] = np.where(ok, acc, np.nan)
+            valid[inside] = ok
+        return values, valid
+
     def gradient(self, xyz, max_points=1 << 22):
         """Central-difference gradient of the trilinear prior at world points ``xyz`` (..., 3).
 
@@ -150,6 +206,21 @@ class FieldPrior:
         """
         source = self._stored_source()
         points = np.asarray(xyz, float)
+        axes = _lattice_axes(points)
+        if axes is not None:
+            result = np.zeros(points.shape)
+            ok = np.ones(points.shape[:-1], bool)
+            for axis in range(3):
+                step = self.spacing[axis]
+                moved = list(axes)
+                moved[axis] = axes[axis] + step
+                ahead, ahead_ok = self._interpolate_lattice(moved, ok.shape, source, True)
+                moved[axis] = axes[axis] - step
+                behind, behind_ok = self._interpolate_lattice(moved, ok.shape, source, True)
+                result[..., axis] = (ahead - behind) / (2 * step)
+                ok &= ahead_ok & behind_ok
+            result[~ok] = 0.0
+            return result, ok
         flat = points.reshape(-1, 3)
         result = np.zeros(flat.shape)
         valid = np.zeros(len(flat), bool)
