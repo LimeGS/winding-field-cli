@@ -134,6 +134,24 @@ def validate_config(config):
         raise ValueError("field_advice must be boolean")
     if config.get("field_coarse_factor", 0) == 1:
         raise ValueError("field_coarse_factor must be 0 (off) or at least 2")
+    if (
+        config.get("field_colours", 0) not in (0, 8)
+        or type(config.get("field_colours", 0)) is not int
+    ):
+        raise ValueError("field_colours must be 0 or 8")
+    if config.get("field_colours", 0) and not config.get("field_coarse_factor", 0):
+        raise ValueError("field_colours requires field_coarse_factor")
+    if ("field_local_workers" in config or "field_local_devices" in config) and not config.get(
+        "field_colours", 0
+    ):
+        raise ValueError("field_local_workers/field_local_devices require field_colours 8")
+    devices = config.get("field_local_devices")
+    if devices is not None and (
+        not isinstance(devices, list)
+        or not devices
+        or not all(isinstance(d, str) and d for d in devices)
+    ):
+        raise ValueError("field_local_devices must be a nonempty list of device names")
     if config.get("field_pair_scope", "block") not in ("block", "global"):
         raise ValueError("field_pair_scope must be block or global")
     if config.get("field_memory", "auto") not in ("auto", "disk", "field", "all"):
@@ -239,6 +257,7 @@ def validate_config(config):
         "field_chunk": (4, None),
         "field_halo": (1, None),
         "field_coarse_factor": (0, None),
+        "field_local_workers": (1, 64),
         "level": (0, None),
         "sweeps": (1, None),
         "maxiter": (1, None),

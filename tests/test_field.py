@@ -800,6 +800,47 @@ def test_field_coarse_factor_is_part_of_the_problem_and_cuts_the_error(tmp_path)
         )
 
 
+def test_field_colours_are_opt_in_and_the_worker_count_leaves_the_field_unchanged(tmp_path):
+    from winding_field.config import validate_config
+    from winding_field.field import open_field, solve
+
+    validate_config(dict(field_coarse_factor=4, field_colours=8, field_local_workers=2))
+    validate_config(dict(field_coarse_factor=4, field_colours=8, field_local_devices=["cuda:0"]))
+    for bad, message in (
+        (dict(field_coarse_factor=4, field_colours=4), "field_colours"),
+        (dict(field_colours=8), "field_coarse_factor"),
+        (dict(field_coarse_factor=4, field_local_workers=2), "field_colours 8"),
+        (
+            dict(field_coarse_factor=4, field_colours=8, field_local_workers=0),
+            "field_local_workers",
+        ),
+        (
+            dict(field_coarse_factor=4, field_colours=8, field_local_devices=[]),
+            "field_local_devices",
+        ),
+    ):
+        with pytest.raises(ValueError, match=message):
+            validate_config(bad)
+
+    def field_after(name, **config):
+        run = prepared_run(tmp_path / name, shape=(6, 6, 32), chunk=8, variable=True)
+        base = dict(sweeps=2, field_chunk=8, field_coarse_factor=4, rtol=1e-10, maxiter=10000)
+        result = solve(run, {**base, "field_memory": "field", **config})
+        assert result["status"] == "FIELD_READY"
+        identity = json.loads((run / "field/CHECKPOINT.json").read_bytes())["identity"]
+        with open_field(run) as source:
+            values, _ = source.read([0, 0, 0], [6, 6, 32])
+        return identity, values
+
+    plain, _ = field_after("plain")
+    one, one_values = field_after("one", field_colours=8)
+    three, three_values = field_after("three", field_colours=8, field_local_workers=3)
+    assert "colours" not in plain and one["colours"] == 8 and one == three
+    np.testing.assert_array_equal(one_values, three_values)
+    with pytest.raises(ValueError, match="sweep checkpoints"):
+        field_after("disk", field_colours=8, field_memory="disk")
+
+
 def test_field_memory_tiers_give_the_same_field_and_are_reported(tmp_path):
     from winding_field.config import validate_config
     from winding_field.field import memory_plan, open_field, solve

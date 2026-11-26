@@ -62,6 +62,18 @@ PHerc0175A 384 box (RTX 5090, one field of 27 blocks) this configuration reached
 one-block solution in about 5 sweeps, and a steady sweep took 51 s against 137 s with AMG
 local solves and the eager loop. `--field-scope supported` cannot be combined with a
 coarse factor and is refused at validation.
+
+**Experimental, with a coarse factor:** `--field-colours 8` solves each sweep in eight
+colour batches (2 x 2 x 2 by chunk parity). Blocks of one colour do not share crops, so
+every block of a batch reads the field as it was before the batch (fibre pairs and the
+coarse correction included) and the batch commits in block order. That lets
+`--field-local-workers N` run N local solves at once, each on its own CUDA stream, while
+the main thread prepares the next blocks; `--field-local-devices cuda:0,cuda:1` spreads the
+workers over GPUs. The colouring changes the iteration and the run identity, and may need
+more sweeps than the default sequential order; the worker count and devices do not change
+the field. It needs sweep checkpoints (the whole field in RAM): a run whose memory tier
+falls back to block checkpoints is refused, and a stop takes effect between batches. The
+open batch also holds one owned core per block (about 1/4 of the float32 field at most).
 On a PHerc0175A plan-192 region (fibre weight 1000, chunk 64, halo 8, factor 8) global
 pairs cut the field error by about 0.41 per sweep (0.0145 turns max after 8 sweeps),
 while block pairs stopped at a coarse residual of 1.0. A sweep costs about 1.5 times a
