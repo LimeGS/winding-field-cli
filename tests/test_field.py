@@ -72,10 +72,35 @@ def test_physical_planar_field_and_fibre_constraints(tmp_path):
     assert receipt["physical_acceptance"] is False
 
 
+def test_fused_field_kernel_matches_eager_and_is_recorded(tmp_path):
+    import torch
+
+    from winding_field.field import solve, open_field
+
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    fields, receipts = {}, {}
+    for kernel in ("eager", "fused"):
+        run = prepared_run(tmp_path / kernel)
+        config = {"sweeps": 2, "field_chunk": 8, "device": device}
+        if kernel == "fused":
+            config["field_kernel"] = "fused"
+        receipts[kernel] = solve(run, config)
+        with open_field(run) as source:
+            fields[kernel] = source.read([0, 0, 0], [6, 6, 24])[0]
+        identity = json.loads((run / "field/CHECKPOINT.json").read_text())["identity"]
+        assert identity.get("kernel") == (None if kernel == "eager" else "fused")
+    np.testing.assert_allclose(fields["fused"], fields["eager"], atol=1e-6)
+    assert "solver_kernels" not in receipts["eager"]["solver"]
+    used = receipts["fused"]["solver"]["solver_kernels"]
+    # Off CUDA (and outside Triton's interpreter) the core falls back to eager and says so.
+    assert set(used) == {"fused-v1" if device == "cuda" else "eager"}
+
+
 @pytest.mark.parametrize(
     "config",
     [
         {"preconditioner": "spectral"},
+        {"field_kernel": "triton"},
         {"prepared_cache_bytes": True},
         {"prepared_cache_bytes": -1},
         {"prepared_cache_bytes": 1.5},
