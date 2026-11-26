@@ -161,7 +161,15 @@ def validate_run_config(mapping: dict, *, base: Path) -> dict[str, Any]:
         }
         _keys(
             solver,
-            {"device", "dtype", "rtol", "maxiter", "preconditioner", "nonconvergence_policy"},
+            {
+                "device",
+                "dtype",
+                "rtol",
+                "maxiter",
+                "preconditioner",
+                "kernel",
+                "nonconvergence_policy",
+            },
             "solver",
         )
         preconditioner = solver.pop("preconditioner", "jacobi")
@@ -169,6 +177,11 @@ def validate_run_config(mapping: dict, *, base: Path) -> dict[str, Any]:
             raise ValueError("prepared block workflows require preconditioner='jacobi' or 'amg'")
         if preconditioner == "amg":
             solver["preconditioner"] = "amg"
+        kernel = solver.pop("kernel", "eager")
+        if kernel not in ("eager", "fused"):
+            raise ValueError("prepared block workflows require kernel='eager' or 'fused'")
+        if kernel == "fused":
+            solver["kernel"] = "fused"
         if solver.get("nonconvergence_policy", "fail") not in ("fail", "continue"):
             raise ValueError("invalid nonconvergence_policy")
         if solver["dtype"] not in ("float32", "float64") or solver["device"] not in (
@@ -575,7 +588,14 @@ def _supervised(config_path: Path, output: Path, *, resume: bool, prefetch: bool
     )
 
 
-_SOLVER_FLAGS = {"device": str, "dtype": str, "rtol": float, "maxiter": int, "preconditioner": str}
+_SOLVER_FLAGS = {
+    "device": str,
+    "dtype": str,
+    "rtol": float,
+    "maxiter": int,
+    "preconditioner": str,
+    "kernel": str,
+}
 _EXECUTION_FLAGS = {
     name: int
     for name in (

@@ -160,6 +160,20 @@ weaken its aggregation (41 iterations on a 128³ tile with weak fibres). Fixed
 `tile_memory.preconditioner` records the choice; the solver records it in each tile's
 block identity, so a tile keeps it when resumed.
 
+**Kernel (`--tile-kernel`, default `eager`).** `fused` adds `--field-kernel fused` to every
+tile: the core runs the PCG iterations as three Triton GPU kernels instead of ~40 PyTorch
+ops (core `solve_field(kernel="fused")`). The solve is bandwidth-bound, and fusing cuts the
+non-fibre traffic per node-iteration from ~490 to ~120 bytes in float64; Jacobi gains most,
+AMG only in its outer iteration (its V-cycle is unchanged). Same system and stopping rules,
+round-off-level differences; the final residual is still measured with the eager operator.
+The kernel joins the block identity (a tile resumes only with the same kernel), and each
+tile's receipt counts the solves per kernel actually used (`solver.solver_kernels`); off
+CUDA the core falls back to eager and says so there.
+Measured on a real 224³ PHerc0175A tile (GTX 1660, Jacobi, fibre weight 1000, rtol 1e-7):
+CG solve 177.5 s eager, 82 s fused (2.16x; 5,018 vs 5,014 iterations), field stage 321 s →
+~220 s, fused reruns byte-identical, max difference 3.8e-6 windings. The fibre rows stay on
+the eager sparse matvec (~18 % of an eager iteration on the 1660, ~27 % on an A100).
+
 **Larger is not cheaper per node.** Measured alone on a GTX 1660, the solve took 24 s for
 128³ nodes, 142 s for 192³ and 538 s for 256³: 11, 20 and 32 µs per node, about the tile
 edge to the power 1.5 (iterations grow with the tile), with the memory controller busy

@@ -862,3 +862,17 @@ def test_tiles_stopped_by_the_plan_until_are_prepared_and_solve_on_the_next_run(
     assert json.loads((root / "status/000-000-000.json").read_text())["status"] == "PREPARED"
     second = scroll.run_tiles(args)
     assert second["status"] == "TILES_DONE" and second["DONE"] == 2
+
+
+def test_tile_kernel_fused_adds_the_field_kernel_run_flag(tmp_path, monkeypatch):
+    from winding_field import workflow
+
+    monkeypatch.setattr(workflow, "open_volume", lambda config: _FakeVolume())
+    coarse = write_coarse(tmp_path / "coarse")
+    scroll.plan(_plan_args(tmp_path, coarse, "--tile-nodes", "128"))
+    assert (
+        "--field-kernel" not in json.loads((tmp_path / "plan/TILES.json").read_text())["run_args"]
+    )
+    scroll.plan(_plan_args(tmp_path / "f", coarse, "--tile-nodes", "128", "--tile-kernel", "fused"))
+    run_args = json.loads((tmp_path / "f/plan/TILES.json").read_text())["run_args"]
+    assert run_args[run_args.index("--field-kernel") + 1] == "fused"
