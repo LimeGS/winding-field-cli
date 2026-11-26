@@ -347,9 +347,10 @@ def main(argv=None):
         p.add_argument(
             "--field-chunk",
             type=int,
-            default=64,
-            help="field solver block edge in field-grid samples (default: 64); at least the "
-            "largest grid dimension solves the whole field as one block",
+            default=argparse.SUPPRESS,
+            help="field solver block edge in field-grid samples (default: 64, or 128 with "
+            "--field-coarse-factor); at least the largest grid dimension solves the whole "
+            "field as one block",
         )
         p.add_argument(
             "--sweeps",
@@ -443,7 +444,7 @@ def main(argv=None):
             choices=["eager", "fused"],
             default=argparse.SUPPRESS,
             help=(
-                "default: eager; fused runs the Jacobi/AMG field iterations with Triton GPU "
+                "default: eager (fused with --field-coarse-factor); fused runs the Jacobi/AMG field iterations with Triton GPU "
                 "kernels (CUDA only, ~2x faster Jacobi solves on a GTX 1660, same system and stopping "
                 "rules; falls back to eager elsewhere and records the kernel in the receipt)"
             ),
@@ -494,8 +495,9 @@ def main(argv=None):
             "--field-halo",
             type=int,
             default=argparse.SUPPRESS,
-            help="field nodes each solver block shares with its neighbours (default: 2); "
-            "a wider overlap reaches the global solution in fewer sweeps",
+            help="field nodes each solver block shares with its neighbours (default: 2, or 8 "
+            "with --field-coarse-factor); a wider overlap reaches the global solution in "
+            "fewer sweeps",
         )
         p.add_argument(
             "--field-coarse-factor",
@@ -503,7 +505,9 @@ def main(argv=None):
             default=argparse.SUPPRESS,
             help="experimental, 0 (default) or >= 2: open every field sweep with a global coarse correction on "
             "every F-th node (two-level Schwarz); large-scale structure then crosses all blocks "
-            "in each sweep instead of one overlap per sweep",
+            "in each sweep instead of one overlap per sweep. Sets the measured production "
+            "defaults for what is not given: --field-chunk 128, --field-halo 8, --field-kernel "
+            "fused (Jacobi stays the preconditioner)",
         )
         p.add_argument(
             "--field-prior-calibration",
@@ -914,12 +918,12 @@ def main(argv=None):
             )
         elif args.command in ("run", "plan"):
             from .workflow import run, plan, stage_path
-            from .config import validate_config
+            from .config import field_defaults, validate_config
             from .export_settings import tifxyz_request, pop_tifxyz_options, output_frame_overrides
             from .cli_settings import merge_explicit, read_settings
             from .util import digest
 
-            config = vars(args).copy()
+            config = field_defaults(vars(args).copy())
             command = config.pop("command")
             until = config.pop("until")
             from .input_settings import import_requests, IMPORT_OPTIONS

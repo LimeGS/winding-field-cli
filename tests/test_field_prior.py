@@ -227,3 +227,17 @@ def test_lattice_points_take_the_same_values_as_scattered_points(shape):
     assert np.array_equal(values.ravel(), flat_values, equal_nan=True)
     assert np.array_equal(valid.ravel(), flat_valid)
     assert valid.any() and not valid.all()
+
+
+def test_coarse_factor_sets_the_production_field_defaults_for_unset_flags():
+    from winding_field.config import field_defaults
+
+    assert field_defaults({}) == dict(field_chunk=64)
+    assert field_defaults(dict(field_coarse_factor=0, field_halo=3)) == dict(
+        field_coarse_factor=0, field_halo=3, field_chunk=64
+    )
+    assert field_defaults(dict(field_coarse_factor=8)) == dict(
+        field_coarse_factor=8, field_chunk=128, field_halo=8, field_kernel="fused"
+    )
+    explicit = dict(field_coarse_factor=8, field_chunk=64, field_halo=4, field_kernel="eager")
+    assert field_defaults(dict(explicit)) == explicit

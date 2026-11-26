@@ -54,6 +54,14 @@ and field advice keep per-block checkpoints. The field is bit-identical in every
 `--field-pair-scope global` (fibre pairs sampled over the whole grid). They change the
 field and its identity. With a coarse factor the pair scope defaults to `global`: with
 block-sampled pairs the blocks do not solve the global problem and the sweeps plateau.
+A coarse factor also sets the production defaults for the flags that are not given:
+`--field-chunk 128`, `--field-halo 8` and `--field-kernel fused` (Jacobi stays the
+preconditioner; the fused kernels fall back to the eager loop where they cannot run, and
+the receipt says so). They are resolved when the run is created and saved with it. On the
+PHerc0175A 384 box (RTX 5090, one field of 27 blocks) this configuration reached the
+one-block solution in about 5 sweeps, and a steady sweep took 51 s against 137 s with AMG
+local solves and the eager loop. `--field-scope supported` cannot be combined with a
+coarse factor and is refused at validation.
 On a PHerc0175A plan-192 region (fibre weight 1000, chunk 64, halo 8, factor 8) global
 pairs cut the field error by about 0.41 per sweep (0.0145 turns max after 8 sweeps),
 while block pairs stopped at a coarse residual of 1.0. A sweep costs about 1.5 times a
