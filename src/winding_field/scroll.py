@@ -168,6 +168,7 @@ AMG_HIERARCHY_BYTES_PER_NODE = 350.0
 # Below this tile edge the AMG setup is not paid back: auto uses Jacobi for smaller tiles.
 AMG_MIN_TILE_NODES = 192
 TILE_PRECONDITIONERS = ("auto", "amg", "jacobi")
+TILE_KERNELS = ("eager", "fused")
 
 
 def tile_bytes_per_node(spacing_um, preconditioner="jacobi"):
@@ -513,6 +514,8 @@ def plan(args):
         run_args += ["--field-chunk", str(edge), *ONE_BLOCK_RUN_ARGS]
     if preconditioner == "amg":
         run_args += ["--preconditioner", "amg"]
+    if args.tile_kernel == "fused":
+        run_args += ["--field-kernel", "fused"]
     run_args += list(args.run_arg or [])
     document = dict(
         schema=PLAN_SCHEMA,
@@ -1899,6 +1902,13 @@ def _parser():
         f"fits the GPU down to {AMG_MIN_TILE_NODES} nodes per axis, else Jacobi; amg forces "
         "AMG. AMG needs ~3.4x the GPU and host memory of Jacobi and was slower with strong "
         "fibres (docs/SCROLL.md)",
+    )
+    p.add_argument(
+        "--tile-kernel",
+        choices=TILE_KERNELS,
+        default="eager",
+        help="eager (default); fused: solve tiles with the fused Triton GPU kernels "
+        "(run --field-kernel fused; CUDA only, same system and stopping rules)",
     )
     p.add_argument(
         "--overlap-nodes",

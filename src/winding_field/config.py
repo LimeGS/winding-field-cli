@@ -121,6 +121,8 @@ def validate_config(config):
         raise ValueError("field_memory must be auto, disk, field or all")
     if config.get("preconditioner", "jacobi") not in ("jacobi", "amg"):
         raise ValueError("block workflows require preconditioner='jacobi' or 'amg'")
+    if config.get("field_kernel", "eager") not in ("eager", "fused"):
+        raise ValueError("field_kernel must be eager or fused")
     if config.get("field_status_policy", "all") not in ("all", "checkpoints"):
         raise ValueError("field_status_policy must be all or checkpoints")
     prior = config.get("field_prior")

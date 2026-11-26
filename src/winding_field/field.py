@@ -597,6 +597,9 @@ def solve(run, config, stop=None, *, sweep_target=None, convergence=None):
     preconditioner = config.get("preconditioner", "jacobi")
     if preconditioner not in ("jacobi", "amg"):
         raise ValueError("block workflows require preconditioner='jacobi' or 'amg'")
+    kernel = config.get("field_kernel", "eager")
+    if kernel not in ("eager", "fused"):
+        raise ValueError("field_kernel must be eager or fused")
     status_policy = config.get("field_status_policy", "all")
     if status_policy not in ("all", "checkpoints"):
         raise ValueError("field_status_policy must be all or checkpoints")
@@ -756,6 +759,9 @@ def solve(run, config, stop=None, *, sweep_target=None, convergence=None):
     if preconditioner != "jacobi":
         # Only a non-default policy is passed: Jacobi run identities stay unchanged.
         options["preconditioner"] = preconditioner
+    if kernel != "eager":
+        # The core adds the kernel to the problem identity only when it is not eager.
+        options["kernel"] = kernel
     coarse_factor = config.get("field_coarse_factor", 0)
     if type(coarse_factor) is not int or coarse_factor < 0 or coarse_factor == 1:
         raise ValueError("field_coarse_factor must be 0 (off) or at least 2")

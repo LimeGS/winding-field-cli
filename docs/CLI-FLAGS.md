@@ -130,7 +130,7 @@ never a hidden requirement for another handwritten JSON file.
 | `sheet_step`, `calibration` | `--sheet-step`, `--calibration` | raw field units/sheet, provenance string |
 | `observations.target/weights/observed` | `--target/--weights/--observed` and each `--NAME-sha256` | local array path and lowercase SHA256 |
 | `fixed`, `constraints`, `order` | `--fixed/--constraints/--order` and each `--NAME-sha256` | local NPY/NPZ data path and SHA256 |
-| `solver.*` | `--device`, `--dtype`, `--rtol`, `--maxiter`, `--preconditioner` | existing solver types/defaults; `--preconditioner jacobi` (default) or `amg` |
+| `solver.*` | `--device`, `--dtype`, `--rtol`, `--maxiter`, `--preconditioner`, `--kernel` | existing solver types/defaults; `--preconditioner jacobi` (default) or `amg`; `--kernel eager` (default) or `fused` (Triton GPU kernels, CUDA only) |
 | `execution.*` | `--chunk`, `--halo`, `--sweeps`, `--cache-bytes`, `--read-workers`, `--constraint-cache-bytes`, `--prepared-cache-bytes`, `--max-bytes`, `--reserve-bytes` | integer node counts, counts or bytes as named |
 | `gpu.*` | `--gpu-index`, `--gpu-uuid`, `--gpu-lock-path`, `--gpu-min-free-bytes`, `--gpu-deadline` | index, explicit UUID, local lock path, bytes, epoch seconds |
 | `source_identity` | repeated `--source-identity KEY JSON_VALUE` | strict JSON values; duplicate keys reject |
