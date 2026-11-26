@@ -125,8 +125,9 @@ def prepare_static_block(spec, lo, hi, build_rows=True):
     _, maps, db, prior = _STATE
     low = np.asarray(lo)
     high = np.asarray(hi)
+    orientation = {} if prior is not None else None
     values = sample_prior(
-        maps, spec["meta"], spec["geometry"], spec["calibration"], low, high, prior
+        maps, spec["meta"], spec["geometry"], spec["calibration"], low, high, prior, orientation
     )
     observations = (*values, {"maps": spec["meta"]["tiles_sha256"]})
     try:
@@ -163,6 +164,8 @@ def prepare_static_block(spec, lo, hi, build_rows=True):
         * (1 if sys.platform == "darwin" else 1024),
         built_constraints=build_rows,
     )
+    if orientation is not None:
+        info["orientation"] = orientation
     return PreparedBlock(tuple(lo), tuple(hi), digest(spec), observations, rows, size, info)
 
 
@@ -251,6 +254,7 @@ class CPUFieldInputs:
         self.pool = None
         self.closed = False
         self.boxes = [(tuple(map(int, lo)), tuple(map(int, hi))) for lo, hi in spec["boxes"]]
+        self.orientation_boxes = set()
         self.next_index = 0
         run = Path(spec["run"])
         # Bound source decompression separately from retained/IPC payloads.
@@ -350,6 +354,13 @@ class CPUFieldInputs:
         self.active = validate_block(block, self.spec, low, high, build_rows=build)
         self.pending.popleft()
         self.stats["completed"] += 1
+        # prior-gradient orientation counts, each box once (as the in-process path).
+        orientation = block.worker_info.pop("orientation", None)
+        if orientation is not None and bounds not in self.orientation_boxes:
+            self.orientation_boxes.add(bounds)
+            total = self.stats.setdefault("orientation", {})
+            for name, count in orientation.items():
+                total[name] = total.get(name, 0) + int(count)
         self.stats["worker_info"][str(block.worker_info["pid"])] = block.worker_info
         return block.observations
 

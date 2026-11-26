@@ -72,7 +72,7 @@ PRIOR_GRADIENT_MIN_DENSITY = 0.3
 FIELD_ORIENTATIONS = ("radial", "prior-gradient")
 
 
-def oriented(data, xyz, cal, prior=None):
+def oriented(data, xyz, cal, prior=None, stats=None):
     """Sheet-normal targets signed outward, with weights and the nodes that keep them.
 
     By default (radial) a normal is signed against the direction from the calibration
@@ -81,10 +81,12 @@ def oriented(data, xyz, cal, prior=None):
     direction, so a wedge of nodes is dropped and a tilted sheet takes its tilt's sign.
 
     With ``prior`` (a FieldPrior; --field-orientation prior-gradient) a normal is signed
-    against the prior's own gradient wherever all six of its central-difference samples
-    are supported, and dropped where that gradient is nearly perpendicular to the normal
-    or weaker than PRIOR_GRADIENT_MIN_DENSITY x the sheet density. The radial rule
-    remains outside the prior's support.
+    against the prior's own gradient (FieldPrior.gradient: stored values, observed or
+    not) wherever it is defined, and dropped where that gradient is nearly perpendicular
+    to the normal or weaker than PRIOR_GRADIENT_MIN_DENSITY x the sheet density. The
+    radial rule remains where the gradient is undefined. ``stats``, a dict, accumulates
+    the supported nodes and their split into prior_signed, prior_dropped, radial_signed and
+    radial_dropped.
     """
     direction = np.asarray(cal["axis_xyz"]) if cal["mode"] == "planar" else xyz - cal["centre_xyz"]
     if cal["mode"] != "planar":
@@ -103,12 +105,60 @@ def oriented(data, xyz, cal, prior=None):
         )
         dot = np.where(defined, along, dot)
         valid = np.where(defined, kept, valid)
+        if stats is not None:
+            support = data["support"]
+            for name, count in (
+                ("supported", support),
+                ("prior_signed", support & defined & valid),
+                ("prior_dropped", support & defined & ~valid),
+                ("radial_signed", support & ~defined & valid),
+                ("radial_dropped", support & ~defined & ~valid),
+            ):
+                stats[name] = stats.get(name, 0) + int(np.count_nonzero(count))
     target = (
         data["normals"] * np.where(dot >= 0, 1.0, -1.0)[..., None] * data["density"][..., None]
     ).astype(np.float32)
     target[~valid] = 0
     weights = np.where(valid, 1.0, 1e-3).astype(np.float32)
     return target, weights, valid
+
+
+# A prior-gradient run whose radial fallback exceeds this share is reported as a warning.
+RADIAL_FALLBACK_WARNING = 0.05
+ORIENTATION_CLASSES = ("prior_signed", "prior_dropped", "radial_signed", "radial_dropped")
+
+
+def _orientation_receipt(rule, *counters):
+    """The orientation rule with its node counts and shares, also logged on stderr.
+
+    The four ORIENTATION_CLASSES partition the supported nodes; radial_fallback is the sum
+    of the two radial ones.
+    """
+    total = dict.fromkeys(("supported", *ORIENTATION_CLASSES), 0)
+    for counter in counters:
+        for name, count in counter.items():
+            total[name] += int(count)
+    total["radial_fallback"] = total["radial_signed"] + total["radial_dropped"]
+    supported = total["supported"]
+    shares = {
+        name + "_share": total[name] / supported if supported else None
+        for name in (*ORIENTATION_CLASSES, "radial_fallback")
+    }
+    receipt = dict(
+        rule, counted="each solved observation box once, halos included", **total, **shares
+    )
+    if supported:
+        share = {name: f"{value:.1%}" for name, value in shares.items()}
+        warning = "WARNING: " if shares["radial_fallback_share"] > RADIAL_FALLBACK_WARNING else ""
+        print(
+            f"[field] {warning}orientation prior-gradient over {supported} supported nodes: "
+            f"prior gradient signed {share['prior_signed_share']}, dropped "
+            f"{share['prior_dropped_share']}; radial fallback {share['radial_fallback_share']} "
+            f"(signed {share['radial_signed_share']}, dropped {share['radial_dropped_share']})",
+            file=sys.stderr,
+            flush=True,
+        )
+    return receipt
 
 
 def initial_field(xyz, meta, cal):
@@ -162,15 +212,16 @@ def _owned_chunks(run, order, chunk, shape, identity, maps, meta, cal, prior=Non
     return owned
 
 
-def sample_prior(maps, meta, geometry, cal, lo, hi, prior=None):
-    """Oriented observations on field nodes ``lo..hi``; ``prior`` as in ``oriented``."""
+def sample_prior(maps, meta, geometry, cal, lo, hi, prior=None, stats=None):
+    """Oriented observations on field nodes ``lo..hi``; ``prior`` and ``stats`` as in
+    ``oriented`` (stats count map nodes when the maps and field grids differ)."""
     names = ("normals", "density", "support")
     if all(geometry[k] == meta[k] for k in ("origin_xyz", "spacing_xyz", "shape_zyx")):
-        return oriented(maps.read_many(names, lo, hi), coordinates(lo, hi, meta), cal, prior)
+        return oriented(maps.read_many(names, lo, hi), coordinates(lo, hi, meta), cal, prior, stats)
 
     def transform(data, start):
         target, weights, valid = oriented(
-            data, coordinates(start, start + data["support"].shape, meta), cal, prior
+            data, coordinates(start, start + data["support"].shape, meta), cal, prior, stats
         )
         return dict(target=target, weights=weights, support=valid)
 
@@ -181,14 +232,16 @@ def sample_prior(maps, meta, geometry, cal, lo, hi, prior=None):
     return data["target"], data["weights"], valid
 
 
-def open_field(run):
+def open_field(run, support_policy="observed"):
+    """A completed field run's checkpoint; ``support_policy`` "observed" (default) admits
+    observed nodes, "stored" every stored node."""
     run = Path(run)
     meta = json.loads((run / "FIELD.json").read_bytes())
     descriptor = dict(
         kind="chunks",
         path=str((run / "field/CHECKPOINT.json").resolve()),
         sha256=meta["checkpoint_sha256"],
-        support_policy="observed",
+        support_policy=support_policy,
     )
     # Retain at least one decoded chunk so a field stored as a few large blocks is not
     # decoded again for every read; affects memory only.
@@ -489,8 +542,10 @@ def solve(run, config, stop=None, *, sweep_target=None, convergence=None):
                 "field_orientation prior-gradient requires field_prior and ordinary preparation"
             )
         # Only recorded when not radial, so radial runs keep their identity and resume.
+        # v2: the gradient reads the prior's stored values (v1 required observed corners).
         identity["orientation"] = dict(
-            rule="prior-gradient-central-v1",
+            rule="prior-gradient-central-v2",
+            prior_values="stored-finite",
             min_dot=ORIENTATION_MIN_DOT,
             min_gradient_per_density=PRIOR_GRADIENT_MIN_DENSITY,
             fallback="radial",
@@ -677,13 +732,18 @@ def solve(run, config, stop=None, *, sweep_target=None, convergence=None):
     def source_receipt():
         return {"maps": meta["tiles_sha256"]}
 
-    def compute_observations(lo, hi):
+    # prior-gradient orientation: node counts, each solved observation box once (halos
+    # included); the CPU pool keeps its own (CPUFieldInputs.stats["orientation"]).
+    orientation_stats = {}
+    orientation_boxes = set()
+
+    def compute_observations(lo, hi, stats=None):
         if bounded:
             values = maps.read_many(("target", "weights", "support"), lo, hi)
             target, weights, valid = (values[k] for k in ("target", "weights", "support"))
         else:
             target, weights, valid = sample_prior(
-                maps, meta, geometry, cal, lo, hi, orientation_prior
+                maps, meta, geometry, cal, lo, hi, orientation_prior, stats
             )
         return target, weights, valid, source_receipt()
 
@@ -700,7 +760,12 @@ def solve(run, config, stop=None, *, sweep_target=None, convergence=None):
             observation_stats["hits"] += 1
             return (*cached, source_receipt())
         observation_stats["misses"] += 1
-        values = cpu_inputs.load(lo, hi) if cpu_inputs is not None else compute_observations(lo, hi)
+        if cpu_inputs is not None:
+            values = cpu_inputs.load(lo, hi)
+        else:
+            counted = orientation_prior is not None and key not in orientation_boxes
+            orientation_boxes.add(key)
+            values = compute_observations(lo, hi, orientation_stats if counted else None)
         if observation_state["retain"] and cached is None and key in solve_boxes:
             arrays = tuple(values[:3])
             charge = 4096 + sum(a.nbytes for a in arrays)
@@ -1040,6 +1105,11 @@ def solve(run, config, stop=None, *, sweep_target=None, convergence=None):
             receipt["field_prior"] = identity["field_prior"]
         if "field_scope" in identity:
             receipt["field_scope"] = identity["field_scope"]
+        if orientation_prior is not None:
+            pooled = cpu_inputs.stats.get("orientation", {}) if cpu_inputs is not None else {}
+            receipt["orientation"] = _orientation_receipt(
+                identity["orientation"], orientation_stats, pooled
+            )
         atomic_json(run / "FIELD.json", receipt)
         return receipt
     except InterruptedError:
