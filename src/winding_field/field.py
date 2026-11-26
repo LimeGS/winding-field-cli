@@ -459,6 +459,11 @@ def global_pair_constraints(db, meta, fibres, geometry, maps, shape, weight, cac
     )
 
 
+def _global_pair_catalog(meta, fibres):
+    """Global pairs come from the on-disk catalog where curves are read in id order."""
+    return meta["prediction"] == "qual-v2" or bool(fibres.get("spatial_index"))
+
+
 def pair_index_bytes(count, available=None):
     """Spatial index budget for ``count`` global pairs, or 0 when it would not fit.
 
@@ -1028,14 +1033,91 @@ def solve(run, config, stop=None, *, sweep_target=None, convergence=None):
             file=sys.stderr,
             flush=True,
         )
+    pair_catalog = None
     if pair_scope == "global" and pair_provider is None and len(options["order"]) > 1:
         # Several blocks: one global pair set, restricted per crop with exterior terms.
-        rows = global_pair_constraints(
-            db, meta, fibres, geometry, maps, shape, identity["fibre_weight"], constraint_budget
-        )
+        if _global_pair_catalog(meta, fibres):
+            # The same rows from a catalog on disk: the in-memory set does not fit a scroll.
+            from . import global_pairs
+
+            status = global_pairs.build(
+                run / "field-pairs",
+                run / "fibres/fibres.sqlite",
+                fibres["sha256"],
+                geometry,
+                shape,
+                workers=global_pairs.default_workers(),
+                stop=stop,
+            )
+            if status == "PAUSED":
+                maps.close()
+                return dict(status="PAUSED")
+            rows = global_pairs.GlobalPairs(
+                run / "field-pairs",
+                geometry,
+                shape,
+                identity["fibre_weight"],
+                cache_bytes=constraint_budget,
+            )
+            if len(rows):
+                boxes = []
+                for key in options["order"]:
+                    low = np.array(key) * chunk
+                    high = np.minimum(low + chunk, shape)
+                    boxes.append(
+                        (
+                            np.maximum(low - options["halo"], 0),
+                            np.minimum(high + options["halo"], shape),
+                        )
+                    )
+                rows.prefetch(boxes, global_pairs.default_workers())
+                pair_catalog = rows
+            else:
+                rows = None
+        else:
+            rows = global_pair_constraints(
+                db, meta, fibres, geometry, maps, shape, identity["fibre_weight"], constraint_budget
+            )
         options["constraints"] = rows
         identity["pair_scope"] = "global-grid-v1"
-        row_count = 0 if rows is None else len(rows._weights)
+        row_count = (
+            0 if rows is None else rows.count if hasattr(rows, "count") else len(rows._weights)
+        )
+
+    def initial_values(keys):
+        """(key, start, valid) per chunk; ordinary fields compute them in worker processes."""
+        from .global_pairs import default_workers
+
+        workers = min(default_workers(), len(keys))
+        if bounded or workers < 2:
+            for key in keys:
+                lo = np.array(key) * chunk
+                hi = np.minimum(lo + chunk, shape)
+                _, _, valid, _ = compute_observations(lo, hi)
+                xyz = coordinates(lo, hi, geometry)
+                start = initial_field(xyz, geometry, cal)
+                if prior is not None:
+                    start = prior.initial(xyz, start)
+                yield key, start, valid
+            return
+        from .field_init import initial_chunks
+
+        spec = dict(
+            run=str(run.resolve()),
+            meta=meta,
+            geometry=geometry,
+            calibration=cal,
+            orientation=orientation,
+            sheet=orientation_sheet,
+            prior=None
+            if prior is None
+            else dict(
+                path=str(config["field_prior"]),
+                field_json_sha256=prior.identity["field_json_sha256"],
+            ),
+        )
+        yield from initial_chunks(spec, keys, chunk, shape, workers)
+
     try:
         checkpoint = root / "CHECKPOINT.json"
         if not checkpoint.exists():
@@ -1057,18 +1139,14 @@ def solve(run, config, stop=None, *, sweep_target=None, convergence=None):
                 max_bytes=options.get("max_bytes"),
             ) as store:
                 progress = store.manifest["progress"]
-                for key in options["order"]:
+                todo = [
+                    key
+                    for key in options["order"]
+                    if "-".join(map(str, key)) not in store.manifest["chunks"]
+                ]
+                for key, start, valid in initial_values(todo):
                     if stop and stop():
                         return dict(status="PAUSED")
-                    if "-".join(map(str, key)) in store.manifest["chunks"]:
-                        continue
-                    lo = np.array(key) * chunk
-                    hi = np.minimum(lo + chunk, shape)
-                    _, _, valid, _ = compute_observations(lo, hi)
-                    xyz = coordinates(lo, hi, geometry)
-                    start = initial_field(xyz, geometry, cal)
-                    if prior is not None:
-                        start = prior.initial(xyz, start)
                     store.commit(key, start, progress, valid)
                 progress["initialization_done"] = True
                 store.save_progress(progress)
@@ -1322,3 +1400,5 @@ def solve(run, config, stop=None, *, sweep_target=None, convergence=None):
             prior.close()
         if pair_provider is not None:
             pair_provider.__exit__()
+        if pair_catalog is not None:
+            pair_catalog.close()
