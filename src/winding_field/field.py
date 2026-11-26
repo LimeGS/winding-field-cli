@@ -71,10 +71,12 @@ ORIENTATION_MIN_DOT = 0.15
 PRIOR_GRADIENT_MIN_DENSITY = 0.3
 FIELD_ORIENTATIONS = ("radial", "prior-gradient")
 # The prior-gradient sheet check (see sheet_inconsistent): probe radii in nodes of the maps'
-# lattice, directions per radius in the node's tangent plane, and the check's defaults.
+# lattice, directions per radius in the node's tangent plane, and the check's defaults. The
+# check is off unless a share below 1 is given: on the 175A corner tiles it moved the seam
+# gate from 20.06% to 19.67%, so it is kept as an experiment, not as part of the rule.
 SHEET_CHECK_RADII = (3, 6)
 SHEET_CHECK_DIRECTIONS = 8
-SHEET_CHECK_MAX_DISAGREEMENT = 0.3
+SHEET_CHECK_MAX_DISAGREEMENT = 1.0
 SHEET_CHECK_MIN_PROBES = 0
 
 
@@ -668,9 +670,14 @@ def solve(run, config, stop=None, *, sweep_target=None, convergence=None):
             0 <= orientation_sheet["min_probes"] <= probes
         ):
             raise ValueError(f"field_orientation_min_probes must be an integer from 0 to {probes}")
+        if least is not None and orientation_sheet["max_disagreement"] >= 1:
+            raise ValueError(
+                "field_orientation_min_probes requires field_orientation_max_disagreement below 1"
+            )
         if orientation_sheet["max_disagreement"] < 1:
             # v3: also drop prior-signed nodes the prior contradicts along their own sheet.
-            # A share of 1 flags nothing and keeps the v2 identity, so v2 runs resume.
+            # A share of 1, the default, flags nothing and keeps the v2 identity, so v2 runs
+            # resume; a v3 run resumes only with its share given again.
             identity["orientation"].update(
                 rule="prior-gradient-central-v3",
                 sheet_check=dict(

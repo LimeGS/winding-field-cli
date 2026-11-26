@@ -452,6 +452,10 @@ def test_prior_gradient_orientation_is_validated_and_recorded(tmp_path, coarse, 
             validate_config({**gradient, key: value})
     with pytest.raises(ValueError, match="sheet check requires field_orientation prior-gradient"):
         validate_config({"field_prior": str(coarse), "field_orientation_min_probes": 4})
+    # The check is off unless a share below 1 is given; min_probes alone would do nothing.
+    for share in ({}, {"field_orientation_max_disagreement": 1}):
+        with pytest.raises(ValueError, match="requires field_orientation_max_disagreement below"):
+            validate_config({**gradient, **share, "field_orientation_min_probes": 4})
     validate_config(
         {**gradient, "field_orientation_max_disagreement": 0, "field_orientation_min_probes": 16}
     )
@@ -465,7 +469,8 @@ def test_prior_gradient_orientation_is_validated_and_recorded(tmp_path, coarse, 
     radial = _tile(tmp_path / "radial", (6, 6, 16), shift_x=20.0)
     assert field.solve(radial, config)["status"] == "FIELD_READY"
     tile = _tile(tmp_path / "prior", (6, 6, 16), shift_x=20.0)
-    receipt = field.solve(tile, dict(config, field_orientation="prior-gradient"))
+    checked = dict(config, field_orientation="prior-gradient")
+    receipt = field.solve(tile, dict(checked, field_orientation_max_disagreement=0.3))
     assert receipt["status"] == "FIELD_READY"
     identity = json.loads((tile / "field/CHECKPOINT.json").read_bytes())["identity"]
     rule = identity["source_identity"]["orientation"]
@@ -487,18 +492,21 @@ def test_prior_gradient_orientation_is_validated_and_recorded(tmp_path, coarse, 
     assert counts["radial_fallback_share"] == counts["radial_fallback"] / counts["supported"]
     log = capsys.readouterr().err
     assert "orientation prior-gradient over" in log and "dropped by the sheet check" in log
-    # A share of 1 flags nothing and keeps the v2 identity, so v2 runs resume.
-    v2 = _tile(tmp_path / "v2", (6, 6, 16), shift_x=20.0)
-    off = dict(config, field_orientation="prior-gradient", field_orientation_max_disagreement=1)
-    assert field.solve(v2, off)["status"] == "FIELD_READY"
-    v2_rule = json.loads((v2 / "field/CHECKPOINT.json").read_bytes())["identity"]
-    assert v2_rule["source_identity"]["orientation"] == dict(
-        rule="prior-gradient-central-v2",
-        prior_values="stored-finite",
-        min_dot=0.15,
-        min_gradient_per_density=0.3,
-        fallback="radial",
-    )
+    # Without a share, or with 1, the check is off and the identity stays v2, so v2 runs
+    # resume.
+    for name, share in (("v2", {}), ("v2-explicit", {"field_orientation_max_disagreement": 1})):
+        v2 = _tile(tmp_path / name, (6, 6, 16), shift_x=20.0)
+        assert field.solve(v2, dict(checked, **share))["status"] == "FIELD_READY"
+        v2_rule = json.loads((v2 / "field/CHECKPOINT.json").read_bytes())["identity"]
+        assert v2_rule["source_identity"]["orientation"] == dict(
+            rule="prior-gradient-central-v2",
+            prior_values="stored-finite",
+            min_dot=0.15,
+            min_gradient_per_density=0.3,
+            fallback="radial",
+        )
+    with pytest.raises(ValueError, match="requires field_orientation_max_disagreement below"):
+        field.solve(v2, dict(checked, field_orientation_min_probes=4))
     radial_identity = json.loads((radial / "field/CHECKPOINT.json").read_bytes())["identity"]
     assert "orientation" not in radial_identity["source_identity"]
     # These sheets are planar and the prior agrees with the radial sign: the same field.
@@ -509,7 +517,10 @@ def test_prior_gradient_orientation_is_validated_and_recorded(tmp_path, coarse, 
     assert seen.any() and np.max(np.abs(values - expected)) < 1e-6
 
 
-def test_prior_gradient_orientation_reaches_cpu_workers(tmp_path, coarse):
+@pytest.mark.parametrize(
+    "sheet", [{}, {"field_orientation_max_disagreement": 0.3}], ids=["rule", "sheet-check"]
+)
+def test_prior_gradient_orientation_reaches_cpu_workers(tmp_path, coarse, sheet):
     import torch
 
     from winding_field import field
@@ -518,7 +529,7 @@ def test_prior_gradient_orientation_reaches_cpu_workers(tmp_path, coarse):
     previous = torch.get_num_threads()
     torch.set_num_threads(1)
     try:
-        _solve_inline_and_pooled(tmp_path, coarse, field)
+        _solve_inline_and_pooled(tmp_path, coarse, field, sheet)
     finally:
         torch.set_num_threads(previous)
 
@@ -559,7 +570,7 @@ def test_cpu_workers_apply_the_sheet_check(tmp_path, monkeypatch):
     assert block.worker_info["orientation"]["prior_inconsistent"] == np.count_nonzero(flagged)
 
 
-def _solve_inline_and_pooled(tmp_path, coarse, field):
+def _solve_inline_and_pooled(tmp_path, coarse, field, sheet):
     config = dict(
         sweeps=2,
         field_chunk=8,
@@ -567,6 +578,7 @@ def _solve_inline_and_pooled(tmp_path, coarse, field):
         field_prior=str(coarse),
         field_prior_calibration="inherit",
         field_orientation="prior-gradient",
+        **sheet,
     )
     inline = _tile(tmp_path / "inline", (6, 6, 16), shift_x=20.0)
     assert field.solve(inline, config)["status"] == "FIELD_READY"
