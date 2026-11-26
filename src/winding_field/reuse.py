@@ -41,6 +41,7 @@ VARIABLE = {
     "field_memory",
     "field_pair_scope",
     "field_prior_calibration",
+    "field_orientation",
     "sweeps",
     "maxiter",
     "rtol",

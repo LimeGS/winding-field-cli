@@ -103,7 +103,18 @@ def _initialize(spec):
         raise ValueError("CPU worker source identity changed")
     db = sqlite3.connect((run / "fibres/fibres.sqlite").as_uri() + "?mode=ro", uri=True)
     db.setlimit(sqlite3.SQLITE_LIMIT_LENGTH, spec["curve_bytes"])
-    _STATE = (spec, maps, db)
+    prior = None
+    if "orientation_prior" in spec:
+        from .field_prior import FieldPrior
+
+        wanted = spec["orientation_prior"]
+        prior = FieldPrior(wanted["run"], spec["geometry"], spec["meta"].get("source"))
+        if prior.identity["field_json_sha256"] != wanted["field_json_sha256"]:
+            prior.close()
+            db.close()
+            maps.close()
+            raise ValueError("CPU worker field prior changed")
+    _STATE = (spec, maps, db, prior)
 
 
 def prepare_static_block(spec, lo, hi, build_rows=True):
@@ -111,10 +122,12 @@ def prepare_static_block(spec, lo, hi, build_rows=True):
 
     if _STATE is None or _STATE[0] != spec:
         raise ValueError("CPU worker was not initialized for this source")
-    _, maps, db = _STATE
+    _, maps, db, prior = _STATE
     low = np.asarray(lo)
     high = np.asarray(hi)
-    values = sample_prior(maps, spec["meta"], spec["geometry"], spec["calibration"], low, high)
+    values = sample_prior(
+        maps, spec["meta"], spec["geometry"], spec["calibration"], low, high, prior
+    )
     observations = (*values, {"maps": spec["meta"]["tiles_sha256"]})
     try:
         rows = (
