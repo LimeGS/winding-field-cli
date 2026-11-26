@@ -130,6 +130,10 @@ def validate_config(config):
         raise ValueError("field_prior_calibration must be own or inherit")
     if config.get("field_prior_calibration") == "inherit" and not prior:
         raise ValueError("field_prior_calibration inherit requires field_prior")
+    if config.get("field_orientation", "radial") not in ("radial", "prior-gradient"):
+        raise ValueError("field_orientation must be radial or prior-gradient")
+    if config.get("field_orientation") == "prior-gradient" and not prior:
+        raise ValueError("field_orientation prior-gradient requires field_prior")
     if config.get("field_scope", "all") not in ("all", "supported"):
         raise ValueError("field_scope must be all or supported")
     if config.get("field_scope") == "supported" and not prior:

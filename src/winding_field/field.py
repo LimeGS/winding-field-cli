@@ -64,13 +64,45 @@ def coordinates(lo, hi, meta):
     return np.stack((x, y, z), axis=-1) * meta["spacing_xyz"] + meta["origin_xyz"]
 
 
-def oriented(data, xyz, cal):
+# Normals closer than this (|cos|) to perpendicular to the orientation direction get no sign.
+ORIENTATION_MIN_DOT = 0.15
+# --field-orientation prior-gradient: a prior gradient weaker than this fraction of the local
+# sheet density (the bottom of a valley, a flat prior) gives no sign.
+PRIOR_GRADIENT_MIN_DENSITY = 0.3
+FIELD_ORIENTATIONS = ("radial", "prior-gradient")
+
+
+def oriented(data, xyz, cal, prior=None):
+    """Sheet-normal targets signed outward, with weights and the nodes that keep them.
+
+    By default (radial) a normal is signed against the direction from the calibration
+    centre (or the planar axis). In a flattened scroll that fails near the plane the
+    sheets were pressed into: normals there are nearly perpendicular to the radial
+    direction, so a wedge of nodes is dropped and a tilted sheet takes its tilt's sign.
+
+    With ``prior`` (a FieldPrior; --field-orientation prior-gradient) a normal is signed
+    against the prior's own gradient wherever all six of its central-difference samples
+    are supported, and dropped where that gradient is nearly perpendicular to the normal
+    or weaker than PRIOR_GRADIENT_MIN_DENSITY x the sheet density. The radial rule
+    remains outside the prior's support.
+    """
     direction = np.asarray(cal["axis_xyz"]) if cal["mode"] == "planar" else xyz - cal["centre_xyz"]
     if cal["mode"] != "planar":
         direction[..., 2] = 0
         direction /= np.maximum(np.linalg.norm(direction, axis=-1, keepdims=True), 1e-12)
     dot = np.sum(data["normals"] * direction, axis=-1)
-    valid = data["support"] & (abs(dot) > 0.15)
+    valid = data["support"] & (abs(dot) > ORIENTATION_MIN_DOT)
+    if prior is not None:
+        gradient, defined = prior.gradient(xyz)
+        magnitude = np.linalg.norm(gradient, axis=-1)
+        along = np.sum(data["normals"] * gradient, axis=-1) / np.maximum(magnitude, 1e-300)
+        kept = (
+            data["support"]
+            & (abs(along) > ORIENTATION_MIN_DOT)
+            & (magnitude >= PRIOR_GRADIENT_MIN_DENSITY * data["density"])
+        )
+        dot = np.where(defined, along, dot)
+        valid = np.where(defined, kept, valid)
     target = (
         data["normals"] * np.where(dot >= 0, 1.0, -1.0)[..., None] * data["density"][..., None]
     ).astype(np.float32)
@@ -106,12 +138,14 @@ def map_axes(meta, geometry, lo, hi):
     ]
 
 
-def _owned_chunks(run, order, chunk, shape, identity, maps, meta, cal):
+def _owned_chunks(run, order, chunk, shape, identity, maps, meta, cal, prior=None):
     """Chunks with supported observations, cached in the run for resumes."""
     from .field_prior import owned_chunks
 
     geometry = identity["geometry"]
     key = dict(maps=identity["maps"], geometry=geometry, chunk=chunk)
+    if "orientation" in identity:
+        key["orientation"] = identity["orientation"]
     path = run / "FIELD_SCOPE.json"
     if path.exists():
         saved = json.loads(path.read_bytes())
@@ -119,7 +153,7 @@ def _owned_chunks(run, order, chunk, shape, identity, maps, meta, cal):
             return [tuple(k) for k in saved["owned"]]
 
     def supported(lo, hi):
-        return bool(sample_prior(maps, meta, geometry, cal, lo, hi)[2].any())
+        return bool(sample_prior(maps, meta, geometry, cal, lo, hi, prior)[2].any())
 
     owned = owned_chunks(order, chunk, shape, supported)
     if not owned:
@@ -128,14 +162,15 @@ def _owned_chunks(run, order, chunk, shape, identity, maps, meta, cal):
     return owned
 
 
-def sample_prior(maps, meta, geometry, cal, lo, hi):
+def sample_prior(maps, meta, geometry, cal, lo, hi, prior=None):
+    """Oriented observations on field nodes ``lo..hi``; ``prior`` as in ``oriented``."""
     names = ("normals", "density", "support")
     if all(geometry[k] == meta[k] for k in ("origin_xyz", "spacing_xyz", "shape_zyx")):
-        return oriented(maps.read_many(names, lo, hi), coordinates(lo, hi, meta), cal)
+        return oriented(maps.read_many(names, lo, hi), coordinates(lo, hi, meta), cal, prior)
 
     def transform(data, start):
         target, weights, valid = oriented(
-            data, coordinates(start, start + data["support"].shape, meta), cal
+            data, coordinates(start, start + data["support"].shape, meta), cal, prior
         )
         return dict(target=target, weights=weights, support=valid)
 
@@ -445,6 +480,21 @@ def solve(run, config, stop=None, *, sweep_target=None, convergence=None):
     )
     if inherited is not None:
         identity["calibration_source"] = dict(kind="field_prior", sha256=inherited)
+    orientation = config.get("field_orientation", "radial")
+    if orientation not in FIELD_ORIENTATIONS:
+        raise ValueError("field_orientation must be " + " or ".join(FIELD_ORIENTATIONS))
+    if orientation == "prior-gradient":
+        if bounded or not config.get("field_prior"):
+            raise ValueError(
+                "field_orientation prior-gradient requires field_prior and ordinary preparation"
+            )
+        # Only recorded when not radial, so radial runs keep their identity and resume.
+        identity["orientation"] = dict(
+            rule="prior-gradient-central-v1",
+            min_dot=ORIENTATION_MIN_DOT,
+            min_gradient_per_density=PRIOR_GRADIENT_MIN_DENSITY,
+            fallback="radial",
+        )
     pair_provider = None
     if bounded or convergence is not None:
         from .bounded_constraints import build, PairCatalog
@@ -539,6 +589,7 @@ def solve(run, config, stop=None, *, sweep_target=None, convergence=None):
     if bounded:
         options["max_bytes"] = config.get("bounded_bytes", 12 << 30) // 8
     prior = None
+    orientation_prior = None
     scope = config.get("field_scope", "all")
     if scope not in ("all", "supported"):
         raise ValueError("field_scope must be all or supported")
@@ -552,9 +603,13 @@ def solve(run, config, stop=None, *, sweep_target=None, convergence=None):
         prior = FieldPrior(config["field_prior"], geometry, meta.get("source"))
         # The prior seeds and gauges the solve, so it is part of the numerical problem.
         identity["field_prior"] = prior.identity
+        if orientation == "prior-gradient":
+            orientation_prior = prior
         if scope == "supported":
             total = len(options["order"])
-            owned = _owned_chunks(run, options["order"], chunk, shape, identity, maps, meta, cal)
+            owned = _owned_chunks(
+                run, options["order"], chunk, shape, identity, maps, meta, cal, orientation_prior
+            )
             options.update(order=owned, partial_order=True)
             identity["field_scope"] = dict(
                 mode="supported-chunks-v1", owned_chunks=len(owned), total_chunks=total
@@ -627,7 +682,9 @@ def solve(run, config, stop=None, *, sweep_target=None, convergence=None):
             values = maps.read_many(("target", "weights", "support"), lo, hi)
             target, weights, valid = (values[k] for k in ("target", "weights", "support"))
         else:
-            target, weights, valid = sample_prior(maps, meta, geometry, cal, lo, hi)
+            target, weights, valid = sample_prior(
+                maps, meta, geometry, cal, lo, hi, orientation_prior
+            )
         return target, weights, valid, source_receipt()
 
     def release_observations():
@@ -788,6 +845,17 @@ def solve(run, config, stop=None, *, sweep_target=None, convergence=None):
                 calibration=cal,
                 weight=identity["fibre_weight"],
                 boxes=boxes,
+                # Workers open the prior themselves; absent for radial orientation.
+                **(
+                    dict(
+                        orientation_prior=dict(
+                            run=str(prior.run),
+                            field_json_sha256=prior.identity["field_json_sha256"],
+                        )
+                    )
+                    if orientation_prior is not None
+                    else {}
+                ),
                 cache_bytes=constraint_budget + budget + observation_budget,
             )
             cpu_inputs = CPUFieldInputs(

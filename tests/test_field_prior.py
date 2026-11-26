@@ -189,3 +189,166 @@ def test_inherited_calibration_uses_the_priors_centre_and_is_recorded(tmp_path, 
     assert identity["source_identity"]["calibration_source"]["kind"] == "field_prior"
     own_identity = json.loads((own / "field/CHECKPOINT.json").read_bytes())["identity"]
     assert "calibration_source" not in own_identity["source_identity"]
+
+
+class _GridSource:
+    """A FieldSource stand-in over an in-memory ZYX grid."""
+
+    def __init__(self, values, support):
+        self.values, self.support = values, support
+
+    def read(self, lo, hi):
+        box = tuple(slice(int(a), int(b)) for a, b in zip(lo, hi))
+        return self.values[box], self.support[box]
+
+
+def _grid_prior(function, origin_xyz, spacing_xyz, shape_zyx, support=None):
+    from winding_field.field_prior import FieldPrior
+
+    prior = object.__new__(FieldPrior)
+    prior.origin = np.asarray(origin_xyz, float)
+    prior.spacing = np.asarray(spacing_xyz, float)
+    prior.shape = np.asarray(shape_zyx, int)
+    z, y, x = np.meshgrid(*(np.arange(n) for n in shape_zyx), indexing="ij")
+    xyz = np.stack((x, y, z), -1) * prior.spacing + prior.origin
+    values = function(xyz)
+    prior.source = _GridSource(values, np.ones(values.shape, bool) if support is None else support)
+    return prior
+
+
+def test_prior_gradient_is_a_continuous_central_difference():
+    slope = np.array([0.5, -0.25, 2.0])
+    linear = _grid_prior(lambda p: p @ slope, (10.0, 20.0, 30.0), (2.0, 3.0, 4.0), (6, 7, 8))
+    inside = np.array([[15.0, 30.0, 40.0], [16.3, 31.1, 41.7]])
+    gradient, valid = linear.gradient(inside)
+    assert valid.all() and np.allclose(gradient, slope)
+    # Each axis needs its +-h samples inside the supported prior: one spacing from an edge
+    # (x = 10 is the first node) is still valid, closer is not.
+    gradient, valid = linear.gradient(np.array([[12.0, 30.0, 40.0], [11.0, 30.0, 40.0]]))
+    assert valid.tolist() == [True, False] and (gradient[1] == 0).all()
+    # A curved prior: no jump at a coarse cell face (x = 16), so a node shared by two tiles
+    # gets the same sign whichever cell its coordinates round into.
+    curved = _grid_prior(lambda p: p[..., 0] ** 2, (10.0, 20.0, 30.0), (2.0, 3.0, 4.0), (6, 7, 8))
+    face = np.array([[16.0, 30.0, 40.0], [16.0 - 1e-9, 30.0, 40.0], [16.0 + 1e-9, 30.0, 40.0]])
+    gradient, valid = curved.gradient(face)
+    assert valid.all() and np.ptp(gradient[:, 0]) < 1e-6
+    # Bounded batches give the same answer as one pass.
+    points = np.random.default_rng(0).uniform([13, 24, 35], [18, 35, 50], (50, 3))
+    whole, _ = curved.gradient(points)
+    batched, _ = curved.gradient(points, max_points=7)
+    assert np.array_equal(whole, batched)
+
+
+def test_prior_gradient_orients_the_pressed_core_of_a_flattened_scroll():
+    """Sheets pressed flat (normals ~ +-y, tilted 20 degrees) 22 mm along x from the centre.
+
+    Radially, the sheet below the core plane takes the tilt's sign and points inward. The
+    prior (W grows with |y|, a valley at the core plane) signs both sides outward, drops
+    the valley floor where its gradient vanishes, and leaves the radial rule outside its
+    support.
+    """
+    from winding_field.field import oriented
+
+    prior = _grid_prior(
+        lambda p: abs(p[..., 1]) / 103.0, (20000.0, -3000.0, -1000.0), (500.0,) * 3, (5, 13, 9)
+    )
+    cal = dict(mode="radial-z", centre_xyz=[0.0, 0.0, 0.0], axis_xyz=[0.0, 0.0, 1.0])
+    tilt = np.deg2rad(20.0)
+    sheet = np.array([np.sin(tilt), np.cos(tilt), 0.0])
+    xyz = np.array(
+        [
+            [22000.0, 1000.0, 0.0],  # above the core plane: outward is +y
+            [22000.0, -1000.0, 0.0],  # below: outward is -y
+            [22000.0, 0.0, 0.0],  # the valley floor
+            [30000.0, -1000.0, 0.0],  # outside the prior
+        ]
+    )
+    # Normals carry no sign of their own.
+    flips = np.array([1.0, -1.0, 1.0, -1.0])
+    data = dict(
+        normals=(sheet * flips[:, None]).astype(np.float32),
+        density=np.full(4, 1 / 141.0, np.float32),
+        support=np.ones(4, bool),
+    )
+    target, weights, valid = oriented(dict(data), xyz, cal)
+    assert valid.tolist() == [True, True, True, True]
+    assert target[1, 1] > 0  # radial: points inward below the core plane
+    target, weights, valid = oriented(dict(data), xyz, cal, prior)
+    assert valid.tolist() == [True, True, False, True]
+    assert target[0, 1] > 0 and target[1, 1] < 0
+    assert (target[2] == 0).all() and weights[2] == np.float32(1e-3)
+    radial, _, _ = oriented(dict(data), xyz[3:], cal)
+    assert np.array_equal(target[3], radial[0])
+    # A prior gradient weaker than 0.3 x the sheet density signs nothing.
+    weak = _grid_prior(
+        lambda p: abs(p[..., 1]) / 1000.0, (20000.0, -3000.0, -1000.0), (500.0,) * 3, (5, 13, 9)
+    )
+    _, _, valid = oriented(dict(data), xyz, cal, weak)
+    assert valid.tolist() == [False, False, False, True]
+
+
+def test_prior_gradient_orientation_is_validated_and_recorded(tmp_path, coarse):
+    from winding_field import field
+    from winding_field.config import validate_config
+
+    with pytest.raises(ValueError, match="requires field_prior"):
+        validate_config({"field_orientation": "prior-gradient"})
+    with pytest.raises(ValueError, match="radial or prior-gradient"):
+        validate_config({"field_prior": str(coarse), "field_orientation": "normal"})
+    config = dict(
+        sweeps=3,
+        field_chunk=8,
+        field_spacing_um=1.0,
+        field_prior=str(coarse),
+        field_prior_calibration="inherit",
+    )
+    radial = _tile(tmp_path / "radial", (6, 6, 16), shift_x=20.0)
+    assert field.solve(radial, config)["status"] == "FIELD_READY"
+    tile = _tile(tmp_path / "prior", (6, 6, 16), shift_x=20.0)
+    receipt = field.solve(tile, dict(config, field_orientation="prior-gradient"))
+    assert receipt["status"] == "FIELD_READY"
+    identity = json.loads((tile / "field/CHECKPOINT.json").read_bytes())["identity"]
+    assert identity["source_identity"]["orientation"]["rule"] == "prior-gradient-central-v1"
+    radial_identity = json.loads((radial / "field/CHECKPOINT.json").read_bytes())["identity"]
+    assert "orientation" not in radial_identity["source_identity"]
+    # These sheets are planar and the prior agrees with the radial sign: the same field.
+    geometry = json.loads((tile / "FIELD.json").read_bytes())["geometry"]
+    with field.open_field(tile) as a, field.open_field(radial) as b:
+        values, seen = a.read([0, 0, 0], geometry["shape_zyx"])
+        expected, _ = b.read([0, 0, 0], geometry["shape_zyx"])
+    assert seen.any() and np.max(np.abs(values - expected)) < 1e-6
+
+
+def test_prior_gradient_orientation_reaches_cpu_workers(tmp_path, coarse):
+    import torch
+
+    from winding_field import field
+
+    # One parent thread leaves the worker a CPU slot, as in test_field_cpu.
+    previous = torch.get_num_threads()
+    torch.set_num_threads(1)
+    try:
+        _solve_inline_and_pooled(tmp_path, coarse, field)
+    finally:
+        torch.set_num_threads(previous)
+
+
+def _solve_inline_and_pooled(tmp_path, coarse, field):
+    config = dict(
+        sweeps=2,
+        field_chunk=8,
+        field_spacing_um=1.0,
+        field_prior=str(coarse),
+        field_prior_calibration="inherit",
+        field_orientation="prior-gradient",
+    )
+    inline = _tile(tmp_path / "inline", (6, 6, 16), shift_x=20.0)
+    assert field.solve(inline, config)["status"] == "FIELD_READY"
+    pooled = _tile(tmp_path / "pooled", (6, 6, 16), shift_x=20.0)
+    workers = dict(config, field_cpu_workers=1, field_cpu_buffer_bytes=16 << 20)
+    assert field.solve(pooled, workers)["status"] == "FIELD_READY"
+    geometry = json.loads((inline / "FIELD.json").read_bytes())["geometry"]
+    with field.open_field(inline) as a, field.open_field(pooled) as b:
+        values, _ = a.read([0, 0, 0], geometry["shape_zyx"])
+        expected, _ = b.read([0, 0, 0], geometry["shape_zyx"])
+    assert np.array_equal(values, expected)
