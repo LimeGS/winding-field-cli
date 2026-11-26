@@ -300,19 +300,35 @@ close around it, so such a face stays free like a face of the scroll. Each pass 
 `FIELD.json` → `field_boundary` lists the nodes held (`fixed_nodes`) and the tiles they
 came from per face (`source_tiles`); the pass receipt counts them and the faces left
 free (`held`). The plan is then
-merged again with each tile's newest field. Scratch runs of this recipe took that 384 box
+merged again with each tile's newest field.
+
+The first pass is narrower (`--worst-first`, 0.5): it solves only the tiles the open
+seams are attributed to. Every pair's share of nodes over half a winding is split between
+its two tiles by a least-squares fit over all pairs, so a tile at odds with all its
+neighbours takes the blame and a tile whose only open seams are with it takes little;
+the tiles with at least that part of the largest blame are solved, held at neighbours
+that have not moved. The reason is one comparison, not yet repeated with this option: on
+a 2x2x2 corner of that box with two drifted tiles, solving all eight in the first pass
+left the merge 0.95 winding (95th percentile, poorly determined region) from a
+single-block solve of the corner, with seams at 0.03 %, while scratch runs that solved
+the two drifted tiles first and then all eight ended at 0.50. A tile solved in the same
+pass as a drifted neighbour is held at a merge that carries the drift, and where the data
+determine W poorly later passes do not take it out. `--worst-first 0` solves every
+triggered tile and its neighbours from the first pass. Pass 0's receipt lists the tiles
+chosen (`worst_first`). Scratch runs of this recipe took that 384 box
 from 9.64 % to 0.82 % and 0.065 % in two passes, which solved 27 and then 18 of its 27
 tiles again.
 
 Two neighbours held at the same merge agree on their overlap partly by construction, so
 closed seams alone do not show that the iteration has settled. `refine` accepts a merge
-when all of these hold, and otherwise goes on up to `--max-passes` (3):
+when all of these hold, and otherwise goes on up to `--max-passes` (4):
 
 - no pair is over the trigger;
 - the bound of the remaining error is at most `--bound` (0.25 winding): the change
   between the last two merges on the tiles just solved (95th percentile, after removing
   the constant and tilt the join leaves free), times r / (1 − r), with r the ratio of the
-  last two changes. It needs two passes, so tiles whose seams close in one are solved once
+  last two changes. It needs two passes that solved the same tiles (changes taken on
+  different tiles have no ratio), so tiles whose seams close in one are solved once
   more; a change within 0.001 winding counts as settled;
 - no solved tile bends more at its held faces than `--max-kink-ratio` (2) times its own
   mid-planes (95th percentile of the second difference of W over the local sheet slope).
@@ -327,7 +343,10 @@ is redone. Passes made with other thresholds or layers are refused, and so is a 
 solved against another merge. `--prune` deletes each merge once the next two passes no
 longer need it.
 
-What the bound does not say: inside the poorly determined region itself the tiles settle,
+What the bound does not say: that the merge is right. It says the passes have stopped
+moving it. On the corner above the bound was 0.05 and the seams 0.03 % with the merge
+0.95 winding from the single-block solve; only that comparison with a reference showed
+it. Inside the poorly determined region itself the tiles settle,
 at the same rate as elsewhere, on a solution that differs from a single-block solve of the
 same box (384 box: 95th percentile 0.80 winding inside it, 0.35 outside). Both follow the
 observed sheet normals equally there (83.0 % and 83.1 % of nodes within 30 degrees), so

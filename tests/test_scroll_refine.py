@@ -22,7 +22,15 @@ def truth(x):
     return x / 8
 
 
-def write_plan(root, errors, lead=0):
+# Three tiles along x: the middle one overlaps both, the outer two do not meet.
+CHAIN = {
+    "000-000-000": (0, 63, 0, 47),
+    "000-000-001": (32, 95, 48, 79),
+    "000-000-002": (64, 127, 80, 127),
+}
+
+
+def write_plan(root, errors, lead=0, boxes=BOXES):
     """A plan whose tiles are prepared and hold a first field: the truth plus
     ``errors[id](x_local, z)`` (windings), as an earlier ``scroll tiles`` would leave.
     ``lead``: x nodes of the grid before the first tile, which no tile of the plan covers."""
@@ -32,7 +40,7 @@ def write_plan(root, errors, lead=0):
 
     tiles = []
     (root / "tiles").mkdir(parents=True)
-    for k, (tid, box) in enumerate(BOXES.items()):
+    for k, (tid, box) in enumerate(boxes.items()):
         lo, hi, core_lo, core_hi = (edge + lead for edge in box)
         shape = (SHAPE[0], SHAPE[1], hi - lo + 1)
         run = prepared_run(
@@ -75,7 +83,7 @@ def write_plan(root, errors, lead=0):
             grid=dict(
                 voxel_lo_zyx=[0, 0, 0],
                 ratio=1,
-                shape_zyx=[SHAPE[0], SHAPE[1], SHAPE[2] + lead],
+                shape_zyx=[SHAPE[0], SHAPE[1], max(b[1] for b in boxes.values()) + 1 + lead],
                 origin_zyx_um=[0.0, 0.0, 0.0],
                 spacing_um=SPACING,
             ),
@@ -98,6 +106,7 @@ def arguments(root, output, **changes):
         trigger_p95=0.5,
         bound=0.25,
         max_kink_ratio=2.0,
+        worst_first=0.5,
         jobs=2,
         gpus="",
         workers=1,
@@ -107,11 +116,11 @@ def arguments(root, output, **changes):
     return SimpleNamespace(**dict(values, **changes))
 
 
-def merged(run, lead=0):
+def merged(run, lead=0, nx=SHAPE[2]):
     from winding_field import field
 
     with field.open_field(run) as source:
-        values, seen = source.read([0, 0, lead], [SHAPE[0], SHAPE[1], SHAPE[2] + lead])
+        values, seen = source.read([0, 0, lead], [SHAPE[0], SHAPE[1], nx + lead])
         assert not lead or not source.read([0, 0, 0], [SHAPE[0], SHAPE[1], lead])[1].any()
     assert seen.all()
     return values
@@ -119,7 +128,7 @@ def merged(run, lead=0):
 
 def off_truth(values, lead=0):
     """Largest distance to the truth once the merge's free constant and tilts are taken out."""
-    z, y, x = np.meshgrid(*[np.arange(n) for n in SHAPE], indexing="ij")
+    z, y, x = np.meshgrid(*[np.arange(n) for n in values.shape], indexing="ij")
     design = np.column_stack([np.ones(values.size), z.ravel(), y.ravel(), x.ravel()])
     error = (values - truth(x + lead)).ravel()
     return float(np.abs(error - design @ np.linalg.lstsq(design, error, rcond=None)[0]).max())
@@ -275,6 +284,46 @@ def test_a_face_toward_a_tile_the_plan_lacks_stays_free(tmp_path):
     }
 
 
+def bowed(x, z):
+    """The middle tile curves away from the sheets toward both of its neighbours."""
+    return 3.0 * ((x - 31.5) / 31.5) ** 2 * np.where(z >= 3, 1.0, -1.0)
+
+
+def test_the_first_pass_solves_the_drifted_tile_alone(tmp_path):
+    """Both seams of the middle tile are open and the outer tiles are right: the first pass
+    solves the middle tile alone, held at neighbours that have not moved. Later passes
+    follow the trigger, and a rate is taken only between passes that solved the same tiles.
+    (These synthetic sheets determine W everywhere, so solving all three at once ends at
+    the same field; it is where they do not that the order decides what is kept.)"""
+    nx = 128
+    root = write_plan(tmp_path / "plan", {"000-000-001": bowed}, boxes=CHAIN)
+    result = scroll_refine.refine(arguments(root, tmp_path / "refined"))
+    assert result["status"] == "REFINED" and result["tiles_solved"] == [0, 1, 3, 3]
+    first, second, third, last = json.loads((root / "passes/REFINE.json").read_bytes())["passes"]
+    assert len(first["seams"]["pairs_over_trigger"]) == 2
+    assert first["worst_first"]["tiles"] == first["selected"] == ["000-000-001"]
+    assert first["worst_first"]["share"] == 0.5 and first["worst_first"]["blame"] > 0.5
+    assert second["tiles"] == ["000-000-001"] and second["held"]["faces"] == 2
+    assert second["seams"]["over_half_share"] < 0.1 * first["seams"]["over_half_share"]
+    # What is left goes by the trigger: the pair still open and the tiles next to it.
+    assert second["worst_first"] is None and len(second["selected"]) == 3
+    # Pass 2 solved other tiles than pass 1: their changes have no ratio.
+    assert third["rate"] is None and third["bound"] is None
+    assert "solve the same tiles" in third["reasons"][0] and third["selected"] == third["tiles"]
+    assert last["rate"] < 0.5 and last["bound"] < 0.01
+    alone = off_truth(merged(root / "passes/1/merge", nx=nx))
+    assert off_truth(merged(tmp_path / "refined", nx=nx)) < 0.01
+
+    every = write_plan(tmp_path / "every", {"000-000-001": bowed}, boxes=CHAIN)
+    result = scroll_refine.refine(arguments(every, tmp_path / "every-refined", worst_first=0.0))
+    assert result["status"] == "REFINED" and result["tiles_solved"] == [0, 3, 3, 3]
+    first, second, third, _ = json.loads((every / "passes/REFINE.json").read_bytes())["passes"]
+    assert first["worst_first"] is None and len(first["selected"]) == 3
+    # The same three tiles twice: a rate after two passes.
+    assert third["rate"] is not None
+    assert alone < off_truth(merged(every / "passes/1/merge", nx=nx))
+
+
 def test_tiles_that_agree_need_no_pass(tmp_path):
     root = write_plan(tmp_path / "plan", {"000-000-001": lambda x, z: 0.3 + 0.0 * x})
     result = scroll_refine.refine(arguments(root, tmp_path / "refined"))
@@ -325,6 +374,42 @@ def test_selection_takes_the_pair_and_the_tiles_sharing_a_face_with_it():
     assert scroll_refine.select(tiles, []) == []
 
 
+def _pairs(shares, nodes=1000):
+    return {
+        name: dict(nodes=nodes, over_half_winding=round(share * nodes))
+        for name, share in shares.items()
+    }
+
+
+def test_open_seams_are_attributed_to_the_tiles_that_explain_them():
+    worst = scroll_refine.worst_tiles
+    # b is at odds with both neighbours; a and c only with b.
+    pairs = _pairs({"a|b": 0.5, "b|c": 0.5})
+    assert scroll_refine.tile_blame(pairs) == pytest.approx(dict(a=0, b=0.5, c=0), abs=1e-3)
+    assert worst(pairs, list(pairs), 0.5)[0] == ["b"]
+    # a's only open seam is with b, which agrees with c: a is the one that drifted.
+    pairs = _pairs({"a|b": 0.5, "b|c": 0.03})
+    assert worst(pairs, ["a|b", "b|c"], 0.5) == (["a"], pytest.approx(0.47, abs=1e-3))
+    # One pair says nothing about which of its two tiles it is: both.
+    pairs = _pairs({"a|b": 0.5})
+    assert worst(pairs, ["a|b"], 0.5)[0] == ["a", "b"]
+    # Eight tiles that all overlap, two of them off: every pair with one of them is wide
+    # open, the pairs among the other six are over the trigger too, by little.
+    ids = [f"{z}{y}{x}" for z in "01" for y in "01" for x in "01"]
+    off = {"010", "110"}
+    shares = {
+        f"{a}|{b}": 0.45 + 0.01 * k if off & {a, b} else 0.03 + 0.001 * k
+        for k, (a, b) in enumerate((a, b) for i, a in enumerate(ids) for b in ids[i + 1 :])
+    }
+    pairs = _pairs(shares, nodes=100000)
+    assert worst(pairs, list(pairs), 0.5)[0] == ["010", "110"]
+    assert len(worst(pairs, list(pairs), 0.05)[0]) > 2
+    # Only tiles of a pair over the trigger are candidates; nothing open, nothing chosen.
+    assert set(worst(pairs, ["000|001"], 0.5)[0]) <= {"000", "001"}
+    assert worst(_pairs({"a|b": 0.0}), [], 0.5) == ([], 0.0)
+    assert scroll_refine.tile_blame({}) == {}
+
+
 def test_seam_gate_counts_every_pair_and_triggers_on_share_or_p95():
     seams = dict(
         worst_p95_abs_dW=0.7,
@@ -371,7 +456,15 @@ def test_decision_accepts_only_closed_seams_a_small_bound_and_no_kink():
     assert decide(_record(0), settings, 3, tiles, [])[0] == "REFINED"
     status, reasons, chosen = decide(_record(0, pair), settings, 3, tiles, [])
     assert status is None and chosen == ["000-000-000", "000-000-001", "000-000-002"]
-    assert decide(_record(0, pair), settings, 0, tiles, [])[0] == "REFINE_NOT_CONVERGED"
+    # At the cap the selection is what one more pass would solve.
+    status, _, chosen = decide(_record(0, pair), settings, 0, tiles, [])
+    assert status == "REFINE_NOT_CONVERGED" and len(chosen) == 3
+    # The first pass takes the tiles the seams are attributed to, later ones the trigger.
+    first = dict(_record(0, pair), worst_first=dict(tiles=["000-000-001"]))
+    assert decide(first, settings, 3, tiles, [])[2] == ["000-000-001"]
+    assert decide(dict(first, worst_first=dict(tiles=[])), settings, 3, tiles, [])[2] == chosen
+    later = dict(_record(1, pair, rate=0.2, bound=0.01), worst_first=dict(tiles=["000-000-001"]))
+    assert decide(later, settings, 3, tiles, [])[2] == chosen
     # Closed seams after one pass: the same tiles again, to measure the rate.
     status, reasons, chosen = decide(_record(1), settings, 3, tiles, ["000-000-001"])
     assert status is None and chosen == ["000-000-001"] and "two passes" in reasons[0]

@@ -2009,8 +2009,8 @@ def _parser():
     p.add_argument(
         "--max-passes",
         type=int,
-        default=3,
-        help="most passes of tile solves after the first merge (default: 3)",
+        default=4,
+        help="most passes of tile solves after the first merge (default: 4)",
     )
     p.add_argument(
         "--layers",
@@ -2031,6 +2031,16 @@ def _parser():
         type=float,
         default=0.5,
         help="or whose 95th percentile of |dW| on shared nodes is over this (default: 0.5)",
+    )
+    p.add_argument(
+        "--worst-first",
+        type=float,
+        default=0.5,
+        metavar="SHARE",
+        help="the first pass solves only the tiles the open seams are attributed to: those "
+        "whose share of them is at least this part of the worst tile's, held at neighbours "
+        "that have not moved; 0 solves every tile of a pair over the trigger and the tiles "
+        "next to them from the first pass (default: 0.5)",
     )
     p.add_argument(
         "--bound",

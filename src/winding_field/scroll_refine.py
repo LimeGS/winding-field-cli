@@ -6,7 +6,8 @@ and ``scroll merge`` cannot level it with one constant and one tilt. ``scroll re
 repeats, after that first merge (pass 0):
 
     measure   seams, the change against the previous merge, slope kinks at held faces
-    select    the tiles of every pair over the seam trigger, and the tiles next to them
+    select    the tiles of every pair over the seam trigger, and the tiles next to them;
+              in the first pass only the tiles the open seams are attributed to
     solve     the selected tiles with ``run --field-boundary`` on the current merge
     merge     the plan again, each tile with its newest field
 
@@ -18,7 +19,11 @@ every pass (FIELD.json ``refine``). Rerunning the command continues where it sto
 
 With the faces of two neighbours held at one merge their overlap agrees partly by
 construction, so the seams alone would flatter the result: the change between
-consecutive merges and its rate are what say the iteration has settled.
+consecutive merges and its rate are what say the iteration has settled. Settled is not
+the same as right. Where the data determine W poorly the iteration keeps what the first
+passes put there, so a tile solved in the same pass as a neighbour that drifted takes
+that drift on its held faces and keeps part of it. That is why the first pass solves the
+drifted tiles alone, against neighbours that have not moved (``--worst-first``).
 """
 
 from __future__ import annotations
@@ -46,7 +51,7 @@ CHANGE_BINS = np.concatenate([np.linspace(0.0, 4.0, 4001), [np.inf]])
 # the local sheet slope per node: a field flatter than that (a synthetic one) would turn
 # any bend at a face into a large ratio.
 KINK_FLOOR = 0.05
-SETTINGS = ("layers", "trigger_share", "trigger_p95", "bound", "max_kink_ratio")
+SETTINGS = ("layers", "trigger_share", "trigger_p95", "bound", "max_kink_ratio", "worst_first")
 
 
 def seam_summary(seams, trigger_share, trigger_p95):
@@ -92,6 +97,64 @@ def select(tiles, pairs):
         if any(sum(abs(a - b) for a, b in zip(tile["key"], key)) == 1 for key in keys):
             chosen.add(tile["id"])
     return sorted(chosen)
+
+
+def tile_blame(pairs):
+    """{tile: b}: the share of seam nodes over half a winding that each tile accounts for.
+
+    A pair's share is modelled as the sum of its two tiles' b >= 0 and fitted by least
+    squares over all pairs, each weighted by its shared nodes. A tile at odds with every
+    neighbour gets a large b; a tile whose only open seams are with such a tile gets
+    little, because its other pairs are closed. Two tiles with nothing but their common
+    pair to tell them apart get the same b.
+    """
+    from scipy.optimize import lsq_linear
+    from scipy.sparse import coo_matrix
+
+    names = sorted(name for name, p in pairs.items() if p["nodes"])
+    ids = sorted({tid for name in names for tid in name.split("|")})
+    if not ids:
+        return {}
+    column = {tid: k for k, tid in enumerate(ids)}
+    rows, columns, entries, target = [], [], [], []
+    for row, name in enumerate(names):
+        pair = pairs[name]
+        weight = float(np.sqrt(pair["nodes"]))
+        for tid in name.split("|"):
+            rows.append(row)
+            columns.append(column[tid])
+            entries.append(weight)
+        target.append(weight * pair["over_half_winding"] / pair["nodes"])
+    # What the pairs leave open is settled by two faint pulls. On the sum of b: of the
+    # fits that explain a row of tiles equally well, the one that blames fewest (the tile
+    # in the middle, not its two neighbours). On each b, fainter: two tiles with one
+    # common pair share it evenly.
+    heaviest = max(entries)
+    for k in range(len(ids)):
+        rows.append(len(names))
+        columns.append(k)
+        entries.append(1e-3 * heaviest)
+    target.append(0.0)
+    for k in range(len(ids)):
+        rows.append(len(names) + 1 + k)
+        columns.append(k)
+        entries.append(1e-6 * heaviest)
+        target.append(0.0)
+    matrix = coo_matrix((entries, (rows, columns)), shape=(len(target), len(ids))).tocsr()
+    fit = lsq_linear(matrix, np.asarray(target), bounds=(0.0, np.inf), tol=1e-12)
+    return dict(zip(ids, (float(b) for b in fit.x)))
+
+
+def worst_tiles(pairs, over, share):
+    """The tiles of the pairs ``over`` the trigger whose blame is at least ``share`` of
+    the largest one, and that largest blame; ([], 0.0) when nothing stands out."""
+    blame = tile_blame(pairs)
+    candidates = {tid for name in over for tid in name.split("|") if tid in blame}
+    top = max((blame[tid] for tid in candidates), default=0.0)
+    if top <= 0:
+        return [], 0.0
+    # Ties are kept together: 1e-6 of the top is far under what tells tiles apart.
+    return sorted(tid for tid in candidates if blame[tid] >= share * top - 1e-6 * top), top
 
 
 def merge_change(current, previous, boxes):
@@ -170,6 +233,8 @@ def merge_change(current, previous, boxes):
 def rate_bound(change, previous):
     """(r, bound): the ratio of two consecutive changes and the bound it puts on what is
     left, change x r / (1 - r) for a geometric decay. No bound unless the change shrinks.
+    ``previous`` is the change of a pass that solved the same tiles, or None: changes
+    taken on different tiles have no ratio.
 
     A change within the resolution of its histogram has no measurable rate: the merge has
     stopped moving, and the change itself is the bound.
@@ -274,7 +339,8 @@ def kink_summary(kinks):
 
 def decide(record, settings, max_passes, tiles, previous_selection):
     """(status, reasons, selection): accept the merge of this pass, give up, or name the
-    tiles of the next pass (status None)."""
+    tiles of the next pass (status None). At ``max_passes`` the selection is what a
+    further pass would solve."""
     number = record["pass"]
     over = record["seams"]["pairs_over_trigger"]
     reasons = []
@@ -282,7 +348,10 @@ def decide(record, settings, max_passes, tiles, previous_selection):
         reasons.append(f"{len(over)} tile pairs over the seam trigger, e.g. {over[:3]}")
     if number >= 1:
         if record["bound"] is None and record["rate"] is None:
-            reasons.append("the rate of change between merges needs two passes that move it")
+            reasons.append(
+                "the rate of change between merges needs two passes that solve the same "
+                "tiles and move the merge"
+            )
         elif record["bound"] is None:
             reasons.append(
                 f"the change between merges is not shrinking (rate {record['rate']:.3g})"
@@ -299,12 +368,15 @@ def decide(record, settings, max_passes, tiles, previous_selection):
             )
     if not reasons:
         return "REFINED", ["no tile pair over the seam trigger"] if not number else [], []
-    if number >= max_passes:
-        return "REFINE_NOT_CONVERGED", reasons, []
-    # Seams closed but the rate is not known or not small yet: the same tiles again.
-    selection = select(tiles, over) if over else list(previous_selection)
-    if not selection:
-        return "REFINE_NOT_CONVERGED", reasons, []
+    worst = (record.get("worst_first") or {}).get("tiles")
+    if not number and worst:
+        # The first pass: the drifted tiles alone, against neighbours that have not moved.
+        selection = list(worst)
+    else:
+        # Seams closed but the rate is not known or not small yet: the same tiles again.
+        selection = select(tiles, over) if over else list(previous_selection)
+    if number >= max_passes or not selection:
+        return "REFINE_NOT_CONVERGED", reasons, selection
     return None, reasons, selection
 
 
@@ -490,7 +562,10 @@ def refine(args):
         trigger_p95=args.trigger_p95,
         bound=args.bound,
         max_kink_ratio=args.max_kink_ratio,
+        worst_first=args.worst_first,
     )
+    if not 0 <= args.worst_first <= 1:
+        raise ValueError("--worst-first must be from 0 to 1")
     if type(args.layers) is not int or args.layers < 1:
         raise ValueError("--layers must be a positive integer")
     if type(args.max_passes) is not int or args.max_passes < 0:
@@ -602,18 +677,27 @@ def refine(args):
                     _json(merged / "SEAMS.json"), settings["trigger_share"], settings["trigger_p95"]
                 ),
                 join=field_meta.get("join"),
+                worst_first=None,
                 held=None,
                 change=None,
                 rate=None,
                 bound=None,
                 kink=None,
             )
+            if not number and settings["worst_first"] > 0:
+                worst, top = worst_tiles(
+                    _json(merged / "SEAMS.json")["pairs"],
+                    record["seams"]["pairs_over_trigger"],
+                    settings["worst_first"],
+                )
+                record["worst_first"] = dict(share=settings["worst_first"], blame=top, tiles=worst)
             if number:
                 record["held"] = held_summary(fields, selection)
                 boxes = [(by_id[tid]["nodes_lo"], by_id[tid]["nodes_hi"]) for tid in selection]
                 record["change"] = merge_change(merged, passes / str(number - 1) / "merge", boxes)
+                before = state["passes"][number - 1]
                 record["rate"], record["bound"] = rate_bound(
-                    record["change"], state["passes"][number - 1]["change"]
+                    record["change"], before["change"] if before["tiles"] == selection else None
                 )
                 record["kink"] = kink_summary(
                     {
