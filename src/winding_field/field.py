@@ -261,7 +261,31 @@ def global_pair_constraints(db, meta, fibres, geometry, maps, shape, weight, cac
         tuple(int(n) for n in shape),
         weight=weight,
         cache_bytes=cache_bytes,
+        spatial_index_bytes=pair_index_bytes(len(pairs[0])),
     )
+
+
+def pair_index_bytes(count, available=None):
+    """Spatial index budget for ``count`` global pairs, or 0 when it would not fit.
+
+    Without the index every block restriction scans all pair rows of the grid, twice per
+    sweep, which dominated two-level sweeps. The core admits the index when the budget
+    covers its construction workspace (64 bytes per stencil slot, 16 slots per pair) and
+    retains 16 bytes per nonzero slot; it does not change the rows or the field.
+    """
+    from field_memory import available_memory
+
+    need = 4096 + int(count) * 16 * 64
+    if available is None:
+        available = available_memory()[0]
+    if available is not None and need > available // 4:
+        print(
+            f"[field] WARNING: the pair index needs {need >> 20} MiB; blocks scan all pairs",
+            file=sys.stderr,
+            flush=True,
+        )
+        return 0
+    return need
 
 
 def _pair_points(db, meta, fibres, geometry, maps, lo, hi, *, max_pairs=None, stop=None):
