@@ -395,8 +395,9 @@ def test_sheet_atlas_subcommands_accept_complete_config_files(tmp_path, capsys):
     atomic_json(options, dict(atlas="atlas"))
     before = pins(tmp_path / "atlas")
     if sys.platform != "linux":
-        with pytest.raises(InterruptedError, match="Linux"):
-            main(["sheet-atlas", "verify", "--config", str(options)])
+        # The RSS guard needs /proc; tool errors exit 1 with the message on stderr.
+        assert main(["sheet-atlas", "verify", "--config", str(options)]) == 1
+        assert "requires Linux /proc" in capsys.readouterr().err
         assert before == pins(tmp_path / "atlas")
         return
     assert main(["sheet-atlas", "verify", "--config", str(options)]) == 0

@@ -8,6 +8,7 @@ from pathlib import Path
 import sqlite3
 import subprocess
 import sys
+import time
 import types
 import uuid
 import threading
@@ -661,7 +662,17 @@ def test_real_supervisor_kill_preserves_phase_and_charges_clock(tool, inputs, tm
         str(attempt / "started"),
     ]
     budget = tool.Budget(out, 30.0)
-    result = _supervise(command, attempt, 0.3)
+    started = attempt / "started"
+    ready = time.monotonic() + 60
+
+    def wait_for_child():
+        # Barrier: the 0.3 s limit must expire after the child ignores SIGTERM, not
+        # during interpreter start-up on a loaded runner (then nothing is ever killed).
+        while not started.exists() and time.monotonic() < ready:
+            time.sleep(0.01)
+        return False
+
+    result = _supervise(command, attempt, 0.3, stop=wait_for_child)
     budget.close()
     assert (attempt / "started").exists() and result["reason"] == "TIME_LIMIT"
     assert (out / "source/data.npz").read_bytes() == before
