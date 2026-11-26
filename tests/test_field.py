@@ -4,7 +4,15 @@ import numpy as np
 import pytest
 
 
-def prepared_run(root, shape=(6, 6, 24), chunk=8, variable=False, support_x_below=None):
+def prepared_run(
+    root,
+    shape=(6, 6, 24),
+    chunk=8,
+    variable=False,
+    support_x_below=None,
+    spacing=(2.0, 3.0, 4.0),
+    origin=(10.0, 20.0, 30.0),
+):
     from winding_field.artifacts import Tiles
     from winding_field.fibres import trace
     from winding_field.util import atomic_json
@@ -44,8 +52,8 @@ def prepared_run(root, shape=(6, 6, 24), chunk=8, variable=False, support_x_belo
         )
     meta = dict(
         shape_zyx=list(shape),
-        spacing_xyz=[2.0, 3.0, 4.0],
-        origin_xyz=[10.0, 20.0, 30.0],
+        spacing_xyz=list(spacing),
+        origin_xyz=list(origin),
         frame="test",
         tiles_sha256=maps.identity(),
         prediction="analytic-test",

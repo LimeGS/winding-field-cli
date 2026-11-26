@@ -9,6 +9,7 @@ meshes against CT at a chosen pitch and level:
     plan      choose tile ROIs on one global grid and write TILES.json
     tiles     run/continue the planned tiles with bounded local concurrency
     merge     blend tiles into MERGED/field/CHECKPOINT.json, FIELD.json, LEVELS.json
+    refine    solve again the tiles whose seams stay open, their faces held at the merge
     render-ct flatten and render one mesh bundle against CT at --render-pitch-um
 
 Every tile is an ordinary ``winding-field run`` (imported fibres and Lasagna,
@@ -742,6 +743,9 @@ class _Tile:
     A tile may be solved on a larger box than its plan gives it, to move a free face away
     from the nodes it contributes: every reader here indexes the plan box, and the nodes
     outside it take no part in the join, the blend or the seam statistics.
+
+    ``tile["field_run"]`` names the directory of a field solved apart from the prepared
+    tile (a ``scroll refine`` pass): the maps still come from the plan's tile.
     """
 
     def __init__(self, plan_root, tile, grid):
@@ -750,7 +754,8 @@ class _Tile:
 
         self.tile = tile
         self.run = Path(plan_root) / "tiles" / tile["id"]
-        meta = _json(self.run / "FIELD.json")
+        self.field_run = Path(tile["field_run"]) if tile.get("field_run") else self.run
+        meta = _json(self.field_run / "FIELD.json")
         self.geometry = meta["geometry"]
         self.prepared = _json(self.run / "PREPARED.json")
         self.lo = np.asarray(tile["nodes_lo"])
@@ -770,7 +775,7 @@ class _Tile:
         self.grown = bool(self.shift.any() or (self.solved_hi > self.hi).any())
         descriptor = dict(
             kind="chunks",
-            path=str(self.run / "field/CHECKPOINT.json"),
+            path=str(self.field_run / "field/CHECKPOINT.json"),
             sha256=meta["checkpoint_sha256"],
         )
         self.stored = FieldSource(
@@ -782,7 +787,7 @@ class _Tile:
         self.maps = Tiles(self.run / "maps", readonly=True)
         self.core_lo = np.asarray(tile["core_lo"])
         self.core_hi = np.asarray(tile["core_hi"])
-        manifest = _json(self.run / "field/CHECKPOINT.json")
+        manifest = _json(self.field_run / "field/CHECKPOINT.json")
         self.chunk = int(manifest["chunk"])
         self.chunks = [tuple(map(int, k.split("-"))) for k in manifest["chunks"]]
 
@@ -1191,8 +1196,11 @@ def _merged_frame(geometries, sources):
     return frame, frame_match(frames=tiles_by_frame)
 
 
-def merge(args):
+def merge(args, fields=None):
+    """Blend the plan's solved tiles. ``fields`` maps a tile id to the directory of a field
+    that replaces the one in the plan's tile (``scroll refine``)."""
     root = Path(args.plan).resolve()
+    fields = {tid: Path(path) for tid, path in (fields or {}).items()}
     document = _json(root / "TILES.json")
     if document.get("schema") != PLAN_SCHEMA:
         raise ValueError("not a scroll tile plan")
@@ -1204,7 +1212,11 @@ def merge(args):
     missing = [t["id"] for t in tiles if not _tile_done(root / "tiles" / t["id"])]
     if missing and not args.allow_missing:
         raise ValueError(f"{len(missing)} tiles have no completed field, e.g. {missing[:5]}")
-    tiles = [t for t in tiles if t["id"] not in missing]
+    tiles = [
+        dict(t, field_run=str(fields[t["id"]])) if t["id"] in fields else t
+        for t in tiles
+        if t["id"] not in missing
+    ]
     geometries = {}
     sources = {}
     grown = {}
@@ -1317,7 +1329,7 @@ def merge(args):
         geometry=geometry,
         plan_sha256=file_sha(root / "TILES.json"),
         tiles={
-            tid: _json(root / "tiles" / tid / "FIELD.json")["checkpoint_sha256"]
+            tid: _json(fields.get(tid, root / "tiles" / tid) / "FIELD.json")["checkpoint_sha256"]
             for tid in geometries
         },
         blend="linear cross-fade over 2*overlap+1 nodes on interior tile faces",
@@ -1402,6 +1414,13 @@ def merge(args):
     if grown:
         # Solved on a larger box than planned; only the plan box was joined and blended.
         field_meta["grown_tiles"] = grown
+    if fields:
+        # Fields solved apart from their prepared tile, relative to the plan.
+        field_meta["tile_fields"] = {
+            tid: os.path.relpath(path, root)
+            for tid, path in sorted(fields.items())
+            if tid in geometries
+        }
     atomic_json(output / "FIELD.json", field_meta)
     surface = dict(
         schema="winding-surfaces-v1",
@@ -1975,6 +1994,72 @@ def _parser():
         "Gaussian scale by the coarse field before blending (0 disables)",
     )
 
+    p = sub.add_parser(
+        "refine",
+        help="close the seams of the merged tiles: solve the tiles that disagree again with "
+        "their internal faces held at the merge, until the merge stops changing",
+    )
+    p.add_argument("plan")
+    p.add_argument("--output", required=True, help="the refined merged field (a new directory)")
+    p.add_argument(
+        "--max-passes",
+        type=int,
+        default=3,
+        help="most passes of tile solves after the first merge (default: 3)",
+    )
+    p.add_argument(
+        "--layers",
+        type=int,
+        default=2,
+        help="node layers held on each internal tile face (run --field-boundary-layers; "
+        "default: 2)",
+    )
+    p.add_argument(
+        "--trigger-share",
+        type=float,
+        default=0.02,
+        help="solve again the tiles of a pair with more than this share of its shared nodes "
+        "over half a winding apart, and the tiles next to them (default: 0.02)",
+    )
+    p.add_argument(
+        "--trigger-p95",
+        type=float,
+        default=0.5,
+        help="or whose 95th percentile of |dW| on shared nodes is over this (default: 0.5)",
+    )
+    p.add_argument(
+        "--bound",
+        type=float,
+        default=0.25,
+        help="accept when the bound of the remaining error, change x r / (1 - r) with r the "
+        "ratio of the last two changes between merges (95th percentile, windings), is at "
+        "most this (default: 0.25)",
+    )
+    p.add_argument(
+        "--max-kink-ratio",
+        type=float,
+        default=2.0,
+        help="accept when no solved tile bends more at its held faces than this many times "
+        "its own mid-planes (95th percentile of the second difference of W; default: 2)",
+    )
+    p.add_argument(
+        "--jobs",
+        type=int,
+        help="tiles at once (default: GPUs x the plan's jobs per GPU, or 1 without GPUs)",
+    )
+    p.add_argument(
+        "--gpus",
+        help="comma-separated GPU ids for the tiles, one per tile process (default: all "
+        "visible GPUs; empty string: none)",
+    )
+    p.add_argument("--workers", type=int, default=max(1, (os.cpu_count() or 2) // 2))
+    p.add_argument("--allow-missing", action="store_true")
+    p.add_argument(
+        "--prune",
+        action="store_true",
+        help="delete each pass's merge once the next two passes no longer need it",
+    )
+
     p = sub.add_parser("render-ct", help="flatten and render one mesh bundle against CT")
     p.add_argument("--mesh", required=True, help="single-level mesh bundle directory")
     p.add_argument("--source", required=True)
@@ -2083,6 +2168,10 @@ def main(argv=None):
             result = run_tiles(args)
         elif args.action == "merge":
             result = merge(args)
+        elif args.action == "refine":
+            from .scroll_refine import refine
+
+            result = refine(args)
         elif args.action == "site":
             result = site(args)
         else:
@@ -2091,7 +2180,7 @@ def main(argv=None):
         print("scroll: " + str(error), file=sys.stderr)
         return 2
     print(json.dumps(result, allow_nan=False, default=float))
-    return 0 if result.get("status") not in ("INCOMPLETE",) else 3
+    return 0 if result.get("status") not in ("INCOMPLETE", "REFINE_NOT_CONVERGED") else 3
 
 
 if __name__ == "__main__":

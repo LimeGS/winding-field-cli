@@ -1054,7 +1054,7 @@ def solve(run, config, stop=None, *, sweep_target=None, convergence=None, output
         checkpoint = root / "CHECKPOINT.json"
         if not checkpoint.exists():
             # Publish only a complete initial checkpoint; failed admission is retryable.
-            with TemporaryDirectory(prefix=".field-init-", dir=run) as temporary:
+            with TemporaryDirectory(prefix=".field-init-", dir=out) as temporary:
                 initial = Path(temporary) / "field"
                 solve_blocks(initial, shape, chunk, identity, load, stop=lambda: True, **options)
                 initial.rename(root)

@@ -246,10 +246,11 @@ def test_field_can_be_written_apart_from_its_prepared_run(tmp_path):
     here = _tile(tmp_path / "here", (6, 6, 16), shift_x=20.0)
     assert field.solve(here, config)["status"] == "FIELD_READY"
     tile = _tile(tmp_path / "tile", (6, 6, 16), shift_x=20.0)
-    before = sorted(p.name for p in tile.iterdir())
+    before = sorted((p.name, p.stat().st_mtime_ns) for p in (tile, *tile.rglob("*")))
     out = tmp_path / "passes/1/tile"
     assert field.solve(tile, config, output=out)["status"] == "FIELD_READY"
-    assert sorted(p.name for p in tile.iterdir()) == before
+    # Nothing is created in the prepared run, not even for a moment.
+    assert sorted((p.name, p.stat().st_mtime_ns) for p in (tile, *tile.rglob("*"))) == before
     assert (out / "FIELD.json").is_file() and (out / "CALIBRATION.json").is_file()
     np.testing.assert_array_equal(read(out)[0], read(here)[0])
 

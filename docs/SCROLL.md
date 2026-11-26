@@ -273,6 +273,60 @@ reads it on its plan box only: the nodes outside take no part in the join, the b
 seams or the levels, and `FIELD.json` → `grown_tiles` lists the boxes such tiles were
 solved on.
 
+### Seams that the join cannot close (`scroll refine`)
+
+The join gives each tile one constant and one tilt. That is enough where the data fix W:
+a 256-node box of PHerc0175A merged with 1.77 % of its seam nodes over half a winding. It
+is not enough where a tile face cuts a region the data determine poorly (few sheets seen,
+normals that disagree): the face is free, the solve drifts whole windings from what the
+neighbours find, and the error is neither a constant nor a tilt. On the 384-node box of
+the same scroll, with `--run-arg=--field-orientation --run-arg=prior-gradient`, 9.64 % of
+the seam nodes stayed over half a winding.
+
+```sh
+wf scroll refine /outputs/plan --output /outputs/refined
+```
+
+`refine` merges as above (pass 0) and then repeats: every tile of a pair over the trigger
+(`--trigger-share`, more than 2 % of the pair's shared nodes over half a winding, or
+`--trigger-p95`, their 95th percentile of |dW| over 0.5), and every tile that shares a
+face with one, is solved again with `run --field-boundary <the current merge>`: the two
+outer node layers (`--layers`) of each internal face are held at the merge's observed
+values, no gauge node is pinned, and the solve starts from the merge. The plan is then
+merged again with each tile's newest field. Scratch runs of this recipe took that 384 box
+from 9.64 % to 0.82 % and 0.065 % in two passes, which solved 27 and then 18 of its 27
+tiles again.
+
+Two neighbours held at the same merge agree on their overlap partly by construction, so
+closed seams alone do not show that the iteration has settled. `refine` accepts a merge
+when all of these hold, and otherwise goes on up to `--max-passes` (3):
+
+- no pair is over the trigger;
+- the bound of the remaining error is at most `--bound` (0.25 winding): the change
+  between the last two merges on the tiles just solved (95th percentile, after removing
+  the constant and tilt the join leaves free), times r / (1 − r), with r the ratio of the
+  last two changes. It needs two passes, so tiles whose seams close in one are solved once
+  more; a change within 0.001 winding counts as settled;
+- no solved tile bends more at its held faces than `--max-kink-ratio` (2) times its own
+  mid-planes (95th percentile of the second difference of W over the local sheet slope).
+
+The result is `REFINED`, or `REFINE_NOT_CONVERGED` (exit code 3) with the reasons; the
+last merge is published in `--output` either way, with the measurements of every pass in
+`FIELD.json` → `refine` and each tile's field in `tile_fields`. The plan's tiles are not
+written: pass k keeps its fields in `PLAN/passes/k/tiles/<id>` (the field only; maps and
+fibres are read from the plan's tile) and its merge in `PLAN/passes/k/merge`. Running the
+command again continues: finished tiles and measured merges are kept, an unfinished merge
+is redone. Passes made with other thresholds or layers are refused, and so is a pass tile
+solved against another merge. `--prune` deletes each merge once the next two passes no
+longer need it.
+
+What the bound does not say: inside the poorly determined region itself the tiles settle,
+at the same rate as elsewhere, on a solution that differs from a single-block solve of the
+same box (384 box: 95th percentile 0.80 winding inside it, 0.35 outside). Both follow the
+observed sheet normals equally there (83.0 % and 83.1 % of nodes within 30 degrees), so
+neither is known to be the better one. The passes were measured with one block per tile,
+Jacobi and the eager kernels; fixed faces with AMG or the fused kernels are not measured.
+
 ## 5. Meshes and full-resolution CT
 
 Mesh the merged field per level with the existing command, then flatten and render each
