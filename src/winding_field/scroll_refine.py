@@ -285,6 +285,17 @@ def decide(record, settings, max_passes, tiles, previous_selection):
     return None, reasons, selection
 
 
+def tile_orientation(root, tiles):
+    """{rule: tiles}: the orientation rule each tile's recorded run settings name. A pass
+    solves a tile with those settings, whatever made the field the plan holds."""
+    counts = {}
+    for tile in tiles:
+        config = _json(root / "tiles" / tile["id"] / "RUN.json")["config"]
+        rule = config.get("field_orientation", "radial")
+        counts[rule] = counts.get(rule, 0) + 1
+    return dict(sorted(counts.items()))
+
+
 # --- one tile of a pass -----------------------------------------------------------------
 
 
@@ -493,6 +504,7 @@ def refine(args):
         t for t in document["tiles"] if t["supported"] and _tile_done(root / "tiles" / t["id"])
     ]
     by_id = {t["id"]: t for t in tiles}
+    orientation = tile_orientation(root, tiles)
     workers = SimpleNamespace(
         plan=str(root),
         workers=args.workers,
@@ -603,6 +615,7 @@ def refine(args):
         status=status,
         reasons=reasons,
         settings=settings,
+        orientation=orientation,
         max_passes=args.max_passes,
         final_pass=number,
         passes=state["passes"][: number + 1],
@@ -620,6 +633,7 @@ def refine(args):
         rate=final["rate"],
         bound=final["bound"],
         tiles_solved=[len(p["tiles"]) for p in state["passes"][: number + 1]],
+        orientation=orientation,
     )
     state["published"] = dict(output=str(output), status=status, **{"pass": number}, result=result)
     atomic_json(state_path, state)

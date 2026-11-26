@@ -138,11 +138,13 @@ def test_refine_solves_the_disagreeing_tiles_until_the_merge_stops_moving(tmp_pa
     assert result["status"] == "REFINED" and result["reasons"] == []
     assert result["passes"] == 3 and result["tiles_solved"] == [0, 2, 2, 2]
     assert result["pairs_over_trigger"] == [] and result["seam_over_half_share"] == 0
+    assert result["orientation"] == {"radial": 2}
     # The plan's tiles keep their first fields; passes live beside them.
     assert tree(root / "tiles") == before
     receipt = json.loads((tmp_path / "refined/FIELD.json").read_bytes())
     refine = receipt["refine"]
     assert refine["status"] == "REFINED" and refine["final_pass"] == 3
+    assert refine["orientation"] == result["orientation"]
     first, second, third, last = refine["passes"]
     assert first["seams"]["pairs_over_trigger"] == ["000-000-000|000-000-001"]
     assert first["seams"]["over_half_share"] > 0.02 and first["change"] is None
@@ -265,6 +267,16 @@ def test_refine_command_reports_its_result_and_exit_code(tmp_path, capsys):
     level = write_plan(tmp_path / "level", {})
     code = scroll.main(["refine", str(level), "--output", str(tmp_path / "level-refined"), *common])
     assert code == 0 and json.loads(capsys.readouterr().out)["status"] == "REFINED"
+
+
+def test_orientation_is_the_rule_each_tile_recorded(tmp_path):
+    """A pass solves a tile with its recorded settings: the receipt says which rule that is."""
+    rules = {"a": {}, "b": {"field_orientation": "prior-gradient"}, "c": {}}
+    for tid, config in rules.items():
+        (tmp_path / "tiles" / tid).mkdir(parents=True)
+        (tmp_path / "tiles" / tid / "RUN.json").write_text(json.dumps(dict(config=config)))
+    tiles = [dict(id=tid) for tid in rules]
+    assert scroll_refine.tile_orientation(tmp_path, tiles) == {"prior-gradient": 1, "radial": 2}
 
 
 def _tiles(*keys):

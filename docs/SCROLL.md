@@ -327,6 +327,11 @@ observed sheet normals equally there (83.0 % and 83.1 % of nodes within 30 degre
 neither is known to be the better one. The passes were measured with one block per tile,
 Jacobi and the eager kernels; fixed faces with AMG or the fused kernels are not measured.
 
+A pass solves each tile with the settings its plan tile recorded (`RUN.json`), not with
+whatever made the field the plan holds. The result and `FIELD.json` → `refine` list the
+orientation rule of the tiles in `orientation` (for example `{"prior-gradient": 8}`); the
+passes were measured on tiles solved with `--field-orientation prior-gradient`.
+
 ## 5. Meshes and full-resolution CT
 
 Mesh the merged field per level with the existing command, then flatten and render each
