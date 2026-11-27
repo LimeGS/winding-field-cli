@@ -222,6 +222,16 @@ def main(argv=None):
             help="free disk reserve in GiB (default: 1); not RAM",
         )
         p.add_argument(
+            "--disk-estimate-fraction",
+            type=float,
+            default=argparse.SUPPRESS,
+            metavar="F",
+            help="share of the uncompressed product estimate that the disk check before the run "
+            "requires free, in (0, 1] (default: 1). Products are stored compressed, so measured "
+            "runs use far less than the estimate; set it only from a measured ratio. The reserve "
+            "(--reserve-gib) and the checks made while writing stay in force",
+        )
+        p.add_argument(
             "--ct-mode",
             choices=["auto", "download", "stream"],
             default="auto",

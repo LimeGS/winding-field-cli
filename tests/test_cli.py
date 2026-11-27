@@ -267,3 +267,42 @@ def test_tool_errors_are_reported_without_traceback(tmp_path, monkeypatch, capsy
     monkeypatch.setattr(field_advice, "report", fail)
     assert main(["field-advice", str(tmp_path)]) == 1
     assert capsys.readouterr().err == "winding-field field-advice: unreadable run\n"
+
+
+def test_disk_estimate_fraction_scales_the_check_before_the_run(tmp_path, monkeypatch):
+    import pytest
+    from types import SimpleNamespace
+    from winding_field.config import validate_config
+    from winding_field.demo import synthetic
+    from winding_field.workflow import run
+
+    source = synthetic(tmp_path / "ct.zarr")
+    config = dict(
+        source=source,
+        prediction="classical",
+        chunk=64,
+        field_chunk=64,
+        sweeps=1,
+        seed_stride=4,
+        reserve_bytes=4096,
+        cache=str(tmp_path / "cache"),
+    )
+    total = 24 * 32 * 56 * 100  # the uncompressed estimate of this volume's products
+    free = total // 2
+    monkeypatch.setattr(
+        "winding_field.workflow.shutil.disk_usage", lambda p: SimpleNamespace(free=free)
+    )
+    with pytest.raises(OSError, match="insufficient disk space"):
+        run(dict(config, output=str(tmp_path / "refused")), until="prepare")
+    with pytest.raises(OSError, match="insufficient disk space"):
+        run(
+            dict(config, output=str(tmp_path / "still-refused"), disk_estimate_fraction=0.75),
+            until="prepare",
+        )
+    scaled = dict(config, output=str(tmp_path / "admitted"), disk_estimate_fraction=0.25)
+    state = run(scaled, until="prepare")
+    assert state["status"] == "PAUSED"
+    assert state["config"]["disk_estimate_fraction"] == 0.25
+    for bad in (0, -0.5, 1.5, True, "0.5"):
+        with pytest.raises(ValueError, match="disk_estimate_fraction"):
+            validate_config(dict(config, output=str(tmp_path / "x"), disk_estimate_fraction=bad))
