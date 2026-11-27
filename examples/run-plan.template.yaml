@@ -24,6 +24,7 @@ output: "../runs/scroll-field" # Opciones: ruta local NUEVA para run; plan no la
 cache: "../cache/ct" # Opciones: ruta local de caché CT | null/omitir para la ubicación automática.
 cache_gib: 2.0 # Opciones: número finito >= 0, GiB de caché CT; 0 desactiva retención. No es RAM total.
 reserve_gib: 1.0 # Opciones: número finito >= 0, GiB libres de reserva en disco; 0 no reserva espacio.
+# disk_estimate_fraction: 0.25 # Opciones: número en (0, 1] | null/omitir para 1; parte de la estimación de productos sin comprimir que el chequeo de disco previo exige libre; usar solo con una razón medida; la reserva (reserve_gib) y los chequeos al escribir siguen vigentes.
 ct_mode: auto # Opciones: auto | download | stream; auto decide según estimación de disco.
 offline: false # Opciones: true | false; true prohíbe acceso CT de red; modelos/runtime deben estar provisionados.
 # voxel_um: 9.6 # Opciones: número finito > 0 en µm; calibración CT real si falta en metadatos | null/omitir.
