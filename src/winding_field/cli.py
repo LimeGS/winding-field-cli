@@ -701,6 +701,11 @@ def main(argv=None):
             )
         if command == "resume":
             p.add_argument(
+                "--device",
+                help="PyTorch device for the stages still to run, such as cuda:0; only before "
+                "the field starts (a run prepared on a CPU host, solved on a GPU host)",
+            )
+            p.add_argument(
                 "--field-sweeps",
                 type=int,
                 help="absolute total sweep budget: continue a field (also a finished ordinary one) from its checkpoint; retries do not add sweeps",
@@ -1310,6 +1315,7 @@ def main(argv=None):
                     extra_surface_seconds=getattr(args, "extra_surface_seconds", 0.0),
                     field_sweeps=getattr(args, "field_sweeps", None),
                     offline=args.offline,
+                    device=resolve_device(args.device) if getattr(args, "device", None) else None,
                 )
         print(json.dumps(result, indent=2, allow_nan=False))
         if args.command == "doctor" and not result.get("preflight", {}).get("ready", True):

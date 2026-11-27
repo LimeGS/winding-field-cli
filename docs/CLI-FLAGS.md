@@ -64,7 +64,7 @@ The corresponding family tests must compare maximal file and flag requests.
 | Public family | Existing authority | Required settings/flag groups |
 |---|---|---|
 | `run`, `plan` | `cli.py`, `config.py` | Every existing option; nested original mapping and direct-TIFXYZ requests; imported input geometry and manifest settings |
-| `resume`, `prepare`, `fibres`, `field`, `mesh`, `flatten`, `assemble`, `render`, `status` | `cli.py`, `workflow.py` | Run path; existing offline, sweep and explicit extra-time controls only; config mode must not make frozen scientific settings mutable |
+| `resume`, `prepare`, `fibres`, `field`, `mesh`, `flatten`, `assemble`, `render`, `status` | `cli.py`, `workflow.py` | Run path; existing offline, sweep and explicit extra-time controls, plus `resume --device` before the field starts (recorded in `device_changes`); config mode must not make frozen scientific settings mutable |
 | `field-converge` | `field_convergence.py` | Prepared source or automatic generation, fresh output/resume, total sweep limit, separate global tolerance and inherited field overrides; no legacy migration |
 | `prepared build/resume/verify` | `field_workflow.load_run_config` | Frame/voxel/grid/sheet/calibration; target, weights, observed, fixed, constraints and order artifacts+SHA; solver; execution; GPU lease; source identity |
 | `prepared mesh/surfaces` | `surface_workflow.load_surface_config` | Field or mesh descriptor; field geometry; raw levels; extraction execution; render settings; parallel levels; resume |
