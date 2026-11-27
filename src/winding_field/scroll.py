@@ -1786,7 +1786,11 @@ def _parser():
         help="level-0 (base grid) voxel bounds; default the whole cos array",
     )
     p.add_argument("--tile", type=int, default=192, help="cos voxels per tile edge (x64)")
-    p.add_argument("--device", default="cuda")
+    p.add_argument(
+        "--device",
+        default="cuda",
+        help="torch device (default cuda); without CUDA it falls back to cpu with a warning",
+    )
     p.add_argument(
         "--part",
         type=int,
