@@ -272,6 +272,17 @@ def assert_configurable_gpu(run):
     assert "device=0" not in run
 
 
+def test_self_hosted_cuda_jobs_build_with_the_daemon_driver():
+    # A docker-container builder runs on the bridge network, where DNS timed out on the GPU
+    # runner (v2.0.0b1 release-cuda: lookup ghcr.io: i/o timeout); the daemon driver does not.
+    jobs = workflow("docker.yml")["jobs"]
+    for name in ("release-cuda", "cuda"):
+        setup = next(
+            s for s in jobs[name]["steps"] if s.get("uses", "").startswith("docker/setup-buildx")
+        )
+        assert setup["with"] == {"driver": "docker"}, name
+
+
 def test_manual_cuda_gpu_step_takes_a_configurable_device():
     docker = workflow("docker.yml")
     inputs = docker["on"]["workflow_dispatch"]["inputs"]
