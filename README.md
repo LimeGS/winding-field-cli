@@ -579,6 +579,7 @@ Use `--lasagna-cos-downsample`, `--lasagna-grad-mag-downsample`,
 | `--level-workers 1` | Native W levels computed in parallel processes; each needs its own memory; outputs equal a serial run |
 | `--import-workers 1` | Local import workers (`0` = resource-admitted automatic); results written in input order |
 | `--cache-gib 2 --reserve-gib 1` | CT payload cache cap / free disk reserve, not RAM |
+| `--disk-estimate-fraction F` | Share of the uncompressed product estimate the disk check before the run requires free, in (0, 1] (default 1); set it only from a measured ratio |
 | `--threads 4` | PyTorch threads, not a global worker limit; idle threads sleep (`OMP_WAIT_POLICY=PASSIVE`) so concurrent runs share a host; set `OMP_WAIT_POLICY=ACTIVE` on a dedicated CPU host (~10% faster alone) |
 | `--device auto` | New-run default: usable CUDA → usable MPS → CPU; explicit PyTorch devices remain supported |
 | `--offline` | Disable CT networking; provision models/runtime separately |
