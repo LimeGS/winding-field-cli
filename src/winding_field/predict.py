@@ -287,8 +287,9 @@ def _prepare(volume, run, config, stop, stack, verified_lasagna=None):
     completed = 0
     # Compressing a tile costs far more than computing or receiving it, and it was the
     # whole import's bottleneck when done one tile at a time here. Tiles are stored by a
-    # few threads and published in key order by this one, so the files, their hashes and
-    # the order of the records are the same as with one thread.
+    # few threads and recorded in key order by this one, so the files, their hashes and
+    # the order of the records are the same as with one thread. At most ``storing`` tiles
+    # wait unrecorded, whatever the host, so a stop or a failure loses the same bounded work.
     storing = max(1, min(8, cpu_limit() - 1))
     pool = stack.enter_context(ThreadPoolExecutor(max_workers=storing))
     stack.callback(pool.shutdown, wait=True, cancel_futures=True)
@@ -298,7 +299,7 @@ def _prepare(volume, run, config, stop, stack, verified_lasagna=None):
         nonlocal completed
         while len(stored) > limit:
             tile, sha, info = stored.popleft()
-            maps.publish(tile, sha.result(), info)
+            maps.write(tile, info=info, stored=sha.result())
             completed += 1
 
     for key in maps.keys():
@@ -373,7 +374,7 @@ def _prepare(volume, run, config, stop, stack, verified_lasagna=None):
                     else lasagna.read_observations(run, geometry, start, end)
                 )
         stored.append((key, pool.submit(maps.store, key, arrays), dict(ct_sha256=sha)))
-        publish(2 * storing)
+        publish(storing)
         if stop and stop():
             publish(0)
             maps.close()

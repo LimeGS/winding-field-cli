@@ -1,4 +1,4 @@
-"""Tiles stored by several threads and published in order equal a serial write."""
+"""Tiles stored by several threads and recorded in order equal a serial write."""
 
 from concurrent.futures import ThreadPoolExecutor
 
@@ -19,7 +19,7 @@ def _tiles(rng, tiles):
     }
 
 
-def test_threaded_store_then_ordered_publish_matches_write(tmp_path):
+def test_threaded_store_then_ordered_record_matches_write(tmp_path):
     serial = Tiles(tmp_path / "serial", shape=(8, 16, 24), chunk=8, identity="x")
     threaded = Tiles(tmp_path / "threaded", shape=(8, 16, 24), chunk=8, identity="x")
     data = _tiles(np.random.default_rng(0), serial)
@@ -28,17 +28,17 @@ def test_threaded_store_then_ordered_publish_matches_write(tmp_path):
     with ThreadPoolExecutor(4) as pool:
         stored = [(key, pool.submit(threaded.store, key, arrays)) for key, arrays in data.items()]
         for key, sha in stored:
-            threaded.publish(key, sha.result(), dict(ct_sha256="a"))
+            threaded.write(key, info=dict(ct_sha256="a"), stored=sha.result())
     for key in data:
         assert serial.path(key).read_bytes() == threaded.path(key).read_bytes()
         assert threaded.info(key) == serial.info(key)
     assert threaded.identity() == serial.identity()
 
 
-def test_stored_tile_exists_only_once_published(tmp_path):
+def test_stored_tile_exists_only_once_recorded(tmp_path):
     tiles = Tiles(tmp_path / "maps", shape=(8, 8, 8), chunk=8, identity="x")
     (arrays,) = _tiles(np.random.default_rng(1), tiles).values()
     sha = tiles.store((0, 0, 0), arrays)
     assert tiles.path((0, 0, 0)).exists() and not tiles.has((0, 0, 0))
-    tiles.publish((0, 0, 0), sha, dict(ct_sha256="a"))
+    tiles.write((0, 0, 0), info=dict(ct_sha256="a"), stored=sha)
     assert tiles.has((0, 0, 0)) and file_sha(tiles.path((0, 0, 0))) == sha
