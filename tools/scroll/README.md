@@ -59,7 +59,9 @@ November 2026. Checklist, in order, each item from a measured failure below:
    measured ratio (0.4 used; measured 0.05–0.15 on six 34.56 µm runs).
 5. **Prepare**: `--import-workers 32 --threads 16` (the default is one serial worker).
 6. **Field**: `--field-cpu-workers N --field-cpu-buffer-bytes B` (opt-in; the default 0 builds
-   every block's observations in the main process). Leave `--observation-cache-bytes` unset
+   every block's observations in the main process; the workers are refused without a positive
+   buffer budget). Untested: CPU workers together with `--field-coarse-factor` have not run
+   yet, so check them on a small box before a paid run. Leave `--observation-cache-bytes` unset
    so `--field-memory auto` sizes it (it measured 187 GB of observations for this ROI and
    cached all of them).
 7. **Watch** with `field_status.py`; profile with `cProfile` on a 256³ sub-ROI, since py-spy
