@@ -301,6 +301,31 @@ the collection is not accepted as a single combined mesh by existing readers.
 not rendered. Imported meshes and render-only commands do not support this flag.
 Without the flag the existing single-bundle workflow is unchanged.
 
+### Skip tiles that cannot hold a level (`prepared ranges`)
+
+Extraction reads and decodes every tile of the field before it knows whether a level
+crosses it; a level of a whole scroll crosses only a small part of them. For a
+chunk-checkpoint field (`field.kind="chunks"`), build a ranges file once and pass it to
+every extraction of that field:
+
+```bash
+winding-field prepared ranges --config surface-run.json --output field-ranges.json \
+  --ranges-workers 64
+winding-field prepared mesh --parallel-levels --config surface-run.json \
+  --output runs/parallel-surfaces --tile-ranges field-ranges.json
+```
+
+`ranges` decodes each stored chunk once (payload hashes checked) in
+`--ranges-workers` processes (default: the CPU quota) and records the minimum and
+maximum of its admissible nodes, for the config's `support_policy`. The file is bound
+to the checkpoint hash, support policy, grid shape and chunk size; another field is
+refused. With `--tile-ranges`, a tile is read only when the union of the ranges of the
+chunks it touches contains the level. That union contains the tile's own range, and a
+tile whose range excludes a level yields no faces, so the mesh is **identical**
+(OBJ bytes and `MESH.json` level records) with or without the file; it only saves
+reading. It works with and without `--parallel-levels` (each child reads the same
+file) and on `--resume`. NPY and remote Zarr fields are not supported.
+
 Each process uses one numerical thread. Automatic admission respects CPU affinity
 and Linux cgroup quotas (including mounted v1/hybrid namespaces), available host/container RAM, field cache, tile workspace,
 render buffers and concurrent disk staging. It retains 2 GiB host RAM headroom,

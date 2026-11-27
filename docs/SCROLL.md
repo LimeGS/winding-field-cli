@@ -274,7 +274,9 @@ wf scroll render-ct --mesh /outputs/meshes/level-0000 --source "$CT" --voxel-um 
 
 **What one level costs.** `--parallel-levels` runs one process per level, and each walks
 every 64-node tile of the field in order (32,240 for PHerc0175A at 34.56 µm): levels fill
-the cores, one level never uses more than one. A PHerc0175A level of 12.07 M faces took
+the cores, one level never uses more than one. `prepared ranges` (once per field) plus
+`--tile-ranges FILE` lets each level read only the tiles whose chunks can contain it;
+the meshes are identical ([details](PREPARED.md#skip-tiles-that-cannot-hold-a-level-prepared-ranges)). A PHerc0175A level of 12.07 M faces took
 230 bytes per face in `mesh.sqlite` (2.77 GB) and under 0.6 GB of RAM. Leave free at least
 the size of that database again for the closing step, which rewrites the component of
 nearly every face in one transaction and then writes the `.obj` (about 50 bytes per face):

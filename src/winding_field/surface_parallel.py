@@ -259,7 +259,9 @@ def _child_config(config, level):
     return child
 
 
-def run_parallel_levels(config_path, output, *, resume=False, render=False, stop=None):
+def run_parallel_levels(
+    config_path, output, *, resume=False, render=False, stop=None, tile_ranges=None
+):
     if (
         type(resume) is not bool
         or type(render) is not bool
@@ -280,6 +282,11 @@ def run_parallel_levels(config_path, output, *, resume=False, render=False, stop
     with FieldSource(config["field"], config["geometry"], cache_bytes=0) as source:
         source.validate(hashes=resume or not remote_field)
         identity = source.identity
+    if tile_ranges is not None:
+        from .surface_ranges import load_ranges
+
+        tile_ranges = Path(tile_ranges).absolute()
+        load_ranges(tile_ranges, config["field"], config["geometry"])  # fail before launching
     binding = dict(
         config_sha256=config["config_sha256"],
         config_path=config["config_path"],
@@ -405,10 +412,10 @@ def run_parallel_levels(config_path, output, *, resume=False, render=False, stop
                     )
                 )
             atomic_json(inventory, result)
-        return _supervise(config, output, result, identity, selected, render, stop)
+        return _supervise(config, output, result, identity, selected, render, stop, tile_ranges)
 
 
-def _supervise(config, output, result, identity, selected, render, stop):
+def _supervise(config, output, result, identity, selected, render, stop, tile_ranges=None):
     active = {}
     cancelled = False
     failed = False
@@ -500,6 +507,8 @@ def _supervise(config, output, result, identity, selected, render, stop):
                         command.append("--resume")
                     if render and record["level"] in selected:
                         command.append("--render")
+                    if tile_ranges is not None:
+                        command += ["--tile-ranges", str(tile_ranges)]
                     environment = os.environ.copy()
                     for key in (
                         "OMP_NUM_THREADS",
@@ -614,6 +623,7 @@ def _main():
     parser.add_argument("--original-sha", required=True)
     parser.add_argument("--resume", action="store_true")
     parser.add_argument("--render", action="store_true")
+    parser.add_argument("--tile-ranges", type=Path)
     args = parser.parse_args()
 
     def stopped():
@@ -634,7 +644,12 @@ def _main():
             result = _read(args.output / "MESH.json")
         else:
             result = run_surfaces(
-                args.child, args.output, resume=args.resume, render=False, stop=stopped
+                args.child,
+                args.output,
+                resume=args.resume,
+                render=False,
+                stop=stopped,
+                tile_ranges=args.tile_ranges,
             )
             if result["status"] == "MESH_READY":
                 atomic_json(

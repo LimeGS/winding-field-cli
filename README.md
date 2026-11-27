@@ -480,7 +480,9 @@ For several field levels, add `--parallel-levels` to `prepared mesh` or
 `prepared surfaces`. CPU, available RAM and disk headroom bound the number of
 independent processes automatically. Results are separate `level-0000/`,
 `level-0001/`, … bundles indexed by `LEVELS.json`, not a merged mesh.
-See [parallel prepared levels](docs/PREPARED.md#parallel-prepared-levels).
+See [parallel prepared levels](docs/PREPARED.md#parallel-prepared-levels). For a
+chunk-checkpoint field, `prepared ranges` plus `--tile-ranges FILE` lets each level skip
+the tiles that cannot contain it ([details](docs/PREPARED.md#skip-tiles-that-cannot-hold-a-level-prepared-ranges)).
 
 ### External Lasagna predictions (`.lasagna.json`)
 

@@ -803,13 +803,13 @@ def _effective_request(args, sources):
 
 def main(argv: Sequence[str] | None = None) -> int:
     tokens = list(sys.argv[1:] if argv is None else argv)
-    if tokens and tokens[0] in {"mesh", "render", "surfaces"}:
+    if tokens and tokens[0] in {"mesh", "render", "surfaces", "ranges"}:
         from .surface_workflow import main as surface_main
 
         return surface_main(tokens)
     parser = argparse.ArgumentParser(prog="winding-field prepared", description=__doc__)
     parser.add_argument(
-        "action", choices=("build", "resume", "verify", "mesh", "render", "surfaces")
+        "action", choices=("build", "resume", "verify", "mesh", "render", "surfaces", "ranges")
     )
     parser.add_argument("--config", type=Path, help="optional native prepared-run recipe")
     parser.add_argument("--output", type=Path, required=True)

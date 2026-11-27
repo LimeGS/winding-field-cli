@@ -178,6 +178,9 @@ file view list. Combined surfaces retain the existing execution reserve policy;
 standalone render uses its own render reserve. Standalone `render --mesh BUNDLE`
 needs no field geometry or full surface recipe.
 
+`--tile-ranges FILE` (mesh/surfaces) reads a file written by `prepared ranges
+--config ... --output FILE [--ranges-workers N]`; it changes speed, never the mesh.
+
 `--parallel-levels` uses the same generated sibling recipe and existing digest-
 bound per-level worker protocol. Plain `--resume --output OUTPUT` locates a
 generated serial recipe through `REQUEST.json` or a parallel recipe through
