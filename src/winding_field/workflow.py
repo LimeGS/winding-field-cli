@@ -649,8 +649,50 @@ def _tifxyz_ready(out, result, request_sha, coverage_policy="strict"):
     return marker_record["sha256"]
 
 
+def _move_device(root, state, config, device):
+    """Change the saved device of a run whose field has not started (CPU prepare, GPU field).
+
+    The device enters the field checkpoint identity, so it can change only while no field
+    exists; the completed stages before the field are device independent and stay verified
+    by their hashes. Bounded preparation runs inference in its stages and is refused.
+    """
+    import torch
+
+    if config.get("bounded_preparation"):
+        raise ValueError("device override is not available for bounded preparation runs")
+    missing = [s for s in ("prepare", "fibres") if s not in state["stages"]]
+    if missing:
+        raise ValueError(
+            "device override requires completed prepare and fibres stages; missing "
+            + ", ".join(missing)
+        )
+    if "field" in state["stages"] or (root / "field").exists():
+        raise ValueError(
+            "device override is refused once the field has started: the device is part of "
+            "the field checkpoint identity; use a new output with --reuse-from"
+        )
+    try:
+        torch.empty(0, device=device)  # Fail here, before RUN.json changes, if it is unusable.
+    except Exception as error:  # CPU-only torch raises AssertionError for CUDA devices.
+        raise ValueError(f"device {device} is not usable on this host: {error}") from None
+    state.setdefault("device_changes", []).append(
+        {"from": config.get("device"), "to": device, "at": time.time()}
+    )
+    config = dict(config, device=device)
+    state["config"] = config
+    atomic_json(root / "RUN.json", state)
+    print(f"[resume] device {state['device_changes'][-1]['from']} -> {device}", file=sys.stderr)
+    return config
+
+
 def run(
-    config, resume=False, until=None, extra_surface_seconds=0, field_sweeps=None, offline=False
+    config,
+    resume=False,
+    until=None,
+    extra_surface_seconds=0,
+    field_sweeps=None,
+    offline=False,
+    device=None,
 ):
     validate_config(config)
     from .input_settings import check_recipe_sources
@@ -658,6 +700,8 @@ def run(
     check_recipe_sources(config)
     if type(offline) is not bool or offline and not resume:
         raise ValueError("offline transport override requires a resumed run")
+    if device is not None and (type(device) is not str or not device or not resume):
+        raise ValueError("device override requires a resumed run and a device name")
     if field_sweeps is not None and (
         type(field_sweeps) is not int or field_sweeps < 1 or not resume
     ):
@@ -708,6 +752,8 @@ def run(
                 raise ValueError("run configuration changed; use a new output")
             if config.get("reuse_from") and not state.get("reuse"):
                 raise ValueError("reuse admission incomplete; use a new output")
+            if device is not None and device != config.get("device"):
+                config = _move_device(root, state, config, device)
             if state.get("implementation_sha256") != implementation_sha():
                 if "compat" not in state:
                     raise ValueError(

@@ -85,6 +85,16 @@ must agree on resume. The CT cache is disposable, not the source of truth for
 checkpoints. Retain the original package and data for reproducibility.
 Runs bind absolute source/output paths: moving a run directory is not a supported
 resume operation. Exported geometry and the gallery can be copied independently.
+Copying a run to another host at the same absolute paths is supported: integrity is
+checked by content, not by host, inode or modification time. Copy the external
+inputs with it (CT cache and `--local` mirror, Lasagna inputs, AFV, field prior),
+install the same package and the same `vc_reader` build (its binary hash is pinned),
+and resume there. The device is frozen in `RUN.json` and enters the field checkpoint
+identity; `resume --device cuda:0` changes it only after `prepare` and `fibres` and
+before the field starts (for example a CPU host prepares, a GPU host solves the
+field). Each change is recorded in `RUN.json` `device_changes`. Bounded preparation
+runs cannot change device. Field observations are held in memory and are rebuilt on
+the host that solves the field.
 The implementation identity also includes bundled model JSON, installed numerical
 dependency versions, and the source hashes of the Qual tracer and network architecture.
 
