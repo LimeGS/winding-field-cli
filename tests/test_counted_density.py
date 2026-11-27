@@ -1,5 +1,7 @@
 import json
 from argparse import Namespace
+import platform
+import sys
 
 import numpy as np
 import pytest
@@ -7,6 +9,10 @@ import pytest
 from winding_field import counted_density as cd
 
 PERIOD = 16
+# The shifted-slice filter adds taps in conv1d's order. On x86-64 Linux (the production
+# hosts) torch's CPU conv1d gives the same bits; other backends (macOS ARM) accumulate
+# differently, about 1 ulp of float32.
+SAME_BITS = sys.platform == "linux" and platform.machine() in ("x86_64", "AMD64")
 
 
 def sheets(shape):
@@ -52,7 +58,11 @@ def test_gaussian_gives_the_conv1d_bits(sigma, order):
     import torch
 
     value = torch.rand((23, 31, 57), generator=torch.Generator().manual_seed(0))
-    assert torch.equal(cd._gaussian(value, sigma, order), _conv1d_gaussian(value, sigma, order))
+    new, old = cd._gaussian(value, sigma, order), _conv1d_gaussian(value, sigma, order)
+    if SAME_BITS:
+        assert torch.equal(new, old)
+    else:
+        torch.testing.assert_close(new, old, rtol=1e-5, atol=1e-6)
 
 
 def test_density_normals_unchanged_by_the_filter_rewrite(monkeypatch):
@@ -63,8 +73,17 @@ def test_density_normals_unchanged_by_the_filter_rewrite(monkeypatch):
     new = cd.density_normals(volume, halo=cd.HALO, device="cpu")
     monkeypatch.setattr(cd, "_gaussian", _conv1d_gaussian)
     old = cd.density_normals(volume, halo=cd.HALO, device="cpu")
-    for a, b in zip(new, old):
-        np.testing.assert_array_equal(a, b)
+    if SAME_BITS:
+        for a, b in zip(new, old):
+            np.testing.assert_array_equal(a, b)
+        return
+    # Elsewhere float32 rounding may move a voxel across the coherence or support
+    # threshold; allow a few such voxels and compare the rest closely.
+    (density, normals, supported), (density0, normals0, supported0) = new, old
+    assert (supported != supported0).mean() < 1e-3
+    both = supported & supported0
+    np.testing.assert_allclose(density[both], density0[both], rtol=1e-5, atol=1e-7)
+    assert (np.abs(normals[both] - normals0[both]) > 1e-4).any(-1).mean() < 1e-3
 
 
 def test_encoding_is_what_the_lasagna_importer_decodes():

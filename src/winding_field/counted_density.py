@@ -41,8 +41,10 @@ def _gaussian(value, sigma, order=(0, 0, 0)):
 
     Each axis is a weighted sum of shifted slices of the reflect-padded volume, in tap
     order. On CPU this is 2.4-2.6x faster than ``conv1d`` over single-channel lines
-    (which also needed a gather on a non-contiguous ``movedim`` view) and gives the
-    same bits; on CUDA it avoids cuDNN's costly large-batch single-channel path.
+    (which also needed a gather on a non-contiguous ``movedim`` view). It gives the same
+    bits as conv1d on x86-64 Linux and differs by ~1 float32 ulp where conv1d
+    accumulates differently (macOS ARM). On CUDA it avoids cuDNN's costly large-batch
+    single-channel path.
     """
     import torch
 
