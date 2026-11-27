@@ -902,10 +902,11 @@ def run(
                     raise ValueError("external Lasagna input identity changed")
                 state["lasagna_input"] = estimate["lasagna_input"]
             reserve = max(estimate["reserve_bytes"], estimate.get("tifxyz_reserve_disk_bytes", 0))
-            if (
-                terminal not in state["stages"]
-                and estimate["free_bytes"] < estimate["estimated_remaining_bytes"] + reserve
-            ):
+            # The estimate assumes uncompressed products; a measured ratio may scale it.
+            required = int(
+                estimate["estimated_remaining_bytes"] * config.get("disk_estimate_fraction", 1.0)
+            )
+            if terminal not in state["stages"] and estimate["free_bytes"] < required + reserve:
                 if terminal == "tifxyz":
                     return unfinished(
                         dict(

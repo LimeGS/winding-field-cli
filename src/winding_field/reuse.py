@@ -32,6 +32,7 @@ def _directories(root, bounded=False):
 
 VARIABLE = {
     "output",
+    "disk_estimate_fraction",
     "reuse_from",
     "reuse_from_sha256",
     "field_chunk",
