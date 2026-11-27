@@ -39,6 +39,32 @@ method.
 
 `field_status.py RUN` (under `watch`) shows phase, progress, ETA and per-sweep changes.
 
+### One global Schwarz field on one rented host
+
+The 34.56 µm PHerc0175A field (ROI 2500 × 1616 × 1928 nodes, 4,160 blocks of 128 at coarse
+factor 8, prior = the counted coarse) on one H100 host with 122 CPUs and 755 GB RAM,
+November 2026. Checklist, in order, each item from a measured failure below:
+
+1. **Check the CPU quota** right after ssh: cgroup v2 `cpu.max`, cgroup v1
+   `cpu.cfs_quota_us / cpu.cfs_period_us` (the v1 host had no `cpu.max`; 12287999/100000 =
+   122.9 CPUs).
+2. **Inputs**: fetch with the HF token. Small-file Lasagna levels are latency-bound; use 16
+   streams, and if another host already holds a copy, stream a tar of the tail of the sorted
+   list from it at the same time (one writer per file: a file written by both broke a Xet hash
+   check once). Xet-hash each batch; a full re-hash of 142,419 files takes 38 s.
+3. **CT**: `prefetch_ct.py --workers 64` over the ROI bounds (5,355 level-2 chunks, 5.2 GiB,
+   135 s), then **`--offline` on `run`** and `field RUN --offline` on every continuation.
+4. **Disk check**: the plan estimates products uncompressed (960 GB for this ROI; real use was
+   43 GB after prepare + fibres and a 30 GB field). Pass `--disk-estimate-fraction` with a
+   measured ratio (0.4 used; measured 0.05–0.15 on six 34.56 µm runs).
+5. **Prepare**: `--import-workers 32 --threads 16` (the default is one serial worker).
+6. **Field**: `--field-cpu-workers N --field-cpu-buffer-bytes B` (opt-in; the default 0 builds
+   every block's observations in the main process). Leave `--observation-cache-bytes` unset
+   so `--field-memory auto` sizes it (it measured 187 GB of observations for this ROI and
+   cached all of them).
+7. **Watch** with `field_status.py`; profile with `cProfile` on a 256³ sub-ROI, since py-spy
+   needs `SYS_PTRACE`, which vast containers do not grant.
+
 ## What went wrong, with numbers
 
 | Finding | Evidence (PHerc0175A) | Consequence |
@@ -55,6 +81,13 @@ method.
 | Lasagna grad_mag overcounts sheets | 1.4-1.7 field units per sheet (median grad_mag/cos frequency 1.57); levels crossed 5-6 sheets in 12 mm where the sheets are clean | `scroll counted-density` (October recipe): 0.99 units per sheet on the pilot |
 | Fibres at weight 1 do not hold a level on its sheet | along fibres the field changed by a median 1.14 units | `--fibre-weight 1000` for 34.56 µm tiles, solved as one block (64-node blocks drift ~1 sheet) |
 | The coarse-grid merge correction undid the tiles' sheet-following | same 4 tiles: level drifted 14 sheets in 16 mm after the coarse correction, 0.6 after the overlap join | `scroll merge --join overlap` (default) |
+| The disk check refused a run that fits | 960 GB estimated, 443 GB free; real 43 GB after prepare + fibres, field 30 GB | `--disk-estimate-fraction` with a measured ratio (#132) |
+| Prepare imported Lasagna/AFV serially | `--import-workers` defaults to 1: ~3 tiles/s, ~3 h for 32,240 tiles | `--import-workers 32 --threads 16`: 6–10 tiles/s, 91 min |
+| With 32 import workers, the parent is the limit | parent at 100 % of one core, workers at 6–10 %; cProfile: `Tiles.write` 0.43 s per tile (`np.savez_compressed`, zlib level 6) | Tiles are compressed on threads and recorded in order (#133) |
+| A fresh online `field` re-verified the CT cache | 22 min over 4,368 ledger chunks at ~9 MB/s before setup | `--offline` on `run` as well as on resumes |
+| Sweep 1 builds observations on ~9 of 122 cores | field process ~900 % CPU, GPU 0–30 %, 0.9–1.7 blocks/s in the coarse residual (4,160 blocks, ~50 min) | `--field-cpu-workers` (opt-in, #129); cannot be changed on `field` continuation or reuse |
+| An explicit observation cache overrides the auto plan | 250 GB passed; auto measured 187 GB | Leave `--observation-cache-bytes` unset unless RAM must be reserved |
+| Fibres stop check per block | `(root / "STOP").exists()` for 1.9 M blocks: ~36 s per run under cProfile | Check at most once per second (small) |
 | Seam statistics could not be written | p95 in the open last bin was `inf` | Fixed; `SEAMS.json` reports `over_four_windings` |
 
 ## Scripts
