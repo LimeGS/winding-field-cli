@@ -2,10 +2,10 @@
   "origin": "https://github.com/LimeGS/winding-field",
   "distribution": "winding-field",
   "version": "2.0.0",
-  "revision": "eb4006d02099cae5d9738abe82dc9563919b1279",
-  "install_url": "git+https://github.com/LimeGS/winding-field@eb4006d02099cae5d9738abe82dc9563919b1279",
+  "revision": "c936db7da1f956c5c8dd0192b39457f9a053e214",
+  "install_url": "git+https://github.com/LimeGS/winding-field@c936db7da1f956c5c8dd0192b39457f9a053e214",
   "verification": "git commit object id plus source_sha256, checked after install by tools/install-runtime.sh",
-  "changes": "Core 2.0.0 (main after LimeGS/winding-field#34; the pin moves to the v2.0.0 tag commit at release): opt-in solve_field/solve_blocks(kernel='fused') Triton PCG kernels (field_kernels.py; kernel in the block identity only when fused), everything of #20 (preconditioner='amg', field_schwarz.py) and #21 (solve_blocks(coarse_factor=F) out-of-core two-level Schwarz, checkpoint='sweep', field_memory.py tiers), plus #23 (five unused helpers removed, unified NPY source errors), #24 (AMG Chebyshev upper bound = min(row-sum norm, 1.3 x power estimate)), #26 (faster AMG setup: multithreaded CPU assembly, linear Galerkin product, parallel CPU coalesce; operator and hierarchy bit-identical; optional threads= kwarg), #27 (fused kernels compile on Triton 3.1-3.3: triton/tl bound as module globals; kernels unchanged), #28 (lower AMG setup memory, row-block build; CPU hierarchy bitwise identical), #29-#31 (separable coarse transfers, AMG-PCG coarse solve, pair spatial index per (z, y) line), #32/#33 (threaded coarse residual pass, coarse_workers=; constraint invariants checked in NumPy) and #34 (opt-in solve_blocks(colours=8, local_workers, local_devices) colour-batched sweeps). Identities and checkpoints without coarse_factor unchanged",
+  "changes": "Core 2.0.0 (main after LimeGS/winding-field#34; the pin moves to the v2.0.0 tag commit at release): opt-in solve_field/solve_blocks(kernel='fused') Triton PCG kernels (field_kernels.py; kernel in the block identity only when fused), everything of #20 (preconditioner='amg', field_schwarz.py) and #21 (solve_blocks(coarse_factor=F) out-of-core two-level Schwarz, checkpoint='sweep', field_memory.py tiers), plus #23 (five unused helpers removed, unified NPY source errors), #24 (AMG Chebyshev upper bound = min(row-sum norm, 1.3 x power estimate)), #26 (faster AMG setup: multithreaded CPU assembly, linear Galerkin product, parallel CPU coalesce; operator and hierarchy bit-identical; optional threads= kwarg), #27 (fused kernels compile on Triton 3.1-3.3: triton/tl bound as module globals; kernels unchanged), #28 (lower AMG setup memory, row-block build; CPU hierarchy bitwise identical), #29-#31 (separable coarse transfers, AMG-PCG coarse solve, pair spatial index per (z, y) line), #32/#33 (threaded coarse residual pass, coarse_workers=; constraint invariants checked in NumPy), #34 (opt-in solve_blocks(colours=8, local_workers, local_devices) colour-batched sweeps) and #35 (two-level Schwarz stability: symmetric coarse operator with fixed exterior nodes, coarse_floor, energy coarse step, coarse_divergence_sweeps=2 stop, coarse identity revision 2; local_step=\"auto\" energy-shortened core commits once the coarse residual rises). Identities and checkpoints without coarse_factor unchanged",
   "migrated_workflows": {
     "revision": "baf8052ed7115bddd8cbba08b3197ea31695ac4b",
     "changes": "moved to winding_field with tests, examples and wrappers; package imports, prepared command routing and module-based supervised launch",
@@ -34,7 +34,7 @@
   "source_sha256": {
     "field_store.py": "43489d4a2b5bfdedeca3d60858c5b3f9d0eec9cc2413ded770be389a437532cc",
     "field_runtime.py": "8f6c778a259814a6140b23a2179b9d62ee9196c99a19667ed5641af05ece765a",
-    "block_solver.py": "861ccca43d02eb11d911a6b651923635e2ba1f18490e3d27cc591535216f4565",
+    "block_solver.py": "85e3cd244e590663fb77f58218ef51197832230603adba9470a733f4f72d1953",
     "field_solver.py": "d439ed3dd97dbf25ab17bc4caa5a2bb72ae2ef927140a80adf06ab8c0fe93a49",
     "field_prefetch.py": "3ac983503f5a41661302b0cdd2a0b8526e5a96e86c201e10a18081bd00cb84f8",
     "field_constraints.py": "957a867f2be0622c81f03819858b4542c0369c225171329ef0eecafed82bfb4e",
@@ -42,7 +42,7 @@
     "constraint_templates.py": "a89031eab01b982d8cd16b7bcbda9f78a726637bfbf79bfedf70f1809c114e81",
     "field_observations.py": "be10f03b4bcf07f5b5b43bfcdd382701b843a3ee6516a7beefa0c724f66a249e",
     "field_amg.py": "14666b3ade13a9efa56e70ef0d7d4ea94a003fa269c6cc14ed1bb5340cdaaa56",
-    "field_block_coarse.py": "cf87785ac7b17fe832b429f4b2c4b59d77fc1f96a39e9c00c1d66cd1fb66e706",
+    "field_block_coarse.py": "4428d96a0c271a763b7add185450f2eb2daab576be365a39e5920251a3e28985",
     "field_memory.py": "d6defd61279b878c80870c744cdac3ddde3ca900f3ed412c2966dc42af6cbb7d",
     "field_kernels.py": "0e37ac728b02c223e4f1be3c360e008ec7bc366e958e7381f44464237a3a00d1"
   }
