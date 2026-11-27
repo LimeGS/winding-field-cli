@@ -256,7 +256,10 @@ def test_release_tags_promote_the_qualified_image_without_rebuilding():
     assert '"$GITHUB_REF_NAME" != "v$version"' in run
     assert 'source="$image:sha-${GITHUB_SHA::7}-cpu"' in run
     assert '[ "$released" != "$qualified" ]' in run
-    assert 'imagetools create --tag "$image:$version-cpu" --tag "$image:cpu" "$source"' in run
+    assert 'imagetools create --tag "$image:$version-cpu" "${rolling[@]}" "$source"' in run
+    # The rolling cpu tag follows stable releases only, never a pre-release.
+    assert 'rolling=(--tag "$image:cpu")' in run
+    assert 'if [[ "$version" =~ (a|b|rc)[0-9]+$ ]]; then rolling=(); fi' in run
 
 
 def test_release_default_image_is_cuda_qualified_on_a_gpu_before_publishing():
@@ -287,7 +290,12 @@ def test_release_default_image_is_cuda_qualified_on_a_gpu_before_publishing():
     assert "if" not in gpu and "--gpus" in gpu["run"]
     assert "--models --device cuda:0" in gpu["run"]
     # The default tags carry no variant suffix; the CPU variant keeps -cpu.
-    assert 'for tag in "$version" latest; do' in runs[order["push"]]
+    assert 'tags=("$version" latest)' in runs[order["push"]]
+    assert 'for tag in "${tags[@]}"; do' in runs[order["push"]]
+    # A pre-release publishes its version tag only; latest stays on the last stable release.
+    assert (
+        'if [[ "$version" =~ (a|b|rc)[0-9]+$ ]]; then tags=("$version"); fi' in runs[order["push"]]
+    )
     assert "winding-field:cuda" in runs[order["push"]]
 
 

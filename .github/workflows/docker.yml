@@ -184,7 +184,11 @@ jobs:
           if released=$(digest "$image:$version-cpu" 2>/dev/null) && [ "$released" != "$qualified" ]; then
             echo "::error::$version-cpu is already published with other contents; releases are never overwritten"; exit 1
           fi
-          docker buildx imagetools create --tag "$image:$version-cpu" --tag "$image:cpu" "$source"
+          # A pre-release (PEP 440 aN, bN, rcN) publishes only its own version tag: the rolling
+          # cpu tag stays on the last stable release.
+          rolling=(--tag "$image:cpu")
+          if [[ "$version" =~ (a|b|rc)[0-9]+$ ]]; then rolling=(); fi
+          docker buildx imagetools create --tag "$image:$version-cpu" "${rolling[@]}" "$source"
 
   release-cuda:
     # Stable, default image: the CUDA build, published as X.Y.Z and latest. It is built and
@@ -228,7 +232,10 @@ jobs:
         run: |
           version=$(python3 -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')
           image="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/winding-field-cli"
-          for tag in "$version" latest; do
+          # A pre-release (PEP 440 aN, bN, rcN) never moves latest.
+          tags=("$version" latest)
+          if [[ "$version" =~ (a|b|rc)[0-9]+$ ]]; then tags=("$version"); fi
+          for tag in "${tags[@]}"; do
             docker tag winding-field:cuda "$image:$tag"
             docker push "$image:$tag"
           done

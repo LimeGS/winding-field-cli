@@ -4,14 +4,14 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "winding-field-cli"
-version = "2.0.0"
+version = "2.0.0b1"
 description = "Resumable original-CT to winding-field, meshes and linked flat charts"
 readme = "README.md"
 requires-python = ">=3.11,<3.13"
 license = "MIT"
 license-files = ["LICENSE", "licenses/*.txt"]
 dependencies = [
-  "winding-field @ git+https://github.com/LimeGS/winding-field@c936db7da1f956c5c8dd0192b39457f9a053e214",
+  "winding-field @ git+https://github.com/LimeGS/winding-field@25493938d34c478f5a8f3fb196977133e9534649",
   "numpy>=1.26,<3",
   "scipy>=1.11",
   "torch>=2.6",
