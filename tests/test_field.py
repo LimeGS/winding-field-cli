@@ -788,7 +788,9 @@ def test_field_coarse_factor_is_part_of_the_problem_and_cuts_the_error(tmp_path)
     _, _, exact = field_after("global", sweeps=1, field_chunk=64)
     one_run, one, one_level = field_after("one", sweeps=2, field_chunk=8)
     _, two, two_level = field_after("two", sweeps=2, field_chunk=8, field_coarse_factor=4)
-    assert "coarse" not in one and two["coarse"] == dict(kind="trilinear", factor=4)
+    assert "coarse" not in one and two["coarse"] == dict(
+        kind="trilinear", factor=4, revision=2, floor=1e-3, step="energy"
+    )
     assert np.abs(two_level - exact).max() < 0.1 * np.abs(one_level - exact).max()
     status = json.loads((tmp_path / "two/field/STATUS.json").read_bytes())
     assert status["coarse"]["factor"] == 4
