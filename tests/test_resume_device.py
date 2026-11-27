@@ -20,7 +20,7 @@ def invoke(*args, cwd):
         env=env,
         capture_output=True,
         text=True,
-        timeout=300,
+        timeout=180,
     )
 
 
