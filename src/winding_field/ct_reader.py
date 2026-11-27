@@ -107,6 +107,10 @@ def _forget_file(db, path):
         db.execute(f"DELETE FROM {table} WHERE path=?", (path,))
 
 
+# ``EncodedTransport.read`` without a ledger pin (``None`` pins an authoritative miss).
+UNPINNED = object()
+
+
 class EncodedTransport:
     def __init__(self, root, limit, *, offline=False, reserve=0, stream_policy=False):
         from vc_reader.reader.disk_cache import disk_budget
@@ -134,7 +138,7 @@ class EncodedTransport:
         self._budget.set_min_free_bytes(reserve)
         self._local = ObjectStore(self.root, auth=None, max_read_bytes=256 << 20)
         self._source = self._store = None
-        self.bytes_read = self.cache_hits = 0
+        self.bytes_read = self.cache_hits = self.ledger_hits = 0
         # Each worker owns its transport; the coordinator closes them after joining workers.
         self.db = sqlite3.connect(
             self.root / "receipts.sqlite", timeout=120, check_same_thread=False
@@ -161,20 +165,31 @@ class EncodedTransport:
     def new_epoch(self):
         self._checked.clear()
 
-    def read(self, url):
+    def read(self, url, pinned=UNPINNED):
+        """Encoded bytes of ``url``; ``None`` for an authoritative remote miss.
+
+        ``pinned`` is the run ledger's record for this chunk: its SHA-256, or ``None`` when the
+        ledger pinned an authoritative miss. A cached payload whose receipt and bytes match the
+        pin is returned without a remote request; anything else takes the normal path.
+        """
         path = self.path(url)
         path.parent.mkdir(exist_ok=True)
         # Serialize receipts with their payload across processes, but allow other chunks in parallel.
         with path.with_suffix(".lock").open("a") as lock:
             fcntl.flock(lock, fcntl.LOCK_EX)
-            return self._read(url)
+            return self._read(url, pinned)
 
-    def _read(self, url):
+    def _read(self, url, pinned=UNPINNED):
         from vc_reader.reader import ObjectStore
 
         path = self.path(url)
         receipt = self.db.execute("SELECT sha FROM receipts WHERE url=?", (url,)).fetchone()
         if receipt and receipt[0] is None and (self.offline or url in self._checked):
+            return None
+        if receipt == (None,) and pinned is None:
+            # The ledger pinned this authoritative miss and the receipt still records it.
+            self.ledger_hits += 1
+            self._checked.add(url)
             return None
         raw = self._local.read(str(path.relative_to(self.root)))
         if raw is not None:
@@ -185,6 +200,13 @@ class EncodedTransport:
                 raw = None
             elif hashlib.sha256(raw).hexdigest() != receipt[0]:
                 raise ValueError("corrupt native CT cache: " + url)
+            elif receipt[0] == pinned:
+                # Bytes hash to their receipt and to the ledger pin: the run already consumed
+                # exactly these bytes, so a remote round trip cannot change what it reads.
+                self.cache_hits += 1
+                self.ledger_hits += 1
+                self._checked.add(url)
+                return raw
         if self.offline:
             if raw is None:
                 raise FileNotFoundError("offline cache miss: " + url)

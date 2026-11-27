@@ -298,6 +298,13 @@ the remaining repeated decodes (25.0 s against 33.8 s on the first 1,612 tiles).
   sampling), downloads them into `--cache` over `--prefetch-workers` (default 16)
   parallel connections, sizes the cache so nothing is evicted, and renders `--offline`
   from the ledger-pinned cache. `--prefetch-workers 0` restores the online render.
+- **Resume and `--reuse-from` re-check the CT ledger.** Every chunk the run pinned in
+  `source.sqlite` is hashed again; a cached payload whose SHA-256 equals its pin is accepted
+  without a remote request (the run already consumed exactly those bytes), and the rest are
+  checked over up to 32 parallel connections. On PHerc0175A the old one-request-at-a-time
+  check of 4,368 chunks cost 20-35 min of an idle GPU. `--offline` is an execution setting,
+  so `run --reuse-from ... --offline` reuses a donor prepared online; a chunk missing from
+  the cache then fails instead of being fetched.
 - **`--flattening-scope sheet` (opt-in).** The default (`charts`) flattens ~1,000-face
   charts and welds each to one parent; every other seam is a cut, and drift between
   charts opens those cuts into gaps or overlapping (blanked, `ambiguous_xyz`) pixels.

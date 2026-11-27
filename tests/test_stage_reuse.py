@@ -88,6 +88,45 @@ def test_field_retry_reuses_complete_stages(donor, tmp_path, monkeypatch):
     assert workflow.run(result["config"], resume=True, until="field")["stages"] == result["stages"]
 
 
+def test_offline_retry_reuses_an_online_donor(donor, tmp_path, monkeypatch):
+    # --offline only selects how CT bytes are reached: the reuse still re-checks every chunk
+    # in the copied ledger and must not refuse it as a changed preparation setting.
+    from winding_field import predict, fibres, exports
+
+    root, donor_config = donor
+    assert not donor_config.get("offline")
+    monkeypatch.setattr(predict, "prepare", forbidden)
+    monkeypatch.setattr(fibres, "trace", forbidden)
+    monkeypatch.setattr(exports, "export_lasagna", forbidden)
+    monkeypatch.setattr(exports, "export_afv", forbidden)
+    config = request(donor, tmp_path)
+    config.update(offline=True, maxiter=2000, nonconvergence_policy="continue")
+    result = workflow.run(config, until="field")
+    assert result["config"]["offline"] is True
+    for name in ("prepare", "fibres"):
+        assert result["stages"][name]["mode"] == "reused"
+    assert (Path(config["output"]) / "FIELD.json").exists()
+
+
+def test_online_reuse_resumes_offline(donor, tmp_path, monkeypatch):
+    # 175A run 2: a run reused online, then continued with `field RUN --offline`. The
+    # continuation re-validates the reuse request with the override applied.
+    from winding_field import predict, fibres, exports
+
+    monkeypatch.setattr(predict, "prepare", forbidden)
+    monkeypatch.setattr(fibres, "trace", forbidden)
+    monkeypatch.setattr(exports, "export_lasagna", forbidden)
+    monkeypatch.setattr(exports, "export_afv", forbidden)
+    config = request(donor, tmp_path)
+    config.update(maxiter=2000, nonconvergence_policy="continue")
+    result = workflow.run(config, until="fibres")
+    assert not result["config"].get("offline")
+    resumed = workflow.run(result["config"], resume=True, until="field", offline=True)
+    for name in ("prepare", "fibres"):
+        assert resumed["stages"][name]["mode"] == "reused"
+    assert (Path(config["output"]) / "FIELD.json").exists()
+
+
 @pytest.mark.parametrize(
     "change",
     [

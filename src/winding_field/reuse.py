@@ -53,6 +53,9 @@ VARIABLE = {
     "rtol",
     "fibre_weight",
     "nonconvergence_policy",
+    # Execution only: how CT bytes are reached, not which bytes. An offline reuse still checks
+    # every pinned chunk against the copied ledger, and a cache miss fails instead of fetching.
+    "offline",
 }
 
 
