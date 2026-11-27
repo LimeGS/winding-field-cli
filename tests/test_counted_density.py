@@ -23,6 +23,50 @@ def test_planar_sheets_count_one_per_period_with_normals_along_z():
     assert np.abs(normals[..., 2]).min() > 0.99
 
 
+def _conv1d_gaussian(value, sigma, order=(0, 0, 0)):
+    """The pre-2.0 CPU filter (conv1d over movedim lines): the bits the recipe pins."""
+    import torch
+    from torch.nn import functional as F
+
+    radius = int(4 * sigma + 0.5)
+    x = torch.arange(-radius, radius + 1, dtype=torch.float64)
+    kernel = torch.exp(-0.5 * (x / sigma) ** 2)
+    kernel /= kernel.sum()
+    for axis, derivative in enumerate(order):
+        weight = kernel * x / (sigma * sigma) if derivative else kernel
+        lines = value.movedim(axis, -1)
+        shape = lines.shape
+        size = shape[-1]
+        index = torch.arange(-radius, size + radius) % (2 * size)
+        index = torch.where(index < size, index, 2 * size - 1 - index)
+        padded = lines.index_select(-1, index).reshape(-1, 1, size + 2 * radius)
+        filtered = F.conv1d(padded, weight.to(value.dtype).reshape(1, 1, -1))
+        value = filtered.reshape(shape).movedim(-1, axis)
+    return value
+
+
+@pytest.mark.parametrize(
+    "sigma, order", [(1.0, (1, 0, 0)), (1.0, (0, 0, 1)), (2.0, (0, 0, 0)), (6.0, (0, 0, 0))]
+)
+def test_gaussian_gives_the_conv1d_bits(sigma, order):
+    import torch
+
+    value = torch.rand((23, 31, 57), generator=torch.Generator().manual_seed(0))
+    assert torch.equal(cd._gaussian(value, sigma, order), _conv1d_gaussian(value, sigma, order))
+
+
+def test_density_normals_unchanged_by_the_filter_rewrite(monkeypatch):
+    rng = np.random.default_rng(1)
+    z, y, x = np.meshgrid(*[np.arange(112)] * 3, indexing="ij")
+    radius = np.hypot(y - 50.3, x - 61.7) + 0.2 * z + rng.normal(0, 0.5, z.shape)
+    volume = ((np.cos(2 * np.pi * radius / 14) * 0.5 + 0.5) * 255).astype(np.uint8)
+    new = cd.density_normals(volume, halo=cd.HALO, device="cpu")
+    monkeypatch.setattr(cd, "_gaussian", _conv1d_gaussian)
+    old = cd.density_normals(volume, halo=cd.HALO, device="cpu")
+    for a, b in zip(new, old):
+        np.testing.assert_array_equal(a, b)
+
+
 def test_encoding_is_what_the_lasagna_importer_decodes():
     density = np.array([0.0625, 0.11, 0.0])
     normals = np.array([[0.0, 0.6, -0.8], [1.0, 0.0, 0.0], [0.0, 0.0, 0.0]])
