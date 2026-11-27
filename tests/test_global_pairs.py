@@ -189,3 +189,14 @@ def test_prefetched_templates_equal_the_ones_built_in_place(tmp_path):
     finally:
         pooled.close()
     assert pooled.stats["prefetched"] == 2 * len(boxes)
+
+
+def test_default_workers_follow_the_cgroup_quota_not_the_host(monkeypatch):
+    """A 15.4-CPU quota on a 128-thread host (cpu.max 1536000 100000) gives 12 workers."""
+    import os
+
+    from winding_field import global_pairs, surface_parallel
+
+    monkeypatch.setattr(os, "cpu_count", lambda: 128)
+    monkeypatch.setattr(surface_parallel, "cpu_limit", lambda: 16)
+    assert global_pairs.default_workers() == 12

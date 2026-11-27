@@ -496,6 +496,23 @@ RUNNERS = {
 }
 
 
+def core_receipt():
+    """The pinned core revision and whether the core modules this Python imports are its
+    sources (provenance/core.json source_sha256): a verify against another core proves
+    nothing about the pin."""
+    import importlib.util
+
+    pin = json.loads((REPO / "provenance/core.json").read_text())
+    mismatched = {}
+    for name, expected in sorted(pin["source_sha256"].items()):
+        spec = importlib.util.find_spec(Path(name).stem)
+        origin = None if spec is None else spec.origin
+        actual = None if origin is None else hashlib.sha256(Path(origin).read_bytes()).hexdigest()
+        if actual != expected:
+            mismatched[name] = origin or "not importable"
+    return dict(pinned=pin["revision"], matches_pin=not mismatched, mismatched=mismatched)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--baseline", default="origin/main", help="oracle git ref")
@@ -538,8 +555,15 @@ def main():
         head=git("rev-parse", "HEAD"),
         dirty=bool(git("status", "--porcelain")),
         baseline=dict(ref=args.baseline, sha=base_sha),
+        core=core_receipt(),
         steps={},
     )
+    if not receipt["core"]["matches_pin"]:
+        print(
+            "FAIL  core: the imported core is not the pinned revision "
+            f"{receipt['core']['pinned']}: {receipt['core']['mismatched']}",
+            flush=True,
+        )
     try:
         for name in steps:
             step = Step(name)
@@ -556,7 +580,10 @@ def main():
     finally:
         subprocess.run(["git", "worktree", "remove", "--force", str(base_tree)], cwd=REPO)
     receipt["status"] = (
-        "FAIL" if any(s["status"] == "FAIL" for s in receipt["steps"].values()) else "PASS"
+        "FAIL"
+        if not receipt["core"]["matches_pin"]
+        or any(s["status"] == "FAIL" for s in receipt["steps"].values())
+        else "PASS"
     )
     args.receipt = args.receipt or REPO / ".verify/VERIFY.json"
     args.receipt.parent.mkdir(parents=True, exist_ok=True)

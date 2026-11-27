@@ -364,5 +364,9 @@ def _build_worker(key):
 
 
 def default_workers():
-    count = os.cpu_count() or 1
+    """Three quarters of the CPUs this process may use: its affinity and its cgroup quota
+    (a container on a 128-thread host may get 15 CPUs; os.cpu_count() reports 128)."""
+    from .surface_parallel import cpu_limit
+
+    count = max(1, int(cpu_limit()))
     return max(1, min(count, int(math.ceil(count * 0.75))))
