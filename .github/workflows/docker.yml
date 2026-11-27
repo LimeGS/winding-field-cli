@@ -77,16 +77,19 @@ jobs:
         run: |
           # Test-tool installation needs runner DNS; the runtime smoke above stays offline.
           docker build --network=host -f docker/testing.Dockerfile -t winding-field:cpu-tests .
+          # The suite runs on every runner CPU (pytest-xdist, one file per worker, as in tests.yml);
+          # serially it took 35-47 minutes. The runner has 16 GB, so the suite container gets 12g;
+          # the 6g small-machine limit stays on the smoke runs above.
           # Some runs stall in test_parallel_levels_publish_the_serial_result: a spawned level
-          # worker never returns. If the suite is still running after 45 minutes (it normally
-          # takes about 25), SIGABRT the spawned workers; PYTHONFAULTHANDLER makes each print
-          # its stack, and the waiting test then fails with that evidence instead of hanging.
+          # worker never returns. If the suite is still running after 45 minutes, SIGABRT the
+          # spawned workers; PYTHONFAULTHANDLER makes each print its stack, and the waiting test
+          # then fails with that evidence instead of hanging.
           ( sleep 2700
             docker top wf-suite -eo pid,args 2>/dev/null \
               | awk '/multiprocessing[.]spawn/ {print $1}' | xargs -r kill -ABRT ) &
           watchdog=$!
           status=0
-          docker run --rm --init --name wf-suite --user "$(id -u):$(id -g)" --memory=6g --memory-swap=6g \
+          docker run --rm --init --name wf-suite --user "$(id -u):$(id -g)" --memory=12g --memory-swap=12g \
             -e PYTHONFAULTHANDLER=1 \
             -e MATRIX_NATIVE_APP=/opt/vc3d/AppRun -e MATRIX_NATIVE_RECIPE=historical \
             -e WINDING_LASAGNA_PYTHON=/opt/lasagna/bin/python \
@@ -111,7 +114,7 @@ jobs:
             --mount "type=bind,src=$RUNNER_TEMP/wf/scratch,dst=/scratch" \
             --mount "type=bind,src=$RUNNER_TEMP/wf/outputs,dst=/outputs" \
             --mount "type=bind,src=$RUNNER_TEMP/wf/cache,dst=/cache" \
-            winding-field:cpu-tests -q --durations=30 -o pythonpath= -o faulthandler_timeout=600 -o cache_dir=/scratch/pytest-cache /tests || status=$?
+            winding-field:cpu-tests -n auto --dist loadfile -q --durations=30 -o pythonpath= -o faulthandler_timeout=600 -o cache_dir=/scratch/pytest-cache /tests || status=$?
           kill "$watchdog" 2>/dev/null || true
           exit "$status"
 
