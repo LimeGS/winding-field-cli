@@ -347,11 +347,18 @@ def run_surfaces(
     resume: bool = False,
     render: bool = True,
     stop=None,
+    tile_ranges: str | Path | None = None,
 ) -> dict[str, Any]:
-    """Build/import an agnostic mesh bundle and optionally render actual3D views."""
+    """Build/import an agnostic mesh bundle and optionally render actual3D views.
+
+    ``tile_ranges``: optional file from ``prepared ranges`` for the same chunk field; the
+    extractor then skips tiles whose chunks cannot contain a level. Speed only: the mesh
+    is identical with or without it."""
     if type(resume) is not bool or type(render) is not bool:
         raise ValueError("resume/render must be boolean")
     config = load_surface_config(config_path)
+    if tile_ranges is not None and "field" not in config:
+        raise ValueError("tile ranges apply to field extraction, not imported meshes")
     output = Path(output)
     execution = config["execution"]
 
@@ -391,6 +398,12 @@ def run_surfaces(
             # Memory only: never less than one stored chunk, or large chunks decode per tile.
             cache = max(execution["cache_bytes"], chunk_cache_floor(field, config["geometry"]))
             with FieldSource(field, config["geometry"], cache_bytes=cache) as source:
+                if tile_ranges is not None:
+                    from .surface_ranges import RangedSource, load_ranges
+
+                    source = RangedSource(
+                        source, *load_ranges(tile_ranges, field, config["geometry"])
+                    )
                 result = extractor(
                     source,
                     output,
@@ -571,7 +584,7 @@ def _surface_recipe(args, sources):
 
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(prog="winding-field prepared", description=__doc__)
-    parser.add_argument("action", choices=("mesh", "render", "surfaces"))
+    parser.add_argument("action", choices=("mesh", "render", "surfaces", "ranges"))
     parser.add_argument("--config", type=Path)
     parser.add_argument("--mesh", type=Path)
     parser.add_argument("--output", type=Path, required=True)
@@ -580,6 +593,19 @@ def main(argv=None) -> int:
         "--parallel-levels",
         action="store_true",
         help="independent per-level bundles; automatically bound CPU/RAM/disk concurrency",
+    )
+    parser.add_argument(
+        "--tile-ranges",
+        type=Path,
+        metavar="FILE",
+        help="mesh/surfaces: per-chunk value ranges written by 'prepared ranges' for this "
+        "field; tiles that cannot contain a level are skipped (same mesh, less reading)",
+    )
+    parser.add_argument(
+        "--ranges-workers",
+        type=int,
+        metavar="N",
+        help="ranges: processes decoding chunks (default: the CPU quota, see cpu_limit)",
     )
     parser.add_argument(
         "--then-flatten",
@@ -610,6 +636,28 @@ def main(argv=None) -> int:
             from .mesh_chain import check_chain
 
             check_chain(args.output, args.then_flatten, args.flatten_cli_config)
+        if args.action == "ranges":
+            if args.tile_ranges is not None or args.parallel_levels or args.resume:
+                raise ValueError("ranges takes --config/--output (and --ranges-workers) only")
+            from .surface_ranges import build_ranges, default_workers
+
+            config_path = _surface_recipe(args, sources)
+            config = load_surface_config(config_path)
+            if "field" not in config:
+                raise ValueError("ranges need a field source")
+            result = build_ranges(
+                config["field"],
+                config["geometry"],
+                args.output,
+                workers=args.ranges_workers or default_workers(),
+            )
+            config_path = None  # no REQUEST.json beside a ranges file
+            print(json.dumps(result, allow_nan=False))
+            return 0
+        if args.ranges_workers is not None:
+            raise ValueError("--ranges-workers applies to the ranges action")
+        if args.tile_ranges is not None and args.action == "render":
+            raise ValueError("--tile-ranges applies to mesh/surfaces")
         if args.parallel_levels:
             if args.action == "render":
                 raise ValueError("--parallel-levels requires mesh/surfaces")
@@ -617,7 +665,11 @@ def main(argv=None) -> int:
 
             config_path = _surface_recipe(args, sources)
             result = run_parallel_levels(
-                config_path, args.output, resume=args.resume, render=args.action == "surfaces"
+                config_path,
+                args.output,
+                resume=args.resume,
+                render=args.action == "surfaces",
+                tile_ranges=args.tile_ranges,
             )
             print(json.dumps(result, allow_nan=False))
             return {"LEVELS_READY": 0, "CHECKPOINTED_STOP": 3, "RESOURCE_UNAVAILABLE": 75}.get(
@@ -648,7 +700,11 @@ def main(argv=None) -> int:
         else:
             config_path = _surface_recipe(args, sources)
             result = run_surfaces(
-                config_path, args.output, resume=args.resume, render=args.action == "surfaces"
+                config_path,
+                args.output,
+                resume=args.resume,
+                render=args.action == "surfaces",
+                tile_ranges=args.tile_ranges,
             )
             if args.then_flatten is not None:
                 from .mesh_chain import chain_flatten
