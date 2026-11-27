@@ -4,6 +4,7 @@ Checked native Zarr-v2 decoding never treats absent local chunks as known air.
 The compressed disk payload budget is shared across sources and processes.
 """
 
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager, nullcontext
 import fcntl
 import gzip
@@ -24,9 +25,12 @@ from urllib.request import Request, urlopen
 import numpy as np
 
 from .util import atomic_bytes, digest
-from .ct_reader import cache_size, trim_cache, runtime_identity
+from .ct_reader import UNPINNED, cache_size, trim_cache, runtime_identity
 
 CATALOG = "https://vesuvius-challenge-open-data.s3.amazonaws.com/metadata.json"
+# Threads that re-check ledger-pinned CT chunks (validate_used): each one owns its transport,
+# so remote checks overlap instead of running one request at a time.
+VALIDATE_WORKERS = 32
 
 
 def http_url(source):
@@ -159,6 +163,7 @@ class Volume:
         stream_policy=False,
         metadata_pins=None,
         missing_chunks="error",
+        trust_ledger=False,
     ):
         if missing_chunks not in ("error", "fill"):
             raise ValueError("missing_chunks must be 'error' or 'fill'")
@@ -168,6 +173,13 @@ class Volume:
         # refusing unexplained local holes. Reads that succeeded before are unchanged,
         # so the identity is too and earlier runs still resume.
         self.missing_chunks = missing_chunks
+        # trust_ledger=True: a remote chunk whose cached bytes (or local mirror bytes) match the
+        # bound ledger's SHA-256 is accepted without a remote request, since the run already
+        # consumed exactly those bytes. The default keeps one remote round trip per chunk and
+        # verification epoch, which also notices a source changed since the ledger pinned it.
+        if type(trust_ledger) is not bool:
+            raise ValueError("trust_ledger must be a bool")
+        self.trust_ledger = trust_ledger
         self.stream_policy = stream_policy
         self.metadata_pins = metadata_pins or {}
         try:
@@ -206,12 +218,17 @@ class Volume:
         self._stats.update(
             decoded_hits=0, decodes=0, decoded_evictions=0, hashed_bytes=0, chunk_commits=0
         )
+        self._stats.update(ledger_hits=0)
         self._verified_local = {}
         self._ledger = None
         self.db = None
         self._native = None
         self._reader = None
         self._transports = {}
+        # Transports lent to validate_used's threads; reused across calls, closed by close().
+        self._spare_transports = []
+        self._pool_transports = []
+        self._leased = threading.local()
         self._transport_lock = threading.RLock()
         self._transport = "vc_reader.DiskCache" if self.remote else "vc_reader.ObjectStore"
         self._objects = (
@@ -431,7 +448,8 @@ class Volume:
                 if data is None
                 else hashlib.sha256(data).hexdigest()
             )
-            self._stats["hashed_bytes"] += 0 if data is None else len(data)
+            with self._transport_lock:
+                self._stats["hashed_bytes"] += 0 if data is None else len(data)
             self._record_sha(key, sha)
         return data
 
@@ -567,8 +585,7 @@ class Volume:
             if pins is None:
                 self.validate_used(fresh=False)
             else:
-                for key in pins:
-                    self._chunk_bytes(key)
+                self._check_chunks(list(pins))
             if not self.remote:
                 self.validate_metadata()
         except BaseException:
@@ -593,6 +610,9 @@ class Volume:
         Within an invocation, fresh=False reuses per-chunk remote verification;
         local/cache bytes are still hashed against the ledger on every check.
         This is a per-chunk read snapshot, not an atomic remote-volume snapshot.
+        With trust_ledger, cached bytes that match the ledger pin skip the remote request.
+        Chunks are checked on up to VALIDATE_WORKERS threads; the first error in ledger
+        order is raised.
         """
         if fresh:
             self._decoded.clear()
@@ -601,8 +621,77 @@ class Volume:
             for transport in self._transports.values():
                 transport.new_epoch()
         if self._ledger is not None:
-            for (key,) in self._ledger.execute("SELECT key FROM chunks"):
+            with self._transport_lock:
+                keys = [key for (key,) in self._ledger.execute("SELECT key FROM chunks")]
+            self._check_chunks(keys)
+
+    def _check_chunks(self, keys, workers=None):
+        """Re-check ``keys`` through _chunk_bytes, on a thread pool when there are several.
+
+        Each pool thread leases its own transport (one connection per thread), so remote checks
+        overlap. The first error in key order is raised, as in the sequential loop; already
+        pinned keys leave the ledger unchanged, so the result does not depend on the order.
+        """
+        workers = min(VALIDATE_WORKERS if workers is None else workers, len(keys))
+        if workers <= 1 or not self.remote or self.local is not None:
+            # Local arrays and mirrors are disk reads through one shared ObjectStore.
+            for key in keys:
                 self._chunk_bytes(key)
+            return
+
+        def check(key):
+            transport = self._lease_transport()
+            self._leased.transport = transport
+            try:
+                # Return nothing: completed results wait in the pool until consumed in order.
+                self._chunk_bytes(key)
+            finally:
+                self._leased.transport = None
+                with self._transport_lock:
+                    self._spare_transports.append(transport)
+
+        pool = ThreadPoolExecutor(workers, thread_name_prefix="ct-validate")
+        try:
+            for _ in pool.map(check, keys):
+                pass
+        except BaseException:
+            pool.shutdown(wait=True, cancel_futures=True)
+            raise
+        pool.shutdown(wait=True)
+
+    def _new_transport(self):
+        from .ct_reader import EncodedTransport
+
+        transport = EncodedTransport(
+            self.cache / "vc-reader",
+            self._native_limit,
+            offline=self.offline,
+            reserve=self.reserve,
+            stream_policy=self.stream_policy,
+        )
+        # One remote verification epoch for every transport of this volume.
+        transport._checked = self._native._checked
+        return transport
+
+    def _lease_transport(self):
+        """A spare transport for one pool check; spares outlive the pool and close in close()."""
+        with self._transport_lock:
+            if self._spare_transports:
+                return self._spare_transports.pop()
+            transport = self._new_transport()
+            self._pool_transports.append(transport)
+            return transport
+
+    def _ledger_pin(self, key):
+        """The ledger record for ``key`` as EncodedTransport.read takes it."""
+        if self._ledger is None or not self.trust_ledger:
+            return UNPINNED
+        with self._transport_lock:
+            row = self._ledger.execute("SELECT sha FROM chunks WHERE key=?", (key,)).fetchone()
+        if row is None:
+            return UNPINNED
+        # The ledger pins an authoritative miss as the fill digest; the transport as None.
+        return None if row[0] == digest("authoritative-zarr-fill") else row[0]
 
     def _chunk_bytes(self, key):
         local = (
@@ -617,48 +706,47 @@ class Volume:
             if self.remote and not self.offline:
                 sha = hashlib.sha256(raw).hexdigest()
                 if self._verified_local.get(key) != sha:
-                    if self._native_bytes(key) != raw:
+                    if self._ledger_pin(key) == sha:
+                        # The run ledger pinned exactly these mirror bytes.
+                        with self._transport_lock:
+                            self._stats["ledger_hits"] += 1
+                    elif self._native_bytes(key) != raw:
                         raise ValueError("local CT chunk differs from original source: " + key)
                     self._verified_local[key] = sha
-            self._stats["local_hits"] += 1
+            with self._transport_lock:
+                self._stats["local_hits"] += 1
             return self._record(key, raw)
         if not self.remote:
             if self.missing_chunks == "fill":
                 return self._record(key, None)
             raise FileNotFoundError(f"missing local CT chunk (not known air): {key}")
-        return self._record(key, self._native_bytes(key))
+        return self._record(key, self._native_bytes(key, self._ledger_pin(key)))
 
-    def _native_bytes(self, key):
+    def _native_bytes(self, key, pinned=UNPINNED):
         with self._transport_lock:
             with self._lock():
                 if self.db.execute("SELECT COUNT(*) FROM cache").fetchone()[0]:
                     self._evict(min(self.limit, 256 << 20))
                 legacy = self.db.execute("SELECT coalesce(sum(size),0) FROM cache").fetchone()[0]
                 self._native_limit = max(0, self.limit - legacy)
-            worker = threading.get_ident()
-            if worker not in self._transports:
-                from .ct_reader import EncodedTransport
-
-                transport = EncodedTransport(
-                    self.cache / "vc-reader",
-                    self._native_limit,
-                    offline=self.offline,
-                    reserve=self.reserve,
-                    stream_policy=self.stream_policy,
-                )
-                transport._checked = self._native._checked
-                self._transports[worker] = transport
-            transport = self._transports[worker]
+            transport = getattr(self._leased, "transport", None)
+            if transport is None:
+                worker = threading.get_ident()
+                if worker not in self._transports:
+                    self._transports[worker] = self._new_transport()
+                transport = self._transports[worker]
             transport.limit = self._native_limit
         before, hits = transport.bytes_read, transport.cache_hits
+        ledger_hits = transport.ledger_hits
         try:
-            return transport.read(self.source + "/" + key)
+            return transport.read(self.source + "/" + key, pinned)
         finally:
             with self._transport_lock:
                 received = transport.bytes_read - before
                 self._stats["downloaded_bytes"] += received
                 self._stats["downloads"] += int(received > 0)
                 self._stats["cache_hits"] += transport.cache_hits - hits
+                self._stats["ledger_hits"] += transport.ledger_hits - ledger_hits
 
     def _encoded_signature(self, key):
         local = (
@@ -796,6 +884,8 @@ class Volume:
         if self._ledger is not None:
             self._ledger.close()
             self._ledger = None
-        for transport in self._transports.values():
+        for transport in [*self._transports.values(), *self._pool_transports]:
             transport.close()
         self._transports.clear()
+        self._pool_transports.clear()
+        self._spare_transports.clear()

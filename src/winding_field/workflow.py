@@ -132,6 +132,9 @@ def open_volume(config):
         cache=config.get("cache"),
         cache_bytes=config.get("cache_bytes", 2 << 30),
         offline=config.get("offline", False),
+        # Resume and reuse re-check every ledger-pinned chunk; cached bytes that match the
+        # ledger need no S3 round trip (4,368 sequential requests took 20-35 min on 175A).
+        trust_ledger=True,
         voxel_um=config.get("voxel_um"),
         level=config.get("level", 0),
         decoded_cache_bytes=(
