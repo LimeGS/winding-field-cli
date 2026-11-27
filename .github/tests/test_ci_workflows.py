@@ -293,9 +293,9 @@ def test_release_default_image_is_cuda_qualified_on_a_gpu_before_publishing():
     assert 'tags=("$version" latest)' in runs[order["push"]]
     assert 'for tag in "${tags[@]}"; do' in runs[order["push"]]
     # A pre-release publishes its version tag only; latest stays on the last stable release.
-    assert 'if [[ "$version" =~ (a|b|rc)[0-9]+$ ]]; then tags=("$version"); fi' in runs[
-        order["push"]
-    ]
+    assert (
+        'if [[ "$version" =~ (a|b|rc)[0-9]+$ ]]; then tags=("$version"); fi' in runs[order["push"]]
+    )
     assert "winding-field:cuda" in runs[order["push"]]
 
 
