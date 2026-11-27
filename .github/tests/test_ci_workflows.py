@@ -100,6 +100,9 @@ def test_full_suites_and_optional_gpu_checks_are_preserved_and_timed():
     docker = workflow("docker.yml")
     commands = "\n".join(step.get("run", "") for step in docker["jobs"]["cpu"]["steps"])
     assert "--durations=30 -o pythonpath=" in commands and "/tests" in commands
+    # The in-image suite was the longest step of main's CI while it ran serially.
+    assert "-n auto --dist loadfile" in commands
+    assert "pytest-xdist==" in (ROOT / "docker/testing.Dockerfile").read_text()
     assert "dst=/benchmarks,readonly" in commands
     # sdist tests copy the source layout; the container mounts every input they need.
     for path in (
