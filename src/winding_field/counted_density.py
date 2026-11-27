@@ -21,6 +21,7 @@ import json
 import math
 import os
 from pathlib import Path
+import sys
 import time
 
 import numpy as np
@@ -289,6 +290,24 @@ def encode(density, normals, supported, *, scaledown, encode_scale, grad_mag_fac
     return grad_mag, channels[0], channels[1]
 
 
+def resolve_device(requested):
+    """``requested`` if usable; a CUDA request on a host without CUDA falls back to CPU.
+
+    The fallback is announced on stderr: on CPU a tile takes ~50 s instead of ~2 s.
+    """
+    import torch
+
+    if str(requested).startswith("cuda") and not torch.cuda.is_available():
+        print(
+            f"[counted-density] WARNING: --device {requested} requested but no CUDA device "
+            "is available; running on CPU (about 25x slower per tile than a GPU)",
+            file=sys.stderr,
+            flush=True,
+        )
+        return "cpu"
+    return str(requested)
+
+
 def build(args):
     manifest_path = Path(args.lasagna_input).resolve()
     manifest = json.loads(manifest_path.read_text())
@@ -350,6 +369,7 @@ def build(args):
             )
     else:
         atomic_json(identity_path, dict(identity=identity, status="RUNNING"))
+    device = resolve_device(args.device)
     started = time.time()
     computed = skipped = reused = 0
     total, weight = 0.0, 0
@@ -368,7 +388,7 @@ def build(args):
             skipped += 1
             marker.write_text("empty\n")
             continue
-        density, normals, supported = density_normals(volume, halo=HALO, device=args.device)
+        density, normals, supported = density_normals(volume, halo=HALO, device=device)
         channels = encode(
             density,
             normals,
@@ -425,6 +445,7 @@ def build(args):
     return dict(
         status=status,
         output=str(output),
+        device=device,
         manifest=str(manifest_out) if remaining == 0 else None,
         tiles=len(corners),
         computed=computed,

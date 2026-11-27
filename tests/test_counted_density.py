@@ -158,3 +158,24 @@ def test_parts_split_tiles_and_the_manifest_waits_for_all_of_them(tmp_path):
     assert not (tmp_path / "counted/counted.lasagna.json").exists()
     second = cd.build(args(manifest, tmp_path / "counted", part=(1, 2)))
     assert second["status"] == "COUNTED_READY" and second["computed"] == 1
+
+
+def test_cuda_request_without_cuda_falls_back_to_cpu_with_a_warning(monkeypatch, capsys):
+    import torch
+
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
+    assert cd.resolve_device("cuda") == "cpu"
+    assert cd.resolve_device("cuda:1") == "cpu"
+    assert "no CUDA device" in capsys.readouterr().err
+    assert cd.resolve_device("cpu") == "cpu"
+    assert capsys.readouterr().err == ""
+
+
+def test_build_reports_the_device_it_used(tmp_path, monkeypatch, capsys):
+    import torch
+
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
+    manifest = write_manifest(tmp_path, (64, 64, 128))
+    result = cd.build(args(manifest, tmp_path / "counted", device="cuda"))
+    assert result["device"] == "cpu" and result["status"] == "COUNTED_READY"
+    assert "WARNING" in capsys.readouterr().err
