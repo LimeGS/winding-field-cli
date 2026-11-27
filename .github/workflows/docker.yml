@@ -14,6 +14,13 @@ on:
         description: Also run real CUDA operations and model inference (requires cuda)
         type: boolean
         default: false
+      gpu_device:
+        description: >-
+          GPU for the GPU steps (docker --gpus device=...): an index, a comma list or a GPU
+          UUID. Empty uses the repository variable WF_GPU_DEVICE, then the runner's
+          WF_GPU_DEVICE environment (actions-runner/.env), then 0.
+        type: string
+        default: ''
 
 permissions:
   contents: read
@@ -217,9 +224,17 @@ jobs:
       - name: CUDA imports without GPU execution
         run: docker run --rm --entrypoint python winding-field:cuda /opt/runtime-provenance/docker/verify-runtime.py --variant cu128
       - name: Real GPU operations and pinned model inference
+        env:
+          GPU_DEVICE_REQUEST: ${{ vars.WF_GPU_DEVICE }}
         run: |
+          # GPU choice: dispatch input, repository variable, runner environment, else 0.
+          device="${GPU_DEVICE_REQUEST:-${WF_GPU_DEVICE:-0}}"
+          if ! [[ "$device" =~ ^([0-9]+(,[0-9]+)*|GPU-[0-9a-fA-F-]+)$ ]]; then
+            echo "::error::invalid GPU device '$device' (index, comma list or GPU UUID)"; exit 1
+          fi
+          echo "GPU device: $device"
           mkdir -p "$RUNNER_TEMP/wf-release"/{outputs,models,cache,scratch}
-          docker run --rm --init --gpus 'device=0' --user "$(id -u):$(id -g)" --memory=16g --memory-swap=16g \
+          docker run --rm --init --gpus "\"device=$device\"" --user "$(id -u):$(id -g)" --memory=16g --memory-swap=16g \
             --mount "type=bind,src=$RUNNER_TEMP/wf-release/outputs,dst=/outputs" \
             --mount "type=bind,src=$RUNNER_TEMP/wf-release/models,dst=/home/worker/.cache/winding-field/models" \
             --mount "type=bind,src=$RUNNER_TEMP/wf-release/cache,dst=/cache" \
@@ -256,9 +271,17 @@ jobs:
         run: docker run --rm --entrypoint python winding-field:cuda /opt/runtime-provenance/docker/verify-runtime.py --variant cu128
       - name: Real GPU operations and pinned model inference
         if: inputs.gpu
+        env:
+          GPU_DEVICE_REQUEST: ${{ inputs.gpu_device || vars.WF_GPU_DEVICE }}
         run: |
+          # GPU choice: dispatch input, repository variable, runner environment, else 0.
+          device="${GPU_DEVICE_REQUEST:-${WF_GPU_DEVICE:-0}}"
+          if ! [[ "$device" =~ ^([0-9]+(,[0-9]+)*|GPU-[0-9a-fA-F-]+)$ ]]; then
+            echo "::error::invalid GPU device '$device' (index, comma list or GPU UUID)"; exit 1
+          fi
+          echo "GPU device: $device"
           mkdir -p "$RUNNER_TEMP/wf-gpu"/{outputs,models,cache,scratch}
-          docker run --rm --init --gpus 'device=0' --user "$(id -u):$(id -g)" --memory=16g --memory-swap=16g \
+          docker run --rm --init --gpus "\"device=$device\"" --user "$(id -u):$(id -g)" --memory=16g --memory-swap=16g \
             --mount "type=bind,src=$RUNNER_TEMP/wf-gpu/outputs,dst=/outputs" \
             --mount "type=bind,src=$RUNNER_TEMP/wf-gpu/models,dst=/home/worker/.cache/winding-field/models" \
             --mount "type=bind,src=$RUNNER_TEMP/wf-gpu/cache,dst=/cache" \

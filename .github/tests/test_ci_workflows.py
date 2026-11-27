@@ -265,6 +265,23 @@ def test_release_tags_promote_the_qualified_image_without_rebuilding():
     assert 'if [[ "$version" =~ (a|b|rc)[0-9]+$ ]]; then rolling=(); fi' in run
 
 
+def assert_configurable_gpu(run):
+    assert 'device="${GPU_DEVICE_REQUEST:-${WF_GPU_DEVICE:-0}}"' in run
+    assert "^([0-9]+(,[0-9]+)*|GPU-[0-9a-fA-F-]+)$" in run
+    assert '--gpus "\\"device=$device\\""' in run
+    assert "device=0" not in run
+
+
+def test_manual_cuda_gpu_step_takes_a_configurable_device():
+    docker = workflow("docker.yml")
+    inputs = docker["on"]["workflow_dispatch"]["inputs"]
+    assert inputs["gpu_device"]["type"] == "string" and inputs["gpu_device"]["default"] == ""
+    step = next(s for s in docker["jobs"]["cuda"]["steps"] if "--gpus" in s.get("run", ""))
+    assert step["if"] == "inputs.gpu"
+    assert step["env"] == {"GPU_DEVICE_REQUEST": "${{ inputs.gpu_device || vars.WF_GPU_DEVICE }}"}
+    assert_configurable_gpu(step["run"])
+
+
 def test_release_default_image_is_cuda_qualified_on_a_gpu_before_publishing():
     docker = workflow("docker.yml")
     job = docker["jobs"]["release-cuda"]
@@ -292,6 +309,9 @@ def test_release_default_image_is_cuda_qualified_on_a_gpu_before_publishing():
     gpu = steps[order["gpu"]]
     assert "if" not in gpu and "--gpus" in gpu["run"]
     assert "--models --device cuda:0" in gpu["run"]
+    # The GPU is configurable: repository variable, else the runner's environment, else 0.
+    assert gpu["env"] == {"GPU_DEVICE_REQUEST": "${{ vars.WF_GPU_DEVICE }}"}
+    assert_configurable_gpu(gpu["run"])
     # The default tags carry no variant suffix; the CPU variant keeps -cpu.
     assert 'tags=("$version" latest)' in runs[order["push"]]
     assert 'for tag in "${tags[@]}"; do' in runs[order["push"]]

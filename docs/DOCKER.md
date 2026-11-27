@@ -335,7 +335,10 @@ Manual dispatch can also build CUDA on a self-hosted runner labelled `linux`,
 `x64`, `nvidia`, with Docker access and at least 60 GiB free disk. Enable its
 separate `gpu` option to run GPU kernels and real model inference. A release tag builds
 CUDA on that same runner, always runs the GPU checks, and publishes the result as the
-default image; the runner must be online for a release to complete. Test tooling
+default image; the runner must be online for a release to complete. The GPU steps use
+GPU 0 unless told otherwise: the dispatch input `gpu_device`, the repository variable
+`WF_GPU_DEVICE`, or `WF_GPU_DEVICE` in the runner's `actions-runner/.env` (first one set
+wins; an index, a comma list or a GPU UUID). Test tooling
 is installed only in the derivative `docker/testing.Dockerfile` image.
 
 ### CT cache fix end-to-end qualification
