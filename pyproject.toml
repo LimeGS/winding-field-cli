@@ -11,7 +11,7 @@ requires-python = ">=3.11,<3.13"
 license = "MIT"
 license-files = ["LICENSE", "licenses/*.txt"]
 dependencies = [
-  "winding-field @ git+https://github.com/LimeGS/winding-field@eb4006d02099cae5d9738abe82dc9563919b1279",
+  "winding-field @ git+https://github.com/LimeGS/winding-field@c936db7da1f956c5c8dd0192b39457f9a053e214",
   "numpy>=1.26,<3",
   "scipy>=1.11",
   "torch>=2.6",

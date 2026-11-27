@@ -1,5 +1,6 @@
 """Atomic, checksummed tiles for out-of-core intermediates."""
 
+import hashlib
 import io
 import itertools
 import json
@@ -70,7 +71,25 @@ class Tiles:
             raise ValueError("corrupt tile: " + str(key))
         return True
 
-    def write(self, key, arrays, info=None):
+    def write(self, key, arrays=None, info=None, *, stored=None):
+        """Record one tile. ``stored`` is the SHA256 ``store`` returned for it, when the
+        file was stored ahead; otherwise ``arrays`` are stored here first.
+
+        Only the thread that owns the database may call this.
+        """
+        sha = self.store(key, arrays) if stored is None else stored
+        self.db.execute(
+            "INSERT OR REPLACE INTO tiles VALUES (?,?,?)",
+            (self.path(key).stem, sha, json.dumps(info or {}, sort_keys=True)),
+        )
+        self.db.commit()
+
+    def store(self, key, arrays):
+        """Compress and durably write one tile's file; return its SHA256.
+
+        Touches no shared state, so tiles may be stored from several threads (zlib and
+        fsync release the GIL). A stored tile exists only once ``write`` records it.
+        """
         lo, hi = self.box(key)
         bounds(lo, hi, self.shape)
         if not arrays or any(
@@ -80,13 +99,9 @@ class Tiles:
             raise ValueError("tile arrays must match owned core geometry")
         buffer = io.BytesIO()
         np.savez_compressed(buffer, **arrays)
-        path = self.path(key)
-        atomic_bytes(path, buffer.getvalue())
-        self.db.execute(
-            "INSERT OR REPLACE INTO tiles VALUES (?,?,?)",
-            (path.stem, file_sha(path), json.dumps(info or {}, sort_keys=True)),
-        )
-        self.db.commit()
+        data = buffer.getvalue()
+        atomic_bytes(self.path(key), data)
+        return hashlib.sha256(data).hexdigest()
 
     def info(self, key):
         row = self.db.execute(

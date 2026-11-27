@@ -1,5 +1,7 @@
 """Tiled CT preparation with explicit physical units and model provenance."""
 
+from collections import deque
+from concurrent.futures import ThreadPoolExecutor
 import hashlib
 from contextlib import closing
 from functools import lru_cache
@@ -16,6 +18,7 @@ from .artifacts import Tiles
 from .config import validate_config, validate_observations
 from .io import bounds
 from .models import SD2, QualV2, model_sha
+from .surface_parallel import cpu_limit
 from .util import atomic_json, digest, file_sha
 
 
@@ -282,8 +285,26 @@ def _prepare(volume, run, config, stop, stack, verified_lasagna=None):
         return arrays, sha
 
     completed = 0
+    # Compressing a tile costs far more than computing or receiving it, and it was the
+    # whole import's bottleneck when done one tile at a time here. Tiles are stored by a
+    # few threads and recorded in key order by this one, so the files, their hashes and
+    # the order of the records are the same as with one thread. At most ``storing`` tiles
+    # wait unrecorded, whatever the host, so a stop or a failure loses the same bounded work.
+    storing = max(1, min(8, cpu_limit() - 1))
+    pool = stack.enter_context(ThreadPoolExecutor(max_workers=storing))
+    stack.callback(pool.shutdown, wait=True, cancel_futures=True)
+    stored = deque()
+
+    def publish(limit):
+        nonlocal completed
+        while len(stored) > limit:
+            tile, sha, info = stored.popleft()
+            maps.write(tile, info=info, stored=sha.result())
+            completed += 1
+
     for key in maps.keys():
         if stop and stop():
+            publish(0)
             maps.close()
             return dict(status="PAUSED", new_tiles=completed)
         start, end = maps.box(key)
@@ -317,6 +338,7 @@ def _prepare(volume, run, config, stop, stack, verified_lasagna=None):
                             )
                         arrays[name][dst] = value[src]
                 if stop and stop():
+                    publish(0)
                     maps.close()
                     return dict(status="PAUSED", new_tiles=completed)
             sha = digest(hashes)
@@ -351,11 +373,13 @@ def _prepare(volume, run, config, stop, stack, verified_lasagna=None):
                     if imported
                     else lasagna.read_observations(run, geometry, start, end)
                 )
-        maps.write(key, arrays, dict(ct_sha256=sha))
-        completed += 1
+        stored.append((key, pool.submit(maps.store, key, arrays), dict(ct_sha256=sha)))
+        publish(storing)
         if stop and stop():
+            publish(0)
             maps.close()
             return dict(status="PAUSED", new_tiles=completed)
+    publish(0)
     if surface_jobs is not None:
         if next(surface_jobs, None) is not None:
             raise ValueError("unexpected extra imported surface tile")
