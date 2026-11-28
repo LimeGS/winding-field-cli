@@ -90,6 +90,11 @@ def _on_cycle(n, a, b, rng):
     return out
 
 
+def _row_starts(graph, keep):
+    """Row pointers of a CSR matrix after dropping the entries where ``keep`` is False."""
+    return np.r_[0, np.cumsum(keep)][graph.indptr]
+
+
 class _Surface:
     """Edges, dual faces and the contracted graph of one manifold piece."""
 
@@ -168,9 +173,29 @@ class _Surface:
         return self.rep[np.searchsorted(self.rep_key, key)]
 
     def sites(self):
-        """Edges that close the greedy loops through one root, shortest loop first."""
-        start = int(self.node[np.flatnonzero(~self.blocked[self.node])[0]])
-        dist, pred = dijkstra(self.graph, directed=False, indices=start, return_predecessors=True)
+        """Edges that close the greedy loops through a root, shortest loop first.
+
+        A closed rim can split the graph (and each vertex of a rim is a node with no link),
+        so every part with a link gets its own root and tree.
+        """
+        graph = self.graph
+        open_links = np.isfinite(graph.data)
+        linked = csr_matrix(
+            (
+                np.ones(int(open_links.sum())),
+                graph.indices[open_links],
+                _row_starts(graph, open_links),
+            ),
+            shape=graph.shape,
+        )
+        _, part = connected_components(linked, directed=False)
+        first = np.unique(part, return_index=True)[1]
+        roots = first[np.bincount(part)[part[first]] > 1]
+        if not len(roots):
+            return np.zeros(0, np.int64)
+        dist, pred, _ = dijkstra(
+            graph, directed=False, indices=roots, return_predecessors=True, min_only=True
+        )
         reached = np.flatnonzero((pred >= 0) & np.isfinite(dist))
         in_tree = np.zeros(len(self.edges), bool)
         in_tree[self.links(reached, pred[reached])] = True

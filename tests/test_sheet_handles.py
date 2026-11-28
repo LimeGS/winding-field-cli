@@ -149,6 +149,21 @@ def test_each_handle_is_cut_along_a_short_loop_and_the_piece_stays_whole():
     assert max(report["loop_length"]) < 12
 
 
+def test_sites_are_found_when_the_first_vertex_is_shut_in():
+    # On PHerc0175A the first vertex of the main piece had links only to the closed outline:
+    # the single root reached nothing and no handle was found at any radius.
+    from winding_field.flattening.handles import _Surface
+
+    vertices, faces = tunnel_sheet()
+    surface = _Surface(vertices, faces, np.inf)
+    start = int(surface.node[np.flatnonzero(~surface.blocked[surface.node])[0]])
+    assert len(surface.sites()) > 0
+    row = slice(surface.graph.indptr[start], surface.graph.indptr[start + 1])
+    for x in surface.graph.indices[row].tolist():
+        surface.block(x)
+    assert len(surface.sites()) > 0
+
+
 def test_a_piece_without_handles_is_left_alone():
     from winding_field.flattening.handles import cut_handles, handle_collars
 
