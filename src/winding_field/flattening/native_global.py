@@ -31,6 +31,7 @@ from scipy.sparse.csgraph import connected_components
 
 from .legacy_charts import cross2
 from .native_charts import (
+    SLIM_BATCH_FACES,
     SLIM_ITERATIONS,
     SLIM_TOLERANCE,
     _flush_slim,
@@ -39,6 +40,8 @@ from .native_charts import (
 )
 
 SCHEMA = "native-sheet-flatten-v1"
+# State rows naming one finished piece each, in commit order: ``<prefix><sequence>``.
+PIECE_ROW = "sheet_piece/"
 
 
 # One Flatboi call per group keeps process start-up amortized over small pieces.
@@ -318,17 +321,33 @@ def _save_mapped(store, component, charts, quality):
     return total
 
 
-def _fallback(store, component, vertices, faces, face_ids, vertex_ids, chart_faces, app_run):
-    """Chart route for one piece: local charts that ``assemble`` welds as usual."""
+def _fallback_charts(store, component, vertices, faces, face_ids, vertex_ids, chart_faces):
+    """Seeded local charts of one piece for the chart route (``assemble`` welds them)."""
+    items = []
     for first in range(0, len(faces), chart_faces):
         rows = slice(first, first + chart_faces)
-        items = [
+        items += [
             (component, piece)
             for piece in _pieces(
                 vertices, faces[rows], face_ids[rows], vertex_ids, check=store.check
             )
         ]
-        _flush_slim(store, items, app_run, 0, -1)
+    return items
+
+
+def _fallback(store, component, vertices, faces, face_ids, vertex_ids, chart_faces, app_run):
+    """Chart route for one piece: local charts that ``assemble`` welds as usual."""
+    for first in range(0, len(faces), chart_faces):
+        rows = slice(first, first + chart_faces)
+        _flush_slim(
+            store,
+            _fallback_charts(
+                store, component, vertices, faces[rows], face_ids[rows], vertex_ids, chart_faces
+            ),
+            app_run,
+            0,
+            -1,
+        )
 
 
 def flatten_sheet(reader, store, chart_faces=1024, *, app_run=None, offline=False):
@@ -372,9 +391,18 @@ def flatten_sheet(reader, store, chart_faces=1024, *, app_run=None, offline=Fals
         store.set("source_faces", int(len(faces)))
         store.set("source_area", float(areas.sum() / 2))
         store.set("last_face", int(rows[-1, 0]))
-    done = set(store.get("sheet_pieces", []))
     split, parent, groups, repair = _manifold_pieces(faces)
+    # Stores written before per-piece rows keep their whole receipt in one state value.
+    done = set(store.get("sheet_pieces", []))
     receipt = store.get("sheet_receipt", dict(schema=SCHEMA, repair=repair, pieces=[], fallback=[]))
+    finished = store.db.execute(
+        "SELECT value FROM state WHERE name GLOB ? ORDER BY name", (PIECE_ROW + "*",)
+    ).fetchall()
+    for (value,) in finished:
+        entry = json.loads(value)
+        receipt[entry["kind"]].append(entry["record"])
+        done.add(entry["component"])
+    sequence = [len(finished)]
     cut_base = int(ids.max()) + 1
     prepared = []
 
@@ -460,7 +488,9 @@ def flatten_sheet(reader, store, chart_faces=1024, *, app_run=None, offline=Fals
             _raster_charts(cut, uv, piece["face_ids"], source_ids, piece["cut_base"], chart_faces),
             quality,
         )
-        receipt["pieces"].append(
+        finish(
+            "pieces",
+            piece["component"],
             dict(
                 component=piece["component"],
                 faces=int(len(cut["faces"])),
@@ -472,19 +502,30 @@ def flatten_sheet(reader, store, chart_faces=1024, *, app_run=None, offline=Fals
                 iterations=solver["steps"],
                 converged=solver["converged"],
                 **stats,
-            )
+            ),
         )
-        finish(piece["component"])
 
     def initialization_name(record):
         return record.get("method") or record.get("algorithm") or "mean-value"
 
-    def finish(component):
-        done.add(component)
+    def finish(kind, component, record):
+        finish_all(kind, [(component, record)])
+
+    def finish_all(kind, entries):
+        # One small row per piece: rewriting the whole receipt per piece grew as the square
+        # of the piece count (hours on real levels with tens of thousands of pieces). A
+        # group's rows commit together, so a resume regroups the remaining pieces the same.
         with store.db:
-            store.set("sheet_pieces", sorted(done))
-            store.set("sheet_receipt", receipt)
+            for component, record in entries:
+                store.set(
+                    f"{PIECE_ROW}{sequence[0]:09d}",
+                    dict(kind=kind, component=component, record=record),
+                )
+                sequence[0] += 1
             store.set("elapsed_s", store.elapsed)
+        for component, record in entries:
+            receipt[kind].append(record)
+            done.add(component)
 
     def chart_route(piece, reason):
         _fallback(
@@ -497,14 +538,43 @@ def flatten_sheet(reader, store, chart_faces=1024, *, app_run=None, offline=Fals
             chart_faces,
             app_run,
         )
-        receipt["fallback"].append(
-            dict(component=piece["component"], faces=int(len(piece["faces"])), reason=reason)
+        finish(
+            "fallback",
+            piece["component"],
+            dict(component=piece["component"], faces=int(len(piece["faces"])), reason=reason),
         )
-        finish(piece["component"])
 
-    for piece in prepared:
-        if "error" in piece:
-            chart_route(piece, piece["error"])
+    # Pieces with no whole-sheet seed (mostly small ones) share Flatboi calls: one solve
+    # per piece cost a process start each, hours on levels with thousands of such pieces.
+    failed = [piece for piece in prepared if "error" in piece]
+    while failed:
+        items, members, faces_in = [], [], 0
+        while failed and (not members or faces_in < SLIM_BATCH_FACES):
+            piece = failed.pop(0)
+            items += _fallback_charts(
+                store,
+                piece["component"],
+                piece["vertices"],
+                piece["faces"],
+                piece["face_ids"],
+                piece["vertex_ids"],
+                chart_faces,
+            )
+            members.append(piece)
+            faces_in += len(piece["faces"])
+        _flush_slim(store, items, app_run, 0, -1)
+        receipt_entries = [
+            (
+                piece["component"],
+                dict(
+                    component=piece["component"],
+                    faces=int(len(piece["faces"])),
+                    reason=piece["error"],
+                ),
+            )
+            for piece in members
+        ]
+        finish_all("fallback", receipt_entries)
     queue = []
     group, group_faces = [], 0
     for piece in (p for p in prepared if "error" not in p):
