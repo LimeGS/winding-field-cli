@@ -151,6 +151,69 @@ def test_run_and_plan_resolve_flattening_only_at_new_cli_boundary(
         config = json.loads((tmp_path / "captured.json").read_bytes())
         assert config["flattening_method"] == want
         assert config["surface_output"] == branch
+        # Native SLIM defaults to whole-sheet flattening; other branches carry no scope.
+        assert config.get("flattening_scope") == (
+            "sheet" if (branch, want) == ("native", "slim") else None
+        )
+
+
+@pytest.mark.parametrize(
+    "method,scope,want",
+    [
+        ("slim", None, "sheet"),
+        ("slim", "sheet", "sheet"),
+        ("slim", "charts", None),
+        ("default", None, None),
+        ("default", "charts", None),
+    ],
+)
+def test_run_flattening_scope_defaults_to_sheet_with_slim(
+    tmp_path, monkeypatch, capsys, method, scope, want
+):
+    from winding_field.cli import main
+    from winding_field.util import atomic_json
+    import winding_field.workflow as workflow
+
+    def capture(config, **kwargs):
+        atomic_json(tmp_path / "captured.json", config)
+        return {"status": "PAUSED"}
+
+    monkeypatch.setattr(workflow, "run", capture)
+    args = ["run", "--source", "unused", "--output", str(tmp_path / "out")]
+    args += ["--flattening-method", method]
+    if scope:
+        args += ["--flattening-scope", scope]
+    assert main(args) == 0, capsys.readouterr().err
+    config = json.loads((tmp_path / "captured.json").read_bytes())
+    # "charts" is not recorded, so chart-scope identities stay those of 1.x runs.
+    assert config.get("flattening_scope") == want
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [
+        ["--flattening-method", "default"],
+        ["--surface-output", "atlas"],
+    ],
+)
+def test_run_sheet_scope_needs_native_slim(tmp_path, capsys, extra):
+    from winding_field.cli import main
+
+    args = ["run", "--source", "unused", "--output", str(tmp_path / "out")]
+    assert main(args + extra + ["--flattening-scope", "sheet"]) == 1
+    assert "requires --surface-output native" in capsys.readouterr().err
+    assert not (tmp_path / "out").exists()
+
+
+def test_validate_config_refuses_sheet_scope_outside_native_slim():
+    from winding_field.config import validate_config
+
+    with pytest.raises(ValueError, match="native SLIM"):
+        validate_config(dict(surface_output="native", flattening_scope="sheet"))
+    with pytest.raises(ValueError, match="native SLIM"):
+        validate_config(
+            dict(surface_output="native", flattening_method="slim", flattening_scope="charts")
+        )
 
 
 @pytest.mark.parametrize("branch", [None, "atlas", "tifxyz"])

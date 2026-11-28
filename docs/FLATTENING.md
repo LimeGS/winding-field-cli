@@ -113,7 +113,15 @@ requires an explicit `app_run` from an installation that provides them.
 ## Native run flattening
 
 New `winding-field run` and `plan` requests with `--surface-output native`
-default to `--flattening-method slim` on Linux x86_64 (`default` elsewhere). Each
+default to `--flattening-method slim` on Linux x86_64 (`default` elsewhere), and
+native SLIM defaults to `--flattening-scope sheet`: each edge-connected piece is cut to
+a disk, seeded with a global LSCM and solved by one Flatboi SLIM call, so there are no
+welded chart seams (same route as `scroll render-ct`, see docs/SCROLL.md). A piece that
+cannot be flattened whole uses the chart route below and is listed in `LEVEL.json`
+`sheet_flatten.fallback`. `--flattening-scope charts` selects the chart route for the
+whole run; runs created before 2.0.0 keep their saved chart scope on resume.
+
+With `--flattening-scope charts`, each
 bounded local chart gets the existing near-planar projection or LSCM seed; seeded
 charts from consecutive face batches (up to 65,536 faces) are then optimized together
 by **one Flatboi call** (symmetric Dirichlet, at most 200 iterations, tolerance 1e−6).

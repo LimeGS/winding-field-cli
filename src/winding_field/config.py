@@ -321,6 +321,12 @@ def validate_config(config):
         and config.get("surface_output", "atlas") != "native"
     ):
         raise ValueError("SLIM flattening requires --surface-output native")
+    if config.get("flattening_scope") is not None and (
+        config["flattening_scope"] != "sheet"
+        or config.get("flattening_method") != "slim"
+        or config.get("surface_output", "atlas") != "native"
+    ):
+        raise ValueError("flattening_scope sheet requires native SLIM flattening")
     if config.get("surface_output", "atlas") == "native":
         coverage = config.get("coverage_target", 1.0)
         seconds = config.get("surface_time_limit_s", 1800.0)

@@ -1545,6 +1545,7 @@ def render_ct(args):
     from .surface_mesh import MeshReader
     from .workflow import open_volume
 
+    scope = args.flattening_scope or ("sheet" if args.flattening_method == "slim" else "charts")
     config = dict(
         source=args.source,
         voxel_um=args.voxel_um,
@@ -1555,7 +1556,7 @@ def render_ct(args):
         render_pitch_um=args.render_pitch_um,
         chart_faces=args.chart_faces,
         flattening_method=args.flattening_method,
-        flattening_scope=args.flattening_scope if args.flattening_scope != "charts" else None,
+        flattening_scope=None if scope == "charts" else scope,
         surface_time_limit_s=args.surface_time_limit,
         coverage_target=args.coverage_target,
         # 2.0: TIFXYZ and per-pixel XYZ are always written.
@@ -1947,11 +1948,11 @@ def _parser():
     p.add_argument("--flattening-method", default="slim", choices=("slim", "default"))
     p.add_argument(
         "--flattening-scope",
-        default="charts",
+        default=None,
         choices=("charts", "sheet"),
-        help="charts: weld ~1,000-face charts (default); sheet: one global LSCM+SLIM map per "
-        "connected piece, no welded seams (needs --flattening-method slim; raise "
-        "--surface-time-limit for multi-million-face meshes)",
+        help="sheet: one global LSCM+SLIM map per connected piece, no welded seams (default "
+        "with --flattening-method slim; raise --surface-time-limit for multi-million-face "
+        "meshes); charts: weld ~1,000-face charts (default with --flattening-method default)",
     )
     p.add_argument("--surface-time-limit", type=float, default=1800.0)
     p.add_argument("--coverage-target", type=float, default=1.0)
@@ -2030,7 +2031,27 @@ def main(argv=None):
         print("scroll: " + str(error), file=sys.stderr)
         return 2
     print(json.dumps(result, allow_nan=False, default=float))
-    return 0 if result.get("status") not in ("INCOMPLETE",) else 3
+    if result.get("status") == "INCOMPLETE":
+        return 3
+    if args.action == "render-ct" and render_short(result):
+        print("scroll: WARNING " + render_short(result), file=sys.stderr)
+        return 4
+    return 0
+
+
+def render_short(result):
+    """Why a render-ct result falls short of its coverage target, or None when it does not."""
+    if result.get("status") == "PAUSED":
+        return f"render paused ({result.get('reason')}) before it finished; nothing was rendered"
+    if result.get("target_met") is False:
+        coverage = 100 * float(result.get("coverage_fraction", 0.0))
+        target = 100 * float(result.get("coverage_target", 1.0))
+        return (
+            f"only {coverage:.1f}% of the mesh area was flattened (target {target:.1f}%) after "
+            f"{float(result.get('elapsed_s', 0.0)):.0f} s; raise --surface-time-limit or use "
+            "--flattening-scope sheet"
+        )
+    return None
 
 
 if __name__ == "__main__":
