@@ -143,7 +143,8 @@ class _Surface:
         self.at_edge = np.r_[ids, ids][by]
         self.at_ptr = np.searchsorted(ends[by], np.arange(self.total + 1))
         self.blocked = np.zeros(self.total, bool)
-        # Long rims (the outline, the ends of a wrap) carry no local loop.
+        # Long rims (the outline, the ends of a wrap) carry no local loop. Each closed rim
+        # adds one site with nothing to find, so only those rims are closed.
         for k, loop in enumerate(loops):
             rim = np.linalg.norm(vertices[np.roll(loop, -1)] - vertices[loop], axis=1).sum()
             if rim > max_rim:
@@ -288,7 +289,7 @@ def cut_handles(vertices, faces, check=None, *, radius_edges=RADIUS_EDGES, seed=
     report = dict(genus=0, loops=0, loop_length=[], loop_vertices=[], seam_length=0.0, rounds=[])
     genus = None
     while genus is None or genus > 0:
-        surface = _Surface(v, f, 4 * radius)
+        surface = _Surface(v, f, 4 * last_radius)
         if genus is None:
             report["genus"] = int(surface.genus)
         genus = int(surface.genus)

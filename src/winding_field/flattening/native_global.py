@@ -655,7 +655,10 @@ def flatten_sheet(reader, store, chart_faces=1024, *, app_run=None, offline=Fals
         stretch = stats["edge_stretch"]
         if piece["minimal"] and not (stretch["p01"] > 0.5 and stretch["p99"] < 2.0):
             # A kept hole was really a wrap: flatten this piece as a disk instead.
-            raise _NeedsDisk
+            raise _NeedsDisk(
+                f"edge stretch p01 {stretch['p01']:.3f}, p50 {stretch['p50']:.3f}, "
+                f"p99 {stretch['p99']:.3f}"
+            )
         if piece.get("retried") and not (
             stretch["p01"] > DISK_STRETCH[0] and stretch["p99"] < DISK_STRETCH[1]
         ):
@@ -834,11 +837,13 @@ def flatten_sheet(reader, store, chart_faces=1024, *, app_run=None, offline=Fals
         for piece, uv in zip(group, uvs):
             try:
                 commit(piece, uv, solver)
-            except _NeedsDisk:
+            except _NeedsDisk as stretched:
                 if piece.get("rows") is not None:
                     # Without its handles and folds the piece still stretched: the disk
                     # cut would run through them, so it goes to charts whole.
-                    chart_route(piece, "whole-sheet map is distorted after handle removal")
+                    chart_route(
+                        piece, f"whole-sheet map is distorted after handle removal ({stretched})"
+                    )
                     continue
                 prepare(piece, False)
                 piece["retried"] = True
