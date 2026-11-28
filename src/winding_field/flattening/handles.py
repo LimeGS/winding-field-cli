@@ -392,10 +392,10 @@ def handle_collars(vertices, faces, check=None, *, collar=COLLAR, radius_edges=R
     if not loops:
         return aside, report
     reach = collar * np.asarray(report["loop_length"])
-    e = np.unique(
-        np.sort(np.concatenate([f[:, [0, 1]], f[:, [1, 2]], f[:, [2, 0]]]), axis=1), axis=0
-    )
     n = len(vertices)
+    tail, head = f.ravel(), np.roll(f, -1, axis=1).ravel()
+    key = np.unique(np.minimum(tail, head) * n + np.maximum(tail, head))
+    e = np.column_stack([key // n, key % n])
     length = np.linalg.norm(vertices[e[:, 0]] - vertices[e[:, 1]], axis=1) + 1e-9
     # One extra node starts every loop at once, later for the loops with a shorter reach.
     start = np.concatenate([np.full(len(loop), n) for loop in loops])
