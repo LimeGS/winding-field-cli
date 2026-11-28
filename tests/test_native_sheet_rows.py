@@ -126,3 +126,38 @@ def test_a_store_with_the_old_whole_receipt_resumes_to_the_same_result(tmp_path,
     result = run(tmp_path, root, "old")
     assert result[0] == whole[0] and result[1:3] == whole[1:3]
     assert result[3] == 7  # only the pieces finished after the switch have rows
+
+
+@pytest.fixture
+def no_sheet_seed(monkeypatch):
+    """Every piece fails its whole-sheet seed, so all of them take the chart route."""
+    from winding_field.flattening import native_global, native_sheet
+
+    def refuse(*args):
+        raise ValueError("no seed (test)")
+
+    monkeypatch.setattr(native_global, "_minimal_cut", lambda *args: None)
+    monkeypatch.setattr(native_sheet, "cut_component", refuse)
+    monkeypatch.setattr(native_global, "SLIM_BATCH_FACES", 100)  # groups of 4 pieces
+
+
+def test_seedless_pieces_share_flatboi_calls_and_resume_to_the_same_groups(
+    tmp_path, monkeypatch, seeded_solve, no_sheet_seed
+):
+    from winding_field.flattening import flatboi
+
+    calls = []
+    solve = flatboi.solve_batch
+    monkeypatch.setattr(
+        flatboi,
+        "solve_batch",
+        lambda items, *a, **k: calls.append(len(items)) or solve(items, *a, **k),
+    )
+    root = bundle(tmp_path, *pieces())
+    receipt, charts, edges, rows = run(tmp_path, root, "whole")
+    assert receipt["pieces"] == [] and rows == 12
+    assert [f["reason"] for f in receipt["fallback"]] == ["no seed (test)"] * 12
+    assert len(calls) == 3 and sum(calls) == len(charts)  # 12 pieces of 32 faces, 4 per call
+    assert {c[4] for c in charts} == {"LOCAL"}
+    run(tmp_path, root, "resumed", interrupt_after=5)  # inside the second group
+    assert run(tmp_path, root, "resumed") == (receipt, charts, edges, rows)
