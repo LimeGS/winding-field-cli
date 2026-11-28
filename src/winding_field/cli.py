@@ -776,13 +776,21 @@ def main(argv=None):
     p.add_argument("--output", required=True)
     p = sub.add_parser(
         "export-sheets",
-        help="LSCM/SLIM on patches or whole sheets; historical recipes also available",
-        description="Export flattened CT from a field or mesh. The solver/scope matrix and historical patches require Linux; original mapping also supports macOS. Choose --flattening-solver and --scope together, or a historical --flattening-method. LSCM needs no Flatboi; SLIM requires the pinned binary and cgroup limits. Outputs remain diagnostic.",
+        help="flatten and render sheets (default: the scroll render-ct sheet route); "
+        "experimental matrix and historical lanes by flag",
+        description="Export flattened CT and TIFXYZ from a field, a mesh or a saved run. "
+        "Default (Linux x86_64): every level goes through the scroll render-ct sheet route "
+        "(handles set aside, holes kept, wrap ends seamed, LSCM or unrolled seed, Flatboi SLIM, "
+        "stretch gate, chart fallback), one level-NNNN render-ct output per level. "
+        "Experimental lanes, selected explicitly: --flattening-solver/--scope (matrix: "
+        "cut_component with its own seed; also the default where Flatboi cannot run) and "
+        "--flattening-method original|patches (historical recipes). Outputs remain diagnostic.",
     )
     inputs = p.add_mutually_exclusive_group()
     inputs.add_argument(
         "--run",
-        help="completed field run; infer saved inputs and original mapping defaults without manual JSON",
+        help="completed field run; infer saved inputs without manual JSON (render-ct sheet "
+        "route, or --flattening-method original)",
     )
     inputs.add_argument(
         "--field-config",
@@ -819,18 +827,21 @@ def main(argv=None):
     p.add_argument(
         "--flattening-method",
         choices=list(EXPORT_METHODS),
-        help="historical recipe; cannot combine with --flattening-solver/--scope",
+        help="experimental historical recipe; cannot combine with --flattening-solver/--scope "
+        "(default without it: the render-ct sheet route)",
     )
     p.add_argument(
         "--flattening-solver",
         choices=list(SOLVERS),
-        help="lscm-slim (default on Linux x86_64: global LSCM seed, then Flatboi SLIM), "
-        "lscm, or slim (Flatboi from a mean-value seed); default lscm elsewhere",
+        help="experimental matrix lane: lscm-slim (global LSCM seed, then Flatboi SLIM), "
+        "lscm, or slim (Flatboi from a mean-value seed); without it and --scope the "
+        "render-ct sheet route runs (lscm matrix where Flatboi cannot run)",
     )
     p.add_argument(
         "--scope",
         choices=list(SCOPES),
-        help="independent patches or whole connected sheets (default: sheet)",
+        help="experimental matrix lane: independent patches or whole connected sheets "
+        "(sheet when only --flattening-solver is given)",
     )
     # 2.0: mesh-derived float32 XYZ TIFFs and mask are always written alongside CT renders.
     p.set_defaults(export_tifxyz=True)
@@ -1189,6 +1200,8 @@ def main(argv=None):
                         raise ValueError("--source is required without --run")
                     if args.level is None:
                         args.level = 0
+            from .flattening.native_export import available as native_route
+
             if args.run:
                 from .flattening.run_sheet_export import export_run as export_existing
             elif args.flattening_method:
@@ -1200,7 +1213,16 @@ def main(argv=None):
                     from .flattening.patches import export_existing
                 else:
                     from .flattening.original_pipeline import export_existing
+            elif (
+                stages == "all"
+                and args.flattening_solver is None
+                and args.scope is None
+                and native_route()
+            ):
+                # Default: every level through the scroll render-ct sheet route.
+                from .flattening.native_export import export_existing
             else:
+                # Experimental matrix lane (also the default where Flatboi cannot run).
                 from .flattening.selection import DEFAULT_SCOPE, default_solver
 
                 args.flattening_solver = args.flattening_solver or default_solver()
@@ -1340,6 +1362,13 @@ def main(argv=None):
         print(json.dumps(result, indent=2, allow_nan=False))
         if args.command == "doctor" and not result.get("preflight", {}).get("ready", True):
             return 1
+        if args.command == "export-sheets" and result.get("route") == "native-sheet":
+            from .flattening.native_export import short
+
+            if short(result):
+                # Same contract as scroll render-ct: a level paused or under its target.
+                print("winding-field: WARNING " + short(result), file=sys.stderr)
+                return 4
         if native:
             native_result = result.get("native_result", result)
             if result.get("status") == "PAUSED" and native_result.get("reason") in (

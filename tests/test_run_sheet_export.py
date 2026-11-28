@@ -65,10 +65,13 @@ def small_raster(monkeypatch):
 
 
 def command(root, out, *extra):
+    # The original recipe is an explicit lane; without it --run takes the render-ct route.
     return [
         "export-sheets",
         "--run",
         str(root),
+        "--flattening-method",
+        "original",
         "--levels",
         ".5",
         "--output",
@@ -309,3 +312,20 @@ def test_producer_hashes_are_required_in_export_ledger_on_resume(
     before = file_sha(saved_run / "source.sqlite")
     assert main(command(saved_run, out, "--resume")) == 1
     assert file_sha(saved_run / "source.sqlite") == before
+
+
+def test_saved_run_defaults_to_the_render_ct_sheet_route(saved_run, tmp_path):
+    from winding_field.flattening import flatboi
+
+    if not flatboi.supported_platform():
+        pytest.skip("Flatboi SLIM is available only on Linux x86_64")
+    out = tmp_path / "export"
+    argv = ["export-sheets", "--run", str(saved_run), "--levels", ".5", "--output", str(out)]
+    assert main(argv) == 0
+    receipt = json.loads((out / "SHEETS.json").read_text())
+    assert receipt["route"] == "native-sheet" and receipt["status"] == "SHEETS_READY"
+    identity = json.loads((out / "EXPORT.json").read_text())
+    saved = json.loads((saved_run / "RUN.json").read_text())["config"]
+    assert identity["ct_source"] == saved["source"] and identity["field"] is not None
+    assert (out / "level-0000" / "LEVEL.json").is_file()
+    assert main([*argv, "--resume"]) == 0

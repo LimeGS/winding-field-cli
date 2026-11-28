@@ -380,23 +380,31 @@ wf export-sheets --run /outputs/175a-roi --levels -31 \
 ```
 
 Choose more levels with `--levels -31 -30`; these are raw field isovalues, as
-in the rest of the CLI. The command uses the saved field and CT metadata plus
-the original global LSCM recipe. Default XYZ coordinates are physical micrometres
-(unit 1, zero origin), not CT voxel indices.
+in the rest of the CLI. The command uses the saved field and CT metadata and
+flattens every level with the default sheet route, the same one as `run` and
+`scroll render-ct`: handles set aside, holes kept, wrap ends seamed, an LSCM or
+unrolled seed, one Flatboi SLIM solve per piece, a stretch gate and a chart
+fallback (Linux x86_64). TIFXYZ coordinates are in the CT voxel frame, as VC3D
+reads them.
 
-The resolved `field.json` and `flattening.json` are saved automatically in the
-export directory and verified on resume; do not edit them. Repeat the same
-command with `--resume` to continue. Source runs remain unchanged. Missing or
-inconsistent saved metadata produces an error rather than guessed coordinates.
+Repeat the same command with `--resume` to continue. Source runs remain
+unchanged. Missing or inconsistent saved metadata produces an error rather than
+guessed coordinates.
 
-Main outputs:
+Main outputs (one `scroll render-ct` output per level):
 
 ```text
-outputs/exports/W-31/original/level-0000/
-├── image.png
-├── mask.png
-└── tifxyz/{x,y,z}.tif
+outputs/exports/W-31/
+├── SHEETS.json
+└── level-0000/
+    ├── LEVEL.json
+    └── component-*/{overview.png,png/,tifxyz/{x,y,z}.tif}
 ```
+
+The earlier routes stay available as experimental lanes, selected explicitly:
+`--flattening-method original` (original global LSCM recipe, physical-micrometre
+XYZ, `original/level-0000/`), `--flattening-method patches`, and the
+`--flattening-solver`/`--scope` matrix below.
 
 `level-0000` means the first requested W (here −31), not W=0.
 See [flattening setup and advanced reference](docs/FLATTENING.md) for details.
@@ -405,14 +413,15 @@ See [flattening setup and advanced reference](docs/FLATTENING.md) for details.
 
 | Task | Command / guide |
 | --- | --- |
-| Choose LSCM/SLIM and patches/whole sheet | `export-sheets --flattening-solver lscm-slim\|lscm\|slim --scope patches\|sheet` — [configuration](docs/FLATTENING.md#explicit-solver--scope-matrix) |
+| Experimental: choose LSCM/SLIM and patches/whole sheet | `export-sheets --flattening-solver lscm-slim\|lscm\|slim --scope patches\|sheet` — [configuration](docs/FLATTENING.md#experimental-solver--scope-matrix) |
 | Extract and join continuous W ranges | `extract-range`, `join-ranges` — [recipe](docs/RANGES.md) |
 | Align neighbouring W levels on one UV grid | `export-uvw` — [reference map and settings](docs/UVW.md) |
 | Prepare, flatten and resume a constant-W sheet | `constant-sheet` — [stages](docs/CONSTANT-SHEET.md) |
 | Browse sheets and query pixel XYZ | `sheet-atlas build`, `sheet-atlas query` — [visual atlas](docs/SHEET-ATLAS.md) |
 | Continue PNG tiles from a saved patch map | `python -m winding_field.flattening.patch_continue` — [required inputs](docs/PATCHES.md#continue-verified-png-tiles) |
 
-All four solver/scope combinations preserve source IDs and support resumable CT/XYZ
+Without these flags `export-sheets` takes the default sheet route. All four
+experimental solver/scope combinations preserve source IDs and support resumable CT/XYZ
 export. SLIM needs pinned Flatboi; LSCM does not. Do not mix these flags with
 historical `--flattening-method` recipes. UVW outputs are diagnostic: inspect
 coverage and deformation before using side cuts through the stack.

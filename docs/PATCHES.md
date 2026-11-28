@@ -2,7 +2,7 @@
 
 Use this guide only for the older registration/welding recipe. For a new export
 where you want to choose LSCM or SLIM, use
-[the solver/scope matrix](FLATTENING.md#explicit-solver--scope-matrix) instead.
+[the solver/scope matrix](FLATTENING.md#experimental-solver--scope-matrix) instead.
 The two routes do not produce the same UV map or share resume rules.
 
 `export-sheets --flattening-method patches` consumes an immutable mesh bundle or

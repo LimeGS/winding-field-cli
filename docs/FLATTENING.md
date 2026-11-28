@@ -5,9 +5,9 @@ output directory:
 
 | Goal | Use |
 | --- | --- |
-| Export selected levels from a saved CLI run | `export-sheets --run RUN --levels ...` below |
-| Choose LSCM or SLIM on patches or whole sheets | `export-sheets --flattening-solver ... --scope ...` below |
-| Run the original global LSCM recipe | [Original mapping](#new-ct-run-with-original-mapping) |
+| Flatten a mesh, field or saved run (default route) | `export-sheets --mesh-bundle ...` or `--run RUN --levels ...` below |
+| Experimental: LSCM or SLIM on patches or whole sheets | `export-sheets --flattening-solver ... --scope ...` below |
+| Experimental: the original global LSCM recipe | [Original mapping](#new-ct-run-with-original-mapping) |
 | Continue a normal CT run | [Native output](#native-output); use the saved run configuration |
 | Align neighbouring W levels on one UV grid | [UVW](UVW.md) |
 | Export directly from the field, without a mesh | [Experimental direct-field TIFXYZ](#experimental-direct-field-tifxyz) |
@@ -15,9 +15,54 @@ output directory:
 CT images and optional XYZ TIFFs are different products. Missing CT does not
 necessarily mean missing geometry; always inspect masks and coverage.
 
-## Flag-first external mesh export
+## Default route: the `render-ct` sheet route
 
-Native recipe files remain supported, but are no longer required. On Linux:
+Every lane defaults to one flattening route, the one that flattened PHerc0175A
+W −66: `run`/`plan` native output, `scroll render-ct`, `export-sheets` (mesh
+bundle, field or saved run) and `prepared mesh --then-flatten`. Each connected
+piece of a level is flattened as one map
+(`flattening/native_global.py::flatten_sheet`): handles set aside, holes kept,
+the ends of a wrap seamed, an LSCM seed (the unrolled map when LSCM folds or the
+solve ends too stretched), one Flatboi SLIM solve, a stretch gate, and the chart
+route for a piece that still fails. It needs Flatboi (Linux x86_64); elsewhere
+`export-sheets` falls back to the LSCM matrix lane.
+
+`export-sheets` runs every level of its source through `scroll render-ct` itself,
+not a copy of it, so a level gives the same map from either command:
+
+```bash
+winding-field export-sheets --mesh-bundle runs/paris4-flags-W-60 \
+  --source /data/paris4-original-ct.zarr --voxel-um 9.6 --level 0 \
+  --pitch-um 19.2 --output exports/paris4-W-60
+```
+
+The output holds `EXPORT.json` (identity, checked on `--resume`), `SHEETS.json`
+(receipt) and one `render-ct` output per level, `level-NNNN/`. A multi-level
+bundle is split into single-level bundles under `level-meshes/`. Settings it
+reads: `--pitch-um` (default: the finest mesh spacing), `--cache-dir`,
+`--cache-gib`, `--workers` (cut and seed pieces in N processes; same result) and
+output-frame flags equal to the mesh frame (TIFXYZ is written in the CT voxel
+frame). Other settings and `--stages uv|ct` belong to the experimental lanes and
+are refused with the flag to use. Exit code 4 with a WARNING on stderr, as for
+`render-ct`, when a level paused or fell short of its coverage target.
+
+## Experimental lanes
+
+The earlier routes stay available, selected explicitly; they are not the default
+and their outputs are diagnostic:
+
+| Lane | Select with | Notes |
+|---|---|---|
+| Solver × scope matrix | `--flattening-solver lscm-slim\|lscm\|slim` and/or `--scope patches\|sheet` | `cut_component` with its own seed; SLIM needs a cgroup v2 envelope |
+| Original global LSCM | `--flattening-method original` (also with `--run`) | physical-micrometre XYZ by default |
+| Historical patches | `--flattening-method patches` | |
+| Native charts | `run`/`render-ct --flattening-scope charts` | welded ~1,000-face charts |
+| Constant-W sheet, sheet atlas | `constant-sheet`, `sheet-atlas` | own cut and seed |
+
+An output made by one lane resumes only with the same lane's flags; another lane on
+it is refused with an identity error, never mixed.
+
+## Flag-first external mesh export (experimental matrix)
 
 ```bash
 winding-field export-sheets --mesh-bundle runs/paris4-flags-W-60 \
@@ -44,7 +89,9 @@ winding-field export-sheets --run runs/175a-roi --levels -31 \
   --output exports/W-31
 ```
 
-`--run` selects the original global LSCM recipe. It loads the completed field
+`--run` flattens with the default route above; add `--flattening-method original`
+for the experimental original global LSCM recipe, which the rest of this section
+describes. It loads the completed field
 receipt/checkpoint, CT source, CT pyramid level and scale from the saved run.
 It verifies field hashes and geometry, current CT metadata and previously
 consumed encoded CT chunks before creating the export. Keep `RUN.json`,
@@ -181,7 +228,7 @@ baseline to compare stage times and exact products. On a separate real 1,007-fac
 converged in four steps with identical UV bytes and final energy `8.0004073106`
 before and after; the small solve itself took about 3.9 s on both under emulation.
 
-## Explicit solver × scope matrix
+## Experimental solver × scope matrix
 
 `export-sheets` selects `--flattening-solver lscm-slim|lscm|slim` and
 `--scope patches|sheet`. Without a selection (and without `--run` or a historical
@@ -191,7 +238,7 @@ source-preserving preparation and tiled CT exporter:
 
 | Selection | Domain | Algorithm |
 | --- | --- | --- |
-| `--flattening-solver lscm-slim --scope sheet` (default) | Whole connected component | Global libigl LSCM seed → native Flatboi/SLIM |
+| `--flattening-solver lscm-slim --scope sheet` (matrix default when only one of the two flags is given) | Whole connected component | Global libigl LSCM seed → native Flatboi/SLIM |
 | `--flattening-solver lscm-slim --scope patches` | Deterministic independent patches | LSCM seed per patch → native Flatboi/SLIM |
 | `--flattening-solver lscm --scope patches` | Deterministic independent patches | libigl LSCM |
 | `--flattening-solver lscm --scope sheet` | Whole connected component | libigl LSCM |
@@ -524,7 +571,9 @@ were removed in 2.0.0; import and run the modules below as `winding_field.flatte
 | `native_charts` | `native_geometry` | Native-run local charts, seam welding, assembly |
 | `native_sheet` | `native_global` | Cut-to-disk, mean-value and ARAP whole-sheet maps |
 | `handles` | — | Short loop per handle of a sheet piece; faces set aside around each tunnel |
-| `matrix`, `matrix_pipeline` | `flattening_matrix`, `matrix_pipeline` | `export-sheets` solver × scope matrix |
+| `native_global` | — | Default sheet route (`flatten_sheet`) for every lane |
+| `native_export` | — | `export-sheets` default: each level through `scroll render-ct` |
+| `matrix`, `matrix_pipeline` | `flattening_matrix`, `matrix_pipeline` | Experimental `export-sheets` solver × scope matrix |
 | `patches`, `patch_mapping`, `patch_continue`, `patch_visuals` | `patch_pipeline`, … | Historical Flatboi patches |
 | `original`, `original_pipeline`, `original_tifxyz` | `original_recipe`, … | Original global LSCM recipe |
 | `sheet_prepare`, `sheet_finish`, `sheet_atlas*`, `constant_sheet`, `run_sheet_export` | same | Whole-sheet preparation, publication, atlases |

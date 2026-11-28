@@ -37,7 +37,8 @@ def invoke(*args, cwd):
         (
             "export-sheets",
             [
-                "Export flattened CT from a field or mesh",
+                "Export flattened CT and TIFXYZ from a field, a mesh or a saved run",
+                "Experimental lanes, selected explicitly",
                 "unavailable for historical patches",
                 "raw field isovalues",
             ],
