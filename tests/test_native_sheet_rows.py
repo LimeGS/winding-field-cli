@@ -201,3 +201,22 @@ def test_a_flatboi_that_cannot_start_stops_the_run_instead_of_falling_back(tmp_p
     with pytest.raises(flatboi.FlatboiUnavailable):
         flatboi.solve_batch([(vertices, np.array([[0, 1, 2]]), vertices[:, :2])], str(app))
     assert not issubclass(flatboi.FlatboiUnavailable, RuntimeError)
+
+
+def test_source_writes_during_a_capped_tiff_phase_are_not_capped(tmp_path):
+    import errno
+
+    from winding_field.tifxyz_store import _file_limit, _outside_file_limit
+
+    big, small = tmp_path / "work.sqlite", tmp_path / "x.tif"
+    with _file_limit(4096):
+        with pytest.raises(OSError) as raised, small.open("wb") as stream:
+            stream.write(b"\0" * 8192)
+            stream.flush()
+        assert raised.value.errno == errno.EFBIG
+        with _outside_file_limit(), big.open("wb") as stream:
+            stream.write(b"\0" * 65536)  # like NativeStore.check committing work.sqlite
+        with pytest.raises(OSError), small.open("wb") as stream:
+            stream.write(b"\0" * 8192)
+            stream.flush()
+    assert big.stat().st_size == 65536
