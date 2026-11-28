@@ -22,8 +22,13 @@ def export_run(args):
         raise ValueError(
             "--run uses saved CT metadata; omit --source, --level, --voxel-um and solver/scope overrides"
         )
+    from . import native_export
+
+    native = args.flattening_method is None and native_export.available()
     if args.flattening_method not in (None, "original"):
-        raise ValueError("--run requires the original flattening method")
+        raise ValueError(
+            "--run takes the default native sheet route or --flattening-method original"
+        )
     if not args.levels or not all(math.isfinite(v) for v in args.levels):
         raise ValueError("--levels requires finite raw field isovalues with --run")
     root = Path(args.run).expanduser().resolve()
@@ -73,14 +78,19 @@ def export_run(args):
         reader.validate(hashes=True)
     from ..export_settings import flattening_request
 
-    request = settings(
-        flattening_request(
-            args,
-            dict(
-                output_frame=dict(id=geometry["frame"], voxel_um=1.0, origin_xyz_um=[0.0, 0.0, 0.0])
-            ),
+    if native:
+        request = None
+    else:
+        request = settings(
+            flattening_request(
+                args,
+                dict(
+                    output_frame=dict(
+                        id=geometry["frame"], voxel_um=1.0, origin_xyz_um=[0.0, 0.0, 0.0]
+                    )
+                ),
+            )
         )
-    )
     ledger = root / "source.sqlite"
     ledger_sha = file_sha(ledger)
     # A saved cache inside the source run must not turn this read-only export into a writer there.
@@ -112,6 +122,14 @@ def export_run(args):
         args.source = config["source"]
         args.level = config.get("level", 0)
         args.voxel_um = config.get("voxel_um")
+        if native:
+            # The saved run fixes the field and the CT; every level takes the render-ct route.
+            if config.get("cache") and getattr(args, "cache_dir", None) is None:
+                args.cache_dir = Path(config["cache"])
+            args.resolved_field = descriptor
+            args.mesh_bundle = None
+            args.native_local = config.get("local")
+            return native_export.export_existing(args)
         resolved = dict(
             field=descriptor,
             settings=request,

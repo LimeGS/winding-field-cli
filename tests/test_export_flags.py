@@ -247,6 +247,8 @@ def test_original_export_mesh_bundle_needs_no_user_recipe(saved_run, tmp_path, s
                 "export-sheets",
                 "--run",
                 str(saved_run),
+                "--flattening-method",
+                "original",
                 "--levels",
                 ".5",
                 "--output",
@@ -335,6 +337,8 @@ def test_saved_run_accepts_frame_flags_and_keeps_saved_ct(saved_run, tmp_path, s
                 "export-sheets",
                 "--run",
                 str(saved_run),
+                "--flattening-method",
+                "original",
                 "--levels",
                 ".5",
                 "--output",
@@ -538,6 +542,8 @@ def test_original_direct_field_flags_match_file_recipe(saved_run, tmp_path, smal
                 "export-sheets",
                 "--run",
                 str(saved_run),
+                "--flattening-method",
+                "original",
                 "--levels",
                 ".5",
                 "--output",
@@ -588,7 +594,17 @@ def test_complete_cli_config_export_paths_are_relative_to_file(
     baseline = tmp_path / "baseline"
     assert (
         main(
-            ["export-sheets", "--run", str(saved_run), "--levels", ".5", "--output", str(baseline)]
+            [
+                "export-sheets",
+                "--run",
+                str(saved_run),
+                "--flattening-method",
+                "original",
+                "--levels",
+                ".5",
+                "--output",
+                str(baseline),
+            ]  # fmt: skip
         )
         == 0
     )
