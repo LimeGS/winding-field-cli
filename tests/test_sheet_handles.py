@@ -248,6 +248,7 @@ def test_a_folded_first_seed_is_replaced_by_the_capped_mean_value_map(monkeypatc
 
     vertices, faces = tunnel_sheet()
     monkeypatch.setattr(sheet, "_planar_seed", lambda cut, drop=False: None)
+    monkeypatch.setattr(sheet, "_unrolled_seed", lambda cut: None)
     made = sheet._prepare(vertices, faces, True, sheet._unchecked)
     assert "error" not in made and made["minimal"]
     assert made["initialization"]["capped_holes"] == made["topology"]["holes"] >= 6
@@ -256,6 +257,124 @@ def test_a_folded_first_seed_is_replaced_by_the_capped_mean_value_map(monkeypatc
     corners = seed[cut["faces"]]
     edge_a, edge_b = corners[:, 1] - corners[:, 0], corners[:, 2] - corners[:, 0]
     assert (edge_a[:, 0] * edge_b[:, 1] - edge_a[:, 1] * edge_b[:, 0] > 0).all()
+
+
+def rolled(vertices, turn=300.0, spiral=0.1):
+    """Bend a flat sheet into ``turn`` degrees of a spiral around the y axis."""
+    x = vertices[:, 0] - vertices[:, 0].min()
+    angle = np.radians(turn) * x / x.max()
+    radius = x.max() / np.radians(turn) * (1 + spiral * angle) + vertices[:, 2]
+    return np.column_stack([radius * np.cos(angle), vertices[:, 1], radius * np.sin(angle)])
+
+
+def closed_wrap(**sheet):
+    """A sheet rolled into a full turn, its last column of vertices joined to the first."""
+    flat, faces = tunnel_sheet(long=2.0, **sheet)
+    last = flat[:, 0].max()
+    on_grid = flat[:, 2] == 0
+    first = np.flatnonzero(on_grid & (flat[:, 0] == 0))
+    final = np.flatnonzero(on_grid & (flat[:, 0] == last))
+    first, final = first[np.argsort(flat[first, 1])], final[np.argsort(flat[final, 1])]
+    a, b, c, d = final[:-1], first[:-1], first[1:], final[1:]
+    joint = np.concatenate([np.column_stack([a, b, c]), np.column_stack([a, c, d])])
+    vertices = rolled(flat, turn=360 * last / (last + 1), spiral=0.0)
+    return vertices, np.concatenate([faces, joint])
+
+
+def flat_domain(vertices, faces):
+    import igl
+
+    return dict(
+        vertices=vertices,
+        faces=faces,
+        parent=np.arange(len(vertices)),
+        boundary=igl.boundary_loop(faces).astype(np.int64),
+    )
+
+
+def test_a_wrap_is_unrolled_around_its_axis_without_drift():
+    from winding_field.flattening import native_global as sheet
+
+    flat, faces = tunnel_sheet(arches=0, long=2.0)
+    cut = flat_domain(rolled(flat), faces)
+    uv, initialization, rows = sheet._unrolled_seed(cut)
+    assert initialization["method"] == "unroll" and rows is None
+    assert abs(initialization["angle_degrees"] - 300) < 3
+    assert abs(abs(initialization["axis"][1]) - 1) < 1e-6
+    stretch = sheet._stats(cut["vertices"], faces, uv)["edge_stretch"]
+    assert stretch["p01"] > 0.95 and stretch["p99"] < 1.05
+    assert sheet._seed_spread(cut, (uv, initialization, rows)) < 1.1
+
+
+def test_a_closed_wrap_and_a_flat_sheet_are_not_unrolled():
+    from winding_field.flattening import native_global as sheet
+
+    flat, faces = tunnel_sheet(arches=0)
+    assert sheet._unrolled_seed(flat_domain(flat, faces)) is None
+    # A tube: the last column of a grid joined to the first.
+    n, m = 40, 12
+    index = np.arange(n * m).reshape(n, m)
+    a, b = index[:, :-1].ravel(), np.roll(index, -1, axis=0)[:, :-1].ravel()
+    tube = np.concatenate([np.column_stack([a, b, b + 1]), np.column_stack([a, b + 1, a + 1])])
+    angle = 2 * np.pi * (np.arange(n * m) // m) / n
+    points = np.column_stack([5 * np.cos(angle), np.arange(n * m) % m, 5 * np.sin(angle)])
+    assert sheet._unrolled_seed(flat_domain(points, tube)) is None
+
+
+def test_a_drifted_first_seed_gives_way_to_the_unrolled_one(monkeypatch):
+    from winding_field.flattening import native_global as sheet
+
+    flat, faces = tunnel_sheet(long=2.0)
+    vertices = rolled(flat)
+    monkeypatch.setattr(sheet, "SEED_SPREAD", 1.0)
+    made = sheet._prepare(vertices, faces, True, sheet._unchecked)
+    assert "error" not in made and made["minimal"]
+    assert made["initialization"]["method"] == "unroll"
+    assert made["handles"]["loops"] == 3 and made["topology"]["holes"] >= 6
+    monkeypatch.setattr(sheet, "SEED_SPREAD", np.inf)
+    made = sheet._prepare(vertices, faces, True, sheet._unchecked)
+    assert made["initialization"]["method"] == "LSCM"
+
+
+def test_a_rolled_sheet_with_handles_is_flattened_whole(tmp_path, relaxed_solve):
+    flat, faces = tunnel_sheet(long=2.0)
+    root = bundle(tmp_path, rolled(flat), faces)
+    receipt, charts, _, _ = run(tmp_path, root, "out")
+    assert receipt["fallback"] == []
+    (piece,) = receipt["pieces"]
+    assert piece["handles"]["loops"] == 3 and piece["handles"]["genus_left"] == 0
+    assert piece["faces"] + piece["aside_faces"] == len(faces)
+    assert sum(c[3] for c in charts) == len(faces)
+
+
+def test_the_ends_of_a_wrap_get_a_seam_and_its_holes_stay(monkeypatch):
+    from winding_field.flattening import native_global as sheet
+
+    vertices, faces = closed_wrap(arches=0)
+    assert genus(faces) == (0, 8)
+    cut, topology = sheet._minimal_cut(vertices, faces, sheet._unchecked, True)
+    assert topology["holes"] == 6 and 0 < topology["seam_duplicates"] < 70
+    assert sheet._unrolled_seed(dict(cut, vertices=vertices, faces=faces)) is None
+    uv, initialization, rows = sheet._unrolled_seed(cut)
+    assert rows is None and abs(initialization["angle_degrees"] - 360) < 1
+    stretch = sheet._stats(cut["vertices"], cut["faces"].astype(np.int64), uv)["edge_stretch"]
+    assert stretch["p01"] > 0.95 and stretch["p99"] < 1.05
+    # Kept closed, the wrap is a ring: no seam, and one end counts as a hole.
+    monkeypatch.setattr(sheet, "LONG_RIM", 2.0)
+    _, ring = sheet._minimal_cut(vertices, faces, sheet._unchecked, True)
+    assert ring["holes"] == 7 and ring["seam_duplicates"] == 0
+
+
+def test_a_closed_wrap_with_handles_is_flattened_whole(tmp_path, relaxed_solve):
+    vertices, faces = closed_wrap()
+    root = bundle(tmp_path, vertices, faces)
+    receipt, charts, _, _ = run(tmp_path, root, "out")
+    assert receipt["fallback"] == []
+    (piece,) = receipt["pieces"]
+    assert piece["handles"]["loops"] == 3 and piece["handles"]["genus_left"] == 0
+    assert piece["holes"] >= 6 and piece["seam_vertex_copies"] > 0
+    assert piece["faces"] + piece["aside_faces"] == len(faces)
+    assert sum(c[3] for c in charts) == len(faces)
 
 
 def test_a_sheet_without_handles_gives_the_same_charts_as_before(tmp_path, seeded_solve):  # noqa: F811

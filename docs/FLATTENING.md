@@ -122,10 +122,17 @@ cannot be flattened whole uses the chart route below and is listed in `LEVEL.jso
 outline). A piece with handles (tunnels a few voxels wide, common in a fine scroll
 field) first loses the faces around each tunnel: every handle is found along its own
 short loop and the faces within a quarter of that loop's length leave the piece, as do
-the few faces on which the LSCM seed folds (when it folds on more than 5% of the area,
-the seed is the mean-value map of the piece with its holes capped). Those faces are flattened as small pieces
-of their own and counted in `sheet_flatten.pieces[].aside_faces`; `handles` records the
-genus, the loops and their lengths. `--flattening-scope charts` selects the chart route for the
+the few faces on which the seed folds. Those faces are flattened as small pieces of their
+own and counted in `sheet_flatten.pieces[].aside_faces`; `handles` records the genus, the
+loops and their lengths. What is left of such a piece can still close around the scroll
+axis: a rim at least a quarter as long as the longest one is an end of the wrap, not a
+hole, and gets the shortest seam to the outline, so the wrap unrolls to a strip instead
+of mapping as a ring (`seam_vertex_copies` counts the seam). The seed is the global LSCM;
+when its edge stretch drifts (p99/p01 above 16, usual on a rough fine-field sheet) and
+the piece bends around one axis, it is unrolled instead: arc length of its median
+cross-section against the position along the axis (`initialization: unroll`). When
+neither is valid, the seed is the mean-value map of the piece with its holes capped.
+`--flattening-scope charts` selects the chart route for the
 whole run; runs created before 2.0.0 keep their saved chart scope on resume.
 
 With `--flattening-scope charts`, each

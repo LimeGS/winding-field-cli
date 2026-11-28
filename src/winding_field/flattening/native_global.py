@@ -27,7 +27,7 @@ import time
 
 import numpy as np
 from scipy.sparse import coo_matrix
-from scipy.sparse.csgraph import connected_components
+from scipy.sparse.csgraph import breadth_first_order, connected_components, dijkstra
 
 from .legacy_charts import cross2
 from .native_charts import (
@@ -52,6 +52,13 @@ SEED_DROP = 0.05
 SEED_FLOOR = 1e-9
 # A piece flattened as a disk after its holes failed must stay inside these edge stretches.
 DISK_STRETCH = (0.25, 4.0)
+# After handle removal, a rim at least this share of the longest one is an end of a wrap,
+# not a hole: a seam joins it to the outline, so the wrap unrolls instead of mapping as a ring.
+LONG_RIM = 0.25
+# An LSCM seed whose edge stretch p99 / p01 is above this has drifted: try to unroll instead.
+SEED_SPREAD = 16.0
+# Angle step of the cross-section profile a piece is unrolled along.
+UNROLL_STEP = np.radians(0.5)
 
 
 class _NeedsDisk(Exception):
@@ -121,9 +128,11 @@ def _minimal_cut(vertices, faces, check, all_holes=False):
     turns by about -2*pi (Gauss-Bonnet), while the outer boundary turns by about +2*pi and
     either end of a closed wrap by about 0. Loops that turn by less than -pi are capped
     for the topological cut only, so just wraps and handles are cut. With ``all_holes``
-    every loop but the outline is a hole whatever its turning: what is left of a removed
-    tunnel turns like the end of a wrap, and so can a small hole in a rough sheet. A real
-    wrap then maps with heavy stretch, which the caller's stretch gate sends to charts.
+    the turning is not trusted: what is left of a removed tunnel turns like the end of a
+    wrap, and so can a small hole in a rough sheet. Every loop but the outline is then a
+    hole, except the long ones (``LONG_RIM``): those are the ends of a wrap, and a wrap
+    kept closed maps as a ring with its far end squeezed into the middle. Each gets the
+    shortest seam to the outline (``_rim_seams``).
 
     Returns ``(cut, topology)`` like ``cut_component``, or None when there is no hole to
     keep. Raises ValueError when the result is not a planar domain.
@@ -148,7 +157,20 @@ def _minimal_cut(vertices, faces, check, all_holes=False):
         np.add.at(angle, f[:, i], np.arccos(np.clip(cosine, -1.0, 1.0)))
     turning = np.array([float((np.pi - angle[loop]).sum()) for loop in loops])
     outer = int(np.argmax(turning))
-    holes = [k for k in range(len(loops)) if k != outer and (all_holes or turning[k] < -np.pi)]
+    ends = []
+    if all_holes:
+        length = np.array(
+            [
+                np.linalg.norm(vertices[loop] - vertices[np.roll(loop, -1)], axis=1).sum()
+                for loop in loops
+            ]
+        )
+        ends = [k for k in np.flatnonzero(length >= LONG_RIM * length.max()).tolist() if k != outer]
+    holes = [
+        k
+        for k in range(len(loops))
+        if k != outer and k not in ends and (all_holes or turning[k] < -np.pi)
+    ]
     if not holes:
         return None
     # Cap each hole with a fan around one extra vertex; the fan reverses the rim edges.
@@ -164,6 +186,9 @@ def _minimal_cut(vertices, faces, check, all_holes=False):
     capped = np.concatenate([f, caps])
     if original["euler_characteristic"] + len(holes) == 1:
         paths = []
+    elif ends and original["euler_characteristic"] + len(holes) == 1 - len(ends):
+        # A wrap without handles: one seam per end, nothing else is cut.
+        paths = _rim_seams(vertices, f, loops, outer, ends)
     else:
         paths = igl.cut_to_disk(capped)
     if check:
@@ -189,6 +214,52 @@ def _minimal_cut(vertices, faces, check, all_holes=False):
     return dict(vertices=v, faces=cf, parent=parent.astype(np.int64), boundary=boundary), dict(
         original=original, cut=topology, seam_duplicates=len(v) - len(vertices), holes=kept
     )
+
+
+def _rim_seams(vertices, faces, loops, outer, ends):
+    """Shortest seams that join each rim in ``ends`` to the outline or to a rim already joined.
+
+    A seam runs through interior vertices only, so it touches no other rim and every hole
+    stays a hole. Returns one vertex path per seam, as ``igl.cut_to_disk`` does. Raises
+    ValueError when a rim cannot be reached.
+    """
+    count = len(vertices)
+    rim_of = np.full(count, -1, np.int64)
+    for k, loop in enumerate(loops):
+        rim_of[loop] = k
+    tail, head = faces.ravel(), np.roll(faces, -1, axis=1).ravel()
+    key = np.unique(np.minimum(tail, head) * count + np.maximum(tail, head))
+    a, b = key // count, key % count
+    # An edge between two rim vertices runs along a rim or straight across a gap.
+    inner = (rim_of[a] < 0) | (rim_of[b] < 0)
+    a, b = a[inner], b[inner]
+    weight = np.linalg.norm(vertices[a] - vertices[b], axis=1) + 1e-9
+    joined = [outer]
+    seams = []
+    for k in sorted(ends, key=lambda end: -len(loops[end])):
+        open_to = (rim_of < 0) | (rim_of == k) | np.isin(rim_of, joined)
+        keep = open_to[a] & open_to[b]
+        # One extra node stands for the whole rim, so a single search starts from all of it.
+        start = loops[k]
+        graph = coo_matrix(
+            (
+                np.r_[weight[keep], np.full(len(start), 1e-9)],
+                (np.r_[a[keep], np.full(len(start), count)], np.r_[b[keep], start]),
+            ),
+            shape=(count + 1, count + 1),
+        ).tocsr()
+        dist, before = dijkstra(graph, directed=False, indices=count, return_predecessors=True)
+        targets = np.concatenate([loops[j] for j in joined])
+        at = int(targets[np.argmin(dist[targets])])
+        if not np.isfinite(dist[at]):
+            raise ValueError("no seam joins the end of a wrap to the outline")
+        path = [at]
+        while before[at] != count:
+            at = int(before[at])
+            path.append(at)
+        seams.append(np.asarray(path, np.int64))
+        joined.append(k)
+    return seams
 
 
 def _part(vertices, faces, rows):
@@ -224,6 +295,16 @@ def _planar_seed(cut, drop=False):
         return None
     if not drop:
         return None if (signed <= 0).any() else (uv, initialization)
+    return _without_folds(cut, uv, signed, initialization)
+
+
+def _without_folds(cut, uv, signed, initialization):
+    """The face rows a seed is usable on: ``(uv, initialization, rows)``, or None.
+
+    ``rows`` is None when no face is folded; None is returned when the folded faces hold
+    more than ``SEED_DROP`` of the area.
+    """
+    faces = cut["faces"].astype(np.int64, copy=False)
     world = cut["vertices"]
     area = np.linalg.norm(
         np.cross(world[faces[:, 1]] - world[faces[:, 0]], world[faces[:, 2]] - world[faces[:, 0]]),
@@ -237,6 +318,118 @@ def _planar_seed(cut, drop=False):
         return None
     initialization["folded_faces"] = int(folded.sum())
     return uv, initialization, np.flatnonzero(~folded)
+
+
+def _seed_spread(cut, seeded):
+    """Edge stretch p99 / p01 of a seed on the faces it keeps: 1 for a map without drift."""
+    uv, _, rows = seeded
+    faces = cut["faces"].astype(np.int64, copy=False)
+    if rows is not None:
+        faces = faces[rows]
+    edges = np.concatenate([faces[:, [0, 1]], faces[:, [1, 2]], faces[:, [2, 0]]])
+    world = cut["vertices"]
+    length = np.linalg.norm(world[edges[:, 0]] - world[edges[:, 1]], axis=1)
+    ratio = (
+        np.linalg.norm(uv[edges[:, 0]] - uv[edges[:, 1]], axis=1)[length > 0] / length[length > 0]
+    )
+    low, high = np.percentile(ratio, [1, 99])
+    return float(high / low) if low > 0 else np.inf
+
+
+def _unrolled_seed(cut):
+    """Unroll a piece that bends around one axis, as a wrap of a scroll does; None otherwise.
+
+    The axis is the direction the face normals avoid, and it stands at the centre of the
+    circle that fits the piece's cross-section. Around it every vertex has a radius and an
+    angle, followed from vertex to vertex so that it may pass a full turn. The map is the
+    arc length of the piece's median cross-section against the position along the axis.
+    Unlike LSCM it cannot drift: on a rough sheet the conformal scale wanders by orders of
+    magnitude, and SLIM does not undo that in a few hundred steps on millions of faces.
+
+    Returns ``(uv, initialization, rows)`` like ``_planar_seed`` with ``drop``. None for a
+    piece that closes around the axis (its angle has no single value), for one with no
+    such axis, and when the map folds on more than ``SEED_DROP`` of the area.
+    """
+    world = cut["vertices"].astype(np.float64, copy=False)
+    faces = cut["faces"].astype(np.int64, copy=False)
+    normal = np.cross(
+        world[faces[:, 1]] - world[faces[:, 0]], world[faces[:, 2]] - world[faces[:, 0]]
+    )
+    area = np.linalg.norm(normal, axis=1)
+    solid = area > 0
+    if not solid.any():
+        return None
+    unit = normal[solid] / area[solid, None]
+    _, frame = np.linalg.eigh((unit * area[solid, None]).T @ unit)
+    axis, first = frame[:, 0], frame[:, 2]
+    second = np.cross(axis, first)
+    origin = world.mean(0)
+    plane = (world - origin) @ np.column_stack([first, second])
+    along = (world - origin) @ axis
+    # The axis stands at the centre of the circle that fits the cross-section (Kasa).
+    spot = plane[faces[solid]].mean(1)
+    share = np.sqrt(area[solid])[:, None]
+    centre, _, rank, _ = np.linalg.lstsq(
+        np.column_stack([2 * spot, np.ones(len(spot))]) * share,
+        (spot**2).sum(1, keepdims=True) * share,
+        rcond=1e-12,
+    )
+    if rank < 3:
+        return None
+    arm = plane - centre[:2, 0]
+    radius = np.linalg.norm(arm, axis=1)
+    angle = np.arctan2(arm[:, 1], arm[:, 0])
+    if not (np.isfinite(radius).all() and np.isfinite(angle).all()):
+        return None
+
+    def turn(value):
+        return (value + np.pi) % (2 * np.pi) - np.pi
+
+    # Follow the angle along a spanning tree; pointer jumping sums the steps to the root.
+    edges = np.concatenate([faces[:, [0, 1]], faces[:, [1, 2]], faces[:, [2, 0]]])
+    count = len(world)
+    graph = coo_matrix(
+        (np.ones(len(edges), np.int8), (edges[:, 0], edges[:, 1])), shape=(count,) * 2
+    )
+    order, up = breadth_first_order(graph.tocsr(), int(edges[0, 0]), directed=False)
+    if len(order) != count:
+        return None
+    up[order[0]] = order[0]
+    theta = turn(angle - angle[up])
+    while (up != order[0]).any():
+        theta += theta[up]
+        up = up[up]
+    step = turn(angle[edges[:, 1]] - angle[edges[:, 0]])
+    if (np.abs(theta[edges[:, 1]] - theta[edges[:, 0]] - step) > np.pi).any():
+        return None
+    low, extent = float(theta.min()), float(np.ptp(theta))
+    if not extent > 0:
+        return None
+    # Median radius per angle step, smoothed: the cross-section the piece is unrolled along.
+    bins = max(8, int(np.ceil(extent / UNROLL_STEP)))
+    which = np.minimum(((theta - low) / extent * bins).astype(np.int64), bins - 1)
+    by = np.lexsort((radius, which))
+    bounds = np.searchsorted(which[by], np.arange(bins + 1))
+    filled = bounds[1:] > bounds[:-1]
+    middle = low + (np.arange(bins) + 0.5) * extent / bins
+    profile = np.interp(middle, middle[filled], radius[by[(bounds[:-1] + bounds[1:])[filled] // 2]])
+    profile = np.convolve(np.pad(profile, 4, mode="edge"), np.ones(9) / 9, mode="valid")
+    speed = np.hypot(profile, np.gradient(profile, middle))
+    arc = np.concatenate([[0.0], np.cumsum(speed * extent / bins)])
+    uv = np.column_stack([np.interp(theta, low + np.arange(bins + 1) * extent / bins, arc), along])
+    tri = uv[faces]
+    signed = cross2(tri[:, 1] - tri[:, 0], tri[:, 2] - tri[:, 0])
+    if signed.sum() < 0:
+        uv[:, 0] = arc[-1] - uv[:, 0]
+        signed = -signed
+    uv = np.ascontiguousarray(uv - uv.min(0))
+    initialization = dict(
+        method="unroll",
+        axis=[float(t) for t in axis],
+        angle_degrees=float(np.degrees(extent)),
+        cross_section_length=float(arc[-1]),
+    )
+    return _without_folds(cut, uv, signed, initialization)
 
 
 def _capped_seed(cut, check):
@@ -540,6 +733,12 @@ def _keep_holes(vertices, faces, check):
         made = cut_component(world, f, check)
     cut, topology = made
     seeded = _planar_seed(cut, drop=True)
+    if seeded is None or _seed_spread(cut, seeded) > SEED_SPREAD:
+        unrolled = _unrolled_seed(cut)
+        if unrolled is not None and (
+            seeded is None or _seed_spread(cut, unrolled) < _seed_spread(cut, seeded)
+        ):
+            seeded = unrolled
     if seeded is None:
         try:
             seeded = (*_capped_seed(cut, check), None)
