@@ -113,16 +113,17 @@ def _manifold_pieces(faces):
     return split, parent, sorted(groups, key=lambda g: int(g[0])), repair
 
 
-def _minimal_cut(vertices, faces, check, rim_holes=None):
+def _minimal_cut(vertices, faces, check, all_holes=False):
     """Cut a piece only where it cannot lie flat; holes stay holes.
 
     ``cut_component`` joins every hole to the outer boundary, and each of those cuts can
     open or overlap in the render. A hole in a near-developable sheet needs none: its rim
     turns by about -2*pi (Gauss-Bonnet), while the outer boundary turns by about +2*pi and
     either end of a closed wrap by about 0. Loops that turn by less than -pi are capped
-    for the topological cut only, so just wraps and handles are cut. ``rim_holes`` flags
-    the vertices where faces were taken out of the piece: a loop through one is a hole
-    whatever its turning (what is left of a removed tunnel turns like the end of a wrap).
+    for the topological cut only, so just wraps and handles are cut. With ``all_holes``
+    every loop but the outline is a hole whatever its turning: what is left of a removed
+    tunnel turns like the end of a wrap, and so can a small hole in a rough sheet. A real
+    wrap then maps with heavy stretch, which the caller's stretch gate sends to charts.
 
     Returns ``(cut, topology)`` like ``cut_component``, or None when there is no hole to
     keep. Raises ValueError when the result is not a planar domain.
@@ -147,12 +148,7 @@ def _minimal_cut(vertices, faces, check, rim_holes=None):
         np.add.at(angle, f[:, i], np.arccos(np.clip(cosine, -1.0, 1.0)))
     turning = np.array([float((np.pi - angle[loop]).sum()) for loop in loops])
     outer = int(np.argmax(turning))
-    holes = [
-        k
-        for k in range(len(loops))
-        if k != outer
-        and (turning[k] < -np.pi or (rim_holes is not None and rim_holes[loops[k]].any()))
-    ]
+    holes = [k for k in range(len(loops)) if k != outer and (all_holes or turning[k] < -np.pi)]
     if not holes:
         return None
     # Cap each hole with a fan around one extra vertex; the fan reverses the rim edges.
@@ -241,6 +237,47 @@ def _planar_seed(cut, drop=False):
         return None
     initialization["folded_faces"] = int(folded.sum())
     return uv, initialization, np.flatnonzero(~folded)
+
+
+def _capped_seed(cut, check):
+    """Mean-value seed of a planar domain with holes, for when LSCM folds too much of it.
+
+    A fan around one extra vertex caps every hole; what is left is a disk, and a disk has a
+    valid mean-value or uniform map on a circle. The caps go away again, so the holes stay.
+    The outer loop is the longest one: any loop gives a valid map, the longest the least
+    distorted. Raises ValueError when the capped domain is not a disk or its map fails.
+    """
+    import igl
+
+    from .native_sheet import mean_value_map
+
+    world = cut["vertices"]
+    faces = cut["faces"].astype(np.int64, copy=False)
+    loops = [np.asarray(loop, np.int64) for loop in igl.boundary_loop_all(faces)]
+    length = [
+        float(np.linalg.norm(world[loop] - world[np.roll(loop, -1)], axis=1).sum())
+        for loop in loops
+    ]
+    outer = int(np.argmax(length))
+    centre_of = np.full(len(world), -1, np.int64)
+    centres = []
+    for k, loop in enumerate(loops):
+        if k != outer:
+            centre_of[loop] = len(world) + len(centres)
+            centres.append(world[loop].mean(0))
+    tail, head = faces.ravel(), np.roll(faces, -1, axis=1).ravel()
+    key = np.minimum(tail, head) * len(world) + np.maximum(tail, head)
+    _, inverse, counts = np.unique(key, return_inverse=True, return_counts=True)
+    rim = (counts[inverse] == 1) & (centre_of[tail] >= 0)
+    capped = np.concatenate([faces, np.column_stack([head[rim], tail[rim], centre_of[tail[rim]]])])
+    capped = capped.astype(cut["faces"].dtype, copy=False)
+    disk = dict(
+        vertices=np.concatenate([world, np.asarray(centres).reshape(-1, 3)]),
+        faces=capped,
+        boundary=igl.boundary_loop(capped.astype(np.int64)).astype(np.int64),
+    )
+    uv, initialization = mean_value_map(disk, check, uniform_fallback=True)
+    return np.ascontiguousarray(uv[: len(world)]), dict(initialization, capped_holes=len(centres))
 
 
 def _stats(vertices, faces, uv):
@@ -476,13 +513,10 @@ def _keep_holes(vertices, faces, check):
     from .native_sheet import cut_component
 
     faces = faces.astype(np.int64, copy=False)
-    world, f, up, rows, rim_holes = vertices, faces, None, None, None
+    world, f, up, rows = vertices, faces, None, None
     aside, handles = handle_collars(vertices, faces, check)
     if aside.any():
         world, f, up, rows = _part(vertices, faces, np.flatnonzero(~aside))
-        touched = np.zeros(len(vertices), bool)
-        touched[faces[aside]] = True
-        rim_holes = touched[up]
         lengths = handles.pop("loop_length")
         handles = dict(
             genus=handles["genus"],
@@ -498,7 +532,7 @@ def _keep_holes(vertices, faces, check):
         )
     else:
         handles = None
-    made = _minimal_cut(world, f, check, rim_holes)
+    made = _minimal_cut(world, f, check, rows is not None)
     if made is None:
         if rows is None:
             return None, None, None, None
@@ -507,7 +541,10 @@ def _keep_holes(vertices, faces, check):
     cut, topology = made
     seeded = _planar_seed(cut, drop=True)
     if seeded is None:
-        return made, None, rows, handles
+        try:
+            seeded = (*_capped_seed(cut, check), None)
+        except (ValueError, RuntimeError):
+            return made, None, rows, handles
     uv, initialization, keep = seeded
     if keep is not None:
         # The faces that stay are still a planar domain, and the same map is valid on them.

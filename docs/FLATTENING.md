@@ -122,7 +122,8 @@ cannot be flattened whole uses the chart route below and is listed in `LEVEL.jso
 outline). A piece with handles (tunnels a few voxels wide, common in a fine scroll
 field) first loses the faces around each tunnel: every handle is found along its own
 short loop and the faces within a quarter of that loop's length leave the piece, as do
-the few faces on which the LSCM seed folds. Those faces are flattened as small pieces
+the few faces on which the LSCM seed folds (when it folds on more than 5% of the area,
+the seed is the mean-value map of the piece with its holes capped). Those faces are flattened as small pieces
 of their own and counted in `sheet_flatten.pieces[].aside_faces`; `handles` records the
 genus, the loops and their lengths. `--flattening-scope charts` selects the chart route for the
 whole run; runs created before 2.0.0 keep their saved chart scope on resume.

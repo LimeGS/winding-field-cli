@@ -189,6 +189,21 @@ def test_a_sheet_with_handles_is_flattened_whole_and_the_tunnels_apart(tmp_path,
     assert sheet_faces == piece["faces"]
 
 
+def test_a_folded_first_seed_is_replaced_by_the_capped_mean_value_map(monkeypatch):
+    from winding_field.flattening import native_global as sheet
+
+    vertices, faces = tunnel_sheet()
+    monkeypatch.setattr(sheet, "_planar_seed", lambda cut, drop=False: None)
+    made = sheet._prepare(vertices, faces, True, sheet._unchecked)
+    assert "error" not in made and made["minimal"]
+    assert made["initialization"]["capped_holes"] == made["topology"]["holes"] >= 6
+    cut, seed = made["cut"], made["seed"]
+    assert len(seed) == len(cut["vertices"])
+    corners = seed[cut["faces"]]
+    edge_a, edge_b = corners[:, 1] - corners[:, 0], corners[:, 2] - corners[:, 0]
+    assert (edge_a[:, 0] * edge_b[:, 1] - edge_a[:, 1] * edge_b[:, 0] > 0).all()
+
+
 def test_a_sheet_without_handles_gives_the_same_charts_as_before(tmp_path, seeded_solve):  # noqa: F811
     vertices, faces = tunnel_sheet(arches=0)
     root = bundle(tmp_path, vertices, faces)
