@@ -39,6 +39,8 @@ from .native_charts import (
 )
 
 SCHEMA = "native-sheet-flatten-v1"
+# State rows naming one finished piece each, in commit order: ``<prefix><sequence>``.
+PIECE_ROW = "sheet_piece/"
 
 
 # One Flatboi call per group keeps process start-up amortized over small pieces.
@@ -372,9 +374,18 @@ def flatten_sheet(reader, store, chart_faces=1024, *, app_run=None, offline=Fals
         store.set("source_faces", int(len(faces)))
         store.set("source_area", float(areas.sum() / 2))
         store.set("last_face", int(rows[-1, 0]))
-    done = set(store.get("sheet_pieces", []))
     split, parent, groups, repair = _manifold_pieces(faces)
+    # Stores written before per-piece rows keep their whole receipt in one state value.
+    done = set(store.get("sheet_pieces", []))
     receipt = store.get("sheet_receipt", dict(schema=SCHEMA, repair=repair, pieces=[], fallback=[]))
+    finished = store.db.execute(
+        "SELECT value FROM state WHERE name GLOB ? ORDER BY name", (PIECE_ROW + "*",)
+    ).fetchall()
+    for (value,) in finished:
+        entry = json.loads(value)
+        receipt[entry["kind"]].append(entry["record"])
+        done.add(entry["component"])
+    sequence = [len(finished)]
     cut_base = int(ids.max()) + 1
     prepared = []
 
@@ -460,7 +471,9 @@ def flatten_sheet(reader, store, chart_faces=1024, *, app_run=None, offline=Fals
             _raster_charts(cut, uv, piece["face_ids"], source_ids, piece["cut_base"], chart_faces),
             quality,
         )
-        receipt["pieces"].append(
+        finish(
+            "pieces",
+            piece["component"],
             dict(
                 component=piece["component"],
                 faces=int(len(cut["faces"])),
@@ -472,19 +485,24 @@ def flatten_sheet(reader, store, chart_faces=1024, *, app_run=None, offline=Fals
                 iterations=solver["steps"],
                 converged=solver["converged"],
                 **stats,
-            )
+            ),
         )
-        finish(piece["component"])
 
     def initialization_name(record):
         return record.get("method") or record.get("algorithm") or "mean-value"
 
-    def finish(component):
+    def finish(kind, component, record):
+        # One small row per piece: rewriting the whole receipt per piece grew as the square
+        # of the piece count (hours on real levels with tens of thousands of pieces).
+        receipt[kind].append(record)
         done.add(component)
         with store.db:
-            store.set("sheet_pieces", sorted(done))
-            store.set("sheet_receipt", receipt)
+            store.set(
+                f"{PIECE_ROW}{sequence[0]:09d}",
+                dict(kind=kind, component=component, record=record),
+            )
             store.set("elapsed_s", store.elapsed)
+        sequence[0] += 1
 
     def chart_route(piece, reason):
         _fallback(
@@ -497,10 +515,11 @@ def flatten_sheet(reader, store, chart_faces=1024, *, app_run=None, offline=Fals
             chart_faces,
             app_run,
         )
-        receipt["fallback"].append(
-            dict(component=piece["component"], faces=int(len(piece["faces"])), reason=reason)
+        finish(
+            "fallback",
+            piece["component"],
+            dict(component=piece["component"], faces=int(len(piece["faces"])), reason=reason),
         )
-        finish(piece["component"])
 
     for piece in prepared:
         if "error" in piece:
