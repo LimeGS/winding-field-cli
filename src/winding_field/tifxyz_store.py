@@ -84,21 +84,46 @@ def _write_bytes(path, data):
     _fsync_dir(path.parent)
 
 
+# RLIMIT_FSIZE limits from the outer file-size phases, innermost last.
+_OUTER_LIMITS = []
+
+
 @contextmanager
 def _file_limit(cap):
     if not _PHASE_LOCK.acquire(blocking=False):
         raise RuntimeError("concurrent file-size phases are not supported")
     previous = resource.getrlimit(resource.RLIMIT_FSIZE)
     handler = signal.getsignal(signal.SIGXFSZ)
+    _OUTER_LIMITS.append(previous)
     try:
         signal.signal(signal.SIGXFSZ, signal.SIG_IGN)
         soft = cap if previous[0] == resource.RLIM_INFINITY else min(cap, previous[0])
         resource.setrlimit(resource.RLIMIT_FSIZE, (soft, previous[1]))
         yield
     finally:
+        _OUTER_LIMITS.pop()
         resource.setrlimit(resource.RLIMIT_FSIZE, previous)
         signal.signal(signal.SIGXFSZ, handler)
         _PHASE_LOCK.release()
+
+
+@contextmanager
+def _outside_file_limit():
+    """Lift a ``_file_limit`` phase for work that writes other files (journals, SQLite).
+
+    RLIMIT_FSIZE applies to every file the process writes, so a source read that
+    commits its own journal (``NativeStore.check`` writes work.sqlite) failed with
+    EFBIG ("disk I/O error") once that database was larger than the channel cap.
+    """
+    if not _OUTER_LIMITS:
+        yield
+        return
+    current = resource.getrlimit(resource.RLIMIT_FSIZE)
+    resource.setrlimit(resource.RLIMIT_FSIZE, _OUTER_LIMITS[-1])
+    try:
+        yield
+    finally:
+        resource.setrlimit(resource.RLIMIT_FSIZE, current)
 
 
 def _pair(value, name, minimum=0):
@@ -755,9 +780,11 @@ def write_segment(store, grid, frame, pending_dir):
     def channels(axis):
         for y in range(0, shape[0], 256):
             for x in range(0, shape[1], 256):
-                store.guard(pending_bytes=5 * 256 * 256 + 4096)
                 hi = min(y + 256, shape[0]), min(x + 256, shape[1])
-                region = store.read_region((y, x), hi)
+                # The source may commit its own journal: only the channel file is capped.
+                with _outside_file_limit():
+                    store.guard(pending_bytes=5 * 256 * 256 + 4096)
+                    region = store.read_region((y, x), hi)
                 if (region["xyz"][region["mask"]] > np.asarray(frame["shape_zyx"][::-1]) - 1).any():
                     raise ValueError("XYZ outside output frame bounds")
                 output = np.full((256, 256), -1, np.float32)

@@ -317,7 +317,13 @@ the remaining repeated decodes (25.0 s against 33.8 s on the first 1,612 tiles).
   or folded solve) uses the chart route under its own component and is listed in
   `LEVEL.json` → `sheet_flatten.fallback`; per-piece iterations and edge-stretch/area
   percentiles are in `sheet_flatten.pieces`. It needs `--flattening-method slim` and,
-  for multi-million-face meshes, a larger `--surface-time-limit`. Pass
+  for multi-million-face meshes, a larger `--surface-time-limit`. Pieces are cut and
+  seeded before any is solved; while that runs, `STATUS.json` → `sheet_progress`
+  (also in `work.sqlite` state) counts `prepared` and `finished` pieces out of
+  `pieces`. Pieces without a whole-sheet seed share Flatboi calls (up to 65,536
+  faces each). `--flatten-workers N` cuts and seeds pieces in N processes with the
+  same result as 1; keep 1 when many levels run at once, since each level already
+  uses a core. Pass
   `--flattening-scope charts` to reproduce a render made before 2.0.0 (its identity has
   no scope key, so a resume with the new default is refused).
 - **A short render is an error.** When the result is `PAUSED` (time limit or STOP) or

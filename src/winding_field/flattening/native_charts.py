@@ -303,12 +303,13 @@ def flatten_mesh(
     if method not in ("default", "slim"):
         raise ValueError("invalid native flattening method")
     if method == "slim":
-        from .flatboi import resolve_app_run
+        from .flatboi import resolve_app_run, smoke_test
         from .patches import check_flatboi
 
         app_run = check_flatboi(str(resolve_app_run(app_run, offline=offline)), "historical")[
             "app_run"
         ]
+        smoke_test(app_run)
     _schema(store)
     total, area, last = store.get("source_faces"), store.get("source_area"), store.get("last_face")
     if total is None:

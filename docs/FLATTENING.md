@@ -118,7 +118,23 @@ native SLIM defaults to `--flattening-scope sheet`: each edge-connected piece is
 a disk, seeded with a global LSCM and solved by one Flatboi SLIM call, so there are no
 welded chart seams (same route as `scroll render-ct`, see docs/SCROLL.md). A piece that
 cannot be flattened whole uses the chart route below and is listed in `LEVEL.json`
-`sheet_flatten.fallback`. `--flattening-scope charts` selects the chart route for the
+`sheet_flatten.fallback`. A piece with holes keeps them (no cut from a hole to the
+outline). A piece with handles (tunnels a few voxels wide, common in a fine scroll
+field) first loses the faces around each tunnel: every handle is found along its own
+short loop and the faces within a quarter of that loop's length leave the piece, as do
+the few faces on which the seed folds. Those faces are flattened as small pieces of their
+own and counted in `sheet_flatten.pieces[].aside_faces`; `handles` records the genus, the
+loops and their lengths. What is left of such a piece can still close around the scroll
+axis: a rim at least a quarter as long as the longest one is an end of the wrap, not a
+hole, and gets the shortest seam to the outline, so the wrap unrolls to a strip instead
+of mapping as a ring (`seam_vertex_copies` counts the seam). The seed is the global LSCM.
+A piece that bends around one axis has a second seed, its unrolled map (arc length of its
+median cross-section against the position along the axis, `initialization: unroll`): it
+is used when LSCM folds on more than 5% of the area, and for a second solve when the
+LSCM-seeded one ends outside the stretch gate. It folds on more faces than LSCM, so it is
+not the first choice. When neither is valid, the seed is the mean-value map of the piece
+with its holes capped.
+`--flattening-scope charts` selects the chart route for the
 whole run; runs created before 2.0.0 keep their saved chart scope on resume.
 
 With `--flattening-scope charts`, each
@@ -507,6 +523,7 @@ were removed in 2.0.0; import and run the modules below as `winding_field.flatte
 | `flatboi`, `flatboi_checkpoint` | `flatboi_checkpoint` | Flatboi SLIM runtime, batched solves, checkpointed batches (only SLIM backend) |
 | `native_charts` | `native_geometry` | Native-run local charts, seam welding, assembly |
 | `native_sheet` | `native_global` | Cut-to-disk, mean-value and ARAP whole-sheet maps |
+| `handles` | — | Short loop per handle of a sheet piece; faces set aside around each tunnel |
 | `matrix`, `matrix_pipeline` | `flattening_matrix`, `matrix_pipeline` | `export-sheets` solver × scope matrix |
 | `patches`, `patch_mapping`, `patch_continue`, `patch_visuals` | `patch_pipeline`, … | Historical Flatboi patches |
 | `original`, `original_pipeline`, `original_tifxyz` | `original_recipe`, … | Original global LSCM recipe |

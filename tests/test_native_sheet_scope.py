@@ -177,25 +177,37 @@ def test_holes_are_kept_instead_of_cut_to_the_boundary(tmp_path, flatboi_app):  
     assert raster_counts(charts)[3] == 0
 
 
-def test_a_distorted_holed_map_is_redone_as_a_disk(tmp_path, monkeypatch, flatboi_app):  # noqa: F811
+@pytest.mark.parametrize("distorted", [1, 2])
+def test_a_distorted_holed_map_is_solved_unrolled_and_then_as_a_disk(
+    tmp_path,
+    monkeypatch,
+    flatboi_app,  # noqa: F811
+    distorted,
+):
     from winding_field.flattening import native_global
 
     vertices, faces = curved_sheet()
     vertices, faces = punch(vertices, faces, [20 * 60 + 28], 3.5)
     stats, calls = native_global._stats, []
 
-    def first_is_distorted(*args):
+    def first_are_distorted(*args):
         result = stats(*args)
         calls.append(1)
-        if len(calls) == 1:
+        if len(calls) <= distorted:
             result["edge_stretch"]["p99"] = 2.5
         return result
 
-    monkeypatch.setattr(native_global, "_stats", first_is_distorted)
+    monkeypatch.setattr(native_global, "_stats", first_are_distorted)
     receipt, _, summary, charts, _, _, _ = flatten(tmp_path, bundle(tmp_path, vertices, faces))
     piece = receipt["pieces"][0]
-    assert receipt["fallback"] == [] and len(calls) == 2
-    assert piece["holes"] == 0 and piece["seam_vertex_copies"] > 0  # cut to a disk this time
+    assert receipt["fallback"] == [] and len(calls) == distorted + 1
+    if distorted == 1:
+        # The LSCM-seeded solve was refused: the second one starts from the unrolled map.
+        assert piece["initialization"] == "unroll"
+        assert piece["holes"] == 1 and piece["seam_vertex_copies"] == 0
+    else:
+        # Unrolled it is distorted too: cut to a disk this time.
+        assert piece["holes"] == 0 and piece["seam_vertex_copies"] > 0
     assert summary["coverage_fraction"] == pytest.approx(1.0)
 
 

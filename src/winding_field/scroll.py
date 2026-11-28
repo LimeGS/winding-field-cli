@@ -1559,6 +1559,8 @@ def render_ct(args):
         flattening_scope=None if scope == "charts" else scope,
         surface_time_limit_s=args.surface_time_limit,
         coverage_target=args.coverage_target,
+        # Not part of the identity: workers change speed, not the result.
+        flatten_workers=args.flatten_workers,
         # 2.0: TIFXYZ and per-pixel XYZ are always written.
         export_tifxyz=True,
         render_keep_xyz=True,
@@ -1955,6 +1957,13 @@ def _parser():
         "meshes); charts: weld ~1,000-face charts (default with --flattening-method default)",
     )
     p.add_argument("--surface-time-limit", type=float, default=1800.0)
+    p.add_argument(
+        "--flatten-workers",
+        type=int,
+        default=1,
+        help="with --flattening-scope sheet: cut and seed pieces in N processes "
+        "(same result as 1; use 1 when running many levels at once)",
+    )
     p.add_argument("--coverage-target", type=float, default=1.0)
     p.add_argument(
         "--no-ct-texture",

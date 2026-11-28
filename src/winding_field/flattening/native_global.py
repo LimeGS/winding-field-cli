@@ -27,7 +27,7 @@ import time
 
 import numpy as np
 from scipy.sparse import coo_matrix
-from scipy.sparse.csgraph import connected_components
+from scipy.sparse.csgraph import breadth_first_order, connected_components, dijkstra
 
 from .legacy_charts import cross2
 from .native_charts import (
@@ -46,6 +46,17 @@ PIECE_ROW = "sheet_piece/"
 
 # One Flatboi call per group keeps process start-up amortized over small pieces.
 GROUP_FACES = 4_000_000
+# A whole-sheet seed may fold on this share of a piece's area; those faces leave the piece.
+SEED_DROP = 0.05
+# Seed faces below this share of the median area scale count as folded.
+SEED_FLOOR = 1e-9
+# A piece flattened as a disk after its holes failed must stay inside these edge stretches.
+DISK_STRETCH = (0.25, 4.0)
+# After handle removal, a rim at least this share of the longest one is an end of a wrap,
+# not a hole: a seam joins it to the outline, so the wrap unrolls instead of mapping as a ring.
+LONG_RIM = 0.25
+# Angle step of the cross-section profile a piece is unrolled along.
+UNROLL_STEP = np.radians(0.5)
 
 
 class _NeedsDisk(Exception):
@@ -107,14 +118,19 @@ def _manifold_pieces(faces):
     return split, parent, sorted(groups, key=lambda g: int(g[0])), repair
 
 
-def _minimal_cut(vertices, faces, check):
+def _minimal_cut(vertices, faces, check, all_holes=False):
     """Cut a piece only where it cannot lie flat; holes stay holes.
 
     ``cut_component`` joins every hole to the outer boundary, and each of those cuts can
     open or overlap in the render. A hole in a near-developable sheet needs none: its rim
     turns by about -2*pi (Gauss-Bonnet), while the outer boundary turns by about +2*pi and
     either end of a closed wrap by about 0. Loops that turn by less than -pi are capped
-    for the topological cut only, so just wraps and handles are cut.
+    for the topological cut only, so just wraps and handles are cut. With ``all_holes``
+    the turning is not trusted: what is left of a removed tunnel turns like the end of a
+    wrap, and so can a small hole in a rough sheet. Every loop but the outline is then a
+    hole, except the long ones (``LONG_RIM``): those are the ends of a wrap, and a wrap
+    kept closed maps as a ring with its far end squeezed into the middle. Each gets the
+    shortest seam to the outline (``_rim_seams``).
 
     Returns ``(cut, topology)`` like ``cut_component``, or None when there is no hole to
     keep. Raises ValueError when the result is not a planar domain.
@@ -139,7 +155,20 @@ def _minimal_cut(vertices, faces, check):
         np.add.at(angle, f[:, i], np.arccos(np.clip(cosine, -1.0, 1.0)))
     turning = np.array([float((np.pi - angle[loop]).sum()) for loop in loops])
     outer = int(np.argmax(turning))
-    holes = [k for k in range(len(loops)) if turning[k] < -np.pi and k != outer]
+    ends = []
+    if all_holes:
+        length = np.array(
+            [
+                np.linalg.norm(vertices[loop] - vertices[np.roll(loop, -1)], axis=1).sum()
+                for loop in loops
+            ]
+        )
+        ends = [k for k in np.flatnonzero(length >= LONG_RIM * length.max()).tolist() if k != outer]
+    holes = [
+        k
+        for k in range(len(loops))
+        if k != outer and k not in ends and (all_holes or turning[k] < -np.pi)
+    ]
     if not holes:
         return None
     # Cap each hole with a fan around one extra vertex; the fan reverses the rim edges.
@@ -155,6 +184,9 @@ def _minimal_cut(vertices, faces, check):
     capped = np.concatenate([f, caps])
     if original["euler_characteristic"] + len(holes) == 1:
         paths = []
+    elif ends and original["euler_characteristic"] + len(holes) == 1 - len(ends):
+        # A wrap without handles: one seam per end, nothing else is cut.
+        paths = _rim_seams(vertices, f, loops, outer, ends)
     else:
         paths = igl.cut_to_disk(capped)
     if check:
@@ -182,19 +214,247 @@ def _minimal_cut(vertices, faces, check):
     )
 
 
-def _planar_seed(cut):
-    """Global LSCM for a planar domain with holes; None when it folds."""
+def _rim_seams(vertices, faces, loops, outer, ends):
+    """Shortest seams that join each rim in ``ends`` to the outline or to a rim already joined.
+
+    A seam runs through interior vertices only, so it touches no other rim and every hole
+    stays a hole. Returns one vertex path per seam, as ``igl.cut_to_disk`` does. Raises
+    ValueError when a rim cannot be reached.
+    """
+    count = len(vertices)
+    rim_of = np.full(count, -1, np.int64)
+    for k, loop in enumerate(loops):
+        rim_of[loop] = k
+    tail, head = faces.ravel(), np.roll(faces, -1, axis=1).ravel()
+    key = np.unique(np.minimum(tail, head) * count + np.maximum(tail, head))
+    a, b = key // count, key % count
+    # An edge between two rim vertices runs along a rim or straight across a gap.
+    inner = (rim_of[a] < 0) | (rim_of[b] < 0)
+    a, b = a[inner], b[inner]
+    weight = np.linalg.norm(vertices[a] - vertices[b], axis=1) + 1e-9
+    joined = [outer]
+    seams = []
+    for k in sorted(ends, key=lambda end: -len(loops[end])):
+        open_to = (rim_of < 0) | (rim_of == k) | np.isin(rim_of, joined)
+        keep = open_to[a] & open_to[b]
+        # One extra node stands for the whole rim, so a single search starts from all of it.
+        start = loops[k]
+        graph = coo_matrix(
+            (
+                np.r_[weight[keep], np.full(len(start), 1e-9)],
+                (np.r_[a[keep], np.full(len(start), count)], np.r_[b[keep], start]),
+            ),
+            shape=(count + 1, count + 1),
+        ).tocsr()
+        dist, before = dijkstra(graph, directed=False, indices=count, return_predecessors=True)
+        targets = np.concatenate([loops[j] for j in joined])
+        at = int(targets[np.argmin(dist[targets])])
+        if not np.isfinite(dist[at]):
+            raise ValueError("no seam joins the end of a wrap to the outline")
+        path = [at]
+        while before[at] != count:
+            at = int(before[at])
+            path.append(at)
+        seams.append(np.asarray(path, np.int64))
+        joined.append(k)
+    return seams
+
+
+def _part(vertices, faces, rows):
+    """The largest edge-connected manifold part of the face rows ``rows`` of a piece.
+
+    Returns ``(vertices, faces, parent, rows)``: its own vertices and faces, the piece
+    vertex of each of its vertices and the rows it keeps, in order.
+    """
+    split, parent, groups, _ = _manifold_pieces(faces[rows].astype(np.int64, copy=False))
+    group = np.sort(max(groups, key=len))
+    used, local = np.unique(split[group], return_inverse=True)
+    return vertices[parent[used]], local.reshape(-1, 3), parent[used], rows[group]
+
+
+def _planar_seed(cut, drop=False):
+    """Global LSCM for a planar domain with holes; None when it folds.
+
+    With ``drop``, a map that folds on at most ``SEED_DROP`` of the area is kept for the
+    rest: returns ``(uv, initialization, rows)`` with the face rows that are not folded
+    (None when all are), and the caller takes the folded faces out of the piece.
+    """
     from .matrix import _global_lscm
 
     uv, pins, _ = _global_lscm(cut)
-    tri = uv[cut["faces"]]
+    faces = cut["faces"].astype(np.int64, copy=False)
+    tri = uv[faces]
     signed = cross2(tri[:, 1] - tri[:, 0], tri[:, 2] - tri[:, 0])
     if signed.sum() < 0:
         uv[:, 0] *= -1
         signed = -signed
-    if not np.isfinite(uv).all() or (signed <= 0).any():
+    initialization = dict(method="LSCM", backend="libigl", pins=pins.tolist())
+    if not np.isfinite(uv).all():
         return None
-    return uv, dict(method="LSCM", backend="libigl", pins=pins.tolist())
+    if not drop:
+        return None if (signed <= 0).any() else (uv, initialization)
+    return _without_folds(cut, uv, signed, initialization)
+
+
+def _without_folds(cut, uv, signed, initialization):
+    """The face rows a seed is usable on: ``(uv, initialization, rows)``, or None.
+
+    ``rows`` is None when no face is folded; None is returned when the folded faces hold
+    more than ``SEED_DROP`` of the area.
+    """
+    faces = cut["faces"].astype(np.int64, copy=False)
+    world = cut["vertices"]
+    area = np.linalg.norm(
+        np.cross(world[faces[:, 1]] - world[faces[:, 0]], world[faces[:, 2]] - world[faces[:, 0]]),
+        axis=1,
+    )
+    # A face squeezed to nothing is as unusable a start as a folded one.
+    folded = signed <= SEED_FLOOR * np.median(signed / np.maximum(area, 1e-300)) * area
+    if not folded.any():
+        return uv, initialization, None
+    if area[folded].sum() > SEED_DROP * area.sum():
+        return None
+    initialization["folded_faces"] = int(folded.sum())
+    return uv, initialization, np.flatnonzero(~folded)
+
+
+def _unrolled_seed(cut):
+    """Unroll a piece that bends around one axis, as a wrap of a scroll does; None otherwise.
+
+    The axis is the direction the face normals avoid, and it stands at the centre of the
+    circle that fits the piece's cross-section. Around it every vertex has a radius and an
+    angle, followed from vertex to vertex so that it may pass a full turn. The map is the
+    arc length of the piece's median cross-section against the position along the axis.
+    Unlike LSCM it cannot drift (on a rough sheet the conformal scale wanders by orders of
+    magnitude), and SLIM settles from it in tens of steps. It folds on more faces than LSCM
+    does, though, so it is the second choice: for a piece on which LSCM folds too much, and
+    for one whose LSCM-seeded solve ends too stretched.
+
+    Returns ``(uv, initialization, rows)`` like ``_planar_seed`` with ``drop``. None for a
+    piece that closes around the axis (its angle has no single value), for one with no
+    such axis, and when the map folds on more than ``SEED_DROP`` of the area.
+    """
+    world = cut["vertices"].astype(np.float64, copy=False)
+    faces = cut["faces"].astype(np.int64, copy=False)
+    normal = np.cross(
+        world[faces[:, 1]] - world[faces[:, 0]], world[faces[:, 2]] - world[faces[:, 0]]
+    )
+    area = np.linalg.norm(normal, axis=1)
+    solid = area > 0
+    if not solid.any():
+        return None
+    unit = normal[solid] / area[solid, None]
+    _, frame = np.linalg.eigh((unit * area[solid, None]).T @ unit)
+    axis, first = frame[:, 0], frame[:, 2]
+    second = np.cross(axis, first)
+    origin = world.mean(0)
+    plane = (world - origin) @ np.column_stack([first, second])
+    along = (world - origin) @ axis
+    # The axis stands at the centre of the circle that fits the cross-section (Kasa).
+    spot = plane[faces[solid]].mean(1)
+    share = np.sqrt(area[solid])[:, None]
+    centre, _, rank, _ = np.linalg.lstsq(
+        np.column_stack([2 * spot, np.ones(len(spot))]) * share,
+        (spot**2).sum(1, keepdims=True) * share,
+        rcond=1e-12,
+    )
+    if rank < 3:
+        return None
+    arm = plane - centre[:2, 0]
+    radius = np.linalg.norm(arm, axis=1)
+    angle = np.arctan2(arm[:, 1], arm[:, 0])
+    if not (np.isfinite(radius).all() and np.isfinite(angle).all()):
+        return None
+
+    def turn(value):
+        return (value + np.pi) % (2 * np.pi) - np.pi
+
+    # Follow the angle along a spanning tree; pointer jumping sums the steps to the root.
+    edges = np.concatenate([faces[:, [0, 1]], faces[:, [1, 2]], faces[:, [2, 0]]])
+    count = len(world)
+    graph = coo_matrix(
+        (np.ones(len(edges), np.int8), (edges[:, 0], edges[:, 1])), shape=(count,) * 2
+    )
+    order, up = breadth_first_order(graph.tocsr(), int(edges[0, 0]), directed=False)
+    if len(order) != count:
+        return None
+    up[order[0]] = order[0]
+    theta = turn(angle - angle[up])
+    while (up != order[0]).any():
+        theta += theta[up]
+        up = up[up]
+    step = turn(angle[edges[:, 1]] - angle[edges[:, 0]])
+    if (np.abs(theta[edges[:, 1]] - theta[edges[:, 0]] - step) > np.pi).any():
+        return None
+    low, extent = float(theta.min()), float(np.ptp(theta))
+    if not extent > 0:
+        return None
+    # Median radius per angle step, smoothed: the cross-section the piece is unrolled along.
+    bins = max(8, int(np.ceil(extent / UNROLL_STEP)))
+    which = np.minimum(((theta - low) / extent * bins).astype(np.int64), bins - 1)
+    by = np.lexsort((radius, which))
+    bounds = np.searchsorted(which[by], np.arange(bins + 1))
+    filled = bounds[1:] > bounds[:-1]
+    middle = low + (np.arange(bins) + 0.5) * extent / bins
+    profile = np.interp(middle, middle[filled], radius[by[(bounds[:-1] + bounds[1:])[filled] // 2]])
+    profile = np.convolve(np.pad(profile, 4, mode="edge"), np.ones(9) / 9, mode="valid")
+    speed = np.hypot(profile, np.gradient(profile, middle))
+    arc = np.concatenate([[0.0], np.cumsum(speed * extent / bins)])
+    uv = np.column_stack([np.interp(theta, low + np.arange(bins + 1) * extent / bins, arc), along])
+    tri = uv[faces]
+    signed = cross2(tri[:, 1] - tri[:, 0], tri[:, 2] - tri[:, 0])
+    if signed.sum() < 0:
+        uv[:, 0] = arc[-1] - uv[:, 0]
+        signed = -signed
+    uv = np.ascontiguousarray(uv - uv.min(0))
+    initialization = dict(
+        method="unroll",
+        axis=[float(t) for t in axis],
+        angle_degrees=float(np.degrees(extent)),
+        cross_section_length=float(arc[-1]),
+    )
+    return _without_folds(cut, uv, signed, initialization)
+
+
+def _capped_seed(cut, check):
+    """Mean-value seed of a planar domain with holes, for when LSCM folds too much of it.
+
+    A fan around one extra vertex caps every hole; what is left is a disk, and a disk has a
+    valid mean-value or uniform map on a circle. The caps go away again, so the holes stay.
+    The outer loop is the longest one: any loop gives a valid map, the longest the least
+    distorted. Raises ValueError when the capped domain is not a disk or its map fails.
+    """
+    import igl
+
+    from .native_sheet import mean_value_map
+
+    world = cut["vertices"]
+    faces = cut["faces"].astype(np.int64, copy=False)
+    loops = [np.asarray(loop, np.int64) for loop in igl.boundary_loop_all(faces)]
+    length = [
+        float(np.linalg.norm(world[loop] - world[np.roll(loop, -1)], axis=1).sum())
+        for loop in loops
+    ]
+    outer = int(np.argmax(length))
+    centre_of = np.full(len(world), -1, np.int64)
+    centres = []
+    for k, loop in enumerate(loops):
+        if k != outer:
+            centre_of[loop] = len(world) + len(centres)
+            centres.append(world[loop].mean(0))
+    tail, head = faces.ravel(), np.roll(faces, -1, axis=1).ravel()
+    key = np.minimum(tail, head) * len(world) + np.maximum(tail, head)
+    _, inverse, counts = np.unique(key, return_inverse=True, return_counts=True)
+    rim = (counts[inverse] == 1) & (centre_of[tail] >= 0)
+    capped = np.concatenate([faces, np.column_stack([head[rim], tail[rim], centre_of[tail[rim]]])])
+    capped = capped.astype(cut["faces"].dtype, copy=False)
+    disk = dict(
+        vertices=np.concatenate([world, np.asarray(centres).reshape(-1, 3)]),
+        faces=capped,
+        boundary=igl.boundary_loop(capped.astype(np.int64)).astype(np.int64),
+    )
+    uv, initialization = mean_value_map(disk, check, uniform_fallback=True)
+    return np.ascontiguousarray(uv[: len(world)]), dict(initialization, capped_holes=len(centres))
 
 
 def _stats(vertices, faces, uv):
@@ -350,23 +610,173 @@ def _fallback(store, component, vertices, faces, face_ids, vertex_ids, chart_fac
         )
 
 
-def flatten_sheet(reader, store, chart_faces=1024, *, app_run=None, offline=False):
+def _unchecked():
+    """Stand-in for ``store.check`` in prepare workers; the parent checks between results."""
+
+
+def _sheet_seed(cut, check, scratch):
+    """Global LSCM seed; when it folds, mean-value, and the uniform map if that inverts.
+
+    The matrix route's ``_lscm_seed`` without the last step: a piece with no valid seed
+    leaves the whole-sheet route for local charts, so a valid uniform seed keeps it
+    whole (SLIM then removes the uniform map's distortion).
+    """
+    from .matrix import _global_lscm
+    from .native_sheet import mean_value_map
+
+    uv, pins, _ = _global_lscm(cut)
+    tri = uv[cut["faces"]]
+    signed = cross2(tri[:, 1] - tri[:, 0], tri[:, 2] - tri[:, 0])
+    if signed.sum() < 0:
+        uv[:, 0] *= -1
+        signed = -signed
+    folded = int((signed <= 0).sum())
+    if np.isfinite(uv).all() and folded == 0:
+        return uv, dict(method="LSCM", backend="libigl", pins=pins.tolist())
+    uv, initialization = mean_value_map(cut, check, diagnostics=scratch, uniform_fallback=True)
+    return uv, dict(initialization, lscm_rejected=dict(folded_faces=folded))
+
+
+def _prepare(vertices, faces, minimal, check, unroll=False):
+    """Cut one piece and seed its map; returns the fields ``commit`` needs, or an error.
+
+    With ``minimal`` the piece keeps its holes. Handles go first: the faces around each
+    tunnel leave the piece (``handles.handle_collars``), and so do the few faces on which
+    the seed folds. ``rows`` then lists the face rows that stay in the whole-sheet map
+    (None for all); the others are flattened as small pieces of their own. With ``unroll``
+    the seed is the unrolled map or nothing (``_unrolled_seed``).
+    """
+    from .native_sheet import cut_component
+
+    try:
+        with tempfile.TemporaryDirectory(prefix="sheet-seed-") as scratch:
+            made = seeded = rows = handles = None
+            if minimal:
+                try:
+                    made, seeded, rows, handles = _keep_holes(vertices, faces, check, unroll)
+                except ValueError:
+                    seeded = None
+            if seeded:
+                (cut, topology), (seed, initialization) = made, seeded
+            elif unroll:
+                raise ValueError("the piece does not unroll around one axis")
+            elif handles and handles["loops"]:
+                # A disk cut through the handles is the map that collapses: use charts.
+                raise ValueError("no whole-sheet seed after handle removal")
+            else:
+                rows = None
+                cut, topology = cut_component(vertices, faces, check)
+                seed, initialization = _sheet_seed(cut, check, scratch)
+        tri = seed[cut["faces"]]
+        if not np.isfinite(seed).all() or np.any(
+            cross2(tri[:, 1] - tri[:, 0], tri[:, 2] - tri[:, 0]) <= 0
+        ):
+            raise ValueError("no valid whole-sheet seed")
+        return dict(
+            cut=cut,
+            seed=seed,
+            topology=topology,
+            initialization=initialization,
+            minimal=bool(seeded),
+            rows=rows,
+            handles=handles,
+        )
+    except (ValueError, RuntimeError, MemoryError) as error:
+        return dict(error=str(error) or type(error).__name__)
+
+
+def _keep_holes(vertices, faces, check, unroll=False):
+    """Minimal cut and seed of a piece without its handles: ``(made, seeded, rows, handles)``.
+
+    The seed is the global LSCM, the unrolled map when LSCM folds on too much of the piece,
+    and the capped mean-value map when that fails too; with ``unroll`` only the unrolled map.
+    """
+    import igl
+
+    from .handles import handle_collars
+    from .native_sheet import cut_component
+
+    faces = faces.astype(np.int64, copy=False)
+    world, f, up, rows = vertices, faces, None, None
+    aside, handles = handle_collars(vertices, faces, check)
+    if aside.any():
+        world, f, up, rows = _part(vertices, faces, np.flatnonzero(~aside))
+        lengths = handles.pop("loop_length")
+        handles = dict(
+            genus=handles["genus"],
+            loops=handles["loops"],
+            genus_left=handles["genus_left"],
+            collar_faces=handles["collar_faces"],
+            rounds=len(handles["rounds"]),
+            loop_length=dict(
+                min=float(np.min(lengths)),
+                median=float(np.median(lengths)),
+                max=float(np.max(lengths)),
+            ),
+        )
+    else:
+        handles = None
+    made = _minimal_cut(world, f, check, rows is not None)
+    if made is None:
+        if rows is None:
+            return None, None, None, None
+        # The removed faces opened the piece to its outline: no hole is left to keep.
+        made = cut_component(world, f, check)
+    cut, topology = made
+    seeded = None if unroll else _planar_seed(cut, drop=True)
+    if seeded is None:
+        seeded = _unrolled_seed(cut)
+    if seeded is None:
+        if unroll:
+            return made, None, rows, handles
+        try:
+            seeded = (*_capped_seed(cut, check), None)
+        except (ValueError, RuntimeError):
+            return made, None, rows, handles
+    uv, initialization, keep = seeded
+    if keep is not None:
+        # The faces that stay are still a planar domain, and the same map is valid on them.
+        part_world, part_faces, part_up, keep = _part(cut["vertices"], cut["faces"], keep)
+        cut = dict(
+            vertices=part_world,
+            faces=part_faces.astype(cut["faces"].dtype, copy=False),
+            parent=cut["parent"][part_up],
+            boundary=igl.boundary_loop(part_faces).astype(np.int64),
+        )
+        uv = uv[part_up]
+        rows = keep if rows is None else rows[keep]
+        topology = dict(topology, seed_dropped_faces=int(len(f) - len(keep)))
+    if up is not None:
+        cut["parent"] = up[cut["parent"]]
+    if handles:
+        topology = dict(topology, handles=handles)
+    return (cut, topology), (uv, initialization), rows, handles
+
+
+def _prepare_task(task):
+    vertices, faces = task
+    return _prepare(vertices, faces, True, _unchecked)
+
+
+def flatten_sheet(reader, store, chart_faces=1024, *, app_run=None, offline=False, workers=1):
     """Flatten every edge-connected piece of a single-level mesh as one map.
 
     Idempotent: a completed store returns its saved receipt. Interrupted work restarts
-    from the pieces that were not committed.
+    from the pieces that were not committed. ``workers`` > 1 cuts and seeds pieces in
+    that many processes; the results, and so the outputs, are the same as with one.
     """
-    from .flatboi import resolve_app_run, solve_batch
-    from .matrix import _lscm_seed
-    from .native_sheet import cut_component
+    from .flatboi import resolve_app_run, smoke_test, solve_batch
     from .patches import check_flatboi
 
     if type(chart_faces) is not int or not 1 <= chart_faces <= 8192:
         raise ValueError("chart_faces must be1..8192")
+    if type(workers) is not int or workers < 1:
+        raise ValueError("flatten workers must be a positive integer")
     _schema(store)
     if store.get("flatten_complete", False) and store.get("sheet_flatten") is not None:
         return store.get("sheet_flatten")
     app_run = check_flatboi(str(resolve_app_run(app_run, offline=offline)), "historical")["app_run"]
+    smoke_test(app_run)
     store.phase = "flatten"
     started = time.monotonic()
     reader.validate()
@@ -387,6 +797,7 @@ def flatten_sheet(reader, store, chart_faces=1024, *, app_run=None, offline=Fals
     areas = np.linalg.norm(
         np.cross(xyz[faces[:, 1]] - xyz[faces[:, 0]], xyz[faces[:, 2]] - xyz[faces[:, 0]]), axis=1
     )
+    rows_last = int(rows[-1, 0])
     with store.db:
         store.set("source_faces", int(len(faces)))
         store.set("source_area", float(areas.sum() / 2))
@@ -406,36 +817,21 @@ def flatten_sheet(reader, store, chart_faces=1024, *, app_run=None, offline=Fals
     cut_base = int(ids.max()) + 1
     prepared = []
 
-    def prepare(piece, minimal):
+    def prepare(piece, minimal, unroll=False):
         piece.pop("error", None)
-        try:
-            with tempfile.TemporaryDirectory(prefix="sheet-seed-") as scratch:
-                made = seeded = None
-                if minimal:
-                    try:
-                        made = _minimal_cut(piece["vertices"], piece["faces"], store.check)
-                        seeded = made and _planar_seed(made[0])
-                    except ValueError:
-                        seeded = None
-                if seeded:
-                    (cut, topology), (seed, initialization) = made, seeded
-                else:
-                    cut, topology = cut_component(piece["vertices"], piece["faces"], store.check)
-                    seed, initialization = _lscm_seed(cut, store.check, scratch)
-            tri = seed[cut["faces"]]
-            if not np.isfinite(seed).all() or np.any(
-                cross2(tri[:, 1] - tri[:, 0], tri[:, 2] - tri[:, 0]) <= 0
-            ):
-                raise ValueError("no valid whole-sheet seed")
-            piece.update(
-                cut=cut,
-                seed=seed,
-                topology=topology,
-                initialization=initialization,
-                minimal=bool(seeded),
-            )
-        except (ValueError, RuntimeError, MemoryError) as error:
-            piece["error"] = str(error) or type(error).__name__
+        piece.update(_prepare(piece["vertices"], piece["faces"], minimal, store.check, unroll))
+
+    progress = dict(pieces=len(groups), finished=len(done), prepared=0, prepare_seconds=0.0)
+    shown = [0.0]
+
+    def report(force=False):
+        # Visible while it runs: work.sqlite state "sheet_progress" and STATUS.json.
+        now = time.monotonic()
+        if force or now - shown[0] >= 2.0:
+            shown[0] = now
+            progress["prepare_seconds"] = round(now - started, 1)
+            with store.db:
+                store.set("sheet_progress", progress)
 
     for group in groups:
         store.check()
@@ -454,8 +850,24 @@ def flatten_sheet(reader, store, chart_faces=1024, *, app_run=None, offline=Fals
         cut_base += 8 * len(used) + 16
         if component in done:
             continue
-        prepare(piece, True)
         prepared.append(piece)
+    report(True)
+    if workers > 1 and len(prepared) > 1:
+        from concurrent.futures import ProcessPoolExecutor
+
+        with ProcessPoolExecutor(min(workers, len(prepared))) as pool:
+            tasks = ((piece["vertices"], piece["faces"]) for piece in prepared)
+            for piece, made in zip(prepared, pool.map(_prepare_task, tasks, chunksize=4)):
+                store.check()
+                piece.update(made)
+                progress["prepared"] += 1
+                report()
+    else:
+        for piece in prepared:
+            prepare(piece, True)
+            progress["prepared"] += 1
+            report()
+    report(True)
 
     def commit(piece, uv, solver):
         cut = piece["cut"]
@@ -468,7 +880,15 @@ def flatten_sheet(reader, store, chart_faces=1024, *, app_run=None, offline=Fals
         stretch = stats["edge_stretch"]
         if piece["minimal"] and not (stretch["p01"] > 0.5 and stretch["p99"] < 2.0):
             # A kept hole was really a wrap: flatten this piece as a disk instead.
-            raise _NeedsDisk
+            raise _NeedsDisk(
+                f"edge stretch p01 {stretch['p01']:.3f}, p50 {stretch['p50']:.3f}, "
+                f"p99 {stretch['p99']:.3f}"
+            )
+        if piece.get("retried") and not (
+            stretch["p01"] > DISK_STRETCH[0] and stretch["p99"] < DISK_STRETCH[1]
+        ):
+            # Neither with its holes nor as a disk: a collapsed map is worse than charts.
+            raise ValueError("whole-sheet map is distorted with holes kept and as a disk")
         quality = dict(
             method="SLIM",
             backend="flatboi",
@@ -482,18 +902,23 @@ def flatten_sheet(reader, store, chart_faces=1024, *, app_run=None, offline=Fals
             ),
         )
         source_ids = piece["vertex_ids"][cut["parent"]]
+        rows = piece.get("rows")
+        face_ids = piece["face_ids"] if rows is None else piece["face_ids"][rows]
         _save_mapped(
             store,
             piece["component"],
-            _raster_charts(cut, uv, piece["face_ids"], source_ids, piece["cut_base"], chart_faces),
+            _raster_charts(cut, uv, face_ids, source_ids, piece["cut_base"], chart_faces),
             quality,
         )
+        aside = 0 if rows is None else set_aside(piece, rows)
         finish(
             "pieces",
             piece["component"],
             dict(
                 component=piece["component"],
                 faces=int(len(cut["faces"])),
+                aside_faces=int(aside),
+                handles=piece.get("handles"),
                 seam_vertex_copies=int(piece["topology"]["seam_duplicates"]),
                 holes=int(piece["topology"].get("holes", 0)),
                 euler_characteristic=piece["topology"]["original"]["euler_characteristic"],
@@ -505,6 +930,33 @@ def flatten_sheet(reader, store, chart_faces=1024, *, app_run=None, offline=Fals
             ),
         )
 
+    def set_aside(piece, rows):
+        """Flatten the faces a piece gave up as charts of their own components."""
+        rest = np.setdiff1d(np.arange(len(piece["faces"])), rows)
+        if not len(rest):
+            return 0
+        faces = piece["faces"][rest].astype(np.int64, copy=False)
+        _, _, groups, _ = _manifold_pieces(faces)
+        items = []
+        for group in groups:
+            ids = piece["face_ids"][rest[group]]
+            # A chart joins the sheet only inside its component: these stay apart, each
+            # under its first face (or past the last face when that names the piece).
+            component = int(ids.min())
+            if component == piece["component"]:
+                component += int(rows_last) + 1
+            items += _fallback_charts(
+                store,
+                component,
+                piece["vertices"],
+                faces[group],
+                ids,
+                piece["vertex_ids"],
+                chart_faces,
+            )
+        _flush_slim(store, items, app_run, 0, -1)
+        return len(rest)
+
     def initialization_name(record):
         return record.get("method") or record.get("algorithm") or "mean-value"
 
@@ -515,6 +967,7 @@ def flatten_sheet(reader, store, chart_faces=1024, *, app_run=None, offline=Fals
         # One small row per piece: rewriting the whole receipt per piece grew as the square
         # of the piece count (hours on real levels with tens of thousands of pieces). A
         # group's rows commit together, so a resume regroups the remaining pieces the same.
+        progress["finished"] += len(entries)
         with store.db:
             for component, record in entries:
                 store.set(
@@ -523,6 +976,7 @@ def flatten_sheet(reader, store, chart_faces=1024, *, app_run=None, offline=Fals
                 )
                 sequence[0] += 1
             store.set("elapsed_s", store.elapsed)
+            store.set("sheet_progress", progress)
         for component, record in entries:
             receipt[kind].append(record)
             done.add(component)
@@ -608,8 +1062,25 @@ def flatten_sheet(reader, store, chart_faces=1024, *, app_run=None, offline=Fals
         for piece, uv in zip(group, uvs):
             try:
                 commit(piece, uv, solver)
-            except _NeedsDisk:
+            except _NeedsDisk as stretched:
+                if piece["initialization"].get("method") == "LSCM":
+                    # LSCM drifts on a rough sheet and the solve may not undo it in its
+                    # steps: a wrap gets a second solve from its unrolled map.
+                    prepare(piece, True, True)
+                    if "error" not in piece:
+                        queue.append([piece])
+                        continue
+                    # It does not unroll: the piece is as it was, with its LSCM map refused.
+                    piece.pop("error")
+                if piece.get("rows") is not None:
+                    # Without its handles and folds the piece still stretched: the disk
+                    # cut would run through them, so it goes to charts whole.
+                    chart_route(
+                        piece, f"whole-sheet map is distorted after handle removal ({stretched})"
+                    )
+                    continue
                 prepare(piece, False)
+                piece["retried"] = True
                 if "error" in piece:
                     chart_route(piece, piece["error"])
                 else:

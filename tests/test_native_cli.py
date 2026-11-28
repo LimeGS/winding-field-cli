@@ -329,11 +329,12 @@ def test_actual_cli_cancellation_preserves_checkpoints_and_resumes(tmp_path, met
             stdout=log,
             stderr=subprocess.STDOUT,
         )
-        deadline = time.monotonic() + 30
         try:
+            # No clock here: the first chart is 6 to 7 s of work on an idle machine and took
+            # more than 30 s beside the rest of the suite. The run bounds itself with
+            # --surface-time-limit, and a run that ends without a chart fails the test.
             while not list((out / "surfaces").glob("level-*/charts/*.npz")):
-                assert process.poll() is None
-                assert time.monotonic() < deadline
+                assert process.poll() is None, (tmp_path / "resume.log").read_text()
                 time.sleep(0.01)
             if method == "sigint":
                 process.send_signal(signal.SIGINT)

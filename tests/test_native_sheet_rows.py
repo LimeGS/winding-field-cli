@@ -41,7 +41,7 @@ def seeded_solve(monkeypatch):
     )
 
 
-def run(tmp_path, root, name, interrupt_after=None):
+def run(tmp_path, root, name, interrupt_after=None, workers=1):
     from winding_field.flattening import native_global
     from winding_field.native_store import Journal, Paused
     from winding_field.surface_mesh import MeshReader
@@ -59,10 +59,10 @@ def run(tmp_path, root, name, interrupt_after=None):
 
             store.set = set_and_stop
             with pytest.raises(Paused):
-                native_global.flatten_sheet(reader, store, 64)
+                native_global.flatten_sheet(reader, store, 64, workers=workers)
             store.set = real
             return None
-        receipt = native_global.flatten_sheet(reader, store, 64)
+        receipt = native_global.flatten_sheet(reader, store, 64, workers=workers)
         charts = store.db.execute(
             "SELECT name,component,area,faces,status,minx,maxx,miny,maxy FROM charts ORDER BY name"
         ).fetchall()
@@ -70,6 +70,13 @@ def run(tmp_path, root, name, interrupt_after=None):
         rows = store.db.execute(
             "SELECT count(*) FROM state WHERE name GLOB ?", (native_global.PIECE_ROW + "*",)
         ).fetchone()[0]
+        progress = store.get("sheet_progress")
+    assert (
+        progress["finished"]
+        == progress["pieces"]
+        == len(receipt["pieces"]) + len(receipt["fallback"])
+    )
+    assert progress["prepared"] <= progress["pieces"]
     return dict(receipt, seconds=None), charts, edges, rows
 
 
@@ -157,7 +164,80 @@ def test_seedless_pieces_share_flatboi_calls_and_resume_to_the_same_groups(
     receipt, charts, edges, rows = run(tmp_path, root, "whole")
     assert receipt["pieces"] == [] and rows == 12
     assert [f["reason"] for f in receipt["fallback"]] == ["no seed (test)"] * 12
+    calls = calls[1:]  # the first is the start-up smoke test
     assert len(calls) == 3 and sum(calls) == len(charts)  # 12 pieces of 32 faces, 4 per call
     assert {c[4] for c in charts} == {"LOCAL"}
     run(tmp_path, root, "resumed", interrupt_after=5)  # inside the second group
     assert run(tmp_path, root, "resumed") == (receipt, charts, edges, rows)
+
+
+@pytest.mark.parametrize("seedless", [False, True])
+def test_prepare_workers_give_the_same_result_as_one(tmp_path, request, seeded_solve, seedless):
+    if seedless:
+        request.getfixturevalue("no_sheet_seed")
+    root = bundle(tmp_path, *pieces())
+    assert run(tmp_path, root, "pool", workers=3) == run(tmp_path, root, "serial")
+
+
+def test_prepare_workers_must_be_positive(tmp_path, seeded_solve):
+    root = bundle(tmp_path, *pieces(count=2))
+    with pytest.raises(ValueError, match="workers"):
+        run(tmp_path, root, "bad", workers=0)
+
+
+def test_a_flatboi_that_cannot_start_stops_the_run_instead_of_falling_back(tmp_path):
+    from winding_field.flattening import flatboi
+
+    # The real solve_batch, with a launcher whose loader fails like the vast image did.
+    app = tmp_path / "AppRun"
+    app.write_text(
+        "#!/bin/sh\necho 'flatboi: error while loading shared libraries: libGLX.so.0' >&2\n"
+        "exit 127\n"
+    )
+    app.chmod(0o755)
+    vertices = np.array([[0.0, 0, 0], [1, 0, 0], [0, 1, 0]])
+    with pytest.raises(flatboi.FlatboiUnavailable, match="exit 127"):
+        flatboi.smoke_test(str(app))
+    with pytest.raises(flatboi.FlatboiUnavailable):
+        flatboi.solve_batch([(vertices, np.array([[0, 1, 2]]), vertices[:, :2])], str(app))
+    assert not issubclass(flatboi.FlatboiUnavailable, RuntimeError)
+
+
+def test_source_writes_during_a_capped_tiff_phase_are_not_capped(tmp_path):
+    import errno
+
+    from winding_field.tifxyz_store import _file_limit, _outside_file_limit
+
+    big, small = tmp_path / "work.sqlite", tmp_path / "x.tif"
+    with _file_limit(4096):
+        with pytest.raises(OSError) as raised, small.open("wb") as stream:
+            stream.write(b"\0" * 8192)
+            stream.flush()
+        assert raised.value.errno == errno.EFBIG
+        with _outside_file_limit(), big.open("wb") as stream:
+            stream.write(b"\0" * 65536)  # like NativeStore.check committing work.sqlite
+        with pytest.raises(OSError), small.open("wb") as stream:
+            stream.write(b"\0" * 8192)
+            stream.flush()
+    assert big.stat().st_size == 65536
+
+
+def test_an_inverted_mean_value_map_falls_back_to_the_uniform_map(monkeypatch):
+    from winding_field.flattening import native_sheet
+    from winding_field.tifxyz_guide import validate_map
+
+    vertices, faces = pieces(count=1, size=12)
+    cut, _ = native_sheet.cut_component(vertices, faces)
+    plain, record = native_sheet.mean_value_map(cut)
+    assert "mvc" in record and "rejected" not in record["mvc"]
+
+    def inverted(*args):
+        raise ValueError("inverted UV triangle")
+
+    monkeypatch.setattr(native_sheet, "_mean_value_step", inverted)
+    with pytest.raises(ValueError, match="inverted"):
+        native_sheet.mean_value_map(cut)
+    uv, record = native_sheet.mean_value_map(cut, uniform_fallback=True)
+    assert record["mvc"] == {"rejected": "inverted UV triangle"}
+    validate_map(dict(world=cut["vertices"], faces=cut["faces"], uv=uv))
+    assert not np.array_equal(uv, plain)
