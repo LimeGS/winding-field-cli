@@ -220,3 +220,24 @@ def test_source_writes_during_a_capped_tiff_phase_are_not_capped(tmp_path):
             stream.write(b"\0" * 8192)
             stream.flush()
     assert big.stat().st_size == 65536
+
+
+def test_an_inverted_mean_value_map_falls_back_to_the_uniform_map(monkeypatch):
+    from winding_field.flattening import native_sheet
+    from winding_field.tifxyz_guide import validate_map
+
+    vertices, faces = pieces(count=1, size=12)
+    cut, _ = native_sheet.cut_component(vertices, faces)
+    plain, record = native_sheet.mean_value_map(cut)
+    assert "mvc" in record and "rejected" not in record["mvc"]
+
+    def inverted(*args):
+        raise ValueError("inverted UV triangle")
+
+    monkeypatch.setattr(native_sheet, "_mean_value_step", inverted)
+    with pytest.raises(ValueError, match="inverted"):
+        native_sheet.mean_value_map(cut)
+    uv, record = native_sheet.mean_value_map(cut, uniform_fallback=True)
+    assert record["mvc"] == {"rejected": "inverted UV triangle"}
+    validate_map(dict(world=cut["vertices"], faces=cut["faces"], uv=uv))
+    assert not np.array_equal(uv, plain)

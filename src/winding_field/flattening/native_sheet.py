@@ -425,7 +425,13 @@ def _scaling_edges(adjacency):
     return upper.nonzero()
 
 
-def mean_value_map(cut, check=None, *, diagnostics=None):
+def mean_value_map(cut, check=None, *, diagnostics=None, uniform_fallback=False):
+    """Mean-value (MVC) disk map, started from the uniform Tutte map on the same circle.
+
+    MVC weights can be negative on obtuse triangles, so the MVC map can invert where the
+    uniform one cannot. With ``uniform_fallback`` an MVC map that fails validation returns
+    the validated uniform map instead of raising; it is a coarser but valid SLIM seed.
+    """
     v, f, b = _disk(cut, check)
     import igl
 
@@ -461,6 +467,22 @@ def mean_value_map(cut, check=None, *, diagnostics=None):
     _check(check)
     if diagnostics is not None:
         _save_initialization(diagnostics, cut, scale)
+    try:
+        return _mean_value_step(v, f, b, uv, uniform, scale, check, diagnostics)
+    except ValueError as error:
+        if not uniform_fallback:
+            raise
+        return uv, dict(
+            uniform=uniform,
+            mvc=dict(rejected=str(error)),
+            physical_scale=scale,
+            positive_disk_validated=True,
+            boundary_exact=True,
+            initialization="uniform Tutte map; the mean-value map failed validation",
+        )
+
+
+def _mean_value_step(v, f, b, uv, uniform, scale, check, diagnostics):
     fixed = uv[b].copy()
     weights = _weights(v, f, check)
     # MVC rows were normalized in the control: diagonal is exactly one.

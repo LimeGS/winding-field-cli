@@ -354,9 +354,31 @@ def _unchecked():
     """Stand-in for ``store.check`` in prepare workers; the parent checks between results."""
 
 
+def _sheet_seed(cut, check, scratch):
+    """Global LSCM seed; when it folds, mean-value, and the uniform map if that inverts.
+
+    The matrix route's ``_lscm_seed`` without the last step: a piece with no valid seed
+    leaves the whole-sheet route for local charts, so a valid uniform seed keeps it
+    whole (SLIM then removes the uniform map's distortion).
+    """
+    from .matrix import _global_lscm
+    from .native_sheet import mean_value_map
+
+    uv, pins, _ = _global_lscm(cut)
+    tri = uv[cut["faces"]]
+    signed = cross2(tri[:, 1] - tri[:, 0], tri[:, 2] - tri[:, 0])
+    if signed.sum() < 0:
+        uv[:, 0] *= -1
+        signed = -signed
+    folded = int((signed <= 0).sum())
+    if np.isfinite(uv).all() and folded == 0:
+        return uv, dict(method="LSCM", backend="libigl", pins=pins.tolist())
+    uv, initialization = mean_value_map(cut, check, diagnostics=scratch, uniform_fallback=True)
+    return uv, dict(initialization, lscm_rejected=dict(folded_faces=folded))
+
+
 def _prepare(vertices, faces, minimal, check):
     """Cut one piece and seed its map; returns the fields ``commit`` needs, or an error."""
-    from .matrix import _lscm_seed
     from .native_sheet import cut_component
 
     try:
@@ -372,7 +394,7 @@ def _prepare(vertices, faces, minimal, check):
                 (cut, topology), (seed, initialization) = made, seeded
             else:
                 cut, topology = cut_component(vertices, faces, check)
-                seed, initialization = _lscm_seed(cut, check, scratch)
+                seed, initialization = _sheet_seed(cut, check, scratch)
         tri = seed[cut["faces"]]
         if not np.isfinite(seed).all() or np.any(
             cross2(tri[:, 1] - tri[:, 0], tri[:, 2] - tri[:, 0]) <= 0
