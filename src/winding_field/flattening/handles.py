@@ -331,7 +331,9 @@ def cut_handles(vertices, faces, check=None, *, radius_edges=RADIUS_EDGES, seed=
                     loop = surface.local_loop(source, radius, rng)
                     if loop is None:
                         break
-                    found.append((loop[0], loop[1], parent[loop[2][loop[2] < len(v)]]))
+                    # The ends of the loop's edges: a loop from hole to hole has no other vertex.
+                    where = parent[np.unique(surface.edges[loop[1]])]
+                    found.append((loop[0], loop[1], where))
                     surface.cut[loop[1]] = True
                     for x in loop[2].tolist():
                         surface.block(x)

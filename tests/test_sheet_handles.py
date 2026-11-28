@@ -164,6 +164,45 @@ def test_sites_are_found_when_the_first_vertex_is_shut_in():
     assert len(surface.sites()) > 0
 
 
+def strap_sheet(n=24):
+    """Grid sheet with two holes and a one-face-wide strap that arches from one to the other."""
+    idx = np.arange(n * n).reshape(n, n)
+    xs, ys = np.meshgrid(np.arange(n), np.arange(n), indexing="ij")
+    v = np.column_stack([xs.ravel(), ys.ravel(), np.zeros(n * n)]).astype(float)
+    alive = np.ones((n - 1, n - 1), bool)
+    alive[6:8, 10:12] = alive[14:16, 10:12] = False
+    ii, jj = np.nonzero(alive)
+    a, b, c, d = idx[ii, jj], idx[ii + 1, jj], idx[ii + 1, jj + 1], idx[ii, jj + 1]
+    f = np.concatenate([np.column_stack([a, b, c]), np.column_stack([a, c, d])])
+    # From the rim edge (8,10)-(8,11) of one hole over the sheet to (14,10)-(14,11) of the other.
+    rungs = [(idx[8, 10], idx[8, 11])]
+    for x in np.linspace(8, 14, 8)[1:-1]:
+        rungs.append((len(v), len(v) + 1))
+        z = 2.0 * np.sin(np.pi * (x - 8) / 6)
+        v = np.concatenate([v, [[x, 10.0, z], [x, 11.0, z]]])
+    rungs.append((idx[14, 10], idx[14, 11]))
+    strap = []
+    for (p0, p1), (q0, q1) in zip(rungs[:-1], rungs[1:]):
+        strap += [[p0, p1, q1], [p0, q1, q0]]
+    used, inverse = np.unique(np.concatenate([f, np.asarray(strap, np.int64)]), return_inverse=True)
+    return v[used], inverse.reshape(-1, 3).astype(np.int64)
+
+
+def test_a_handle_that_runs_from_hole_to_hole_gets_its_collar():
+    # A strap between two holes is a handle whose shortest loop has both ends on a rim.
+    from winding_field.flattening.handles import cut_handles, handle_collars
+
+    vertices, faces = strap_sheet()
+    assert genus(faces) == (1, 2)
+    _, _, _, report = cut_handles(vertices, faces)
+    assert report["loops"] == 1 and report["genus_left"] == 0
+    assert len(report["loop_vertices"][0]) >= 2
+    aside, _ = handle_collars(vertices, faces)
+    assert 0 < aside.sum() < 12
+    left = faces[~aside]
+    assert genus(np.unique(left, return_inverse=True)[1].reshape(-1, 3))[0] == 0
+
+
 def test_a_piece_without_handles_is_left_alone():
     from winding_field.flattening.handles import cut_handles, handle_collars
 
