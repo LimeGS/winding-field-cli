@@ -401,7 +401,7 @@ def flatten_sheet(reader, store, chart_faces=1024, *, app_run=None, offline=Fals
     from the pieces that were not committed. ``workers`` > 1 cuts and seeds pieces in
     that many processes; the results, and so the outputs, are the same as with one.
     """
-    from .flatboi import resolve_app_run, solve_batch
+    from .flatboi import resolve_app_run, smoke_test, solve_batch
     from .patches import check_flatboi
 
     if type(chart_faces) is not int or not 1 <= chart_faces <= 8192:
@@ -412,6 +412,7 @@ def flatten_sheet(reader, store, chart_faces=1024, *, app_run=None, offline=Fals
     if store.get("flatten_complete", False) and store.get("sheet_flatten") is not None:
         return store.get("sheet_flatten")
     app_run = check_flatboi(str(resolve_app_run(app_run, offline=offline)), "historical")["app_run"]
+    smoke_test(app_run)
     store.phase = "flatten"
     started = time.monotonic()
     reader.validate()

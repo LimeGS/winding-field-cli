@@ -164,6 +164,7 @@ def test_seedless_pieces_share_flatboi_calls_and_resume_to_the_same_groups(
     receipt, charts, edges, rows = run(tmp_path, root, "whole")
     assert receipt["pieces"] == [] and rows == 12
     assert [f["reason"] for f in receipt["fallback"]] == ["no seed (test)"] * 12
+    calls = calls[1:]  # the first is the start-up smoke test
     assert len(calls) == 3 and sum(calls) == len(charts)  # 12 pieces of 32 faces, 4 per call
     assert {c[4] for c in charts} == {"LOCAL"}
     run(tmp_path, root, "resumed", interrupt_after=5)  # inside the second group
@@ -182,3 +183,21 @@ def test_prepare_workers_must_be_positive(tmp_path, seeded_solve):
     root = bundle(tmp_path, *pieces(count=2))
     with pytest.raises(ValueError, match="workers"):
         run(tmp_path, root, "bad", workers=0)
+
+
+def test_a_flatboi_that_cannot_start_stops_the_run_instead_of_falling_back(tmp_path):
+    from winding_field.flattening import flatboi
+
+    # The real solve_batch, with a launcher whose loader fails like the vast image did.
+    app = tmp_path / "AppRun"
+    app.write_text(
+        "#!/bin/sh\necho 'flatboi: error while loading shared libraries: libGLX.so.0' >&2\n"
+        "exit 127\n"
+    )
+    app.chmod(0o755)
+    vertices = np.array([[0.0, 0, 0], [1, 0, 0], [0, 1, 0]])
+    with pytest.raises(flatboi.FlatboiUnavailable, match="exit 127"):
+        flatboi.smoke_test(str(app))
+    with pytest.raises(flatboi.FlatboiUnavailable):
+        flatboi.solve_batch([(vertices, np.array([[0, 1, 2]]), vertices[:, :2])], str(app))
+    assert not issubclass(flatboi.FlatboiUnavailable, RuntimeError)

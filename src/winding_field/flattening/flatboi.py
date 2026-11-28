@@ -33,6 +33,15 @@ CONTAINER_APP_RUN = Path("/opt/vc3d/AppRun")
 ENERGY = "symmetric_dirichlet"
 
 
+class FlatboiUnavailable(Exception):
+    """Flatboi could not start (exit 127: missing shared libraries or loader).
+
+    Not a ``RuntimeError`` on purpose: callers that bisect a failing batch or fall back
+    to another route for a ``RuntimeError`` must stop instead, because every later call
+    would fail the same way and the run would finish with an invalid result.
+    """
+
+
 def supported_platform():
     return platform.system() == "Linux" and platform.machine().lower() in ("x86_64", "amd64")
 
@@ -205,6 +214,11 @@ def solve_batch(
                 raise
         log = (work / "stdout.log").read_text(errors="replace")
         errors = (work / "stderr.log").read_text(errors="replace")
+        if code == 127 or "error while loading shared libraries" in errors:
+            raise FlatboiUnavailable(
+                f"Flatboi could not start (exit {code}); install its system libraries: "
+                + errors[-2000:]
+            )
         if code:
             raise RuntimeError(f"Flatboi exited with {code}: {errors[-2000:]}")
         if "No per-corner UVs" in log:
@@ -226,6 +240,17 @@ def solve_batch(
         faces=int(len(faces)),
     )
     return [uv[offsets[i] : offsets[i + 1]] - shifts[i] for i in range(len(charts))], receipt
+
+
+def smoke_test(app_run):
+    """Solve one tiny chart so a Flatboi that cannot start fails before any real work."""
+    vertices = np.array([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.1], [1.0, 1.0, 0.0]])
+    faces = np.array([[0, 1, 2], [1, 3, 2]])
+    try:
+        solve_batch([(vertices, faces, vertices[:, :2].copy())], app_run, iterations=2)
+    except RuntimeError:
+        pass  # a numerical outcome on this toy chart says nothing about the runtime
+    return app_run
 
 
 if __name__ == "__main__":
