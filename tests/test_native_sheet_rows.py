@@ -135,16 +135,38 @@ def test_a_store_with_the_old_whole_receipt_resumes_to_the_same_result(tmp_path,
     assert result[3] == 7  # only the pieces finished after the switch have rows
 
 
+def refuse_seed(*args):
+    raise ValueError("no seed (test)")
+
+
+def without_seed(replace):
+    """Make every piece fail its whole-sheet seed in this process."""
+    from winding_field.flattening import native_global, native_sheet
+
+    replace(native_global, "_minimal_cut", lambda *args: None)
+    replace(native_sheet, "cut_component", refuse_seed)
+
+
+def seedless_prepare_task(task):
+    """``_prepare_task`` for the workers of a seedless run.
+
+    A spawned worker imports the modules afresh, so what the fixture replaced in the test
+    process is replaced again in the worker before it prepares the piece.
+    """
+    from winding_field.flattening import native_global
+
+    without_seed(setattr)
+    vertices, faces = task
+    return native_global._prepare(vertices, faces, True, native_global._unchecked)
+
+
 @pytest.fixture
 def no_sheet_seed(monkeypatch):
     """Every piece fails its whole-sheet seed, so all of them take the chart route."""
-    from winding_field.flattening import native_global, native_sheet
+    from winding_field.flattening import native_global
 
-    def refuse(*args):
-        raise ValueError("no seed (test)")
-
-    monkeypatch.setattr(native_global, "_minimal_cut", lambda *args: None)
-    monkeypatch.setattr(native_sheet, "cut_component", refuse)
+    without_seed(monkeypatch.setattr)
+    monkeypatch.setattr(native_global, "_prepare_task", seedless_prepare_task)
     monkeypatch.setattr(native_global, "SLIM_BATCH_FACES", 100)  # groups of 4 pieces
 
 
@@ -176,7 +198,10 @@ def test_prepare_workers_give_the_same_result_as_one(tmp_path, request, seeded_s
     if seedless:
         request.getfixturevalue("no_sheet_seed")
     root = bundle(tmp_path, *pieces())
-    assert run(tmp_path, root, "pool", workers=3) == run(tmp_path, root, "serial")
+    pool, serial = run(tmp_path, root, "pool", workers=3), run(tmp_path, root, "serial")
+    assert pool == serial
+    # Both runs took the route the case is about, not just the same one.
+    assert len(serial[0]["fallback" if seedless else "pieces"]) == 12
 
 
 def test_prepare_workers_must_be_positive(tmp_path, seeded_solve):

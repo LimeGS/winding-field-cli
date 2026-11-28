@@ -853,9 +853,13 @@ def flatten_sheet(reader, store, chart_faces=1024, *, app_run=None, offline=Fals
         prepared.append(piece)
     report(True)
     if workers > 1 and len(prepared) > 1:
+        import multiprocessing
         from concurrent.futures import ProcessPoolExecutor
 
-        with ProcessPoolExecutor(min(workers, len(prepared))) as pool:
+        # Spawned on every platform, like the other pools: a worker gets its piece as an
+        # argument and nothing from the parent's memory, so Linux runs what macOS runs.
+        context = multiprocessing.get_context("spawn")
+        with ProcessPoolExecutor(min(workers, len(prepared)), mp_context=context) as pool:
             tasks = ((piece["vertices"], piece["faces"]) for piece in prepared)
             for piece, made in zip(prepared, pool.map(_prepare_task, tasks, chunksize=4)):
                 store.check()
