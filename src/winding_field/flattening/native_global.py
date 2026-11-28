@@ -55,8 +55,6 @@ DISK_STRETCH = (0.25, 4.0)
 # After handle removal, a rim at least this share of the longest one is an end of a wrap,
 # not a hole: a seam joins it to the outline, so the wrap unrolls instead of mapping as a ring.
 LONG_RIM = 0.25
-# An LSCM seed whose edge stretch p99 / p01 is above this has drifted: try to unroll instead.
-SEED_SPREAD = 16.0
 # Angle step of the cross-section profile a piece is unrolled along.
 UNROLL_STEP = np.radians(0.5)
 
@@ -320,22 +318,6 @@ def _without_folds(cut, uv, signed, initialization):
     return uv, initialization, np.flatnonzero(~folded)
 
 
-def _seed_spread(cut, seeded):
-    """Edge stretch p99 / p01 of a seed on the faces it keeps: 1 for a map without drift."""
-    uv, _, rows = seeded
-    faces = cut["faces"].astype(np.int64, copy=False)
-    if rows is not None:
-        faces = faces[rows]
-    edges = np.concatenate([faces[:, [0, 1]], faces[:, [1, 2]], faces[:, [2, 0]]])
-    world = cut["vertices"]
-    length = np.linalg.norm(world[edges[:, 0]] - world[edges[:, 1]], axis=1)
-    ratio = (
-        np.linalg.norm(uv[edges[:, 0]] - uv[edges[:, 1]], axis=1)[length > 0] / length[length > 0]
-    )
-    low, high = np.percentile(ratio, [1, 99])
-    return float(high / low) if low > 0 else np.inf
-
-
 def _unrolled_seed(cut):
     """Unroll a piece that bends around one axis, as a wrap of a scroll does; None otherwise.
 
@@ -343,8 +325,10 @@ def _unrolled_seed(cut):
     circle that fits the piece's cross-section. Around it every vertex has a radius and an
     angle, followed from vertex to vertex so that it may pass a full turn. The map is the
     arc length of the piece's median cross-section against the position along the axis.
-    Unlike LSCM it cannot drift: on a rough sheet the conformal scale wanders by orders of
-    magnitude, and SLIM does not undo that in a few hundred steps on millions of faces.
+    Unlike LSCM it cannot drift (on a rough sheet the conformal scale wanders by orders of
+    magnitude), and SLIM settles from it in tens of steps. It folds on more faces than LSCM
+    does, though, so it is the second choice: for a piece on which LSCM folds too much, and
+    for one whose LSCM-seeded solve ends too stretched.
 
     Returns ``(uv, initialization, rows)`` like ``_planar_seed`` with ``drop``. None for a
     piece that closes around the axis (its angle has no single value), for one with no
@@ -653,13 +637,14 @@ def _sheet_seed(cut, check, scratch):
     return uv, dict(initialization, lscm_rejected=dict(folded_faces=folded))
 
 
-def _prepare(vertices, faces, minimal, check):
+def _prepare(vertices, faces, minimal, check, unroll=False):
     """Cut one piece and seed its map; returns the fields ``commit`` needs, or an error.
 
     With ``minimal`` the piece keeps its holes. Handles go first: the faces around each
     tunnel leave the piece (``handles.handle_collars``), and so do the few faces on which
     the seed folds. ``rows`` then lists the face rows that stay in the whole-sheet map
-    (None for all); the others are flattened as small pieces of their own.
+    (None for all); the others are flattened as small pieces of their own. With ``unroll``
+    the seed is the unrolled map or nothing (``_unrolled_seed``).
     """
     from .native_sheet import cut_component
 
@@ -668,11 +653,13 @@ def _prepare(vertices, faces, minimal, check):
             made = seeded = rows = handles = None
             if minimal:
                 try:
-                    made, seeded, rows, handles = _keep_holes(vertices, faces, check)
+                    made, seeded, rows, handles = _keep_holes(vertices, faces, check, unroll)
                 except ValueError:
                     seeded = None
             if seeded:
                 (cut, topology), (seed, initialization) = made, seeded
+            elif unroll:
+                raise ValueError("the piece does not unroll around one axis")
             elif handles and handles["loops"]:
                 # A disk cut through the handles is the map that collapses: use charts.
                 raise ValueError("no whole-sheet seed after handle removal")
@@ -698,8 +685,12 @@ def _prepare(vertices, faces, minimal, check):
         return dict(error=str(error) or type(error).__name__)
 
 
-def _keep_holes(vertices, faces, check):
-    """Minimal cut and seed of a piece without its handles: ``(made, seeded, rows, handles)``."""
+def _keep_holes(vertices, faces, check, unroll=False):
+    """Minimal cut and seed of a piece without its handles: ``(made, seeded, rows, handles)``.
+
+    The seed is the global LSCM, the unrolled map when LSCM folds on too much of the piece,
+    and the capped mean-value map when that fails too; with ``unroll`` only the unrolled map.
+    """
     import igl
 
     from .handles import handle_collars
@@ -732,14 +723,12 @@ def _keep_holes(vertices, faces, check):
         # The removed faces opened the piece to its outline: no hole is left to keep.
         made = cut_component(world, f, check)
     cut, topology = made
-    seeded = _planar_seed(cut, drop=True)
-    if seeded is None or _seed_spread(cut, seeded) > SEED_SPREAD:
-        unrolled = _unrolled_seed(cut)
-        if unrolled is not None and (
-            seeded is None or _seed_spread(cut, unrolled) < _seed_spread(cut, seeded)
-        ):
-            seeded = unrolled
+    seeded = None if unroll else _planar_seed(cut, drop=True)
     if seeded is None:
+        seeded = _unrolled_seed(cut)
+    if seeded is None:
+        if unroll:
+            return made, None, rows, handles
         try:
             seeded = (*_capped_seed(cut, check), None)
         except (ValueError, RuntimeError):
@@ -828,9 +817,9 @@ def flatten_sheet(reader, store, chart_faces=1024, *, app_run=None, offline=Fals
     cut_base = int(ids.max()) + 1
     prepared = []
 
-    def prepare(piece, minimal):
+    def prepare(piece, minimal, unroll=False):
         piece.pop("error", None)
-        piece.update(_prepare(piece["vertices"], piece["faces"], minimal, store.check))
+        piece.update(_prepare(piece["vertices"], piece["faces"], minimal, store.check, unroll))
 
     progress = dict(pieces=len(groups), finished=len(done), prepared=0, prepare_seconds=0.0)
     shown = [0.0]
@@ -1074,6 +1063,15 @@ def flatten_sheet(reader, store, chart_faces=1024, *, app_run=None, offline=Fals
             try:
                 commit(piece, uv, solver)
             except _NeedsDisk as stretched:
+                if piece["initialization"].get("method") == "LSCM":
+                    # LSCM drifts on a rough sheet and the solve may not undo it in its
+                    # steps: a wrap gets a second solve from its unrolled map.
+                    prepare(piece, True, True)
+                    if "error" not in piece:
+                        queue.append([piece])
+                        continue
+                    # It does not unroll: the piece is as it was, with its LSCM map refused.
+                    piece.pop("error")
                 if piece.get("rows") is not None:
                     # Without its handles and folds the piece still stretched: the disk
                     # cut would run through them, so it goes to charts whole.

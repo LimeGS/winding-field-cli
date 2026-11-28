@@ -127,11 +127,13 @@ own and counted in `sheet_flatten.pieces[].aside_faces`; `handles` records the g
 loops and their lengths. What is left of such a piece can still close around the scroll
 axis: a rim at least a quarter as long as the longest one is an end of the wrap, not a
 hole, and gets the shortest seam to the outline, so the wrap unrolls to a strip instead
-of mapping as a ring (`seam_vertex_copies` counts the seam). The seed is the global LSCM;
-when its edge stretch drifts (p99/p01 above 16, usual on a rough fine-field sheet) and
-the piece bends around one axis, it is unrolled instead: arc length of its median
-cross-section against the position along the axis (`initialization: unroll`). When
-neither is valid, the seed is the mean-value map of the piece with its holes capped.
+of mapping as a ring (`seam_vertex_copies` counts the seam). The seed is the global LSCM.
+A piece that bends around one axis has a second seed, its unrolled map (arc length of its
+median cross-section against the position along the axis, `initialization: unroll`): it
+is used when LSCM folds on more than 5% of the area, and for a second solve when the
+LSCM-seeded one ends outside the stretch gate. It folds on more faces than LSCM, so it is
+not the first choice. When neither is valid, the seed is the mean-value map of the piece
+with its holes capped.
 `--flattening-scope charts` selects the chart route for the
 whole run; runs created before 2.0.0 keep their saved chart scope on resume.
 

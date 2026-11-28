@@ -303,7 +303,6 @@ def test_a_wrap_is_unrolled_around_its_axis_without_drift():
     assert abs(abs(initialization["axis"][1]) - 1) < 1e-6
     stretch = sheet._stats(cut["vertices"], faces, uv)["edge_stretch"]
     assert stretch["p01"] > 0.95 and stretch["p99"] < 1.05
-    assert sheet._seed_spread(cut, (uv, initialization, rows)) < 1.1
 
 
 def test_a_closed_wrap_and_a_flat_sheet_are_not_unrolled():
@@ -321,19 +320,44 @@ def test_a_closed_wrap_and_a_flat_sheet_are_not_unrolled():
     assert sheet._unrolled_seed(flat_domain(points, tube)) is None
 
 
-def test_a_drifted_first_seed_gives_way_to_the_unrolled_one(monkeypatch):
+def test_a_folded_first_seed_gives_way_to_the_unrolled_one(monkeypatch):
     from winding_field.flattening import native_global as sheet
 
     flat, faces = tunnel_sheet(long=2.0)
     vertices = rolled(flat)
-    monkeypatch.setattr(sheet, "SEED_SPREAD", 1.0)
+    made = sheet._prepare(vertices, faces, True, sheet._unchecked)
+    assert made["initialization"]["method"] == "LSCM"
+    monkeypatch.setattr(sheet, "_planar_seed", lambda cut, drop=False: None)
     made = sheet._prepare(vertices, faces, True, sheet._unchecked)
     assert "error" not in made and made["minimal"]
     assert made["initialization"]["method"] == "unroll"
     assert made["handles"]["loops"] == 3 and made["topology"]["holes"] >= 6
-    monkeypatch.setattr(sheet, "SEED_SPREAD", np.inf)
-    made = sheet._prepare(vertices, faces, True, sheet._unchecked)
-    assert made["initialization"]["method"] == "LSCM"
+    # Asked for alone, the unrolled map is all there is: a flat sheet has none.
+    again = sheet._prepare(vertices, faces, True, sheet._unchecked, True)
+    assert again["initialization"]["method"] == "unroll"
+    assert "error" in sheet._prepare(*tunnel_sheet(arches=0), True, sheet._unchecked, True)
+
+
+def test_a_stretched_solve_is_run_again_from_the_unrolled_map(tmp_path, relaxed_solve, monkeypatch):
+    from winding_field.flattening import flatboi
+
+    solve, calls = flatboi.solve_batch, []
+
+    def drifted(items, app_run, **kw):
+        calls.append(len(items))
+        if len(calls) == 1:
+            # What a solve that ran out of steps leaves: a valid map, far too stretched.
+            return [seed * [4.0, 0.25] for _, _, seed in items], dict(steps=30, converged=False)
+        return solve(items, app_run, **kw)
+
+    monkeypatch.setattr(flatboi, "solve_batch", drifted)
+    flat, faces = tunnel_sheet(long=2.0)
+    root = bundle(tmp_path, rolled(flat), faces)
+    receipt, charts, _, _ = run(tmp_path, root, "out")
+    assert len(calls) >= 2 and receipt["fallback"] == []
+    (piece,) = receipt["pieces"]
+    assert piece["initialization"] == "unroll" and piece["handles"]["loops"] == 3
+    assert sum(c[3] for c in charts) == len(faces)
 
 
 def test_a_rolled_sheet_with_handles_is_flattened_whole(tmp_path, relaxed_solve):
