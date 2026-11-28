@@ -46,6 +46,12 @@ PIECE_ROW = "sheet_piece/"
 
 # One Flatboi call per group keeps process start-up amortized over small pieces.
 GROUP_FACES = 4_000_000
+# A whole-sheet seed may fold on this share of a piece's area; those faces leave the piece.
+SEED_DROP = 0.05
+# Seed faces below this share of the median area scale count as folded.
+SEED_FLOOR = 1e-9
+# A piece flattened as a disk after its holes failed must stay inside these edge stretches.
+DISK_STRETCH = (0.25, 4.0)
 
 
 class _NeedsDisk(Exception):
@@ -107,14 +113,16 @@ def _manifold_pieces(faces):
     return split, parent, sorted(groups, key=lambda g: int(g[0])), repair
 
 
-def _minimal_cut(vertices, faces, check):
+def _minimal_cut(vertices, faces, check, rim_holes=None):
     """Cut a piece only where it cannot lie flat; holes stay holes.
 
     ``cut_component`` joins every hole to the outer boundary, and each of those cuts can
     open or overlap in the render. A hole in a near-developable sheet needs none: its rim
     turns by about -2*pi (Gauss-Bonnet), while the outer boundary turns by about +2*pi and
     either end of a closed wrap by about 0. Loops that turn by less than -pi are capped
-    for the topological cut only, so just wraps and handles are cut.
+    for the topological cut only, so just wraps and handles are cut. ``rim_holes`` flags
+    the vertices where faces were taken out of the piece: a loop through one is a hole
+    whatever its turning (what is left of a removed tunnel turns like the end of a wrap).
 
     Returns ``(cut, topology)`` like ``cut_component``, or None when there is no hole to
     keep. Raises ValueError when the result is not a planar domain.
@@ -139,7 +147,12 @@ def _minimal_cut(vertices, faces, check):
         np.add.at(angle, f[:, i], np.arccos(np.clip(cosine, -1.0, 1.0)))
     turning = np.array([float((np.pi - angle[loop]).sum()) for loop in loops])
     outer = int(np.argmax(turning))
-    holes = [k for k in range(len(loops)) if turning[k] < -np.pi and k != outer]
+    holes = [
+        k
+        for k in range(len(loops))
+        if k != outer
+        and (turning[k] < -np.pi or (rim_holes is not None and rim_holes[loops[k]].any()))
+    ]
     if not holes:
         return None
     # Cap each hole with a fan around one extra vertex; the fan reverses the rim edges.
@@ -182,19 +195,52 @@ def _minimal_cut(vertices, faces, check):
     )
 
 
-def _planar_seed(cut):
-    """Global LSCM for a planar domain with holes; None when it folds."""
+def _part(vertices, faces, rows):
+    """The largest edge-connected manifold part of the face rows ``rows`` of a piece.
+
+    Returns ``(vertices, faces, parent, rows)``: its own vertices and faces, the piece
+    vertex of each of its vertices and the rows it keeps, in order.
+    """
+    split, parent, groups, _ = _manifold_pieces(faces[rows].astype(np.int64, copy=False))
+    group = np.sort(max(groups, key=len))
+    used, local = np.unique(split[group], return_inverse=True)
+    return vertices[parent[used]], local.reshape(-1, 3), parent[used], rows[group]
+
+
+def _planar_seed(cut, drop=False):
+    """Global LSCM for a planar domain with holes; None when it folds.
+
+    With ``drop``, a map that folds on at most ``SEED_DROP`` of the area is kept for the
+    rest: returns ``(uv, initialization, rows)`` with the face rows that are not folded
+    (None when all are), and the caller takes the folded faces out of the piece.
+    """
     from .matrix import _global_lscm
 
     uv, pins, _ = _global_lscm(cut)
-    tri = uv[cut["faces"]]
+    faces = cut["faces"].astype(np.int64, copy=False)
+    tri = uv[faces]
     signed = cross2(tri[:, 1] - tri[:, 0], tri[:, 2] - tri[:, 0])
     if signed.sum() < 0:
         uv[:, 0] *= -1
         signed = -signed
-    if not np.isfinite(uv).all() or (signed <= 0).any():
+    initialization = dict(method="LSCM", backend="libigl", pins=pins.tolist())
+    if not np.isfinite(uv).all():
         return None
-    return uv, dict(method="LSCM", backend="libigl", pins=pins.tolist())
+    if not drop:
+        return None if (signed <= 0).any() else (uv, initialization)
+    world = cut["vertices"]
+    area = np.linalg.norm(
+        np.cross(world[faces[:, 1]] - world[faces[:, 0]], world[faces[:, 2]] - world[faces[:, 0]]),
+        axis=1,
+    )
+    # A face squeezed to nothing is as unusable a start as a folded one.
+    folded = signed <= SEED_FLOOR * np.median(signed / np.maximum(area, 1e-300)) * area
+    if not folded.any():
+        return uv, initialization, None
+    if area[folded].sum() > SEED_DROP * area.sum():
+        return None
+    initialization["folded_faces"] = int(folded.sum())
+    return uv, initialization, np.flatnonzero(~folded)
 
 
 def _stats(vertices, faces, uv):
@@ -378,21 +424,30 @@ def _sheet_seed(cut, check, scratch):
 
 
 def _prepare(vertices, faces, minimal, check):
-    """Cut one piece and seed its map; returns the fields ``commit`` needs, or an error."""
+    """Cut one piece and seed its map; returns the fields ``commit`` needs, or an error.
+
+    With ``minimal`` the piece keeps its holes. Handles go first: the faces around each
+    tunnel leave the piece (``handles.handle_collars``), and so do the few faces on which
+    the seed folds. ``rows`` then lists the face rows that stay in the whole-sheet map
+    (None for all); the others are flattened as small pieces of their own.
+    """
     from .native_sheet import cut_component
 
     try:
         with tempfile.TemporaryDirectory(prefix="sheet-seed-") as scratch:
-            made = seeded = None
+            made = seeded = rows = handles = None
             if minimal:
                 try:
-                    made = _minimal_cut(vertices, faces, check)
-                    seeded = made and _planar_seed(made[0])
+                    made, seeded, rows, handles = _keep_holes(vertices, faces, check)
                 except ValueError:
                     seeded = None
             if seeded:
                 (cut, topology), (seed, initialization) = made, seeded
+            elif handles and handles["loops"]:
+                # A disk cut through the handles is the map that collapses: use charts.
+                raise ValueError("no whole-sheet seed after handle removal")
             else:
+                rows = None
                 cut, topology = cut_component(vertices, faces, check)
                 seed, initialization = _sheet_seed(cut, check, scratch)
         tri = seed[cut["faces"]]
@@ -406,9 +461,71 @@ def _prepare(vertices, faces, minimal, check):
             topology=topology,
             initialization=initialization,
             minimal=bool(seeded),
+            rows=rows,
+            handles=handles,
         )
     except (ValueError, RuntimeError, MemoryError) as error:
         return dict(error=str(error) or type(error).__name__)
+
+
+def _keep_holes(vertices, faces, check):
+    """Minimal cut and seed of a piece without its handles: ``(made, seeded, rows, handles)``."""
+    import igl
+
+    from .handles import handle_collars
+    from .native_sheet import cut_component
+
+    faces = faces.astype(np.int64, copy=False)
+    world, f, up, rows, rim_holes = vertices, faces, None, None, None
+    aside, handles = handle_collars(vertices, faces, check)
+    if aside.any():
+        world, f, up, rows = _part(vertices, faces, np.flatnonzero(~aside))
+        touched = np.zeros(len(vertices), bool)
+        touched[faces[aside]] = True
+        rim_holes = touched[up]
+        lengths = handles.pop("loop_length")
+        handles = dict(
+            genus=handles["genus"],
+            loops=handles["loops"],
+            genus_left=handles["genus_left"],
+            collar_faces=handles["collar_faces"],
+            rounds=len(handles["rounds"]),
+            loop_length=dict(
+                min=float(np.min(lengths)),
+                median=float(np.median(lengths)),
+                max=float(np.max(lengths)),
+            ),
+        )
+    else:
+        handles = None
+    made = _minimal_cut(world, f, check, rim_holes)
+    if made is None:
+        if rows is None:
+            return None, None, None, None
+        # The removed faces opened the piece to its outline: no hole is left to keep.
+        made = cut_component(world, f, check)
+    cut, topology = made
+    seeded = _planar_seed(cut, drop=True)
+    if seeded is None:
+        return made, None, rows, handles
+    uv, initialization, keep = seeded
+    if keep is not None:
+        # The faces that stay are still a planar domain, and the same map is valid on them.
+        part_world, part_faces, part_up, keep = _part(cut["vertices"], cut["faces"], keep)
+        cut = dict(
+            vertices=part_world,
+            faces=part_faces.astype(cut["faces"].dtype, copy=False),
+            parent=cut["parent"][part_up],
+            boundary=igl.boundary_loop(part_faces).astype(np.int64),
+        )
+        uv = uv[part_up]
+        rows = keep if rows is None else rows[keep]
+        topology = dict(topology, seed_dropped_faces=int(len(f) - len(keep)))
+    if up is not None:
+        cut["parent"] = up[cut["parent"]]
+    if handles:
+        topology = dict(topology, handles=handles)
+    return (cut, topology), (uv, initialization), rows, handles
 
 
 def _prepare_task(task):
@@ -455,6 +572,7 @@ def flatten_sheet(reader, store, chart_faces=1024, *, app_run=None, offline=Fals
     areas = np.linalg.norm(
         np.cross(xyz[faces[:, 1]] - xyz[faces[:, 0]], xyz[faces[:, 2]] - xyz[faces[:, 0]]), axis=1
     )
+    rows_last = int(rows[-1, 0])
     with store.db:
         store.set("source_faces", int(len(faces)))
         store.set("source_area", float(areas.sum() / 2))
@@ -538,6 +656,11 @@ def flatten_sheet(reader, store, chart_faces=1024, *, app_run=None, offline=Fals
         if piece["minimal"] and not (stretch["p01"] > 0.5 and stretch["p99"] < 2.0):
             # A kept hole was really a wrap: flatten this piece as a disk instead.
             raise _NeedsDisk
+        if piece.get("retried") and not (
+            stretch["p01"] > DISK_STRETCH[0] and stretch["p99"] < DISK_STRETCH[1]
+        ):
+            # Neither with its holes nor as a disk: a collapsed map is worse than charts.
+            raise ValueError("whole-sheet map is distorted with holes kept and as a disk")
         quality = dict(
             method="SLIM",
             backend="flatboi",
@@ -551,18 +674,23 @@ def flatten_sheet(reader, store, chart_faces=1024, *, app_run=None, offline=Fals
             ),
         )
         source_ids = piece["vertex_ids"][cut["parent"]]
+        rows = piece.get("rows")
+        face_ids = piece["face_ids"] if rows is None else piece["face_ids"][rows]
         _save_mapped(
             store,
             piece["component"],
-            _raster_charts(cut, uv, piece["face_ids"], source_ids, piece["cut_base"], chart_faces),
+            _raster_charts(cut, uv, face_ids, source_ids, piece["cut_base"], chart_faces),
             quality,
         )
+        aside = 0 if rows is None else set_aside(piece, rows)
         finish(
             "pieces",
             piece["component"],
             dict(
                 component=piece["component"],
                 faces=int(len(cut["faces"])),
+                aside_faces=int(aside),
+                handles=piece.get("handles"),
                 seam_vertex_copies=int(piece["topology"]["seam_duplicates"]),
                 holes=int(piece["topology"].get("holes", 0)),
                 euler_characteristic=piece["topology"]["original"]["euler_characteristic"],
@@ -573,6 +701,33 @@ def flatten_sheet(reader, store, chart_faces=1024, *, app_run=None, offline=Fals
                 **stats,
             ),
         )
+
+    def set_aside(piece, rows):
+        """Flatten the faces a piece gave up as charts of their own components."""
+        rest = np.setdiff1d(np.arange(len(piece["faces"])), rows)
+        if not len(rest):
+            return 0
+        faces = piece["faces"][rest].astype(np.int64, copy=False)
+        _, _, groups, _ = _manifold_pieces(faces)
+        items = []
+        for group in groups:
+            ids = piece["face_ids"][rest[group]]
+            # A chart joins the sheet only inside its component: these stay apart, each
+            # under its first face (or past the last face when that names the piece).
+            component = int(ids.min())
+            if component == piece["component"]:
+                component += int(rows_last) + 1
+            items += _fallback_charts(
+                store,
+                component,
+                piece["vertices"],
+                faces[group],
+                ids,
+                piece["vertex_ids"],
+                chart_faces,
+            )
+        _flush_slim(store, items, app_run, 0, -1)
+        return len(rest)
 
     def initialization_name(record):
         return record.get("method") or record.get("algorithm") or "mean-value"
@@ -680,7 +835,13 @@ def flatten_sheet(reader, store, chart_faces=1024, *, app_run=None, offline=Fals
             try:
                 commit(piece, uv, solver)
             except _NeedsDisk:
+                if piece.get("rows") is not None:
+                    # Without its handles and folds the piece still stretched: the disk
+                    # cut would run through them, so it goes to charts whole.
+                    chart_route(piece, "whole-sheet map is distorted after handle removal")
+                    continue
                 prepare(piece, False)
+                piece["retried"] = True
                 if "error" in piece:
                     chart_route(piece, piece["error"])
                 else:
