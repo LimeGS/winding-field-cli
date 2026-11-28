@@ -358,9 +358,10 @@ run's `surfaces/`: OBJ meshes in `level-*/meshes/` and CT images, overviews and
 masks in `level-*/component-*/`. The saved run configuration selects the branch.
 
 New native `run`/`plan` requests default to `--flattening-method slim` on Linux
-x86_64 (`default` elsewhere): each local chart keeps its projection/LSCM seed,
-then batches of charts are optimized by the pinned Flatboi SLIM, with the same
-geometry gates and seam assembly. Docker bundles Flatboi; host installs fetch and
+x86_64 (`default` elsewhere) with `--flattening-scope sheet`: each connected piece is
+one global LSCM + Flatboi SLIM map, without welded chart seams. `--flattening-scope
+charts` keeps the local charts (projection/LSCM seed, batches optimized by the pinned
+Flatboi SLIM, seam assembly). Docker bundles Flatboi; host installs fetch and
 verify it on first use. Select `--flattening-method default` for the historical
 local mapping or `original` for global LSCM. Explicit `slim` is native-only;
 atlas/direct-field TIFXYZ retain their previous defaults. Add `--level-workers N`

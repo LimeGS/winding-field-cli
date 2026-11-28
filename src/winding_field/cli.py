@@ -618,6 +618,12 @@ def main(argv=None):
             help="slim: Flatboi SLIM (default for new native runs on Linux x86_64), default: tangent projection/LSCM charts, original: global LSCM; independent of field resolution",
         )
         p.add_argument(
+            "--flattening-scope",
+            choices=["charts", "sheet"],
+            help="native only: sheet = one global LSCM+SLIM map per connected piece (default "
+            "with SLIM); charts = welded ~1,000-face charts (default otherwise)",
+        )
+        p.add_argument(
             "--flattening-config",
             help="original-mapping JSON: output_frame, optional pitch and memory_gib; requires --flattening-method original",
         )
@@ -1010,6 +1016,20 @@ def main(argv=None):
                     if config["surface_output"] == "native" and supported_platform()
                     else "default"
                 )
+            scope = config.pop("flattening_scope", None)
+            native_slim = (
+                config["surface_output"] == "native" and config["flattening_method"] == "slim"
+            )
+            if scope == "sheet" and not native_slim:
+                raise ValueError(
+                    "--flattening-scope sheet requires --surface-output native and "
+                    "--flattening-method slim"
+                )
+            if scope is None and native_slim:
+                scope = "sheet"
+            if scope == "sheet":
+                # Recorded only for sheet, so chart-scope identities and resumes are unchanged.
+                config["flattening_scope"] = "sheet"
             original = config.pop("flattening_config")
             original_flags = {
                 key: config.pop(flag)

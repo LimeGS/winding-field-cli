@@ -305,7 +305,8 @@ the remaining repeated decodes (25.0 s against 33.8 s on the first 1,612 tiles).
   check of 4,368 chunks cost 20-35 min of an idle GPU. `--offline` is an execution setting,
   so `run --reuse-from ... --offline` reuses a donor prepared online; a chunk missing from
   the cache then fails instead of being fetched.
-- **`--flattening-scope sheet` (opt-in).** The default (`charts`) flattens ~1,000-face
+- **`--flattening-scope sheet` (default with `--flattening-method slim`).** `charts`
+  (the default only with `--flattening-method default`) flattens ~1,000-face
   charts and welds each to one parent; every other seam is a cut, and drift between
   charts opens those cuts into gaps or overlapping (blanked, `ambiguous_xyz`) pixels.
   `sheet` flattens each edge-connected piece as **one map**: it is cut to a disk
@@ -316,7 +317,15 @@ the remaining repeated decodes (25.0 s against 33.8 s on the first 1,612 tiles).
   or folded solve) uses the chart route under its own component and is listed in
   `LEVEL.json` → `sheet_flatten.fallback`; per-piece iterations and edge-stretch/area
   percentiles are in `sheet_flatten.pieces`. It needs `--flattening-method slim` and,
-  for multi-million-face meshes, a larger `--surface-time-limit`.
+  for multi-million-face meshes, a larger `--surface-time-limit`. Pass
+  `--flattening-scope charts` to reproduce a render made before 2.0.0 (its identity has
+  no scope key, so a resume with the new default is refused).
+- **A short render is an error.** When the result is `PAUSED` (time limit or STOP) or
+  flattens less than `--coverage-target` of the mesh area, `render-ct` still writes
+  `LEVEL.json` and the JSON result, prints `scroll: WARNING ...` with the flattened
+  percentage on stderr and exits 4. A chart render that hits the UV budget (60 % of
+  `--surface-time-limit`) renders only the charts it flattened, so a 12 % mosaic no
+  longer passes as a success.
 
   On a synthetic 20 × 14 mm curved, non-developable sheet (radius 8 mm, 80 µm bumps),
   decimated 1/9 to 51,800 faces and rasterized at 8.64 µm:

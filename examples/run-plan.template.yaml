@@ -135,6 +135,7 @@ field_scope: all # Opciones: all | supported (requiere field_prior; resuelve y g
 previews: true # Opciones: true | false; previews de atlas legacy; false no elimina renders CT finales.
 surface_output: native # Opciones: native | atlas | tifxyz; tifxyz es directo del campo, no muestrea CT.
 flattening_method: slim # Opciones: slim | default | original; slim solo native; default conserva mapping legacy; original = global LSCM.
+flattening_scope: sheet # Opciones: sheet | charts | null/omitir para sheet con slim native (charts en otro caso); sheet = un mapa global LSCM+SLIM por pieza conexa, sin costuras soldadas; charts = cartas locales de ~1.000 caras soldadas; flag --flattening-scope.
 coverage_target: 1.0 # Opciones: número finito en (0,1], fracción de área mallada native; no cobertura CT observada.
 surface_time_limit_s: 1800.0 # Opciones: segundos finitos >0 activos acumulados por W native; flag --surface-time-limit.
 # ct_texture: false # Opciones: true | false; false aplana y escribe TIFXYZ sin muestrear CT para la textura (solo native; los TIFF XYZ se escriben siempre desde 2.0); flag --no-ct-texture.

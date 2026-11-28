@@ -284,7 +284,7 @@ def test_pieces_that_cannot_be_flattened_whole_use_the_chart_route(
     assert summary["mapped_faces"] >= len(faces) - 2
 
 
-def test_sheet_scope_is_opt_in_and_needs_slim():
+def test_sheet_scope_settings_key_only_when_enabled_and_needs_slim():
     from winding_field.native_pipeline import _settings
 
     default = _settings({})
@@ -349,3 +349,77 @@ def test_render_ct_sheet_scope_renders_and_resumes(tmp_path, monkeypatch, flatbo
     args.flattening_scope = "charts"
     with pytest.raises(ValueError, match="identity"):
         scroll.render_ct(args)
+
+
+def _render_args(tmp_path, *extra):
+    from test_native_geometry import plane_bundle
+    from winding_field import scroll
+
+    mesh = plane_bundle(tmp_path, nx=5, ny=4)
+    return scroll._parser().parse_args(
+        ["render-ct", "--mesh", str(mesh), "--source", "unused", "--render-pitch-um", "0.5",
+         "--output", str(tmp_path / "out"), *extra]
+    )  # fmt: skip
+
+
+@pytest.mark.parametrize(
+    "extra,want",
+    [
+        ((), "sheet"),
+        (("--flattening-scope", "charts"), None),
+        (("--flattening-method", "default"), None),
+        (("--flattening-method", "slim", "--flattening-scope", "sheet"), "sheet"),
+    ],
+)
+def test_render_ct_defaults_to_sheet_with_slim(tmp_path, monkeypatch, extra, want):
+    import winding_field.native_pipeline as native_pipeline
+    import winding_field.workflow as workflow
+    from winding_field import scroll
+
+    seen = {}
+
+    def capture(reader, output, volume, config):
+        seen.update(config)
+        return dict(status="COMPLETE")
+
+    monkeypatch.setattr(native_pipeline, "render_mesh", capture)
+    monkeypatch.setattr(workflow, "open_volume", lambda config: _NoVolume())
+    scroll.render_ct(_render_args(tmp_path, *extra))
+    assert seen["flattening_scope"] == want
+
+
+class _NoVolume:
+    remote = False
+
+    def close(self):
+        pass
+
+
+@pytest.mark.parametrize(
+    "result,code,message",
+    [
+        (dict(status="COMPLETE", coverage_fraction=1.0, coverage_target=1.0, target_met=True), 0,
+         None),
+        (dict(status="PARTIAL", coverage_fraction=0.125, coverage_target=1.0, target_met=False,
+              elapsed_s=1800.0), 4, "only 12.5% of the mesh area was flattened"),
+        (dict(status="PAUSED", reason="TIME_LIMIT", elapsed_s=1800.0), 4, "TIME_LIMIT"),
+        # A full map without CT contrast is PARTIAL but not short of its coverage target.
+        (dict(status="PARTIAL", coverage_fraction=1.0, coverage_target=1.0, target_met=True), 0,
+         None),
+    ],
+)  # fmt: skip
+def test_render_ct_fails_loudly_when_short_of_coverage(
+    tmp_path, monkeypatch, capsys, result, code, message
+):
+    from winding_field import scroll
+
+    monkeypatch.setattr(scroll, "render_ct", lambda args: result)
+    argv = ["render-ct", "--mesh", str(tmp_path), "--source", "unused", "--render-pitch-um", "1", "--output",
+            str(tmp_path / "out")]  # fmt: skip
+    assert scroll.main(argv) == code
+    captured = capsys.readouterr()
+    assert json.loads(captured.out)["status"] == result["status"]
+    if message:
+        assert "WARNING" in captured.err and message in captured.err
+    else:
+        assert "WARNING" not in captured.err
