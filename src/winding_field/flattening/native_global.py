@@ -350,19 +350,64 @@ def _fallback(store, component, vertices, faces, face_ids, vertex_ids, chart_fac
         )
 
 
-def flatten_sheet(reader, store, chart_faces=1024, *, app_run=None, offline=False):
+def _unchecked():
+    """Stand-in for ``store.check`` in prepare workers; the parent checks between results."""
+
+
+def _prepare(vertices, faces, minimal, check):
+    """Cut one piece and seed its map; returns the fields ``commit`` needs, or an error."""
+    from .matrix import _lscm_seed
+    from .native_sheet import cut_component
+
+    try:
+        with tempfile.TemporaryDirectory(prefix="sheet-seed-") as scratch:
+            made = seeded = None
+            if minimal:
+                try:
+                    made = _minimal_cut(vertices, faces, check)
+                    seeded = made and _planar_seed(made[0])
+                except ValueError:
+                    seeded = None
+            if seeded:
+                (cut, topology), (seed, initialization) = made, seeded
+            else:
+                cut, topology = cut_component(vertices, faces, check)
+                seed, initialization = _lscm_seed(cut, check, scratch)
+        tri = seed[cut["faces"]]
+        if not np.isfinite(seed).all() or np.any(
+            cross2(tri[:, 1] - tri[:, 0], tri[:, 2] - tri[:, 0]) <= 0
+        ):
+            raise ValueError("no valid whole-sheet seed")
+        return dict(
+            cut=cut,
+            seed=seed,
+            topology=topology,
+            initialization=initialization,
+            minimal=bool(seeded),
+        )
+    except (ValueError, RuntimeError, MemoryError) as error:
+        return dict(error=str(error) or type(error).__name__)
+
+
+def _prepare_task(task):
+    vertices, faces = task
+    return _prepare(vertices, faces, True, _unchecked)
+
+
+def flatten_sheet(reader, store, chart_faces=1024, *, app_run=None, offline=False, workers=1):
     """Flatten every edge-connected piece of a single-level mesh as one map.
 
     Idempotent: a completed store returns its saved receipt. Interrupted work restarts
-    from the pieces that were not committed.
+    from the pieces that were not committed. ``workers`` > 1 cuts and seeds pieces in
+    that many processes; the results, and so the outputs, are the same as with one.
     """
     from .flatboi import resolve_app_run, solve_batch
-    from .matrix import _lscm_seed
-    from .native_sheet import cut_component
     from .patches import check_flatboi
 
     if type(chart_faces) is not int or not 1 <= chart_faces <= 8192:
         raise ValueError("chart_faces must be1..8192")
+    if type(workers) is not int or workers < 1:
+        raise ValueError("flatten workers must be a positive integer")
     _schema(store)
     if store.get("flatten_complete", False) and store.get("sheet_flatten") is not None:
         return store.get("sheet_flatten")
@@ -408,34 +453,19 @@ def flatten_sheet(reader, store, chart_faces=1024, *, app_run=None, offline=Fals
 
     def prepare(piece, minimal):
         piece.pop("error", None)
-        try:
-            with tempfile.TemporaryDirectory(prefix="sheet-seed-") as scratch:
-                made = seeded = None
-                if minimal:
-                    try:
-                        made = _minimal_cut(piece["vertices"], piece["faces"], store.check)
-                        seeded = made and _planar_seed(made[0])
-                    except ValueError:
-                        seeded = None
-                if seeded:
-                    (cut, topology), (seed, initialization) = made, seeded
-                else:
-                    cut, topology = cut_component(piece["vertices"], piece["faces"], store.check)
-                    seed, initialization = _lscm_seed(cut, store.check, scratch)
-            tri = seed[cut["faces"]]
-            if not np.isfinite(seed).all() or np.any(
-                cross2(tri[:, 1] - tri[:, 0], tri[:, 2] - tri[:, 0]) <= 0
-            ):
-                raise ValueError("no valid whole-sheet seed")
-            piece.update(
-                cut=cut,
-                seed=seed,
-                topology=topology,
-                initialization=initialization,
-                minimal=bool(seeded),
-            )
-        except (ValueError, RuntimeError, MemoryError) as error:
-            piece["error"] = str(error) or type(error).__name__
+        piece.update(_prepare(piece["vertices"], piece["faces"], minimal, store.check))
+
+    progress = dict(pieces=len(groups), finished=len(done), prepared=0, prepare_seconds=0.0)
+    shown = [0.0]
+
+    def report(force=False):
+        # Visible while it runs: work.sqlite state "sheet_progress" and STATUS.json.
+        now = time.monotonic()
+        if force or now - shown[0] >= 2.0:
+            shown[0] = now
+            progress["prepare_seconds"] = round(now - started, 1)
+            with store.db:
+                store.set("sheet_progress", progress)
 
     for group in groups:
         store.check()
@@ -454,8 +484,24 @@ def flatten_sheet(reader, store, chart_faces=1024, *, app_run=None, offline=Fals
         cut_base += 8 * len(used) + 16
         if component in done:
             continue
-        prepare(piece, True)
         prepared.append(piece)
+    report(True)
+    if workers > 1 and len(prepared) > 1:
+        from concurrent.futures import ProcessPoolExecutor
+
+        with ProcessPoolExecutor(min(workers, len(prepared))) as pool:
+            tasks = ((piece["vertices"], piece["faces"]) for piece in prepared)
+            for piece, made in zip(prepared, pool.map(_prepare_task, tasks, chunksize=4)):
+                store.check()
+                piece.update(made)
+                progress["prepared"] += 1
+                report()
+    else:
+        for piece in prepared:
+            prepare(piece, True)
+            progress["prepared"] += 1
+            report()
+    report(True)
 
     def commit(piece, uv, solver):
         cut = piece["cut"]
@@ -515,6 +561,7 @@ def flatten_sheet(reader, store, chart_faces=1024, *, app_run=None, offline=Fals
         # One small row per piece: rewriting the whole receipt per piece grew as the square
         # of the piece count (hours on real levels with tens of thousands of pieces). A
         # group's rows commit together, so a resume regroups the remaining pieces the same.
+        progress["finished"] += len(entries)
         with store.db:
             for component, record in entries:
                 store.set(
@@ -523,6 +570,7 @@ def flatten_sheet(reader, store, chart_faces=1024, *, app_run=None, offline=Fals
                 )
                 sequence[0] += 1
             store.set("elapsed_s", store.elapsed)
+            store.set("sheet_progress", progress)
         for component, record in entries:
             receipt[kind].append(record)
             done.add(component)

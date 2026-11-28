@@ -174,7 +174,9 @@ def verify_ct_snapshot(root, volume):
             volume._ledger = previous
 
 
-def _geometry_and_render(reader, store, volume, settings, pitch, until, *, offline=False):
+def _geometry_and_render(
+    reader, store, volume, settings, pitch, until, *, offline=False, flatten_workers=1
+):
     from .flattening.native_charts import SLIM_BATCH_FACES, flatten_mesh, assemble, summary
     from .native_render import render
 
@@ -186,7 +188,9 @@ def _geometry_and_render(reader, store, volume, settings, pitch, until, *, offli
         from .flattening.native_global import flatten_sheet
 
         # One global map per connected piece; charts are stored already assembled.
-        flatten_sheet(reader, store, settings["chart_faces"], offline=offline)
+        flatten_sheet(
+            reader, store, settings["chart_faces"], offline=offline, workers=flatten_workers
+        )
         if until == "flatten":
             return None
         mapped = assemble(store, target)
@@ -312,6 +316,7 @@ def render_mesh(reader, output, volume, config, stop=None):
                 pitch,
                 "render",
                 offline=config.get("offline", False),
+                flatten_workers=config.get("flatten_workers", 1),
             )
             result["timing_scope"] = "existing-mesh-to-render"
             atomic_json(store.path("LEVEL.json"), result)
@@ -453,6 +458,7 @@ def work(run, config, until="render", stop=None, token=None, started_epoch=None,
                             float(min(source.spacing)),
                             until,
                             offline=config.get("offline", False),
+                            flatten_workers=config.get("flatten_workers", 1),
                         )
                     if result is None:
                         continue

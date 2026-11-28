@@ -41,7 +41,7 @@ def seeded_solve(monkeypatch):
     )
 
 
-def run(tmp_path, root, name, interrupt_after=None):
+def run(tmp_path, root, name, interrupt_after=None, workers=1):
     from winding_field.flattening import native_global
     from winding_field.native_store import Journal, Paused
     from winding_field.surface_mesh import MeshReader
@@ -59,10 +59,10 @@ def run(tmp_path, root, name, interrupt_after=None):
 
             store.set = set_and_stop
             with pytest.raises(Paused):
-                native_global.flatten_sheet(reader, store, 64)
+                native_global.flatten_sheet(reader, store, 64, workers=workers)
             store.set = real
             return None
-        receipt = native_global.flatten_sheet(reader, store, 64)
+        receipt = native_global.flatten_sheet(reader, store, 64, workers=workers)
         charts = store.db.execute(
             "SELECT name,component,area,faces,status,minx,maxx,miny,maxy FROM charts ORDER BY name"
         ).fetchall()
@@ -70,6 +70,13 @@ def run(tmp_path, root, name, interrupt_after=None):
         rows = store.db.execute(
             "SELECT count(*) FROM state WHERE name GLOB ?", (native_global.PIECE_ROW + "*",)
         ).fetchone()[0]
+        progress = store.get("sheet_progress")
+    assert (
+        progress["finished"]
+        == progress["pieces"]
+        == len(receipt["pieces"]) + len(receipt["fallback"])
+    )
+    assert progress["prepared"] <= progress["pieces"]
     return dict(receipt, seconds=None), charts, edges, rows
 
 
@@ -161,3 +168,17 @@ def test_seedless_pieces_share_flatboi_calls_and_resume_to_the_same_groups(
     assert {c[4] for c in charts} == {"LOCAL"}
     run(tmp_path, root, "resumed", interrupt_after=5)  # inside the second group
     assert run(tmp_path, root, "resumed") == (receipt, charts, edges, rows)
+
+
+@pytest.mark.parametrize("seedless", [False, True])
+def test_prepare_workers_give_the_same_result_as_one(tmp_path, request, seeded_solve, seedless):
+    if seedless:
+        request.getfixturevalue("no_sheet_seed")
+    root = bundle(tmp_path, *pieces())
+    assert run(tmp_path, root, "pool", workers=3) == run(tmp_path, root, "serial")
+
+
+def test_prepare_workers_must_be_positive(tmp_path, seeded_solve):
+    root = bundle(tmp_path, *pieces(count=2))
+    with pytest.raises(ValueError, match="workers"):
+        run(tmp_path, root, "bad", workers=0)

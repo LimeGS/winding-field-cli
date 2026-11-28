@@ -190,6 +190,8 @@ class Journal:
                     source_area=self.get("source_area"),
                     render_tiles=self.get("render_tiles", 0),
                     scratch_bytes=scratch,
+                    # Whole-sheet flattening: pieces prepared and finished so far.
+                    sheet_progress=self.get("sheet_progress"),
                 ),
             )
 
