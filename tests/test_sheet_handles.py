@@ -214,6 +214,24 @@ def test_a_piece_without_handles_is_left_alone():
     assert not aside.any()
 
 
+def test_a_piece_with_no_inner_edge_has_no_handles(tmp_path, relaxed_solve):
+    from winding_field.flattening.handles import handle_collars
+
+    # One triangle, and two that share an edge whose ends are both on the rim: a level has
+    # thousands of such slivers next to its sheet.
+    points = np.array([[0.0, 0, 0], [1, 0, 0], [0, 1, 0], [1, 1, 0]])
+    for faces in ([[0, 1, 2]], [[0, 1, 2], [1, 3, 2]]):
+        aside, report = handle_collars(points[: np.max(faces) + 1], np.asarray(faces))
+        assert not aside.any() and report["genus"] == 0 and report["loops"] == 0
+    vertices, faces = tunnel_sheet()
+    sliver = np.array([[0.0, 0, 50], [1, 0, 50], [0, 1, 50]])
+    both = np.concatenate([faces, [[len(vertices), len(vertices) + 1, len(vertices) + 2]]])
+    root = bundle(tmp_path, np.concatenate([vertices, sliver]), both)
+    receipt, charts, _, _ = run(tmp_path, root, "out")
+    assert sum(c[3] for c in charts) == len(both)
+    assert max(p["handles"]["loops"] for p in receipt["pieces"] if p["handles"]) == 3
+
+
 def test_the_faces_around_each_tunnel_leave_a_piece_with_only_holes():
     from winding_field.flattening.handles import handle_collars
     from winding_field.flattening.native_global import _part

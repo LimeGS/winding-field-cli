@@ -135,7 +135,7 @@ class _Surface:
         hi = np.maximum(self.na[cand], self.nb[cand])
         best = np.lexsort((self.length[cand], hi, lo))
         cand, lo, hi = cand[best], lo[best], hi[best]
-        firsts = np.r_[True, (lo[1:] != lo[:-1]) | (hi[1:] != hi[:-1])]
+        firsts = np.r_[True, (lo[1:] != lo[:-1]) | (hi[1:] != hi[:-1])][: len(lo)]
         self.rep, self.rep_key = cand[firsts], (lo * self.total + hi)[firsts]
         graph = coo_matrix(
             (self.length[self.rep] + 1e-9, (lo[firsts], hi[firsts])), shape=(self.total,) * 2
